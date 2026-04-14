@@ -343,7 +343,7 @@ export class DKGWriter extends DKGClient {
   }
 
   /**
-   * Convenience: createRound + wait for receipt.
+   * Create a round and wait for the receipt.
    * Returns the transaction receipt (check `status === 'success'`).
    */
   async createRoundAndWait(policy: RoundPolicy) {

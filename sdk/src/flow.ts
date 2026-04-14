@@ -105,18 +105,15 @@ export async function waitForCombinedDecryption(
 }
 
 /**
- * Full demonstration flow (for testing / documentation purposes).
+ * End-to-end encrypt/decrypt flow for testing and documentation.
  *
- * This function illustrates the complete end-to-end DKG encryption flow:
+ * Assumes the round was already created. The function encrypts `plaintext`
+ * with `collectivePub`, then waits for the on-chain combined decryption to
+ * complete.
  *
- *   1. Wait for round to be Finalized (assuming it was already created)
- *   2. Encrypt a plaintext with the collective public key
- *   3. Wait for the on-chain combined decryption to complete
- *
- * In production, steps 2–3 are done by different parties:
- *  - The data producer encrypts and publishes the ciphertext (off-chain / on-chain).
- *  - DKG nodes submit partial decryptions for the ciphertext.
- *  - Any party that has the threshold of partial decryptions calls combineDecryption.
+ * In production these steps happen across different parties: the data producer
+ * encrypts and publishes the ciphertext, DKG nodes submit partial decryptions,
+ * and any caller with enough partial decryptions calls combineDecryption.
  *
  * @param client         Read-only DKGClient
  * @param roundId        The round ID

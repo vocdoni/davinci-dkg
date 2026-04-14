@@ -311,16 +311,15 @@ seed that is already resolved.
 
 ## Overview
 
-The protocol eliminates interactive complaint procedures entirely through systematic use of ZK proofs.
+The protocol eliminates interactive complaint procedures through ZK proofs.
 Every participant proves the correctness of their contribution in a single Groth16 zk-SNARK submitted
-alongside their data. The smart contract rejects any invalid submission at transaction time, there is
-no dispute phase.
+alongside their data. The smart contract rejects any invalid submission at transaction time — no
+dispute phase exists.
 
-Key properties:
-- **Non-interactive**: each participant submits exactly one transaction per phase
-- **Publicly verifiable**: any observer can verify correctness by inspecting the on-chain record
-- **Threshold**: a `t`-of-`n` secret sharing scheme; any `t` participants can decrypt or reconstruct
-- **EVM-compatible**: Groth16 on BN254 with Poseidon1 hashing, matching the DAVINCI stack
+Each participant submits exactly one transaction per phase. Any observer can verify correctness by
+inspecting the on-chain record. The secret sharing is `t`-of-`n`: any `t` participants can decrypt
+or reconstruct. The cryptographic stack uses Groth16 on BN254 with Poseidon1 hashing, matching the
+rest of the DAVINCI system.
 
 ---
 
@@ -465,7 +464,7 @@ h = keccak256(seed ‖ msg.sender)           (256-bit big-endian integer)
 eligible iff h < lotteryThreshold
 ```
 
-The keccak hash acts as a verifiable random function seeded by the blockhash:
+The keccak hash is a verifiable random function seeded by the blockhash:
 every observer can independently recompute `h` for any address and confirm
 whether that node was allowed to claim the slot. No trusted coordinator is
 involved and no ZK proof is needed — the check is a handful of opcodes in the
@@ -979,7 +978,7 @@ The runner will:
 
 ## Web Explorer
 
-`webapp/` contains a single-page React application that acts as a read-only
+`webapp/` contains a single-page React application — a read-only
 block-explorer for a live `DKGManager` / `DKGRegistry` pair. It is a Vite +
 React + TypeScript + Chakra UI + React Query stack talking to the chain
 directly via `viem`, and it is **embedded into the `davinci-dkg-node` binary
@@ -1021,8 +1020,8 @@ browser to the RPC via `viem`, so the Go node does no proxying and does not
 need any contract bindings for the UI to work. Polling cadence is 4 s.
 
 Because the RPC URL is a runtime field (not baked into the bundle), the same
-embedded SPA transparently targets local, testnet, or public deployments —
-you only need to override `WEBAPP_PUBLIC_RPC` for the compose service or flip
+embedded SPA works against local, testnet, or public deployments without any
+rebuild — override `WEBAPP_PUBLIC_RPC` for the compose service or flip
 the endpoint in the Settings page.
 
 ### Running it outside the testnet

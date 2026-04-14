@@ -1,6 +1,6 @@
 # Davinci DKG SDK
 
-TypeScript SDK for interacting with the Davinci DKG smart contracts. Provides read/write access to the `DKGManager` and `DKGRegistry` contracts, ElGamal encryption on BabyJubJub, and utilities for monitoring round lifecycle and decryption.
+TypeScript SDK for the Davinci DKG smart contracts. Covers read/write access to `DKGManager` and `DKGRegistry`, ElGamal encryption on BabyJubJub, and helpers for polling round status and decryption results.
 
 ## Installation
 
@@ -10,7 +10,7 @@ npm install @vocdoni/davinci-dkg-sdk
 pnpm add @vocdoni/davinci-dkg-sdk
 ```
 
-**Peer dependencies:** `viem`
+Requires `viem` as a peer dependency.
 
 ## Quick start
 
@@ -127,7 +127,7 @@ unsub(); // stop watching
 
 ## ElGamal encryption
 
-The SDK exposes ElGamal encryption/decryption on the BabyJubJub curve, backed by [`@zk-kit/baby-jubjub`](https://github.com/zk-kit/zk-kit/tree/main/packages/baby-jubjub) — pure TypeScript, synchronous, browser-native.
+The SDK exposes ElGamal encryption/decryption on the BabyJubJub curve via [`@zk-kit/baby-jubjub`](https://github.com/zk-kit/zk-kit/tree/main/packages/baby-jubjub), a pure TypeScript implementation that runs synchronously in the browser.
 
 ```ts
 import { buildElGamal } from '@vocdoni/davinci-dkg-sdk';
@@ -154,7 +154,7 @@ const packed   = elgamal.packPoint(pubKey);   // bigint
 const unpacked = elgamal.unpackPoint(packed); // [bigint, bigint]
 ```
 
-The `flow` module provides convenience wrappers for the most common patterns:
+The `flow` module provides higher-level wrappers for typical usage:
 
 ```ts
 import { encrypt, decrypt, waitForCollectivePublicKeyHash } from '@vocdoni/davinci-dkg-sdk';
@@ -166,7 +166,7 @@ const ciphertext = await encrypt(42n, collectivePubKey);
 const hash = await waitForCollectivePublicKeyHash(client, roundId);
 ```
 
-In the real DKG protocol the private key is never held by a single party. To decrypt a ciphertext:
+In the DKG protocol the private key is never held by a single party. To decrypt a ciphertext:
 
 1. DKG nodes each call `submitPartialDecryption` on the `DKGManager` contract.
 2. Once the threshold is met, any party calls `combineDecryption`.
@@ -199,7 +199,7 @@ In the real DKG protocol the private key is never held by a single party. To dec
 [Anyone]    getCombinedDecryption(roundId, idx)  ← completed: true
 ```
 
-> **Collective public key:** The `RoundFinalized` event contains `collectivePublicKeyHash` — the keccak256 hash of the collective key point. The actual `(x, y)` coordinates are encoded in the `transcript` argument of the `finalizeRound` calldata and can be recovered by decoding that transaction.
+> **Collective public key:** The `RoundFinalized` event contains `collectivePublicKeyHash`, the keccak256 hash of the collective key point. The actual `(x, y)` coordinates are encoded in the `transcript` argument of the `finalizeRound` calldata; decode that transaction to retrieve them.
 
 ## API reference
 
@@ -265,12 +265,12 @@ All `DKGClient` methods plus:
 
 ### Flow helpers
 
-High-level helpers that compose the primitives above:
+Higher-level helpers built on top of the primitives above:
 
 | Export | Description |
 |--------|-------------|
 | `encrypt(message, pubKey, k?)` | ElGamal encrypt via collective public key |
-| `decrypt(ciphertext, privKey)` | ElGamal decrypt (brute-force DLOG, values < 2^20) |
+| `decrypt(ciphertext, privKey)` | ElGamal decrypt via brute-force DLOG (values < 2^20) |
 | `waitForCollectivePublicKeyHash(client, roundId, opts?)` | Wait for Finalized; return on-chain key hash |
 | `waitForCombinedDecryption(client, roundId, idx, opts?)` | Wait for on-chain decryption to complete |
 | `demonstrateEncryptDecryptFlow(client, roundId, pubKey, plaintext, idx)` | End-to-end demo flow |
@@ -281,8 +281,8 @@ High-level helpers that compose the primitives above:
 |--------|-------------|
 | `generateKeyPair()` | Return `{ privKey: bigint, pubKey: BabyJubPoint }` |
 | `randomScalar()` | Uniformly random scalar in the BabyJubJub subgroup |
-| `encrypt(msg, pubKey, k?)` | Encrypt a small integer; `k` is the ephemeral scalar |
-| `decrypt(ciphertext, privKey)` | Brute-force DLOG (works for msg < 2^20) |
+| `encrypt(msg, pubKey, k?)` | Encrypt a small integer; `k` is an optional ephemeral scalar |
+| `decrypt(ciphertext, privKey)` | Brute-force DLOG; works for msg < 2^20 |
 | `packPoint(p)` | Compress a curve point to a single `bigint` |
 | `unpackPoint(packed)` | Decompress back to `[bigint, bigint]` |
 | `mulPoint(point, scalar)` | Scalar multiplication |

@@ -6,7 +6,7 @@ import (
 	"github.com/vocdoni/davinci-dkg/types"
 )
 
-// Storage is the initial in-memory typed storage skeleton for DKG state.
+// Storage is the in-memory store for DKG state.
 type Storage struct {
 	db            db.Database
 	rounds        map[string]types.Round
