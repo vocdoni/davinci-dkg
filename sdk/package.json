@@ -1,0 +1,33 @@
+{
+  "name": "@vocdoni/davinci-dkg-sdk",
+  "version": "0.1.0",
+  "description": "TypeScript SDK for Davinci DKG smart contract interaction",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "check": "tsc --noEmit && tsc -p tsconfig.test.json",
+    "test": "vitest run",
+    "test:integration": "RUN_INTEGRATION_TESTS=true vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@zk-kit/baby-jubjub": "^1.0.3",
+    "viem": "^2.21.55"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.1.0"
+  }
+}

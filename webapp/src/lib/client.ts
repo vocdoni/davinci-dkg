@@ -1,5 +1,5 @@
-import { createPublicClient, http, type PublicClient } from 'viem';
-import { defineChain } from 'viem';
+import { createPublicClient, http, defineChain, type PublicClient } from 'viem';
+import { DKGClient } from '@vocdoni/davinci-dkg-sdk';
 
 export interface RuntimeConfig {
   rpcUrl: string;
@@ -13,6 +13,7 @@ export interface RuntimeConfig {
 let cachedConfig: RuntimeConfig | null = null;
 let cachedBaseConfig: RuntimeConfig | null = null;
 let cachedClient: PublicClient | null = null;
+let cachedDKGClient: DKGClient | null = null;
 
 const RPC_OVERRIDE_KEY = 'dkg-explorer:rpc-url';
 
@@ -37,6 +38,7 @@ export function setRpcOverride(url: string | null) {
   }
   cachedConfig = null;
   cachedClient = null;
+  cachedDKGClient = null;
   // cachedBaseConfig is intentionally kept — it reflects /config.json and
   // is invariant across override changes.
 }
@@ -77,13 +79,33 @@ export async function getClient(): Promise<PublicClient> {
   return cachedClient;
 }
 
+/**
+ * Return (and cache) a DKGClient configured with the current runtime config.
+ *
+ * The same instance is reused across React Query calls within a single
+ * browser session.  Call `resetClient()` after an RPC override change to
+ * force a fresh client on the next request.
+ */
+export async function getDKGClient(): Promise<DKGClient> {
+  if (cachedDKGClient) return cachedDKGClient;
+  const [cfg, publicClient] = await Promise.all([loadConfig(), getClient()]);
+  cachedDKGClient = new DKGClient({
+    publicClient,
+    managerAddress: cfg.managerAddress,
+    registryAddress: cfg.registryAddress,
+  });
+  return cachedDKGClient;
+}
+
 export function resetClient() {
   cachedClient = null;
   cachedConfig = null;
+  cachedDKGClient = null;
 }
 
 export function resetAll() {
   cachedClient = null;
   cachedConfig = null;
   cachedBaseConfig = null;
+  cachedDKGClient = null;
 }

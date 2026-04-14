@@ -40,7 +40,13 @@ jobs:
         with:
           node-version: "20"
           cache: "pnpm"
-          cache-dependency-path: webapp/pnpm-lock.yaml
+          cache-dependency-path: |
+            sdk/pnpm-lock.yaml
+            webapp/pnpm-lock.yaml
+
+      - name: Install and build SDK
+        working-directory: sdk
+        run: pnpm install --frozen-lockfile && pnpm build
 
       - name: Install webapp dependencies
         working-directory: webapp
@@ -233,6 +239,40 @@ jobs:
             -timeout=2h \
             -failfast \
             -count=1
+
+      # ── TypeScript SDK integration tests ─────────────────────────────────
+      # Runs after Go tests so that:
+      #   • Circuit artifacts are already compiled in ~/.davinci/artifacts
+      #     (the sdk-test-fixture binary uses them to generate ZK proofs).
+      #   • The Go binary in cmd/sdk-test-fixture is buildable without a
+      #     separate circuit-compile step.
+      # The SDK tests start their own isolated Docker Compose stack (fresh
+      # Anvil + deployer) so they do not interfere with the Go test stack.
+      - name: Set up pnpm
+        if: github.event.pull_request.draft != true
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Set up Node.js
+        if: github.event.pull_request.draft != true
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+          cache-dependency-path: sdk/pnpm-lock.yaml
+
+      - name: Install SDK dependencies
+        if: github.event.pull_request.draft != true
+        working-directory: sdk
+        run: pnpm install --frozen-lockfile
+
+      - name: Run SDK integration tests
+        if: github.event.pull_request.draft != true
+        working-directory: sdk
+        run: pnpm test:integration
+        env:
+          RUN_INTEGRATION_TESTS: "true"
 
   # ---------------------------------------------------------------------------
   # Docker image build (calls reusable workflow). Only runs after all tests

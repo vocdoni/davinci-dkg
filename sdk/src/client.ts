@@ -1,0 +1,424 @@
+import {
+  getContract,
+  type PublicClient,
+  type Address,
+  type GetContractReturnType,
+} from 'viem';
+import { dkgManagerAbi, dkgRegistryAbi } from './abi.js';
+import {
+  type Round,
+  type ContributionRecord,
+  type PartialDecryptionRecord,
+  type CombinedDecryptionRecord,
+  type RevealedShareRecord,
+  type NodeKey,
+  type DKGConfig,
+  type RoundStatusValue,
+  type RoundEvent,
+  type RoundEntry,
+} from './types.js';
+import { buildRoundId } from './utils.js';
+
+type ManagerContract = GetContractReturnType<typeof dkgManagerAbi, PublicClient>;
+type RegistryContract = GetContractReturnType<typeof dkgRegistryAbi, PublicClient>;
+
+/**
+ * Read-only client for the DKG Manager and Registry contracts.
+ *
+ * Construct it once with a viem `PublicClient` and use its methods
+ * to query on-chain state without needing a signer.
+ */
+export class DKGClient {
+  readonly publicClient: PublicClient;
+  readonly managerAddress: Address;
+  readonly registryAddress: Address;
+
+  private _manager: ManagerContract;
+  private _registry: RegistryContract;
+
+  constructor(config: DKGConfig) {
+    this.publicClient = config.publicClient;
+    this.managerAddress = config.managerAddress;
+    this.registryAddress = config.registryAddress;
+
+    this._manager = getContract({
+      address: this.managerAddress,
+      abi: dkgManagerAbi,
+      client: this.publicClient,
+    });
+    this._registry = getContract({
+      address: this.registryAddress,
+      abi: dkgRegistryAbi,
+      client: this.publicClient,
+    });
+  }
+
+  // ── Round ID utilities ─────────────────────────────────────────────────────
+
+  /**
+   * Fetch the current ROUND_PREFIX and roundNonce, then assemble a round ID.
+   * Call this after `createRound` is mined to derive the new round ID
+   * without needing the transaction receipt.
+   *
+   * @param nonce  The nonce at round-creation time (roundNonce() before the tx)
+   */
+  async buildRoundId(nonce: bigint): Promise<`0x${string}`> {
+    const prefix = await this._manager.read.ROUND_PREFIX();
+    return buildRoundId(prefix, nonce);
+  }
+
+  /** Current round nonce (incremented by each createRound call). */
+  async roundNonce(): Promise<bigint> {
+    return this._manager.read.roundNonce();
+  }
+
+  // ── Round queries ──────────────────────────────────────────────────────────
+
+  /** Fetch full round state. */
+  async getRound(roundId: `0x${string}`): Promise<Round> {
+    const r = await this._manager.read.getRound([roundId as `0x${string}` & { length: 26 }]);
+    return r as unknown as Round;
+  }
+
+  /** Fetch the list of addresses that claimed a slot in this round. */
+  async selectedParticipants(roundId: `0x${string}`): Promise<Address[]> {
+    return this._manager.read.selectedParticipants([roundId as any]) as Promise<Address[]>;
+  }
+
+  /** Fetch the contribution record for a specific contributor. */
+  async getContribution(
+    roundId: `0x${string}`,
+    contributor: Address,
+  ): Promise<ContributionRecord> {
+    const r = await this._manager.read.getContribution([roundId as any, contributor]);
+    return r as unknown as ContributionRecord;
+  }
+
+  /** Fetch a partial decryption record for a specific participant and ciphertext index. */
+  async getPartialDecryption(
+    roundId: `0x${string}`,
+    participant: Address,
+    ciphertextIndex: number,
+  ): Promise<PartialDecryptionRecord> {
+    const r = await this._manager.read.getPartialDecryption([
+      roundId as any,
+      participant,
+      ciphertextIndex,
+    ]);
+    return r as unknown as PartialDecryptionRecord;
+  }
+
+  /** Fetch the combined decryption record for a ciphertext index. */
+  async getCombinedDecryption(
+    roundId: `0x${string}`,
+    ciphertextIndex: number,
+  ): Promise<CombinedDecryptionRecord> {
+    const r = await this._manager.read.getCombinedDecryption([roundId as any, ciphertextIndex]);
+    return r as unknown as CombinedDecryptionRecord;
+  }
+
+  /** Fetch the revealed share record for a participant. */
+  async getRevealedShare(
+    roundId: `0x${string}`,
+    participant: Address,
+  ): Promise<RevealedShareRecord> {
+    const r = await this._manager.read.getRevealedShare([roundId as any, participant]);
+    return r as unknown as RevealedShareRecord;
+  }
+
+  /** Fetch the share-commitment hash for a given participant index. */
+  async getShareCommitmentHash(
+    roundId: `0x${string}`,
+    participantIndex: number,
+  ): Promise<`0x${string}`> {
+    return this._manager.read.getShareCommitmentHash([roundId as any, participantIndex]);
+  }
+
+  // ── Verifier key hashes ────────────────────────────────────────────────────
+
+  async getContributionVerifierVKeyHash(): Promise<`0x${string}`> {
+    return this._manager.read.getContributionVerifierVKeyHash();
+  }
+
+  async getPartialDecryptVerifierVKeyHash(): Promise<`0x${string}`> {
+    return this._manager.read.getPartialDecryptVerifierVKeyHash();
+  }
+
+  async getFinalizeVerifierVKeyHash(): Promise<`0x${string}`> {
+    return this._manager.read.getFinalizeVerifierVKeyHash();
+  }
+
+  async getDecryptCombineVerifierVKeyHash(): Promise<`0x${string}`> {
+    return this._manager.read.getDecryptCombineVerifierVKeyHash();
+  }
+
+  async getRevealSubmitVerifierVKeyHash(): Promise<`0x${string}`> {
+    return this._manager.read.getRevealSubmitVerifierVKeyHash();
+  }
+
+  async getRevealShareVerifierVKeyHash(): Promise<`0x${string}`> {
+    return this._manager.read.getRevealShareVerifierVKeyHash();
+  }
+
+  // ── Registry queries ───────────────────────────────────────────────────────
+
+  /** Fetch the NodeKey record for an operator address. */
+  async getNode(operator: Address): Promise<NodeKey> {
+    const r = await this._registry.read.getNode([operator]);
+    return r as unknown as NodeKey;
+  }
+
+  /** Total number of ever-registered nodes. */
+  async nodeCount(): Promise<bigint> {
+    return this._registry.read.nodeCount();
+  }
+
+  /** Number of currently-active nodes. */
+  async activeCount(): Promise<bigint> {
+    return this._registry.read.activeCount();
+  }
+
+  /** Whether the given operator is currently active. */
+  async isActive(operator: Address): Promise<boolean> {
+    return this._registry.read.isActive([operator]);
+  }
+
+  /** The inactivity window in blocks after which a node can be reaped. */
+  async inactivityWindow(): Promise<bigint> {
+    return this._registry.read.INACTIVITY_WINDOW();
+  }
+
+  // ── Chain utilities ────────────────────────────────────────────────────────
+
+  /** Current block number. */
+  async blockNumber(): Promise<bigint> {
+    return this.publicClient.getBlockNumber();
+  }
+
+  // ── Event queries ──────────────────────────────────────────────────────────
+
+  /**
+   * Fetch RoundCreated events in the given block range.
+   * Returns up to `count` most-recent events when `fromBlock` is omitted.
+   */
+  async getRoundCreatedEvents(options?: {
+    fromBlock?: bigint;
+    toBlock?: bigint;
+  }): Promise<
+    Array<{
+      roundId: `0x${string}`;
+      organizer: Address;
+      seedBlock: bigint;
+      lotteryThreshold: bigint;
+      blockNumber: bigint;
+    }>
+  > {
+    const logs = await this.publicClient.getLogs({
+      address: this.managerAddress,
+      event: {
+        type: 'event',
+        name: 'RoundCreated',
+        inputs: [
+          { name: 'roundId', type: 'bytes12', indexed: true },
+          { name: 'organizer', type: 'address', indexed: true },
+          { name: 'seedBlock', type: 'uint64', indexed: false },
+          { name: 'lotteryThreshold', type: 'uint256', indexed: false },
+        ],
+      } as const,
+      fromBlock: options?.fromBlock ?? 0n,
+      toBlock: options?.toBlock ?? 'latest',
+    });
+    return logs.map((l) => ({
+      roundId: (l.args as any).roundId as `0x${string}`,
+      organizer: (l.args as any).organizer as Address,
+      seedBlock: BigInt((l.args as any).seedBlock ?? 0),
+      lotteryThreshold: BigInt((l.args as any).lotteryThreshold ?? 0),
+      blockNumber: l.blockNumber ?? 0n,
+    }));
+  }
+
+  /**
+   * Fetch all RoundFinalized events for a specific round.
+   */
+  async getRoundFinalizedEvents(roundId: `0x${string}`): Promise<
+    Array<{
+      aggregateCommitmentsHash: `0x${string}`;
+      collectivePublicKeyHash: `0x${string}`;
+      shareCommitmentHash: `0x${string}`;
+      blockNumber: bigint;
+    }>
+  > {
+    const logs = await this.publicClient.getLogs({
+      address: this.managerAddress,
+      event: {
+        type: 'event',
+        name: 'RoundFinalized',
+        inputs: [
+          { name: 'roundId', type: 'bytes12', indexed: true },
+          { name: 'aggregateCommitmentsHash', type: 'bytes32', indexed: false },
+          { name: 'collectivePublicKeyHash', type: 'bytes32', indexed: false },
+          { name: 'shareCommitmentHash', type: 'bytes32', indexed: false },
+        ],
+      } as const,
+      args: { roundId: roundId as any },
+      fromBlock: 0n,
+      toBlock: 'latest',
+    });
+    return logs.map((l) => ({
+      aggregateCommitmentsHash: (l.args as any).aggregateCommitmentsHash as `0x${string}`,
+      collectivePublicKeyHash: (l.args as any).collectivePublicKeyHash as `0x${string}`,
+      shareCommitmentHash: (l.args as any).shareCommitmentHash as `0x${string}`,
+      blockNumber: l.blockNumber ?? 0n,
+    }));
+  }
+
+  /**
+   * Watch for any DKG Manager event and call the handler with the parsed log.
+   * Returns an unsubscribe function.
+   */
+  watchManagerEvents(handler: (log: any) => void): () => void {
+    return this.publicClient.watchContractEvent({
+      address: this.managerAddress,
+      abi: dkgManagerAbi,
+      onLogs: (logs) => logs.forEach(handler),
+    });
+  }
+
+  /**
+   * Watch for any DKG Registry event and call the handler with the parsed log.
+   * Returns an unsubscribe function.
+   */
+  watchRegistryEvents(handler: (log: any) => void): () => void {
+    return this.publicClient.watchContractEvent({
+      address: this.registryAddress,
+      abi: dkgRegistryAbi,
+      onLogs: (logs) => logs.forEach(handler),
+    });
+  }
+
+  // ── Extended queries ───────────────────────────────────────────────────────
+
+  /** Fetch the ROUND_PREFIX constant. Cached cheaply because it is immutable. */
+  async roundPrefix(): Promise<number> {
+    return this._manager.read.ROUND_PREFIX();
+  }
+
+  /**
+   * Fetch all registered node records.
+   *
+   * Discovers operator addresses via NodeRegistered events then fetches
+   * the current NodeKey for each one (which reflects any key updates).
+   */
+  async getRegistryNodes(fromBlock = 0n): Promise<NodeKey[]> {
+    const logs = await this.publicClient.getLogs({
+      address: this.registryAddress,
+      event: {
+        type: 'event',
+        name: 'NodeRegistered',
+        inputs: [
+          { name: 'operator', type: 'address', indexed: true },
+          { name: 'pubX', type: 'uint256', indexed: false },
+          { name: 'pubY', type: 'uint256', indexed: false },
+        ],
+      } as const,
+      fromBlock,
+      toBlock: 'latest',
+    });
+
+    // De-duplicate by lower-cased address; preserve insertion order.
+    const seen = new Set<string>();
+    const operators: Address[] = [];
+    for (const l of logs) {
+      const op = ((l.args as any).operator as string | undefined)?.toLowerCase();
+      if (op && !seen.has(op)) {
+        seen.add(op);
+        operators.push(op as Address);
+      }
+    }
+
+    const nodes = await Promise.all(
+      operators.map(async (op) => {
+        try {
+          return await this.getNode(op);
+        } catch {
+          return null;
+        }
+      }),
+    );
+    return nodes.filter((n): n is NodeKey => n !== null);
+  }
+
+  /**
+   * Fetch all DKGManager events that reference a specific round.
+   *
+   * Events are returned in block order (ascending).  The caller can filter
+   * by `eventName` to isolate e.g. only `ContributionSubmitted` events.
+   */
+  async getAllRoundEvents(roundId: `0x${string}`, fromBlock = 0n): Promise<RoundEvent[]> {
+    const logs = await this.publicClient.getContractEvents({
+      address: this.managerAddress,
+      abi: dkgManagerAbi,
+      fromBlock,
+      toBlock: 'latest',
+    });
+    return logs
+      .filter((l) => 'args' in l && (l.args as any).roundId === roundId)
+      .map((l) => ({
+        eventName: (l as any).eventName as string,
+        args: (l.args ?? {}) as Record<string, unknown>,
+        blockNumber: l.blockNumber ?? 0n,
+        transactionHash: (l.transactionHash ?? '0x') as `0x${string}`,
+      }));
+  }
+
+  /**
+   * Fetch the most recent `limit` rounds in descending nonce order.
+   *
+   * Rounds with status 0 (None) are omitted — they indicate an evicted slot
+   * in the ring buffer.
+   *
+   * @param limit  Maximum number of rounds to return (default: 20)
+   */
+  async getRecentRounds(limit = 20): Promise<RoundEntry[]> {
+    const [nonce, prefix] = await Promise.all([
+      this.roundNonce(),
+      this.roundPrefix(),
+    ]);
+    if (nonce === 0n) return [];
+
+    const RING_BUFFER_SIZE = 64n;
+    const minNonce = nonce > RING_BUFFER_SIZE ? nonce - RING_BUFFER_SIZE + 1n : 1n;
+
+    const ids: `0x${string}`[] = [];
+    for (let i = nonce; i >= minNonce && ids.length < limit; i--) {
+      ids.push(buildRoundId(prefix, i));
+      if (i === 1n) break;
+    }
+
+    const entries = await Promise.all(
+      ids.map(async (id) => {
+        try {
+          const round = await this.getRound(id);
+          return { id, round };
+        } catch {
+          return null;
+        }
+      }),
+    );
+    return entries.filter(
+      (e): e is RoundEntry => e !== null && Number(e.round.status) !== 0,
+    );
+  }
+
+  // ── Internal access for DKGWriter ──────────────────────────────────────────
+
+  /** @internal Exposed for DKGWriter to reuse the same contract handle. */
+  get _managerContract(): ManagerContract {
+    return this._manager;
+  }
+
+  /** @internal */
+  get _registryContract(): RegistryContract {
+    return this._registry;
+  }
+}

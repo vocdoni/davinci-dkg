@@ -6,6 +6,7 @@ const NAV = [
   { to: '/', label: 'Overview' },
   { to: '/rounds', label: 'Rounds' },
   { to: '/registry', label: 'Registry' },
+  { to: '/playground', label: 'Playground' },
   { to: '/settings', label: 'Settings' },
 ];
 

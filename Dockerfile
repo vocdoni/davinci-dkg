@@ -3,11 +3,26 @@
 #   dkg-runner        – testnet scenario orchestrator
 
 # ---------------------------------------------------------------------------
+# SDK build stage (TypeScript library consumed by the webapp)
+# ---------------------------------------------------------------------------
+FROM node:20-bookworm-slim AS sdk-builder
+WORKDIR /sdk
+RUN corepack enable
+COPY sdk/package.json sdk/pnpm-lock.yaml* ./
+RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
+    pnpm install --frozen-lockfile || pnpm install
+COPY sdk/ ./
+RUN pnpm run build
+
+# ---------------------------------------------------------------------------
 # Webapp build stage (produces webapp/dist consumed by go:embed)
 # ---------------------------------------------------------------------------
 FROM node:20-bookworm-slim AS webapp-builder
-WORKDIR /webapp
+WORKDIR /root
 RUN corepack enable
+# Bring in the pre-built SDK so the file:../sdk dependency resolves correctly.
+COPY --from=sdk-builder /sdk ./sdk
+WORKDIR /root/webapp
 COPY webapp/package.json webapp/pnpm-lock.yaml* ./
 RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile || pnpm install
@@ -30,7 +45,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 COPY . .
 # Bring in the pre-built webapp so the //go:embed directive in webapp/embed.go
 # finds the dist/ directory during the Go build below.
-COPY --from=webapp-builder /webapp/dist ./webapp/dist
+COPY --from=webapp-builder /root/webapp/dist ./webapp/dist
 
 ARG VERSION=dev
 
