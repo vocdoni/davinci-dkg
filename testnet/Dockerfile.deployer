@@ -1,0 +1,21 @@
+# Deploys the DKG contracts to a local Anvil chain, seeds node keys in the
+# registry for all well-known Anvil test accounts, then serves the resulting
+# addresses.env over HTTP on port 8888.
+FROM ghcr.io/foundry-rs/foundry:stable
+
+USER root
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends bash curl jq python3 wget \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+
+# Copy only what Foundry needs to deploy
+COPY solidity/        /workspace/solidity/
+COPY testnet/deploy.sh /workspace/testnet/deploy.sh
+RUN chmod +x /workspace/testnet/deploy.sh
+
+EXPOSE 8888
+
+ENTRYPOINT ["/bin/sh", "-c", \
+  "/workspace/testnet/deploy.sh && python3 -m http.server 8888 --bind 0.0.0.0 --directory /addresses"]

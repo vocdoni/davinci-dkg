@@ -1,0 +1,225 @@
+name: Release
+
+# Triggered when a semver tag (e.g. v0.1.0, v1.2.3, v1.2.3-rc1) is pushed.
+# Builds fully-static Linux + macOS binaries, embeds the version string and
+# the bundled webapp, then publishes the artifacts + checksums to a GitHub
+# Release tied to the tag.
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g. v0.1.0). Must already exist."
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1. Build the embedded webapp once. The static assets are picked up by the
+  #    Go binaries via //go:embed in webapp/embed.go, so every platform build
+  #    in the next job consumes the same dist/.
+  # ---------------------------------------------------------------------------
+  webapp:
+    name: Build webapp bundle
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+          cache-dependency-path: webapp/pnpm-lock.yaml
+
+      - name: Install webapp dependencies
+        working-directory: webapp
+        run: pnpm install --frozen-lockfile
+
+      - name: Build webapp
+        working-directory: webapp
+        run: pnpm run build
+
+      - name: Upload dist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: webapp-dist
+          path: webapp/dist/
+          retention-days: 1
+
+  # ---------------------------------------------------------------------------
+  # 2. Cross-compile static binaries for every target in the matrix.
+  # ---------------------------------------------------------------------------
+  build:
+    name: Build ${{ matrix.target }}
+    needs: webapp
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-amd64
+            runner: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            cgo: "0"
+          - target: linux-arm64
+            runner: ubuntu-latest
+            goos: linux
+            goarch: arm64
+            cgo: "0"
+          - target: darwin-amd64
+            runner: macos-13
+            goos: darwin
+            goarch: amd64
+            cgo: "0"
+          - target: darwin-arm64
+            runner: macos-14
+            goos: darwin
+            goarch: arm64
+            cgo: "0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Download webapp dist
+        uses: actions/download-artifact@v4
+        with:
+          name: webapp-dist
+          path: webapp/dist/
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            echo "version=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build davinci-dkg-node
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: ${{ matrix.cgo }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          mkdir -p dist/${{ matrix.target }}
+          go build -trimpath \
+            -ldflags "-s -w -X github.com/vocdoni/davinci-dkg/internal/version.Version=${VERSION}" \
+            -o dist/${{ matrix.target }}/davinci-dkg-node \
+            ./cmd/davinci-dkg-node
+
+      - name: Build dkg-runner
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: ${{ matrix.cgo }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          go build -trimpath \
+            -ldflags "-s -w -X github.com/vocdoni/davinci-dkg/internal/version.Version=${VERSION}" \
+            -o dist/${{ matrix.target }}/dkg-runner \
+            ./cmd/dkg-runner
+
+      - name: Package tarball
+        id: package
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          pkg_dir="davinci-dkg-${VERSION}-${TARGET}"
+          mkdir -p "release/${pkg_dir}"
+          cp dist/${TARGET}/davinci-dkg-node "release/${pkg_dir}/"
+          cp dist/${TARGET}/dkg-runner      "release/${pkg_dir}/"
+          cp README.md LICENSE .env.example "release/${pkg_dir}/"
+          (cd release && tar -czf "${pkg_dir}.tar.gz" "${pkg_dir}")
+          (cd release && sha256sum "${pkg_dir}.tar.gz" > "${pkg_dir}.tar.gz.sha256")
+          echo "tarball=release/${pkg_dir}.tar.gz" >> "$GITHUB_OUTPUT"
+          echo "checksum=release/${pkg_dir}.tar.gz.sha256" >> "$GITHUB_OUTPUT"
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: |
+            ${{ steps.package.outputs.tarball }}
+            ${{ steps.package.outputs.checksum }}
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # 3. Publish the Docker image for the tag (and refresh the `latest` alias
+  #    so Watchtower-based deployments pick up the new release).
+  # ---------------------------------------------------------------------------
+  docker:
+    name: Docker
+    needs: build
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/docker-build.yml
+    secrets: inherit
+    with:
+      image-tag: ${{ github.event.inputs.tag || github.ref_name }}
+      push: true
+
+  # ---------------------------------------------------------------------------
+  # 4. Collect every matrix tarball + checksum and publish the GitHub Release.
+  # ---------------------------------------------------------------------------
+  publish:
+    name: Publish GitHub release
+    needs: [build, docker]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Aggregate checksums
+        working-directory: release-assets
+        run: |
+          cat *.sha256 > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Resolve tag
+        id: tag
+        shell: bash
+        run: |
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: ${{ steps.tag.outputs.tag }}
+          draft: false
+          prerelease: ${{ contains(steps.tag.outputs.tag, '-') }}
+          generate_release_notes: true
+          files: |
+            release-assets/*.tar.gz
+            release-assets/*.sha256
+            release-assets/SHA256SUMS

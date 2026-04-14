@@ -1,0 +1,124 @@
+package main
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	flag "github.com/spf13/pflag"
+	"github.com/spf13/viper"
+)
+
+type Config struct {
+	Web3         Web3Config
+	Log          LogConfig
+	Datadir      string        `mapstructure:"datadir"`
+	PrivKey      string        `mapstructure:"privkey"`
+	RegistryAddr string        `mapstructure:"registry"`
+	ManagerAddr  string        `mapstructure:"manager"`
+	PollInterval time.Duration `mapstructure:"poll-interval"`
+	SharedDir    string        `mapstructure:"shared-dir"`
+	Webapp       WebappConfig  `mapstructure:"webapp"`
+}
+
+type WebappConfig struct {
+	Enabled   bool   `mapstructure:"enabled"`
+	Listen    string `mapstructure:"listen"`
+	PublicRPC string `mapstructure:"public-rpc"`
+}
+
+type Web3Config struct {
+	Network       string   `mapstructure:"network"`
+	RPC           []string `mapstructure:"rpc"`
+	GasMultiplier float64  `mapstructure:"gasMultiplier"`
+}
+
+type LogConfig struct {
+	Level  string `mapstructure:"level"`
+	Output string `mapstructure:"output"`
+}
+
+func defaultConfig() *Config {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = "."
+	}
+	return &Config{
+		Web3: Web3Config{
+			Network:       "localhost",
+			RPC:           []string{"http://127.0.0.1:8545"},
+			GasMultiplier: 1.2,
+		},
+		Log: LogConfig{
+			Level:  "info",
+			Output: "stdout",
+		},
+		Datadir:      filepath.Join(home, ".davinci-dkg"),
+		PollInterval: 5 * time.Second,
+		SharedDir:    "/shared",
+		Webapp: WebappConfig{
+			Enabled: true,
+			Listen:  "0.0.0.0:8081",
+		},
+	}
+}
+
+func loadConfig() (*Config, error) {
+	return loadConfigFromArgs(os.Args[1:])
+}
+
+func loadConfigFromArgs(args []string) (*Config, error) {
+	cfg := defaultConfig()
+
+	fs := flag.NewFlagSet("davinci-dkg-node", flag.ContinueOnError)
+	fs.String("web3.network", cfg.Web3.Network, "network name")
+	fs.StringSlice("web3.rpc", cfg.Web3.RPC, "web3 rpc endpoints")
+	fs.Float64("web3.gasMultiplier", cfg.Web3.GasMultiplier, "gas multiplier")
+	fs.String("log.level", cfg.Log.Level, "log level")
+	fs.String("log.output", cfg.Log.Output, "log output")
+	fs.String("datadir", cfg.Datadir, "data directory")
+	fs.String("privkey", cfg.PrivKey, "hex private key for signing transactions")
+	fs.String("registry", cfg.RegistryAddr, "DKGRegistry contract address")
+	fs.String("manager", cfg.ManagerAddr, "DKGManager contract address")
+	fs.Duration("poll-interval", cfg.PollInterval, "chain polling interval")
+	fs.String("shared-dir", cfg.SharedDir, "shared directory for ciphertexts (testnet)")
+	fs.Bool("webapp.enabled", cfg.Webapp.Enabled, "serve the embedded DKG explorer webapp")
+	fs.String("webapp.listen", cfg.Webapp.Listen, "address the explorer webapp listens on")
+	fs.String("webapp.public-rpc", cfg.Webapp.PublicRPC, "RPC URL exposed to the browser (defaults to first web3.rpc)")
+
+	if err := fs.Parse(args); err != nil {
+		return nil, fmt.Errorf("parse flags: %w", err)
+	}
+
+	v := viper.New()
+	v.SetEnvPrefix("DAVINCI_DKG")
+	// Flag names use dots for nesting (e.g. web3.rpc) and dashes for
+	// compounds (e.g. poll-interval). Both become underscores in env vars
+	// so that DAVINCI_DKG_WEB3_RPC and DAVINCI_DKG_POLL_INTERVAL work.
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_", "-", "_"))
+	v.AutomaticEnv()
+	if err := v.BindPFlags(fs); err != nil {
+		return nil, fmt.Errorf("bind flags: %w", err)
+	}
+	if err := v.Unmarshal(cfg); err != nil {
+		return nil, fmt.Errorf("unmarshal config: %w", err)
+	}
+
+	return cfg, validateConfig(cfg)
+}
+
+func validateConfig(cfg *Config) error {
+	if cfg.Web3.GasMultiplier <= 0 {
+		return fmt.Errorf("gas multiplier must be greater than 0")
+	}
+	if len(cfg.Web3.RPC) == 0 {
+		return fmt.Errorf("at least one web3 rpc endpoint is required")
+	}
+	return nil
+}
+
+func (c *Config) HasChainConfig() bool {
+	return c.PrivKey != "" && c.RegistryAddr != "" && c.ManagerAddr != ""
+}

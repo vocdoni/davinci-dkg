@@ -1,0 +1,19 @@
+[profile.default]
+solc_version = "0.8.28"
+evm_version = "cancun"
+src = "src"
+out = "out"
+test = "test"
+libs = ["lib", "../davinci-contracts/lib"]
+ffi = true
+ast = true
+build_info = true
+optimizer = true
+optimizer_runs = 800
+via_ir = true
+extra_output = ["storageLayout"]
+cache_path = "cache_forge"
+
+[fuzz]
+runs = 5000
+max_test_rejects = 150000

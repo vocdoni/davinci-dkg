@@ -1,0 +1,70 @@
+# ---------------------------------------------------------------------------
+# Docker build context filter for both the main Dockerfile and
+# testnet/Dockerfile.deployer. The goal is to keep the context small and
+# deterministic so layer caching is effective.
+# ---------------------------------------------------------------------------
+
+# ---- Version control ------------------------------------------------------
+.git
+.gitignore
+.gitattributes
+.github
+
+# ---- Compiled binaries at repo root ---------------------------------------
+# Produced by `go build ./cmd/...` or `make build` on the host. They must
+# never leak into the build context; the Dockerfile compiles fresh binaries
+# inside the builder stage.
+/davinci-dkg-node
+/dkg-runner
+/circuit-compile
+/dkgcli
+*.test
+*.exe
+
+# ---- Webapp build output and dependencies ---------------------------------
+# The webapp-builder stage runs `pnpm install` and `pnpm run build` from a
+# clean copy of webapp/, so any host-side node_modules or dist/ would only
+# bloat the context and risk stale artifacts leaking via go:embed.
+webapp/node_modules/
+webapp/dist/
+webapp/.vite/
+webapp/*.log
+
+# ---- Circuit artifact cache -----------------------------------------------
+# Mounted at runtime via a bind or named volume instead of baked into the
+# image. Regenerated with `make circuits-compile`.
+/artifacts/
+
+# ---- Solidity build output ------------------------------------------------
+solidity/out/
+solidity/cache/
+solidity/cache_forge/
+solidity/broadcast/
+solidity/deploy.log
+solidity/.last_deployed_addresses.env
+
+# ---- Foundry / Node / Python scratch --------------------------------------
+node_modules/
+**/node_modules/
+__pycache__/
+*.pyc
+
+# ---- Local environment and secrets ----------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ---- Documentation (not needed in runtime image) --------------------------
+BENCHMARKS.md
+README.md
+
+# ---- Editor and OS artifacts ---------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db

@@ -1,0 +1,2 @@
+forge-std/=lib/forge-std/src/
+@openzeppelin/contracts/=../../davinci-node/davinci-contracts/lib/openzeppelin-contracts/contracts/

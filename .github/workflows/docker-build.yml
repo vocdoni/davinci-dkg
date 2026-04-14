@@ -1,0 +1,83 @@
+name: Docker
+
+# Reusable workflow that builds the davinci-dkg multi-stage Docker image
+# and optionally publishes it to Docker Hub + GHCR. Callers pass an
+# `image-tag` (typically the git ref name); when the tag matches a semver
+# pattern, the image is additionally tagged as `latest` so Watchtower-based
+# deployments pick it up automatically.
+
+on:
+  workflow_call:
+    inputs:
+      image-tag:
+        description: "Primary tag to push (e.g. main, v0.1.0, pr-123)."
+        required: true
+        type: string
+      push:
+        description: "Whether to push to the registries (true) or only build (false)."
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  docker:
+    name: ${{ inputs.push && 'Build and Publish' || 'Build' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to Docker Hub
+        if: ${{ inputs.push }}
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Log in to GHCR
+        if: ${{ inputs.push }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Compose tag list
+        id: tags
+        shell: bash
+        run: |
+          # Github refs that contain slashes (feature/foo) are not valid
+          # Docker tags, so flatten them.
+          primary=$(echo '${{ inputs.image-tag }}' | tr '/' '-')
+
+          tags="vocdoni/davinci-dkg:${primary}"
+          tags="${tags}"$'\n'"ghcr.io/vocdoni/davinci-dkg:${primary}"
+
+          # A semver tag (v0.1.0, v1.2.3-rc1, …) additionally gets the
+          # `latest` alias so Watchtower users tracking `:latest` always
+          # land on the newest tagged release.
+          if [[ "${primary}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-.*)?$ ]]; then
+            tags="${tags}"$'\n'"vocdoni/davinci-dkg:latest"
+            tags="${tags}"$'\n'"ghcr.io/vocdoni/davinci-dkg:latest"
+          fi
+
+          {
+            echo 'list<<EOF'
+            echo "${tags}"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: ${{ inputs.push && 'Build and Publish' || 'Build' }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: ${{ inputs.push }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          tags: ${{ steps.tags.outputs.list }}

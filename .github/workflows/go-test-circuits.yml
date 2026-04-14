@@ -1,0 +1,59 @@
+name: Test Circuits
+
+on:
+  pull_request:
+    paths:
+      - 'circuits/**'
+      - 'crypto/**'
+  push:
+    paths:
+      - 'circuits/**'
+      - 'crypto/**'
+    branches:
+      - dev
+      - stage
+      - main
+      - release**
+  schedule:
+    - cron: "0 1 * * *" # 02:00 UTC+1
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('{0}-pr-{1}', github.workflow, github.event.pull_request.number) || format('{0}-push-{1}-{2}', github.workflow, github.ref, github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  job_go_test_circuits:
+    name: Circuit Tests
+    # Self-hosted for Groth16 trusted-setup performance; falls back to hosted if unavailable.
+    runs-on: ubuntu-latest
+    env:
+      LOG_LEVEL: debug
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Restore circuit artifact cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.davinci/artifacts
+          key: circuits-${{ hashFiles('config/circuit_artifacts.go') }}
+          restore-keys: circuits-
+
+      - name: Run all circuit tests (prove + verify)
+        run: |
+          go test -v ./circuits/... \
+            -failfast \
+            -timeout=2h
+
+      - name: Verify artifact hashes match compiled circuits
+        run: |
+          go test -v ./config/... \
+            -run TestCircuitArtifactsMatch \
+            -timeout=1h

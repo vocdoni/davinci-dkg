@@ -1,0 +1,58 @@
+# ---- Compiled binaries ----------------------------------------------------
+# Produced by `go build` / `make build`. Never commit.
+/davinci-dkg-node
+/dkg-runner
+/circuit-compile
+/dkgcli
+*.exe
+*.test
+*.out
+
+# ---- Circuit artifacts ----------------------------------------------------
+# Cached proving/verifying keys and constraint systems. Regenerated locally
+# on first run via `make circuits-compile`.
+/artifacts/
+/tmp/
+
+# ---- Webapp ---------------------------------------------------------------
+webapp/node_modules/
+webapp/dist/
+webapp/.vite/
+webapp/*.log
+
+# ---- Foundry --------------------------------------------------------------
+solidity/out/
+solidity/cache/
+solidity/cache_forge/
+solidity/broadcast/
+solidity/deploy.log
+solidity/.last_deployed_addresses.env
+
+# ---- Go -------------------------------------------------------------------
+vendor/
+*.prof
+*.coverprofile
+coverage.txt
+coverage.html
+
+# ---- Editor / OS ----------------------------------------------------------
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ---- Secrets --------------------------------------------------------------
+.env
+.env.local
+*.pem
+*.key
+!solidity/src/**/*.key
+
+# ---- Local state ----------------------------------------------------------
+.davinci/
+data/
+logs/
+.claude/

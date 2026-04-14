@@ -1,0 +1,104 @@
+# ---------------------------------------------------------------------------
+# Standalone davinci-dkg node stack.
+#
+# Profiles:
+#   - node  Long-running DKG node + Watchtower auto-updater (default).
+#   - test  Runs unit and integration tests inside a container (no GPU).
+#
+# The node serves a single HTTP surface: the embedded DKG explorer web UI on
+# port 8081 (override with DAVINCI_DKG_WEBAPP_LISTEN). It does NOT provide
+# any additional API endpoint — all interaction with the chain goes through
+# --web3.rpc. If you want HTTPS or a public domain, put this container
+# behind your own reverse proxy (Caddy, nginx, Traefik, Cloudflare…).
+#
+# For the multi-node local testnet (Anvil + deployer + N nodes + explorer),
+# see testnet/docker-compose.yml instead of this file.
+# ---------------------------------------------------------------------------
+
+x-common-env: &common-env
+  DAVINCI_DKG_DATADIR: /app/run
+  DAVINCI_DKG_ARTIFACTS_DIR: /app/run/artifacts
+  # The explorer UI listens on 0.0.0.0:8081 by default. Override via .env if
+  # the node should bind to a different address/port.
+  DAVINCI_DKG_WEBAPP_LISTEN: "0.0.0.0:8081"
+
+x-test-env: &test-env
+  <<: *common-env
+  LOG_LEVEL: debug
+  CGO_ENABLED: "0"
+
+services:
+  # ──────────────────────────────────────────────────────────────────────────
+  # DKG node
+  # ──────────────────────────────────────────────────────────────────────────
+
+  node:
+    profiles: ["node"]
+    build:
+      context: ./
+    image: "ghcr.io/vocdoni/davinci-dkg:${DAVINCI_DKG_TAG:-latest}"
+    env_file: .env
+    environment: *common-env
+    volumes:
+      - run:/app/run
+      - ${HOME:-/root}/.davinci/artifacts:/app/run/artifacts
+    restart: ${RESTART:-unless-stopped}
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    ports:
+      - "${DAVINCI_DKG_WEBAPP_PORT:-8081}:8081"
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Auto-updater — watches the image the `node` service is pinned to and
+  # recreates the container when a new version is published. Remove this
+  # service (or pin DAVINCI_DKG_TAG to an immutable tag) if you want to
+  # control upgrades manually.
+  # ──────────────────────────────────────────────────────────────────────────
+
+  watchtower:
+    profiles: ["node"]
+    image: nickfedor/watchtower
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: --interval 300 --label-enable --include-stopped --revive-stopped
+    restart: ${RESTART:-unless-stopped}
+    depends_on:
+      - node
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Test services
+  # ──────────────────────────────────────────────────────────────────────────
+
+  unit-test:
+    profiles: ["test"]
+    build:
+      context: ./
+      dockerfile: Dockerfile
+      target: builder
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${HOME:-/root}/.davinci/artifacts:/app/run/artifacts
+    network_mode: "host"
+    environment:
+      <<: *test-env
+      RUN_INTEGRATION_TESTS: "false"
+    command: /bin/sh -c "go test -v $$(go list ./... | grep -v github.com/vocdoni/davinci-dkg/tests) -timeout=1h"
+
+  integration-test:
+    profiles: ["test"]
+    build:
+      context: ./
+      dockerfile: Dockerfile
+      target: builder
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${HOME:-/root}/.davinci/artifacts:/app/run/artifacts
+    network_mode: "host"
+    environment:
+      <<: *test-env
+      RUN_INTEGRATION_TESTS: "true"
+    command: go test -v ./tests/... -timeout=2h
+
+volumes:
+  run:
+    driver: local

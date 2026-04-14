@@ -1,0 +1,15 @@
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    ignore:
+      # Pin gnark and gnark-crypto together; bumping requires circuit re-validation
+      - dependency-name: "github.com/consensys/gnark"
+      - dependency-name: "github.com/consensys/gnark-crypto"
