@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-pragma solidity ^0.8.28;
+pragma solidity 0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 import {DKGRegistry} from "../src/DKGRegistry.sol";
@@ -753,5 +753,118 @@ contract DKGManagerTest is Test, TestHelpers {
 
         IDKGManager.Round memory round = manager.getRound(roundId);
         assertEq(uint256(round.status), uint256(DKGTypes.RoundStatus.Aborted));
+    }
+
+    // ── M-01: abortRound cannot abort a Finalized round ───────────────────
+
+    function test_AbortRound_RejectsFinalized() public {
+        bytes12 roundId = createFinalizedRound();
+
+        vm.expectRevert(IDKGManager.InvalidPhase.selector);
+        manager.abortRound(roundId);
+    }
+
+    // ── M-02: extendRegistration deadline validation ───────────────────────
+
+    function test_ExtendRegistration_UpdatesSeedBlockAndDeadline() public {
+        bytes12 roundId = manager.createRound(
+            2, 2, 2, 10000, 1,
+            uint64(block.number + 3),   // registrationDeadline
+            uint64(block.number + 100), // contributionDeadline
+            false
+        );
+        IDKGManager.Round memory before = manager.getRound(roundId);
+
+        // Advance past the registration deadline without filling all slots.
+        vm.roll(block.number + 4);
+        manager.extendRegistration(roundId);
+
+        IDKGManager.Round memory afterRound = manager.getRound(roundId);
+        // Seed block and registration deadline must have advanced.
+        assertTrue(afterRound.seedBlock > before.seedBlock);
+        assertTrue(afterRound.policy.registrationDeadlineBlock > before.policy.registrationDeadlineBlock);
+        // Seed must be reset.
+        assertEq(uint256(afterRound.seed), 0);
+    }
+
+    function test_ExtendRegistration_RejectsWhenNewDeadlineExceedsContribution() public {
+        // registrationDeadlineBlock = block.number + 3
+        // contributionDeadlineBlock = block.number + 4  (very tight)
+        // window = (block.number+3) - ((block.number+1) - 1) = 3
+        // After rolling to block.number+10: newDeadline = 10+3 = 13 > 4 → should revert.
+        uint64 base = uint64(block.number);
+        bytes12 roundId = manager.createRound(
+            2, 2, 2, 10000, 1,
+            base + 3,  // registrationDeadline
+            base + 4,  // contributionDeadline — very tight
+            false
+        );
+
+        // Advance well past the registration deadline.
+        vm.roll(block.number + 10);
+
+        vm.expectRevert(IDKGManager.InvalidPolicy.selector);
+        manager.extendRegistration(roundId);
+    }
+
+    // ── M-03/M-04: constructor validation ─────────────────────────────────
+
+    function test_Constructor_RejectsZeroRegistry() public {
+        vm.expectRevert(IDKGManager.InvalidAddress.selector);
+        new DKGManager(
+            31337,
+            address(0), // zero registry
+            address(verifier),
+            address(partialVerifier),
+            address(finalizeVerifier),
+            address(decryptCombineVerifier),
+            address(revealSubmitVerifier),
+            address(revealShareVerifier)
+        );
+    }
+
+    function test_Constructor_RejectsWrongChainId() public {
+        vm.expectRevert(IDKGManager.InvalidChainId.selector);
+        new DKGManager(
+            1, // mainnet — not the test chain (31337)
+            address(registry),
+            address(verifier),
+            address(partialVerifier),
+            address(finalizeVerifier),
+            address(decryptCombineVerifier),
+            address(revealSubmitVerifier),
+            address(revealShareVerifier)
+        );
+    }
+
+    // ── L-02: ciphertextIndex upper bound ─────────────────────────────────
+
+    function test_SubmitPartialDecryption_RejectsCiphertextIndexTooLarge() public {
+        bytes12 roundId = createFinalizedRound();
+
+        vm.expectRevert(IDKGManager.InvalidPartialDecryption.selector);
+        manager.submitPartialDecryption(
+            roundId,
+            1,
+            257, // > MAX_CIPHERTEXT_INDEX (256)
+            partialDecryptionHash(1),
+            partialDecryptionProof(),
+            partialDecryptionInput(roundId, 1, partialDecryptionHash(1))
+        );
+    }
+
+    function test_CombineDecryption_RejectsCiphertextIndexTooLarge() public {
+        bytes12 roundId = createFinalizedRound();
+
+        vm.expectRevert(IDKGManager.InvalidCombinedDecryption.selector);
+        manager.combineDecryption(
+            roundId,
+            257, // > MAX_CIPHERTEXT_INDEX (256)
+            COMBINED_DECRYPTION_HASH,
+            COMBINED_PLAINTEXT_HASH,
+            decryptCombineTranscript(2),
+            decryptCombineProof(),
+            decryptCombineInput(roundId, 2, 2, COMBINED_DECRYPTION_HASH, COMBINED_PLAINTEXT_HASH)
+        );
     }
 }

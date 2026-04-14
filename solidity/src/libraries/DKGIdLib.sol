@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-pragma solidity ^0.8.28;
+pragma solidity 0.8.28;
 
 library DKGIdLib {
     function getPrefix(uint32 chainId, address manager) internal pure returns (uint32) {

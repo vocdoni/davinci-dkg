@@ -10,20 +10,19 @@ function useHarness() {
   const enabled        = inject('integrationEnabled') as boolean;
   const rpcUrl         = inject('rpcUrl')          as string;
   const managerAddress = inject('managerAddress')  as `0x${string}`;
-  const registryAddress = inject('registryAddress') as `0x${string}`;
-  return { enabled, rpcUrl, managerAddress, registryAddress };
+  return { enabled, rpcUrl, managerAddress };
 }
 
 describe('DKGClient (read-only)', () => {
   let client: DKGClient;
 
   beforeAll(() => {
-    const { enabled, rpcUrl, managerAddress, registryAddress } = useHarness();
+    const { enabled, rpcUrl, managerAddress } = useHarness();
     if (!enabled) return;
+    // registryAddress is intentionally omitted to exercise auto-derive from manager.
     client = new DKGClient({
       publicClient:    makePublicClient(rpcUrl),
       managerAddress,
-      registryAddress,
     });
   });
 

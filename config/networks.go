@@ -1,0 +1,75 @@
+package config
+
+import (
+	"fmt"
+	"strings"
+
+	"github.com/ethereum/go-ethereum/common"
+)
+
+// NetworkDeployment is the canonical on-chain deployment for a well-known network.
+// Only the DKGManager address is stored here; all other contract addresses (registry,
+// verifiers) are derived at startup by querying the manager's public immutable fields
+// via the RPC endpoint.
+type NetworkDeployment struct {
+	// ChainID is the EIP-155 chain identifier, stored for display and validation.
+	// The authoritative chain ID is always fetched from the RPC endpoint at runtime.
+	ChainID uint64
+	// Manager is the deployed DKGManager contract address.
+	Manager common.Address
+}
+
+// KnownNetworks maps canonical lowercase network names to their deployments.
+// Add a new entry here after each production deployment.
+var KnownNetworks = map[string]NetworkDeployment{
+	"sepolia": {
+		ChainID: 11155111,
+		Manager: common.HexToAddress("0xee29811e6897fb55282c194b1fb99c14e4eb5a8a"),
+	},
+}
+
+// networkAliases maps short or alternative spellings to a canonical network name.
+var networkAliases = map[string]string{
+	"sep": "sepolia",
+}
+
+// NetworkByName resolves a network name (canonical or alias) to its deployment.
+// The lookup is case-insensitive. Returns an error if the name is not recognised.
+func NetworkByName(name string) (NetworkDeployment, error) {
+	_, dep, err := ResolveNetwork(name)
+	return dep, err
+}
+
+// ResolveNetwork returns the canonical network name and its deployment for the
+// given name or alias. Returns an error if the name is not recognised.
+func ResolveNetwork(name string) (string, NetworkDeployment, error) {
+	lower := strings.ToLower(strings.TrimSpace(name))
+	canonical := lower
+	if alias, ok := networkAliases[lower]; ok {
+		canonical = alias
+	}
+	dep, ok := KnownNetworks[canonical]
+	if !ok {
+		return "", NetworkDeployment{}, fmt.Errorf("unknown network %q — supported: %s", name, knownNetworkList())
+	}
+	return canonical, dep, nil
+}
+
+// knownNetworkList returns a human-readable comma-separated list of known
+// canonical names and their aliases, e.g. "sepolia (sep)".
+func knownNetworkList() string {
+	// Build a reverse alias map: canonical → []alias
+	reverseAliases := make(map[string][]string)
+	for alias, canon := range networkAliases {
+		reverseAliases[canon] = append(reverseAliases[canon], alias)
+	}
+	parts := make([]string, 0, len(KnownNetworks))
+	for name := range KnownNetworks {
+		entry := name
+		if aliases := reverseAliases[name]; len(aliases) > 0 {
+			entry += " (" + strings.Join(aliases, ", ") + ")"
+		}
+		parts = append(parts, entry)
+	}
+	return strings.Join(parts, ", ")
+}

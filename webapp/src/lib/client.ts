@@ -4,7 +4,8 @@ import { DKGClient } from '@vocdoni/davinci-dkg-sdk';
 export interface RuntimeConfig {
   rpcUrl: string;
   managerAddress: `0x${string}`;
-  registryAddress: `0x${string}`;
+  /** Registry address served by the node for display purposes. May be absent in idle mode. */
+  registryAddress?: `0x${string}`;
   chainId: number;
   chainName: string;
   startBlock?: number;
@@ -92,7 +93,8 @@ export async function getDKGClient(): Promise<DKGClient> {
   cachedDKGClient = new DKGClient({
     publicClient,
     managerAddress: cfg.managerAddress,
-    registryAddress: cfg.registryAddress,
+    // registryAddress is optional — the SDK derives it from the manager on first use.
+    ...(cfg.registryAddress ? { registryAddress: cfg.registryAddress } : {}),
   });
   return cachedDKGClient;
 }

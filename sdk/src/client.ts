@@ -31,26 +31,63 @@ type RegistryContract = GetContractReturnType<typeof dkgRegistryAbi, PublicClien
 export class DKGClient {
   readonly publicClient: PublicClient;
   readonly managerAddress: Address;
-  readonly registryAddress: Address;
 
   private _manager: ManagerContract;
-  private _registry: RegistryContract;
+  private _registry: RegistryContract | null;
+  private _resolvedRegistryAddress: Address | null;
 
   constructor(config: DKGConfig) {
     this.publicClient = config.publicClient;
     this.managerAddress = config.managerAddress;
-    this.registryAddress = config.registryAddress;
 
     this._manager = getContract({
       address: this.managerAddress,
       abi: dkgManagerAbi,
       client: this.publicClient,
     });
+
+    if (config.registryAddress) {
+      this._resolvedRegistryAddress = config.registryAddress;
+      this._registry = getContract({
+        address: config.registryAddress,
+        abi: dkgRegistryAbi,
+        client: this.publicClient,
+      });
+    } else {
+      this._resolvedRegistryAddress = null;
+      this._registry = null;
+    }
+  }
+
+  /**
+   * The DKGRegistry address. Throws if registry has not been resolved yet.
+   * Use `_getRegistryAddress()` in async methods instead.
+   */
+  get registryAddress(): Address {
+    if (!this._resolvedRegistryAddress) {
+      throw new Error('registryAddress not yet resolved; call a registry method first or provide it in config');
+    }
+    return this._resolvedRegistryAddress;
+  }
+
+  /** Resolve and cache the registry contract, fetching its address from the manager when needed. */
+  private async _getRegistry(): Promise<RegistryContract> {
+    if (this._registry) return this._registry;
+    const addr = await this._manager.read.REGISTRY();
+    this._resolvedRegistryAddress = addr;
     this._registry = getContract({
-      address: this.registryAddress,
+      address: addr,
       abi: dkgRegistryAbi,
       client: this.publicClient,
     });
+    return this._registry;
+  }
+
+  /** Resolve and return the registry address, fetching it from the manager when needed. */
+  private async _getRegistryAddress(): Promise<Address> {
+    if (this._resolvedRegistryAddress) return this._resolvedRegistryAddress;
+    await this._getRegistry();
+    return this._resolvedRegistryAddress!;
   }
 
   // ── Round ID utilities ─────────────────────────────────────────────────────
@@ -164,28 +201,33 @@ export class DKGClient {
 
   /** Fetch the NodeKey record for an operator address. */
   async getNode(operator: Address): Promise<NodeKey> {
-    const r = await this._registry.read.getNode([operator]);
+    const registry = await this._getRegistry();
+    const r = await registry.read.getNode([operator]);
     return r as unknown as NodeKey;
   }
 
   /** Total number of ever-registered nodes. */
   async nodeCount(): Promise<bigint> {
-    return this._registry.read.nodeCount();
+    const registry = await this._getRegistry();
+    return registry.read.nodeCount();
   }
 
   /** Number of currently-active nodes. */
   async activeCount(): Promise<bigint> {
-    return this._registry.read.activeCount();
+    const registry = await this._getRegistry();
+    return registry.read.activeCount();
   }
 
   /** Whether the given operator is currently active. */
   async isActive(operator: Address): Promise<boolean> {
-    return this._registry.read.isActive([operator]);
+    const registry = await this._getRegistry();
+    return registry.read.isActive([operator]);
   }
 
   /** The inactivity window in blocks after which a node can be reaped. */
   async inactivityWindow(): Promise<bigint> {
-    return this._registry.read.INACTIVITY_WINDOW();
+    const registry = await this._getRegistry();
+    return registry.read.INACTIVITY_WINDOW();
   }
 
   // ── Chain utilities ────────────────────────────────────────────────────────
@@ -286,11 +328,13 @@ export class DKGClient {
 
   /**
    * Watch for any DKG Registry event and call the handler with the parsed log.
-   * Returns an unsubscribe function.
+   * Returns a Promise that resolves to an unsubscribe function once the
+   * registry address has been resolved.
    */
-  watchRegistryEvents(handler: (log: any) => void): () => void {
+  async watchRegistryEvents(handler: (log: any) => void): Promise<() => void> {
+    const addr = await this._getRegistryAddress();
     return this.publicClient.watchContractEvent({
-      address: this.registryAddress,
+      address: addr,
       abi: dkgRegistryAbi,
       onLogs: (logs) => logs.forEach(handler),
     });
@@ -310,8 +354,9 @@ export class DKGClient {
    * the current NodeKey for each one (which reflects any key updates).
    */
   async getRegistryNodes(fromBlock = 0n): Promise<NodeKey[]> {
+    const registryAddr = await this._getRegistryAddress();
     const logs = await this.publicClient.getLogs({
-      address: this.registryAddress,
+      address: registryAddr,
       event: {
         type: 'event',
         name: 'NodeRegistered',
@@ -417,8 +462,13 @@ export class DKGClient {
     return this._manager;
   }
 
-  /** @internal */
-  get _registryContract(): RegistryContract {
-    return this._registry;
+  /** @internal Async accessor for DKGWriter to reuse the registry contract handle. */
+  async _registryContract(): Promise<RegistryContract> {
+    return this._getRegistry();
+  }
+
+  /** @internal Async accessor for DKGWriter to get the resolved registry address. */
+  async _registryAddressResolved(): Promise<Address> {
+    return this._getRegistryAddress();
   }
 }

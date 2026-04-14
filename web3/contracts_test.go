@@ -39,7 +39,7 @@ func TestNewRejectsMissingAddresses(t *testing.T) {
 	_, err := New("http://127.0.0.1:8545", types.ContractAddresses{})
 
 	c.Assert(err, qt.Not(qt.IsNil))
-	c.Assert(err.Error(), qt.Contains, "registry address is required")
+	c.Assert(err.Error(), qt.Contains, "manager address is required")
 }
 
 func TestVerifierKeyHashes(t *testing.T) {

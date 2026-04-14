@@ -15,6 +15,13 @@ import (
 
 const (
 	dkgManagerABIJSON = `[
+		{"inputs":[],"name":"REGISTRY","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},
+		{"inputs":[],"name":"CONTRIBUTION_VERIFIER","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},
+		{"inputs":[],"name":"FINALIZE_VERIFIER","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},
+		{"inputs":[],"name":"PARTIAL_DECRYPT_VERIFIER","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},
+		{"inputs":[],"name":"DECRYPT_COMBINE_VERIFIER","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},
+		{"inputs":[],"name":"REVEAL_SUBMIT_VERIFIER","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},
+		{"inputs":[],"name":"REVEAL_SHARE_VERIFIER","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},
 		{"inputs":[{"internalType":"bytes12","name":"roundId","type":"bytes12"}],"name":"getRound","outputs":[{"name":"organizer","type":"address"},{"name":"threshold","type":"uint16"},{"name":"committeeSize","type":"uint16"},{"name":"minValidContributions","type":"uint16"},{"name":"lotteryAlphaBps","type":"uint16"},{"name":"seedDelay","type":"uint16"},{"name":"registrationDeadlineBlock","type":"uint64"},{"name":"contributionDeadlineBlock","type":"uint64"},{"name":"disclosureAllowed","type":"bool"},{"name":"status","type":"uint8"},{"name":"nonce","type":"uint64"},{"name":"seedBlock","type":"uint64"},{"name":"seed","type":"bytes32"},{"name":"lotteryThreshold","type":"uint256"},{"name":"claimedCount","type":"uint16"},{"name":"contributionCount","type":"uint16"},{"name":"partialDecryptionCount","type":"uint16"},{"name":"revealedShareCount","type":"uint16"}],"stateMutability":"view","type":"function"},
 		{"inputs":[],"name":"getContributionVerifierVKeyHash","outputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"stateMutability":"view","type":"function"},
 		{"inputs":[],"name":"getFinalizeVerifierVKeyHash","outputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"stateMutability":"view","type":"function"},
@@ -93,9 +100,19 @@ type RevealedShareView struct {
 	Accepted         bool
 }
 
+// New creates a Contracts handle connected to the given RPC endpoint.
+//
+// The only required address is Manager. All other addresses (Registry plus the
+// six verifiers) may be left as zero: New will query the manager's public
+// immutable fields on-chain and fill them in automatically. This means that
+// when using a well-known network preset (see config/networks.go) only the
+// DKGManager address needs to be stored — everything else is derived at runtime.
+//
+// Explicitly-supplied non-zero addresses always take precedence over the
+// on-chain values, so individual verifier overrides still work as before.
 func New(rpcURL string, addresses types.ContractAddresses) (*Contracts, error) {
-	if err := addresses.Validate(); err != nil {
-		return nil, err
+	if addresses.Manager == (common.Address{}) {
+		return nil, fmt.Errorf("manager address is required")
 	}
 	if rpcURL == "" {
 		return nil, fmt.Errorf("rpc url is required")
@@ -112,6 +129,47 @@ func New(rpcURL string, addresses types.ContractAddresses) (*Contracts, error) {
 		return nil, fmt.Errorf("get chain id: %w", err)
 	}
 
+	// Derive the registry address from the manager contract when not supplied.
+	if addresses.Registry == (common.Address{}) {
+		addr, err := fetchAddressFromManager(client, addresses.Manager, "REGISTRY")
+		if err != nil {
+			client.Close()
+			return nil, fmt.Errorf("derive registry from manager: %w", err)
+		}
+		addresses.Registry = addr
+	}
+
+	// Derive verifier addresses from the manager's public immutable fields when
+	// not supplied. This allows callers to provide only the Manager address (e.g.
+	// via a network preset) and have the full address book filled in on-chain.
+	verifierFields := []struct {
+		method string
+		dest   *common.Address
+	}{
+		{"CONTRIBUTION_VERIFIER", &addresses.ContributionVerifier},
+		{"FINALIZE_VERIFIER", &addresses.FinalizeVerifier},
+		{"PARTIAL_DECRYPT_VERIFIER", &addresses.PartialDecryptVerifier},
+		{"DECRYPT_COMBINE_VERIFIER", &addresses.DecryptCombineVerifier},
+		{"REVEAL_SUBMIT_VERIFIER", &addresses.RevealSubmitVerifier},
+		{"REVEAL_SHARE_VERIFIER", &addresses.RevealShareVerifier},
+	}
+	for _, vf := range verifierFields {
+		if *vf.dest != (common.Address{}) {
+			continue // explicit override — keep it
+		}
+		addr, err := fetchAddressFromManager(client, addresses.Manager, vf.method)
+		if err != nil {
+			client.Close()
+			return nil, fmt.Errorf("derive %s from manager: %w", vf.method, err)
+		}
+		*vf.dest = addr
+	}
+
+	if err := addresses.Validate(); err != nil {
+		client.Close()
+		return nil, err
+	}
+
 	return &Contracts{
 		ChainID:     chainID.Uint64(),
 		Addresses:   addresses,
@@ -119,6 +177,35 @@ func New(rpcURL string, addresses types.ContractAddresses) (*Contracts, error) {
 		managerABI:  managerABI,
 		registryABI: registryABI,
 	}, nil
+}
+
+// fetchAddressFromManager calls a named view function on the DKGManager contract
+// and returns the address it returns. Used to derive Registry and the six verifier
+// addresses from the manager's public immutable fields.
+func fetchAddressFromManager(client *ethclient.Client, manager common.Address, method string) (common.Address, error) {
+	input, err := managerABI.Pack(method)
+	if err != nil {
+		return common.Address{}, fmt.Errorf("pack %s: %w", method, err)
+	}
+	output, err := client.CallContract(context.Background(), ethereum.CallMsg{
+		To:   &manager,
+		Data: input,
+	}, nil)
+	if err != nil {
+		return common.Address{}, fmt.Errorf("call %s: %w", method, err)
+	}
+	values, err := managerABI.Unpack(method, output)
+	if err != nil {
+		return common.Address{}, fmt.Errorf("unpack %s: %w", method, err)
+	}
+	if len(values) != 1 {
+		return common.Address{}, fmt.Errorf("unexpected output count for %s", method)
+	}
+	addr, ok := values[0].(common.Address)
+	if !ok {
+		return common.Address{}, fmt.Errorf("unexpected output type for %s", method)
+	}
+	return addr, nil
 }
 
 func (c *Contracts) Close() error {

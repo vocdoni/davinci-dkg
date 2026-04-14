@@ -146,9 +146,11 @@ export function Settings() {
           <Row label="DKGManager">
             <HashCell value={cfg.data.managerAddress} full />
           </Row>
-          <Row label="DKGRegistry">
-            <HashCell value={cfg.data.registryAddress} full />
-          </Row>
+          {cfg.data.registryAddress && (
+            <Row label="DKGRegistry">
+              <HashCell value={cfg.data.registryAddress} full />
+            </Row>
+          )}
           {cfg.data.startBlock !== undefined && (
             <Row label="Start block">
               <Text>#{cfg.data.startBlock}</Text>

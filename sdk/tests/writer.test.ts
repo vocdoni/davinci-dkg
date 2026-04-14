@@ -9,10 +9,9 @@ import { mineUntilSeedAvailable } from './helpers/chain.js';
 
 function useHarness() {
   return {
-    enabled:         inject('integrationEnabled') as boolean,
-    rpcUrl:          inject('rpcUrl')          as string,
-    managerAddress:  inject('managerAddress')  as `0x${string}`,
-    registryAddress: inject('registryAddress') as `0x${string}`,
+    enabled:        inject('integrationEnabled') as boolean,
+    rpcUrl:         inject('rpcUrl')          as string,
+    managerAddress: inject('managerAddress')  as `0x${string}`,
   };
 }
 
@@ -20,13 +19,12 @@ describe('DKGWriter', () => {
   let writer: DKGWriter;
 
   beforeAll(() => {
-    const { enabled, rpcUrl, managerAddress, registryAddress } = useHarness();
+    const { enabled, rpcUrl, managerAddress } = useHarness();
     if (!enabled) return;
     writer = new DKGWriter({
       publicClient:    makePublicClient(rpcUrl),
       walletClient:    makeWalletClient(rpcUrl, 1), // use account #1 so we don't clash with fixture (account #0)
       managerAddress,
-      registryAddress,
     });
   });
 

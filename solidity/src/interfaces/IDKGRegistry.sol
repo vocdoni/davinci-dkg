@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-pragma solidity ^0.8.28;
+pragma solidity 0.8.28;
 
 /// @title  IDKGRegistry
 /// @notice Append-only registry of operator BabyJubJub encryption keys, with
@@ -43,6 +43,7 @@ interface IDKGRegistry {
 
     // ── errors ────────────────────────────────────────────────────────────
     error InvalidKey();
+    error InvalidAddress();
     error AlreadyRegistered();
     error NotRegistered();
     error NotManager();
@@ -51,6 +52,7 @@ interface IDKGRegistry {
     error NotActive();
     error StillActive();
     error NotInactive();
+    error Unauthorized();
 
     // ── registration ──────────────────────────────────────────────────────
     function registerKey(uint256 pubX, uint256 pubY) external;

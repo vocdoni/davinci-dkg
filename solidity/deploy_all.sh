@@ -119,13 +119,29 @@ info "broadcasting DeployAllScript ..."
 )
 
 # ── parse deployed addresses ─────────────────────────────────────────────
-# The Solidity script logs one line per contract in the form:
-#   "<Contract> deployed at: 0x…"
+# Primary source: the Foundry broadcast JSON (broadcast/DeployAll.s.sol/<chainId>/run-latest.json).
+# Newer forge versions suppress console.log output in --broadcast mode, so
+# the JSON is the only reliable source. The log grep is kept as a fallback
+# for older forge versions that do print "deployed at:" lines.
+BROADCAST_JSON="$SCRIPT_DIR/broadcast/DeployAll.s.sol/$CHAIN_ID/run-latest.json"
+
 extract() {
-    grep -E "^ *$1 deployed at:" "$DEPLOY_LOG" \
-        | grep -oE '0x[a-fA-F0-9]{40}' \
-        | tail -n 1 \
-        || true
+    local name="$1"
+    local addr=""
+    # Try broadcast JSON first (jq required, listed in Prerequisites).
+    if [ -f "$BROADCAST_JSON" ] && command -v jq >/dev/null 2>&1; then
+        addr=$(jq -r --arg n "$name" \
+            '[.transactions[] | select(.contractName == $n and .contractAddress != null) | .contractAddress] | last // empty' \
+            "$BROADCAST_JSON" 2>/dev/null || true)
+    fi
+    # Fall back to console.log lines in the deploy log.
+    if [ -z "$addr" ]; then
+        addr=$(grep -E "^ *$name deployed at:" "$DEPLOY_LOG" \
+            | grep -oE '0x[a-fA-F0-9]{40}' \
+            | tail -n 1 \
+            || true)
+    fi
+    printf '%s' "$addr"
 }
 
 CONTRIBUTION_VERIFIER=$(extract ContributionVerifier)
@@ -180,7 +196,6 @@ printf '%b===========================================%b\n' "$BOLD" "$NC"
 printf '%b  deployment complete%b\n'                        "$GREEN" "$NC"
 printf '%b===========================================%b\n' "$BOLD" "$NC"
 printf '  DKGRegistry               : %s\n' "$REGISTRY"
-printf '  DKGManager                : %s\n' "$MANAGER"
 printf '  ContributionVerifier      : %s\n' "$CONTRIBUTION_VERIFIER"
 printf '  FinalizeVerifier          : %s\n' "$FINALIZE_VERIFIER"
 printf '  PartialDecryptVerifier    : %s\n' "$PARTIAL_DECRYPT_VERIFIER"
@@ -188,16 +203,22 @@ printf '  DecryptCombineVerifier    : %s\n' "$DECRYPT_COMBINE_VERIFIER"
 printf '  RevealSubmitVerifier      : %s\n' "$REVEAL_SUBMIT_VERIFIER"
 printf '  RevealShareVerifier       : %s\n' "$REVEAL_SHARE_VERIFIER"
 printf '\n'
-printf '  addresses saved to : %s\n'  "$OUT_FILE"
-printf '  deploy log         : %s\n'  "$DEPLOY_LOG"
+printf '  addresses saved to : %s\n' "$OUT_FILE"
+printf '  deploy log         : %s\n' "$DEPLOY_LOG"
 printf '\n'
 printf 'Next steps:\n'
-printf '  1. Export DAVINCI_DKG_REGISTRY and DAVINCI_DKG_MANAGER in your\n'
-printf '     node environment (see .env.example) or source the file above:\n'
+printf '  1. Set DAVINCI_DKG_MANAGER in your node environment (see .env.example)\n'
+printf '     or source the file above (REGISTRY is derived from the manager on startup):\n'
 printf '         set -a && . %s && set +a\n' "$OUT_FILE"
 printf '  2. Restart davinci-dkg-node so it picks up the new contracts.\n'
 if [ -z "${ETHERSCAN_API_KEY:-}" ]; then
     printf '  3. (optional) Re-run with ETHERSCAN_API_KEY set to publish the\n'
     printf '     contract source for block-explorer verification.\n'
 fi
+printf '\n'
+printf '%b===========================================%b\n' "$BOLD" "$NC"
+printf '%b  DKGManager contract address%b\n'                "$BOLD" "$NC"
+printf '%b===========================================%b\n' "$BOLD" "$NC"
+printf '  %b%s%b\n'                                         "$GREEN" "$MANAGER" "$NC"
+printf '%b===========================================%b\n' "$BOLD" "$NC"
 printf '\n'

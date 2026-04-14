@@ -19,10 +19,9 @@ type ContractAddresses struct {
 }
 
 // Validate checks that the address book contains the mandatory deployments.
+// Registry is not required here because web3.New() derives it from the
+// manager contract when it is not supplied.
 func (c ContractAddresses) Validate() error {
-	if c.Registry == (common.Address{}) {
-		return fmt.Errorf("registry address is required")
-	}
 	if c.Manager == (common.Address{}) {
 		return fmt.Errorf("manager address is required")
 	}

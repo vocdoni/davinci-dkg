@@ -114,8 +114,11 @@ export interface DKGConfig {
   publicClient: PublicClient;
   /** Address of the deployed DKGManager contract */
   managerAddress: Address;
-  /** Address of the deployed DKGRegistry contract */
-  registryAddress: Address;
+  /**
+   * Address of the deployed DKGRegistry contract.
+   * When omitted, the client reads it from DKGManager.REGISTRY() on first use.
+   */
+  registryAddress?: Address;
 }
 
 export interface DKGWriterConfig extends DKGConfig {

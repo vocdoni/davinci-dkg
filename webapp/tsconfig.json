@@ -14,7 +14,14 @@
     "strict": true,
     "noUnusedLocals": false,
     "noUnusedParameters": false,
-    "noFallthroughCasesInSwitch": true
+    "noFallthroughCasesInSwitch": true,
+    "baseUrl": ".",
+    "paths": {
+      "viem": ["node_modules/viem"],
+      "viem/*": ["node_modules/viem/*"],
+      "@zk-kit/baby-jubjub": ["node_modules/@zk-kit/baby-jubjub"],
+      "@zk-kit/baby-jubjub/*": ["node_modules/@zk-kit/baby-jubjub/*"]
+    }
   },
   "include": ["src"]
 }

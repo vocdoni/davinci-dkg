@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-pragma solidity ^0.8.28;
+pragma solidity 0.8.28;
 
 import {DKGTypes} from "../libraries/DKGTypes.sol";
 
@@ -19,6 +19,7 @@ interface IDKGManager {
     }
 
     event RoundCreated(bytes12 indexed roundId, address indexed organizer, uint64 seedBlock, uint256 lotteryThreshold);
+    event RegistrationExtended(bytes12 indexed roundId, uint64 newSeedBlock, uint64 newRegistrationDeadline);
     event SeedResolved(bytes12 indexed roundId, bytes32 seed);
     event SlotClaimed(bytes12 indexed roundId, address indexed claimer, uint16 slot);
     event RegistrationClosed(bytes12 indexed roundId);
@@ -51,6 +52,8 @@ interface IDKGManager {
     event RoundAborted(bytes12 indexed roundId);
 
     error InvalidPolicy();
+    error InvalidChainId();
+    error InvalidAddress();
     error InvalidRound();
     error InvalidPhase();
     error NotEligible();

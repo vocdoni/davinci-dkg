@@ -1,15 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-pragma solidity ^0.8.28;
+pragma solidity 0.8.28;
 
 import {IDKGRegistry} from "./interfaces/IDKGRegistry.sol";
 
 /// @title DKGRegistry
 /// @notice Append-only registry of operator BabyJubJub encryption keys used
 ///         by the DKGManager's lottery and contribution phases.
-/// @dev    The registry is intentionally minimal — no access control, no
-///         key revocation, no admin. Each address claims its slot with a
-///         single `registerKey` call and may rotate its key via
-///         `updateKey`.
+/// @dev    The registry is intentionally minimal — no key revocation, no
+///         rotating admin. Each address claims its slot with a single
+///         `registerKey` call and may rotate its key via `updateKey`.
 ///
 ///         Liveness is tracked through `lastActiveBlock` on each row,
 ///         refreshed by DKGManager on every accepted contribution (via
@@ -18,6 +17,11 @@ import {IDKGRegistry} from "./interfaces/IDKGRegistry.sol";
 ///         function once `INACTIVITY_WINDOW` blocks have passed with no
 ///         activity; the `activeCount` counter tracks the ACTIVE set and
 ///         is the denominator the DKGManager lottery uses.
+///
+///         `setManager` is restricted to the deployer address captured at
+///         construction time — this prevents a front-running attack where a
+///         third party locks in a malicious manager before the deployer's
+///         wiring transaction lands.
 contract DKGRegistry is IDKGRegistry {
     mapping(address operator => NodeKey) internal nodes;
 
@@ -43,18 +47,24 @@ contract DKGRegistry is IDKGRegistry {
     address public override manager;
     bool private _managerSet;
 
+    /// @dev Address that deployed this contract; the only address allowed to
+    ///      call `setManager`. Immutable after construction.
+    address private immutable _deployer;
+
     constructor(uint64 inactivityWindow) {
         if (inactivityWindow == 0) revert InvalidKey();
         INACTIVITY_WINDOW = inactivityWindow;
+        _deployer = msg.sender;
     }
 
     /// @notice Pin the DKGManager address that will be authorised to call
-    ///         `markActive`. May only be called once; subsequent calls
-    ///         revert with `ManagerAlreadySet`.
+    ///         `markActive`. May only be called once by the deployer;
+    ///         subsequent calls revert with `ManagerAlreadySet`.
     /// @param  m The deployed DKGManager contract address.
     function setManager(address m) external {
+        if (msg.sender != _deployer) revert Unauthorized();
         if (_managerSet) revert ManagerAlreadySet();
-        if (m == address(0)) revert InvalidKey();
+        if (m == address(0)) revert InvalidAddress();
         manager = m;
         _managerSet = true;
         emit ManagerSet(m);

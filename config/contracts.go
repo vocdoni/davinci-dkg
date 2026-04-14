@@ -28,8 +28,13 @@ func ParseContractAddressesEnv(data []byte) (types.ContractAddresses, error) {
 		return types.ContractAddresses{}, err
 	}
 
+	// REGISTRY is optional — web3.New() derives it from the manager when absent.
+	var registry common.Address
+	if r := values["REGISTRY"]; r != "" {
+		registry = common.HexToAddress(r)
+	}
 	addresses := types.ContractAddresses{
-		Registry:               common.HexToAddress(values["REGISTRY"]),
+		Registry:               registry,
 		Manager:                common.HexToAddress(values["MANAGER"]),
 		ContributionVerifier:   common.HexToAddress(values["CONTRIBUTION_VERIFIER"]),
 		FinalizeVerifier:       common.HexToAddress(values["FINALIZE_VERIFIER"]),

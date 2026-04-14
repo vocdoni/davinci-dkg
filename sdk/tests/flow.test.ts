@@ -33,11 +33,10 @@ const __dirname  = path.dirname(__filename);
 
 function useHarness() {
   return {
-    enabled:          inject('integrationEnabled') as boolean,
-    rpcUrl:           inject('rpcUrl')           as string,
-    managerAddress:   inject('managerAddress')   as `0x${string}`,
-    registryAddress:  inject('registryAddress')  as `0x${string}`,
-    addressesFile:    inject('addressesFile')    as string,
+    enabled:        inject('integrationEnabled') as boolean,
+    rpcUrl:         inject('rpcUrl')           as string,
+    managerAddress: inject('managerAddress')   as `0x${string}`,
+    addressesFile:  inject('addressesFile')    as string,
   };
 }
 
@@ -93,13 +92,12 @@ describe('Full DKG flow (via Go fixture)', () => {
   let fixture: FixtureResult | null = null;
 
   beforeAll(async () => {
-    const { enabled, rpcUrl, managerAddress, registryAddress, addressesFile } = useHarness();
+    const { enabled, rpcUrl, managerAddress, addressesFile } = useHarness();
     if (!enabled) return;
 
     client = new DKGClient({
       publicClient:    makePublicClient(rpcUrl),
       managerAddress,
-      registryAddress,
     });
 
     console.log('[flow-test] Running Go fixture to create a finalized round…');

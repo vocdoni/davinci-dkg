@@ -25,7 +25,6 @@ echo "Starting DKG explorer webapp (public RPC: $PUBLIC_RPC)"
 exec /app/davinci-dkg-node \
   --web3.rpc="$DAVINCI_DKG_WEB3_RPC" \
   --web3.network="${WEBAPP_CHAIN_NAME:-anvil-testnet}" \
-  --registry="$REGISTRY" \
   --manager="$MANAGER" \
   --log.level="${DAVINCI_DKG_LOG_LEVEL:-info}" \
   --webapp.enabled=true \

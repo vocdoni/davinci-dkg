@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-pragma solidity ^0.8.28;
+pragma solidity 0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 import {DKGRegistry} from "../src/DKGRegistry.sol";
@@ -201,8 +201,15 @@ contract DKGRegistryTest is Test {
     }
 
     function test_SetManager_RejectsZero() public {
-        vm.expectRevert(IDKGRegistry.InvalidKey.selector);
+        vm.expectRevert(IDKGRegistry.InvalidAddress.selector);
         registry.setManager(address(0));
+    }
+
+    function test_SetManager_RejectsNonDeployer() public {
+        // alice did not deploy the registry — she should be rejected.
+        vm.expectRevert(IDKGRegistry.Unauthorized.selector);
+        vm.prank(alice);
+        registry.setManager(fakeManager);
     }
 
     function test_MarkActive_OnlyManager() public {

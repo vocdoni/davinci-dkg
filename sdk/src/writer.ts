@@ -269,8 +269,9 @@ export class DKGWriter extends DKGClient {
    * The caller becomes an active DKG node.
    */
   async registerKey(pubX: bigint, pubY: bigint): Promise<Hash> {
+    const registryAddress = await this._registryAddressResolved();
     const { request } = await this.publicClient.simulateContract({
-      address: this.registryAddress,
+      address: registryAddress,
       abi: dkgRegistryAbi,
       functionName: 'registerKey',
       args: [pubX, pubY],
@@ -283,8 +284,9 @@ export class DKGWriter extends DKGClient {
    * Update an existing registered key.
    */
   async updateKey(pubX: bigint, pubY: bigint): Promise<Hash> {
+    const registryAddress = await this._registryAddressResolved();
     const { request } = await this.publicClient.simulateContract({
-      address: this.registryAddress,
+      address: registryAddress,
       abi: dkgRegistryAbi,
       functionName: 'updateKey',
       args: [pubX, pubY],
@@ -297,8 +299,9 @@ export class DKGWriter extends DKGClient {
    * Send a heartbeat to keep the node active.
    */
   async heartbeat(): Promise<Hash> {
+    const registryAddress = await this._registryAddressResolved();
     const { request } = await this.publicClient.simulateContract({
-      address: this.registryAddress,
+      address: registryAddress,
       abi: dkgRegistryAbi,
       functionName: 'heartbeat',
       account: this._writerAccount,
@@ -310,8 +313,9 @@ export class DKGWriter extends DKGClient {
    * Reactivate a node that was previously reaped.
    */
   async reactivate(): Promise<Hash> {
+    const registryAddress = await this._registryAddressResolved();
     const { request } = await this.publicClient.simulateContract({
-      address: this.registryAddress,
+      address: registryAddress,
       abi: dkgRegistryAbi,
       functionName: 'reactivate',
       account: this._writerAccount,
@@ -323,8 +327,9 @@ export class DKGWriter extends DKGClient {
    * Permissionlessly reap a stale node that has exceeded the inactivity window.
    */
   async reap(operator: Address): Promise<Hash> {
+    const registryAddress = await this._registryAddressResolved();
     const { request } = await this.publicClient.simulateContract({
-      address: this.registryAddress,
+      address: registryAddress,
       abi: dkgRegistryAbi,
       functionName: 'reap',
       args: [operator],

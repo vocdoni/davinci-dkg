@@ -40,7 +40,6 @@ echo "Starting davinci-dkg-node..."
 exec /app/davinci-dkg-node \
   --web3.rpc="$DAVINCI_DKG_WEB3_RPC" \
   --privkey="$KEY" \
-  --registry="$REGISTRY" \
   --manager="$MANAGER" \
   --log.level="${DAVINCI_DKG_LOG_LEVEL:-info}" \
   --shared-dir="${DAVINCI_DKG_SHARED_DIR:-/shared}" \

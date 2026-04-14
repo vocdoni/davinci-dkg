@@ -82,10 +82,12 @@ joining one, see [Local Testnet](#local-testnet) and [Deploy Contracts](#deploy-
 2. **The target network's JSON-RPC URL.** Any HTTPS or WSS endpoint that
    speaks the standard Ethereum JSON-RPC will work (Infura, Alchemy, your
    own node, a local Anvil instance, etc.).
-3. **The deployed contract addresses**: `DKGRegistry` and `DKGManager` on
-   the network you want to join. These are per-network and are published
-   alongside the network's announcement. If you are bootstrapping your own
-   network, deploy them first with [`make solidity-deploy`](#deploy-contracts).
+3. **The target network.** For well-known deployments (currently **Sepolia**),
+   the node already knows the contract addresses — just pass `--network sepolia`
+   (or `DAVINCI_DKG_NETWORK=sepolia`) and no further address configuration is
+   needed. For a custom or private network you will need the `DKGManager`
+   address published alongside that network's announcement; deploy your own
+   with [`make solidity-deploy`](#deploy-contracts) if you are bootstrapping.
 4. **An operator private key** that controls the funded account. It is
    used only for signing, the node never exports or transmits it.
 
@@ -112,8 +114,12 @@ At minimum, fill in:
 ```dotenv
 DAVINCI_DKG_WEB3_RPC=https://your-rpc-endpoint
 DAVINCI_DKG_PRIVKEY=0x<your-64-hex-char-operator-key>
-DAVINCI_DKG_REGISTRY=0x<DKGRegistry address on this network>
-DAVINCI_DKG_MANAGER=0x<DKGManager address on this network>
+
+# For Sepolia — contract addresses are built in:
+DAVINCI_DKG_NETWORK=sepolia
+
+# For any other network — supply the DKGManager address explicitly:
+# DAVINCI_DKG_MANAGER=0x<DKGManager address>
 ```
 
 See `.env.example` for the full list and `davinci-dkg-node --help` for
@@ -165,12 +171,10 @@ DAVINCI_DKG_TAG=local docker compose --profile node up -d
 ### Option B — Download a release binary
 
 Every tagged release publishes fully-static `davinci-dkg-node` and
-`dkg-runner` binaries for Linux (amd64 + arm64) and macOS (amd64 + arm64)
-on the [**GitHub Releases**](https://github.com/vocdoni/davinci-dkg/releases)
-page.
+`dkg-runner` binaries for Linux (amd64 + arm64) on the
+[**GitHub Releases**](https://github.com/vocdoni/davinci-dkg/releases) page.
 
 ```bash
-# Pick the archive that matches your OS/arch from the Releases page.
 VERSION=v0.1.0
 TARGET=linux-amd64
 curl -LO "https://github.com/vocdoni/davinci-dkg/releases/download/${VERSION}/davinci-dkg-${VERSION}-${TARGET}.tar.gz"
@@ -253,11 +257,16 @@ docker compose --profile node logs -f node
 # With a binary or source build (Options B and C):
 ./davinci-dkg-node
 
-# Equivalent, overriding everything on the command line:
+# Sepolia — contract addresses are resolved automatically:
+./davinci-dkg-node \
+  --web3.rpc=https://your-sepolia-rpc \
+  --privkey=0x<your-key> \
+  --network=sepolia
+
+# Custom network — supply the DKGManager address explicitly:
 ./davinci-dkg-node \
   --web3.rpc=https://your-rpc-endpoint \
   --privkey=0x<your-key> \
-  --registry=0x<DKGRegistry> \
   --manager=0x<DKGManager> \
   --log.level=info
 ```
@@ -1031,7 +1040,7 @@ Any `davinci-dkg-node` instance serves the webapp by default on `:8081`:
 ```bash
 davinci-dkg-node \
   --web3.rpc=http://127.0.0.1:8545 \
-  --manager=0x... --registry=0x... \
+  --manager=0x... \
   --privkey=0x... \
   --webapp.listen=0.0.0.0:8081 \
   --webapp.public-rpc=http://<your-host>:8545     # URL the browser will use

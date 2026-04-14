@@ -73,15 +73,10 @@ type Node struct {
 // newNode constructs a Node from the daemon config.
 func newNode(cfg *Config) (*Node, error) {
 	addrs := nodetypes.ContractAddresses{
-		Registry:               common.HexToAddress(cfg.RegistryAddr),
-		Manager:                common.HexToAddress(cfg.ManagerAddr),
-		ContributionVerifier:   common.HexToAddress(os.Getenv("CONTRIBUTION_VERIFIER")),
-		FinalizeVerifier:       common.HexToAddress(os.Getenv("FINALIZE_VERIFIER")),
-		PartialDecryptVerifier: common.HexToAddress(os.Getenv("PARTIAL_DECRYPT_VERIFIER")),
-		DecryptCombineVerifier: common.HexToAddress(os.Getenv("DECRYPT_COMBINE_VERIFIER")),
-		RevealSubmitVerifier:   common.HexToAddress(os.Getenv("REVEAL_SUBMIT_VERIFIER")),
-		RevealShareVerifier:    common.HexToAddress(os.Getenv("REVEAL_SHARE_VERIFIER")),
+		Manager: common.HexToAddress(cfg.resolvedManagerAddr()),
 	}
+	// web3.New() derives Registry and all verifier addresses from the manager's
+	// public immutable fields when they are not supplied (zero address).
 	c, err := web3.New(cfg.Web3.RPC[0], addrs)
 	if err != nil {
 		return nil, fmt.Errorf("web3 connect: %w", err)
@@ -90,11 +85,11 @@ func newNode(cfg *Config) (*Node, error) {
 	if err != nil {
 		return nil, fmt.Errorf("tx manager: %w", err)
 	}
-	manager, err := gtypes.NewDKGManager(addrs.Manager, c.Client())
+	manager, err := gtypes.NewDKGManager(c.Addresses.Manager, c.Client())
 	if err != nil {
 		return nil, fmt.Errorf("manager binding: %w", err)
 	}
-	registry, err := gtypes.NewDKGRegistry(addrs.Registry, c.Client())
+	registry, err := gtypes.NewDKGRegistry(c.Addresses.Registry, c.Client())
 	if err != nil {
 		return nil, fmt.Errorf("registry binding: %w", err)
 	}
@@ -156,7 +151,7 @@ func (n *Node) LogStartupSnapshot(ctx context.Context, cfg *Config) {
 		"rpc", cfg.Web3.RPC[0],
 		"gasMultiplier", cfg.Web3.GasMultiplier)
 	log.Infow("config: contracts",
-		"registry", cfg.RegistryAddr,
+		"registry", n.contracts.Addresses.Registry,
 		"manager", cfg.ManagerAddr)
 	log.Infow("config: participation",
 		"pollInterval", cfg.PollInterval)

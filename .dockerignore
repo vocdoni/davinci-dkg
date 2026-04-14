@@ -30,6 +30,12 @@ webapp/dist/
 webapp/.vite/
 webapp/*.log
 
+# ---- SDK build output -----------------------------------------------------
+# The webapp/Dockerfile rebuilds the SDK from source inside the builder stage;
+# a host-compiled dist/ must not shadow it.
+sdk/dist/
+sdk/node_modules/
+
 # ---- Circuit artifact cache -----------------------------------------------
 # Mounted at runtime via a bind or named volume instead of baked into the
 # image. Regenerated with `make circuits-compile`.

@@ -1,8 +1,8 @@
 name: Release
 
 # Triggered when a semver tag (e.g. v0.1.0, v1.2.3, v1.2.3-rc1) is pushed.
-# Builds fully-static Linux + macOS binaries, embeds the version string and
-# the bundled webapp, then publishes the artifacts + checksums to a GitHub
+# Builds fully-static Linux binaries, embeds the version string and the
+# bundled webapp, then publishes the artifacts + checksums to a GitHub
 # Release tied to the tag.
 
 on:
@@ -42,6 +42,14 @@ jobs:
           cache: "pnpm"
           cache-dependency-path: webapp/pnpm-lock.yaml
 
+      - name: Install SDK dependencies
+        working-directory: sdk
+        run: pnpm install --frozen-lockfile
+
+      - name: Build SDK
+        working-directory: sdk
+        run: pnpm run build
+
       - name: Install webapp dependencies
         working-directory: webapp
         run: pnpm install --frozen-lockfile
@@ -76,16 +84,6 @@ jobs:
           - target: linux-arm64
             runner: ubuntu-latest
             goos: linux
-            goarch: arm64
-            cgo: "0"
-          - target: darwin-amd64
-            runner: macos-13
-            goos: darwin
-            goarch: amd64
-            cgo: "0"
-          - target: darwin-arm64
-            runner: macos-14
-            goos: darwin
             goarch: arm64
             cgo: "0"
     steps:

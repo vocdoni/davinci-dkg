@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-pragma solidity ^0.8.28;
+pragma solidity 0.8.28;
 
 import {IDKGManager} from "./interfaces/IDKGManager.sol";
 import {IDKGRegistry} from "./interfaces/IDKGRegistry.sol";
@@ -72,6 +72,11 @@ contract DKGManager is IDKGManager {
     /// rounds at typical cadences.
     uint256 internal constant ROUND_HISTORY_SIZE = 64;
 
+    /// @dev Upper bound on ciphertext indices accepted by `submitPartialDecryption`
+    /// and `combineDecryption`. Prevents unbounded storage spam by a committee member
+    /// who submits decryptions for arbitrarily large ciphertext indices.
+    uint16 internal constant MAX_CIPHERTEXT_INDEX = 256;
+
     uint32 public immutable CHAIN_ID;
     address public immutable REGISTRY;
     uint32 public immutable ROUND_PREFIX;
@@ -128,6 +133,8 @@ contract DKGManager is IDKGManager {
         address _revealSubmitVerifier,
         address _revealShareVerifier
     ) {
+        if (uint32(block.chainid) != _chainId) revert InvalidChainId();
+        if (_registry == address(0)) revert InvalidAddress();
         if (
             _contributionVerifier == address(0) || _partialDecryptVerifier == address(0) || _finalizeVerifier == address(0)
                 || _decryptCombineVerifier == address(0) || _revealSubmitVerifier == address(0)
@@ -338,10 +345,18 @@ contract DKGManager is IDKGManager {
         uint64 oldSeedBlock = round.seedBlock;
         uint64 window = oldDeadline - (oldSeedBlock - uint64(round.policy.seedDelay));
 
+        uint64 newSeedBlock = uint64(block.number) + uint64(round.policy.seedDelay);
+        uint64 newRegistrationDeadline = uint64(block.number) + window;
+
+        // Guard: the extended registration window must close before the contribution
+        // deadline; otherwise the round would become permanently stuck with no way to
+        // advance to the Contribution phase.
+        if (newRegistrationDeadline >= round.policy.contributionDeadlineBlock) revert InvalidPolicy();
+
         round.seed = bytes32(0);
-        round.seedBlock = uint64(block.number) + uint64(round.policy.seedDelay);
-        round.policy.registrationDeadlineBlock = uint64(block.number) + window;
-        emit RoundCreated(roundId, round.organizer, round.seedBlock, round.lotteryThreshold);
+        round.seedBlock = newSeedBlock;
+        round.policy.registrationDeadlineBlock = newRegistrationDeadline;
+        emit RegistrationExtended(roundId, newSeedBlock, newRegistrationDeadline);
     }
 
     /// @dev Internal helper: build the canonical (recipientIndexes ‖ pubKeys) layout
@@ -366,14 +381,36 @@ contract DKGManager is IDKGManager {
     /// @dev Wipes all storage tied to an old round when it falls out of the recent
     /// rounds ring buffer. Refunds gas via SSTORE-zero on the storage slots being
     /// cleared. Off-chain consumers must rely on the historical event log.
+    ///
+    /// Cleans up all five previously-leaking mappings in addition to the core
+    /// round data: contributions, partial decryptions (per-ciphertext counts and
+    /// per-participant records), combined decryptions, and revealed shares.
     function _evictRound(bytes12 oldRoundId) internal {
         Round storage r = rounds[oldRoundId];
         if (r.organizer == address(0)) return;
         address[] storage parts = roundParticipants[oldRoundId];
         uint256 n = parts.length;
         for (uint256 i = 0; i < n; i++) {
-            delete selectedOperators[oldRoundId][parts[i]];
+            address participant = parts[i];
+            delete selectedOperators[oldRoundId][participant];
             delete roundShareCommitmentHashes[oldRoundId][uint16(i + 1)];
+            delete roundContributions[oldRoundId][participant];
+            delete roundRevealedShares[oldRoundId][participant];
+            // Clear per-ciphertext partial decryption records and counts.
+            for (uint16 ci = 1; ci <= MAX_CIPHERTEXT_INDEX; ci++) {
+                if (roundPartialDecryptions[oldRoundId][ci][participant].accepted) {
+                    delete roundPartialDecryptions[oldRoundId][ci][participant];
+                }
+            }
+        }
+        // Clear per-ciphertext combined decryption records and counts.
+        for (uint16 ci = 1; ci <= MAX_CIPHERTEXT_INDEX; ci++) {
+            if (roundPartialDecryptionCounts[oldRoundId][ci] > 0) {
+                delete roundPartialDecryptionCounts[oldRoundId][ci];
+            }
+            if (roundCombinedDecryptions[oldRoundId][ci].completed) {
+                delete roundCombinedDecryptions[oldRoundId][ci];
+            }
         }
         delete roundParticipants[oldRoundId];
         delete roundContribPrefixHash[oldRoundId];
@@ -680,7 +717,7 @@ contract DKGManager is IDKGManager {
         if (!selectedOperators[roundId][msg.sender]) revert NotSelectedParticipant();
         if (
             participantIndex == 0 || participantIndex > round.policy.committeeSize || ciphertextIndex == 0
-                || deltaHash == bytes32(0)
+                || ciphertextIndex > MAX_CIPHERTEXT_INDEX || deltaHash == bytes32(0)
         ) revert InvalidPartialDecryption();
         if (roundParticipants[roundId][participantIndex - 1] != msg.sender) revert InvalidProofInput();
 
@@ -730,7 +767,7 @@ contract DKGManager is IDKGManager {
         Round storage round = rounds[roundId];
         if (round.organizer == address(0)) revert InvalidRound();
         if (round.status != DKGTypes.RoundStatus.Finalized) revert InvalidPhase();
-        if (ciphertextIndex == 0 || combineHash == bytes32(0) || plaintextHash == bytes32(0)) revert InvalidCombinedDecryption();
+        if (ciphertextIndex == 0 || ciphertextIndex > MAX_CIPHERTEXT_INDEX || combineHash == bytes32(0) || plaintextHash == bytes32(0)) revert InvalidCombinedDecryption();
         if (roundPartialDecryptionCounts[roundId][ciphertextIndex] < round.policy.threshold) revert InsufficientPartialDecryptions();
 
         DKGTypes.CombinedDecryptionRecord storage record = roundCombinedDecryptions[roundId][ciphertextIndex];
@@ -872,13 +909,21 @@ contract DKGManager is IDKGManager {
     }
 
     /// @notice Abort a non-terminal round. Organizer only.
-    /// @dev    Idempotent for rounds already in Completed/Aborted state.
+    /// @dev    Finalized rounds may NOT be aborted: the collective public key has
+    ///         already been published and messages may already be encrypted to it.
+    ///         Aborting after finalization would permanently block decryption for
+    ///         those messages. Only Registration and Contribution phases are
+    ///         abortable.
     /// @param  roundId The round identifier.
     function abortRound(bytes12 roundId) external {
         Round storage round = rounds[roundId];
         if (round.organizer == address(0)) revert InvalidRound();
         if (msg.sender != round.organizer) revert Unauthorized();
-        if (round.status == DKGTypes.RoundStatus.Completed || round.status == DKGTypes.RoundStatus.Aborted) {
+        if (
+            round.status == DKGTypes.RoundStatus.Finalized
+                || round.status == DKGTypes.RoundStatus.Completed
+                || round.status == DKGTypes.RoundStatus.Aborted
+        ) {
             revert InvalidPhase();
         }
 
@@ -963,13 +1008,5 @@ contract DKGManager is IDKGManager {
 
     function _roundScalar(bytes12 roundId) internal pure returns (uint256) {
         return uint256(uint96(roundId));
-    }
-
-    function _commitmentVectorDigest(uint256[70] memory publicInputs) internal pure returns (bytes32) {
-        uint256[64] memory digestInputs;
-        for (uint256 i = 0; i < 64; i++) {
-            digestInputs[i] = publicInputs[6 + i];
-        }
-        return keccak256(abi.encode(digestInputs));
     }
 }

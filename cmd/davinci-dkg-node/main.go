@@ -19,14 +19,14 @@ func main() {
 	}
 
 	log.Init(cfg.Log.Level, cfg.Log.Output, nil)
-	log.Infow("starting davinci-dkg-node", "version", version.Version, "network", cfg.Web3.Network)
+	log.Infow("starting davinci-dkg-node", "version", version.Version, "network", cfg.resolvedNetworkName())
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	if !cfg.HasChainConfig() {
-		log.Infow("no chain config provided — node is idle (set --privkey, --registry, --manager to enable participation)")
-		if _, err := startWebapp(ctx, cfg, 0); err != nil {
+		log.Infow("no chain config provided — node is idle (set --privkey, --manager to enable participation)")
+		if _, err := startWebapp(ctx, cfg, 0, ""); err != nil {
 			log.Errorw(err, "failed to start webapp")
 		}
 		waitForSignal()
@@ -39,7 +39,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if _, err := startWebapp(ctx, cfg, node.contracts.ChainID); err != nil {
+	if _, err := startWebapp(ctx, cfg, node.contracts.ChainID, node.contracts.Addresses.Registry.Hex()); err != nil {
 		log.Errorw(err, "failed to start webapp")
 	}
 

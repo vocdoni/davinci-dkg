@@ -30,7 +30,8 @@ type runtimeConfig struct {
 // startWebapp serves the embedded explorer SPA on cfg.Webapp.Listen. It returns
 // the *http.Server so callers can shut it down with the rest of the node.
 // Returns nil if the webapp is disabled.
-func startWebapp(ctx context.Context, cfg *Config, chainID uint64) (*http.Server, error) {
+// registryAddress is the resolved DKGRegistry address (may be empty in idle mode).
+func startWebapp(ctx context.Context, cfg *Config, chainID uint64, registryAddress string) (*http.Server, error) {
 	if !cfg.Webapp.Enabled {
 		log.Infow("webapp disabled")
 		return nil, nil
@@ -42,7 +43,7 @@ func startWebapp(ctx context.Context, cfg *Config, chainID uint64) (*http.Server
 
 	rc := runtimeConfig{
 		ManagerAddress:  cfg.ManagerAddr,
-		RegistryAddress: cfg.RegistryAddr,
+		RegistryAddress: registryAddress,
 		ChainID:         chainID,
 		ChainName:       cfg.Web3.Network,
 	}

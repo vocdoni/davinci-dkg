@@ -11,7 +11,7 @@
 //
 // Usage:
 //
-//	dkg-runner --rpc http://anvil:8545 --registry 0x... --manager 0x... \
+//	dkg-runner --rpc http://anvil:8545 --manager 0x... \
 //	           --privkey 0x... --nodes 3 --threshold 2
 package main
 
@@ -37,6 +37,7 @@ import (
 	"github.com/vocdoni/davinci-dkg/circuits/contribution"
 	"github.com/vocdoni/davinci-dkg/circuits/decryptcombine"
 	"github.com/vocdoni/davinci-dkg/circuits/finalize"
+	"github.com/vocdoni/davinci-dkg/config"
 	"github.com/vocdoni/davinci-dkg/crypto/group"
 	"github.com/vocdoni/davinci-dkg/log"
 	gtypes "github.com/vocdoni/davinci-dkg/solidity/golang-types"
@@ -55,7 +56,7 @@ type CiphertextFile struct {
 type cfg struct {
 	RPC                        string
 	PrivKey                    string
-	Registry                   string
+	Network                    string
 	Manager                    string
 	Nodes                      int
 	Threshold                  int
@@ -74,8 +75,8 @@ func loadCfg() (*cfg, error) {
 	fs := flag.NewFlagSet("dkg-runner", flag.ContinueOnError)
 	fs.String("rpc", "http://127.0.0.1:8545", "Ethereum RPC endpoint")
 	fs.String("privkey", "", "organiser hex private key")
-	fs.String("registry", "", "DKGRegistry address")
-	fs.String("manager", "", "DKGManager address")
+	fs.String("network", "", "well-known network preset (e.g. sepolia, sep); sets manager address automatically")
+	fs.String("manager", "", "DKGManager contract address (optional when --network is set)")
 	fs.Int("nodes", 3, "number of DKG nodes to wait for")
 	fs.Int("threshold", 2, "decryption threshold")
 	fs.String("shared-dir", "/shared", "directory written with ciphertext files")
@@ -101,7 +102,7 @@ func loadCfg() (*cfg, error) {
 	c := &cfg{
 		RPC:                        v.GetString("rpc"),
 		PrivKey:                    v.GetString("privkey"),
-		Registry:                   v.GetString("registry"),
+		Network:                    v.GetString("network"),
 		Manager:                    v.GetString("manager"),
 		Nodes:                      v.GetInt("nodes"),
 		Threshold:                  v.GetInt("threshold"),
@@ -118,8 +119,13 @@ func loadCfg() (*cfg, error) {
 	if c.PrivKey == "" {
 		return nil, fmt.Errorf("--privkey required")
 	}
-	if c.Registry == "" || c.Manager == "" {
-		return nil, fmt.Errorf("--registry and --manager required")
+	if c.Network != "" {
+		if _, err := config.NetworkByName(c.Network); err != nil {
+			return nil, err
+		}
+	}
+	if c.Manager == "" && c.Network == "" {
+		return nil, fmt.Errorf("--manager or --network required")
 	}
 	if c.Nodes < 1 || c.Threshold < 1 || c.Threshold > c.Nodes {
 		return nil, fmt.Errorf("invalid --nodes / --threshold")
@@ -152,15 +158,19 @@ func runScenario(c *cfg) error {
 	ctx := context.Background()
 
 	// ── connect ──────────────────────────────────────────────────────────────
+	// Resolve manager address: explicit --manager flag takes precedence; when
+	// absent the network preset is used. All verifier addresses are derived
+	// from the manager's public immutable fields by web3.New().
+	managerAddr := c.Manager
+	if managerAddr == "" && c.Network != "" {
+		dep, err := config.NetworkByName(c.Network)
+		if err != nil {
+			return fmt.Errorf("resolve network: %w", err)
+		}
+		managerAddr = dep.Manager.Hex()
+	}
 	addrs := nodetypes.ContractAddresses{
-		Registry:               common.HexToAddress(c.Registry),
-		Manager:                common.HexToAddress(c.Manager),
-		ContributionVerifier:   common.HexToAddress(os.Getenv("CONTRIBUTION_VERIFIER")),
-		FinalizeVerifier:       common.HexToAddress(os.Getenv("FINALIZE_VERIFIER")),
-		PartialDecryptVerifier: common.HexToAddress(os.Getenv("PARTIAL_DECRYPT_VERIFIER")),
-		DecryptCombineVerifier: common.HexToAddress(os.Getenv("DECRYPT_COMBINE_VERIFIER")),
-		RevealSubmitVerifier:   common.HexToAddress(os.Getenv("REVEAL_SUBMIT_VERIFIER")),
-		RevealShareVerifier:    common.HexToAddress(os.Getenv("REVEAL_SHARE_VERIFIER")),
+		Manager: common.HexToAddress(managerAddr),
 	}
 	contracts, err := web3.New(c.RPC, addrs)
 	if err != nil {

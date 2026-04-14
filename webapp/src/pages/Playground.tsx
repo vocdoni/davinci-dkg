@@ -209,14 +209,13 @@ export function Playground() {
         publicClient,
         walletClient: wc,
         managerAddress: cfg.managerAddress,
-        registryAddress: cfg.registryAddress,
+        ...(cfg.registryAddress ? { registryAddress: cfg.registryAddress } : {}),
       });
       setWriter(w);
 
       addLog(`Connected: ${addr}`, 'success');
       addLog(`Chain: ${cfg.chainName} (id=${cfg.chainId})  RPC: ${cfg.rpcUrl}`, 'chain');
       addLog(`Manager:  ${cfg.managerAddress}`, 'chain');
-      addLog(`Registry: ${cfg.registryAddress}`, 'chain');
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       setWalletError(msg);
@@ -465,7 +464,7 @@ export function Playground() {
             <KV label="Connected address" value={address} />
             <KV label="Wallet client" value={walletClient ? 'viem WalletClient (EIP-1193)' : '–'} />
             <KV label="Manager contract" value={writer?.managerAddress ?? '–'} />
-            <KV label="Registry contract" value={writer?.registryAddress ?? '–'} />
+            <KV label="Registry contract" value={writer ? (() => { try { return writer.registryAddress; } catch { return '(auto-derive on first use)'; } })() : '–'} />
           </VStack>
         )}
       </StepCard>
