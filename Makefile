@@ -1,5 +1,5 @@
 .PHONY: help \
-        circuits-compile circuits-update-hashes circuits \
+        circuits-compile circuits-update-hashes circuits circuits-release \
         solidity-build solidity-bind solidity-deploy \
         testnet-up testnet-run testnet-down testnet-logs \
         webapp-install webapp-build webapp-dev webapp-clean \
@@ -12,6 +12,13 @@ DKG_DISCLOSURE_ALLOWED ?= false
 
 # Circuit artifact cache directory (mirrors DAVINCI_DKG_ARTIFACTS_DIR default)
 ARTIFACTS_DIR ?= $(HOME)/.davinci/artifacts
+
+# S3 / DigitalOcean Spaces settings for circuits-release
+# Override S3_ACCESS_KEY and S3_SECRET_KEY on the command line or via env.
+S3_ACCESS_KEY ?=
+S3_SECRET_KEY ?=
+S3_SPACE      ?= circuits
+S3_BUCKET     ?= dev
 
 # Deployment parameters (override on command line or via env)
 RPC_URL     ?=
@@ -30,6 +37,9 @@ help: ## Show this help message
 	@echo "  circuits              Full pipeline: compile → update hashes → Solidity build → Go bind"
 	@echo "  circuits-compile      Compile all 6 circuits; write artifacts + Solidity verifier files"
 	@echo "                        ARTIFACTS_DIR (default: ~/.davinci/artifacts)"
+	@echo "  circuits-release      Compile + upload to CDN + update hashes + Solidity rebuild"
+	@echo "                        Requires: S3_ACCESS_KEY=<key> S3_SECRET_KEY=<secret>"
+	@echo "                        Optional: S3_BUCKET=<channel> (default: dev)"
 	@echo "  circuits-update-hashes Patch config/circuit_artifacts.go with hashes from last compile"
 	@echo "  solidity-build        Build Solidity contracts (forge build)"
 	@echo "  solidity-bind         Regenerate Go ABI bindings (go_bind.sh)"
@@ -107,6 +117,27 @@ solidity-deploy: ## Deploy contracts (set RPC_URL, CHAIN_ID, PRIVATE_KEY)
 circuits: circuits-compile circuits-update-hashes solidity-build solidity-bind ## Full circuit update pipeline
 	@echo ""
 	@echo "Circuit update complete."
+
+circuits-release: ## Compile circuits, upload to CDN, update hashes, rebuild Solidity
+	@[ -n "$(S3_ACCESS_KEY)" ] || { echo "error: S3_ACCESS_KEY is not set"; exit 1; }
+	@[ -n "$(S3_SECRET_KEY)" ] || { echo "error: S3_SECRET_KEY is not set"; exit 1; }
+	@echo "Compiling circuits and uploading to CDN (bucket: $(S3_BUCKET)) ..."
+	@mkdir -p $(ARTIFACTS_DIR)
+	go run ./cmd/circuit-compile \
+		--destination=$(ARTIFACTS_DIR) \
+		--verifiers-dir=solidity/src/verifiers \
+		--output-json=$(CIRCUIT_ARTIFACTS_JSON) \
+		--s3.enabled \
+		--s3.access-key=$(S3_ACCESS_KEY) \
+		--s3.secret-key=$(S3_SECRET_KEY) \
+		--s3.space=$(S3_SPACE) \
+		--s3.bucket=$(S3_BUCKET)
+	@echo ""
+	@echo "Patching config/circuit_artifacts.go ..."
+	@bash scripts/update-circuit-hashes.sh $(CIRCUIT_ARTIFACTS_JSON) config/circuit_artifacts.go
+	@$(MAKE) solidity-build solidity-bind
+	@echo ""
+	@echo "Release complete — commit config/circuit_artifacts.go and the updated Solidity files."
 	@echo "Commit config/circuit_artifacts.go, solidity/src/verifiers/*, and solidity/bindings/*"
 
 # ── Testnet ───────────────────────────────────────────────────────────────

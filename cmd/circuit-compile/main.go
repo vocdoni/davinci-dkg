@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -41,14 +42,27 @@ func main() {
 	var destination string
 	var verifiersDir string
 	var outputJSON string
+	s3Config := NewDefaultS3Config()
 
 	flag.StringVar(&destination, "destination", circuits.BaseDir, "destination folder for cached artifacts")
 	flag.StringVar(&verifiersDir, "verifiers-dir", "solidity/src/verifiers", "destination folder for Solidity verifiers")
 	flag.StringVar(&outputJSON, "output-json", "", "optional path to write the compile result JSON (bypasses stdout, which is polluted by gnark's own logger)")
+	flag.BoolVar(&s3Config.Enabled, "s3.enabled", false, "upload compiled artifacts to DigitalOcean Spaces / S3")
+	flag.StringVar(&s3Config.AccessKey, "s3.access-key", "", "S3 / DO Spaces access key")
+	flag.StringVar(&s3Config.SecretKey, "s3.secret-key", "", "S3 / DO Spaces secret key")
+	flag.StringVar(&s3Config.Space, "s3.space", "circuits", "DO Spaces bucket name")
+	flag.StringVar(&s3Config.Bucket, "s3.bucket", "dev", "folder within the bucket (release channel)")
 	flag.Parse()
 
 	log.Init("info", "stdout", nil)
 	circuits.BaseDir = destination
+
+	if s3Config.Enabled {
+		if err := TestS3Connection(context.Background(), s3Config); err != nil {
+			log.Errorw(err, "S3 connection test failed")
+			os.Exit(1)
+		}
+	}
 
 	targets := []compileTarget{
 		{
@@ -115,6 +129,54 @@ func main() {
 	} else {
 		fmt.Println(string(encoded))
 	}
+
+	if s3Config.Enabled {
+		if err := uploadArtifacts(context.Background(), s3Config, destination, results); err != nil {
+			log.Errorw(err, "upload artifacts failed")
+			os.Exit(1)
+		}
+	}
+}
+
+// uploadArtifacts uploads all compiled circuit artifacts to S3/DO Spaces.
+// Each file is stored under its content-hash with the appropriate extension
+// (.ccs / .pk / .vk) matching the URL scheme in config/circuit_artifacts.go.
+func uploadArtifacts(ctx context.Context, s3Config *S3Config, destination string, results map[string]compiledArtifacts) error {
+	uploader, err := NewS3Uploader(s3Config)
+	if err != nil {
+		return fmt.Errorf("create uploader: %w", err)
+	}
+
+	type upload struct {
+		localPath  string
+		remoteName string
+	}
+	var uploads []upload
+	for name, a := range results {
+		_ = name
+		uploads = append(uploads,
+			upload{filepath.Join(destination, a.CircuitHash), a.CircuitHash + ".ccs"},
+			upload{filepath.Join(destination, a.ProvingKeyHash), a.ProvingKeyHash + ".pk"},
+			upload{filepath.Join(destination, a.VerifyingKeyHash), a.VerifyingKeyHash + ".vk"},
+		)
+	}
+
+	var uploadedKeys []string
+	for _, u := range uploads {
+		key, err := uploader.UploadFileAs(ctx, u.localPath, u.remoteName)
+		if err != nil {
+			return fmt.Errorf("upload %s: %w", u.remoteName, err)
+		}
+		uploadedKeys = append(uploadedKeys, key)
+	}
+
+	if err := uploader.SetPublicACL(ctx, uploadedKeys); err != nil {
+		return fmt.Errorf("set public ACL: %w", err)
+	}
+
+	log.Infow("all artifacts uploaded and made public", "count", len(uploadedKeys),
+		"space", s3Config.Space, "bucket", s3Config.Bucket)
+	return nil
 }
 
 func compileTargetArtifacts(
