@@ -40,9 +40,11 @@ type compileTarget struct {
 func main() {
 	var destination string
 	var verifiersDir string
+	var outputJSON string
 
 	flag.StringVar(&destination, "destination", circuits.BaseDir, "destination folder for cached artifacts")
 	flag.StringVar(&verifiersDir, "verifiers-dir", "solidity/src/verifiers", "destination folder for Solidity verifiers")
+	flag.StringVar(&outputJSON, "output-json", "", "optional path to write the compile result JSON (bypasses stdout, which is polluted by gnark's own logger)")
 	flag.Parse()
 
 	log.Init("info", "stdout", nil)
@@ -102,7 +104,17 @@ func main() {
 		log.Errorw(err, "marshal artifact result")
 		os.Exit(1)
 	}
-	fmt.Println(string(encoded))
+	// When --output-json is set write the result to that file so jq can
+	// parse it cleanly. Otherwise fall back to stdout for interactive use
+	// (the caller is responsible for stripping log lines).
+	if outputJSON != "" {
+		if err := os.WriteFile(outputJSON, encoded, 0o644); err != nil {
+			log.Errorw(err, "write json", "path", outputJSON)
+			os.Exit(1)
+		}
+	} else {
+		fmt.Println(string(encoded))
+	}
 }
 
 func compileTargetArtifacts(

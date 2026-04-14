@@ -20,12 +20,9 @@ RUN pnpm run build
 FROM golang:1.25 AS builder
 WORKDIR /src
 
-# Copy go module files for both the main module and the local replace-directive
-# modules (davinci-node/, gnark-crypto-primitives/) so the download layer
-# is cached independently of source changes.
+# Copy go module files first so the download layer is cached independently
+# of source changes.
 COPY go.mod go.sum ./
-COPY davinci-node/go.mod davinci-node/go.sum ./davinci-node/
-COPY gnark-crypto-primitives/go.mod gnark-crypto-primitives/go.sum ./gnark-crypto-primitives/
 
 RUN --mount=type=cache,target=/go/pkg/mod \
     go mod download

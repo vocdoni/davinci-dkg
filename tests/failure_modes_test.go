@@ -171,6 +171,8 @@ func TestRoundCanFinalizeWithMissingContributorWhenPolicyPermits(t *testing.T) {
 		Threshold:                 2,
 		CommitteeSize:             3,
 		MinValidContributions:     2,
+		LotteryAlphaBps:           helpers.DefaultLotteryAlphaBps,
+		SeedDelay:                 helpers.DefaultSeedDelay,
 		RegistrationDeadlineBlock: head + 25,
 		ContributionDeadlineBlock: head + 50,
 		DisclosureAllowed:         false,
@@ -178,7 +180,7 @@ func TestRoundCanFinalizeWithMissingContributorWhenPolicyPermits(t *testing.T) {
 
 	roundID, err := helpers.CreateRound(ctx, services, policy)
 	c.Assert(err, qt.IsNil)
-	c.Assert(helpers.ClaimSlot(ctx, services, roundID), qt.IsNil)
+	c.Assert(helpers.MineBlocks(ctx, services, uint64(policy.SeedDelay)+1), qt.IsNil)
 	c.Assert(helpers.ClaimSlot(ctx, services, roundID), qt.IsNil)
 	c.Assert(helpers.ClaimSlotAs(ctx, actor1, roundID), qt.IsNil)
 	c.Assert(helpers.ClaimSlotAs(ctx, actor2, roundID), qt.IsNil)

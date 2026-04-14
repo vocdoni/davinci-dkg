@@ -27,13 +27,15 @@ func TestGasProfiles(t *testing.T) {
 		Threshold:                 1,
 		CommitteeSize:             1,
 		MinValidContributions:     1,
+		LotteryAlphaBps:           helpers.DefaultLotteryAlphaBps,
+		SeedDelay:                 helpers.DefaultSeedDelay,
 		RegistrationDeadlineBlock: head + 25,
 		ContributionDeadlineBlock: head + 50,
 		DisclosureAllowed:         true,
 	}
 
 	roundID, createGas := createRoundForGasProfile(t, ctx, policy)
-	signalGas := signalReadinessForGasProfile(t, ctx, roundID)
+	signalGas := signalReadinessForGasProfile(t, ctx, roundID, policy)
 	selectGas := selectParticipantForGasProfile(t, ctx, roundID, policy)
 	contributionGas := submitContributionForGasProfile(t, ctx, roundID)
 	finalizeGas := finalizeForGasProfile(t, ctx, roundID)
@@ -96,9 +98,12 @@ func createRoundForGasProfile(t *testing.T, ctx context.Context, policy types.Ro
 	return helpers.ComputeRoundID(prefix, currentNonce+1), receipt.GasUsed
 }
 
-func signalReadinessForGasProfile(t *testing.T, ctx context.Context, roundID [12]byte) uint64 {
+func signalReadinessForGasProfile(t *testing.T, ctx context.Context, roundID [12]byte, policy types.RoundPolicy) uint64 {
 	t.Helper()
 	c := qt.New(t)
+
+	// Advance past the seed block so the lottery blockhash is available.
+	c.Assert(helpers.MineBlocks(ctx, services, uint64(policy.SeedDelay)+1), qt.IsNil)
 
 	auth, err := services.TxManager.NewTransactOpts(ctx)
 	c.Assert(err, qt.IsNil)
@@ -111,26 +116,11 @@ func signalReadinessForGasProfile(t *testing.T, ctx context.Context, roundID [12
 	return receipt.GasUsed
 }
 
-func selectParticipantForGasProfile(t *testing.T, ctx context.Context, roundID [12]byte, policy types.RoundPolicy) uint64 {
-	t.Helper()
-	c := qt.New(t)
-
-	head, err := services.Contracts.Client().BlockNumber(ctx)
-	c.Assert(err, qt.IsNil)
-	if head <= policy.RegistrationDeadlineBlock {
-		err = helpers.MineBlocks(ctx, services, policy.RegistrationDeadlineBlock-head+1)
-		c.Assert(err, qt.IsNil)
-	}
-
-	auth, err := services.TxManager.NewTransactOpts(ctx)
-	c.Assert(err, qt.IsNil)
-	tx, err := services.Manager.ClaimSlot(auth, roundID)
-	c.Assert(err, qt.IsNil)
-	c.Assert(services.TxManager.WaitTxByHash(tx.Hash(), helpers.DefaultTxTimeout), qt.IsNil)
-	receipt, err := services.Contracts.Client().TransactionReceipt(ctx, tx.Hash())
-	c.Assert(err, qt.IsNil)
-
-	return receipt.GasUsed
+// selectParticipantForGasProfile previously measured a dedicated SelectParticipants
+// organizer call that no longer exists: committee membership is now determined
+// entirely by ClaimSlot (measured in signalReadinessForGasProfile above).
+func selectParticipantForGasProfile(_ *testing.T, _ context.Context, _ [12]byte, _ types.RoundPolicy) uint64 {
+	return 0
 }
 
 func submitContributionForGasProfile(t *testing.T, ctx context.Context, roundID [12]byte) uint64 {

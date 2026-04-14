@@ -32,6 +32,8 @@ func TestCommitteeRoundHappyPath(t *testing.T) {
 		Threshold:                 2,
 		CommitteeSize:             3,
 		MinValidContributions:     2,
+		LotteryAlphaBps:           helpers.DefaultLotteryAlphaBps,
+		SeedDelay:                 helpers.DefaultSeedDelay,
 		RegistrationDeadlineBlock: head + 25,
 		ContributionDeadlineBlock: head + 50,
 		DisclosureAllowed:         true,

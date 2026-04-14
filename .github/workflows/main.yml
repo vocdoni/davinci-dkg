@@ -135,12 +135,15 @@ jobs:
         run: forge test -vvv
 
   # ---------------------------------------------------------------------------
-  # Go unit tests (no chain, no proofs — fast path)
+  # Go unit tests (no chain, no proofs — fast path). Runs on self-hosted
+  # to match davinci-node's pattern: Go tests in this project exercise
+  # Groth16 trusted-setup code paths whose performance on GitHub-hosted
+  # runners is 5–10× slower than on our dedicated boxes.
   # ---------------------------------------------------------------------------
   job_go_unit_test:
     name: Go Unit Tests
     needs: job_webapp
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted]
     env:
       LOG_LEVEL: debug
       RUN_INTEGRATION_TESTS: "false"
@@ -168,12 +171,15 @@ jobs:
             -failfast
 
   # ---------------------------------------------------------------------------
-  # Go integration tests (Anvil + Docker Compose deployer)
+  # Go integration tests (Anvil + Docker Compose deployer). Self-hosted:
+  # the pre-step regenerates all six Groth16 circuits via a trusted setup
+  # (MaxN=16 contribution circuit alone ≈ 90 s), so a cold GitHub-hosted
+  # runner would easily triple the job duration.
   # ---------------------------------------------------------------------------
   job_go_integration_test:
     name: Go Integration Tests
     needs: job_webapp
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted]
     env:
       LOG_LEVEL: debug
       RUN_INTEGRATION_TESTS: "true"
@@ -195,19 +201,30 @@ jobs:
           name: webapp-dist
           path: webapp/dist/
 
-      # Restore the circuit proving/verifying key cache keyed on the pinned
-      # hashes in config/circuit_artifacts.go. This is the SAME cache that
-      # go-test-circuits.yml populates on the circuits/** branch paths, so a
-      # hash-stable run is expected to hit it. Without this step the Go
-      # prover falls back to a local trusted setup whose verifying key does
-      # not match the Solidity verifiers' baked-in vkey, and every
-      # submitContribution reverts with ProofInvalid().
-      - name: Restore circuit artifact cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.davinci/artifacts
-          key: circuits-${{ hashFiles('config/circuit_artifacts.go') }}
-          restore-keys: circuits-
+      # Groth16 trusted setup is randomized: every invocation of
+      # `circuit-compile` produces a fresh proving key and verifying key
+      # with a new pair of hashes. The committed config/circuit_artifacts.go
+      # and solidity/src/verifiers/*_vkey.sol files are snapshots of one
+      # past setup run whose artifacts no CI runner has on disk. If we just
+      # run the test with the committed hashes, the Go prover falls back to
+      # a local setup whose vk does not match the deployed Solidity
+      # verifier, and every submitContribution reverts with
+      # ProofInvalid() (selector 0x7fcdd1f4).
+      #
+      # The fix is to regenerate *both* halves together in the same job:
+      # circuits-compile writes pk/vk to ~/.davinci/artifacts and rewrites
+      # solidity/src/verifiers/*_vkey.sol; circuits-update-hashes patches
+      # config/circuit_artifacts.go and the PROVING_KEY_HASH constants in
+      # the verifier wrappers; solidity-build recompiles the contracts with
+      # the fresh vkey. The integration test then sees a self-consistent
+      # triple (Go pk ↔ pinned hashes ↔ Solidity verifier vk) all coming
+      # from the same trusted setup run.
+      #
+      # Cost: ~3–5 minutes per run (dominated by contribution + finalize
+      # trusted setup at MaxN=16). Caching is not worthwhile — Setup is
+      # non-deterministic so each run's output is fresh regardless.
+      - name: Regenerate circuit artifacts and Solidity verifiers
+        run: make circuits-compile circuits-update-hashes solidity-build
 
       - name: Run integration tests
         if: github.event.pull_request.draft != true

@@ -75,7 +75,7 @@ circuits-compile: ## Compile all circuits; write artifacts and Solidity verifier
 	go run ./cmd/circuit-compile \
 		--destination=$(ARTIFACTS_DIR) \
 		--verifiers-dir=solidity/src/verifiers \
-		| tee $(CIRCUIT_ARTIFACTS_JSON)
+		--output-json=$(CIRCUIT_ARTIFACTS_JSON)
 	@echo ""
 	@echo "Artifacts written to $(ARTIFACTS_DIR)"
 	@echo "Solidity verifiers updated in solidity/src/verifiers"

@@ -5,7 +5,6 @@ import (
 	"math/big"
 	"testing"
 
-	"github.com/ethereum/go-ethereum/common"
 	qt "github.com/frankban/quicktest"
 	"github.com/vocdoni/davinci-dkg/tests/helpers"
 	"github.com/vocdoni/davinci-dkg/types"
@@ -71,7 +70,7 @@ func TestSecretDisclosureHappyPath(t *testing.T) {
 	record, err := helpers.WaitRevealedShare(ctx, services, result.RoundID, services.TxManager.Address())
 	c.Assert(err, qt.IsNil)
 	c.Assert(record.Accepted, qt.IsTrue)
-	c.Assert(record.ShareHash, qt.Equals, common.Hash(submission.ShareHash))
+	// shareHash is no longer persisted in storage; it lives in the RevealedShareSubmitted event.
 
 	round, err := services.Contracts.GetRound(ctx, result.RoundID)
 	c.Assert(err, qt.IsNil)

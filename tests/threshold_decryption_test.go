@@ -5,7 +5,6 @@ import (
 	"math/big"
 	"testing"
 
-	"github.com/ethereum/go-ethereum/common"
 	qt "github.com/frankban/quicktest"
 	"github.com/vocdoni/davinci-dkg/tests/helpers"
 	"github.com/vocdoni/davinci-dkg/types"
@@ -74,7 +73,7 @@ func TestThresholdDecryptionHappyPath(t *testing.T) {
 	record, err := helpers.WaitCombinedDecryption(ctx, services, result.RoundID, 1)
 	c.Assert(err, qt.IsNil)
 	c.Assert(record.Completed, qt.IsTrue)
-	c.Assert(record.PlaintextHash, qt.Equals, common.Hash(combine.PlaintextHash))
+	// combineHash + plaintextHash are no longer persisted in storage; they live in the DecryptionCombined event.
 }
 
 func TestThresholdDecryptionSupportsMultipleCiphertextsPerRound(t *testing.T) {
@@ -161,6 +160,6 @@ func TestThresholdDecryptionSupportsMultipleCiphertextsPerRound(t *testing.T) {
 		record, err := helpers.WaitCombinedDecryption(ctx, services, result.RoundID, ciphertextIndex)
 		c.Assert(err, qt.IsNil)
 		c.Assert(record.Completed, qt.IsTrue)
-		c.Assert(record.PlaintextHash, qt.Equals, common.Hash(combine.PlaintextHash))
+		// combineHash + plaintextHash are no longer persisted in storage; they live in the DecryptionCombined event.
 	}
 }
