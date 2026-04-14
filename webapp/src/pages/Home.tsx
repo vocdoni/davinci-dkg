@@ -13,6 +13,7 @@ import { ErrorBanner } from '../components/ErrorBanner';
 import { StatusBadge } from '../components/StatusBadge';
 import { HashCell } from '../components/HashCell';
 import {
+  useActiveNodeCount,
   useChainTip,
   useConfig,
   useRecentRounds,
@@ -39,6 +40,7 @@ export function Home() {
   const cfg = useConfig();
   const nonce = useRoundNonce();
   const registryCount = useRegistry();
+  const activeNodes = useActiveNodeCount();
   const tip = useChainTip();
   const recent = useRecentRounds(5);
 
@@ -53,8 +55,12 @@ export function Home() {
           value={nonce.data !== undefined ? nonce.data.toString() : '…'}
         />
         <StatCard
-          label="Registered nodes"
-          value={registryCount.data !== undefined ? registryCount.data.toString() : '…'}
+          label="Active / total nodes"
+          value={
+            activeNodes.data !== undefined && registryCount.data !== undefined
+              ? `${activeNodes.data.toString()} / ${registryCount.data.toString()}`
+              : '…'
+          }
         />
         <StatCard
           label="Latest block"

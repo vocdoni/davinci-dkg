@@ -108,9 +108,9 @@ jobs:
           fi
 
       - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v8
         with:
-          version: v1.64
+          version: v2.5
 
   # ---------------------------------------------------------------------------
   # Solidity contract tests
@@ -194,6 +194,20 @@ jobs:
         with:
           name: webapp-dist
           path: webapp/dist/
+
+      # Restore the circuit proving/verifying key cache keyed on the pinned
+      # hashes in config/circuit_artifacts.go. This is the SAME cache that
+      # go-test-circuits.yml populates on the circuits/** branch paths, so a
+      # hash-stable run is expected to hit it. Without this step the Go
+      # prover falls back to a local trusted setup whose verifying key does
+      # not match the Solidity verifiers' baked-in vkey, and every
+      # submitContribution reverts with ProofInvalid().
+      - name: Restore circuit artifact cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.davinci/artifacts
+          key: circuits-${{ hashFiles('config/circuit_artifacts.go') }}
+          restore-keys: circuits-
 
       - name: Run integration tests
         if: github.event.pull_request.draft != true

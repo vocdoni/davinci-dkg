@@ -22,4 +22,4 @@ forge test --gas-report
 
 - `script/DeployAll.s.sol` deploys verifier wrappers and the core contracts.
 - `script/Deploy.s.sol` is a thin single-entry wrapper kept for parity with typical Foundry workflows.
-- `../testenv/deploy.sh` is the Docker-friendly local deploy path used by the Go integration tests.
+- `../testnet/deploy.sh` is the Docker-friendly local deploy path reused by both the multi-node testnet (`testnet/docker-compose.yml`) and the Go integration-test harness (`tests/docker/docker-compose.yml`).

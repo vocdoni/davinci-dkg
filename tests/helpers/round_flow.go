@@ -25,9 +25,24 @@ type FinalizedRoundResult struct {
 	ShareCommitments         []types.CurvePoint
 }
 
+// DefaultLotteryAlphaBps is the over-subscription factor applied to integration
+// test round policies when the caller leaves LotteryAlphaBps at zero. Matches
+// the runtime default used by cmd/dkg-runner.
+const DefaultLotteryAlphaBps uint16 = 15000
+
+// DefaultSeedDelay is the seed-block offset used by integration test policies
+// when the caller does not specify one. Matches cmd/dkg-runner.
+const DefaultSeedDelay uint16 = 1
+
 func CreateContributionRound(ctx context.Context, services *TestServices, policy types.RoundPolicy) ([12]byte, error) {
 	var zero [12]byte
 
+	if policy.LotteryAlphaBps == 0 {
+		policy.LotteryAlphaBps = DefaultLotteryAlphaBps
+	}
+	if policy.SeedDelay == 0 {
+		policy.SeedDelay = DefaultSeedDelay
+	}
 	if err := policy.Validate(); err != nil {
 		return zero, err
 	}

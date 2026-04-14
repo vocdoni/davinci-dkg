@@ -80,8 +80,6 @@ type RevealShareSubmission struct {
 }
 
 var (
-	artifactsBaseDirOnce      sync.Once
-	artifactsBaseDirErr       error
 	contributionRuntimeOnce   sync.Once
 	contributionRuntime       *circuits.CircuitRuntime
 	contributionRuntimeErr    error
@@ -603,14 +601,15 @@ func witnessVectorBigInts(vector any) ([]*big.Int, error) {
 	return values, nil
 }
 
+// ensureArtifactsBaseDir is a no-op retained so the existing call sites keep
+// compiling without edits. The circuits package's init() already points
+// BaseDir at $DAVINCI_DKG_ARTIFACTS_DIR (or ~/.davinci/artifacts), which is
+// the same location maintained by go-test-circuits.yml's actions/cache step
+// and by `make circuits`. Overriding to an in-repo `artifacts/` directory
+// (the previous behavior) is unsafe because that directory is .gitignore'd
+// and almost always stale; the override caused integration tests to fall
+// back to a local trusted setup whose vkey did not match the on-chain
+// verifier, producing ProofInvalid() reverts.
 func ensureArtifactsBaseDir() error {
-	artifactsBaseDirOnce.Do(func() {
-		path, err := repoPath("artifacts")
-		if err != nil {
-			artifactsBaseDirErr = err
-			return
-		}
-		circuits.BaseDir = path
-	})
-	return artifactsBaseDirErr
+	return nil
 }

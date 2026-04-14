@@ -196,9 +196,12 @@ func runScenario(c *cfg) error {
 	if err != nil {
 		return err
 	}
-	// New lottery flow: every registered node is eligible (α × committeeSize ≥ R),
-	// committee fills first-come-first-served via claimSlot.
-	const lotteryAlphaBps uint16 = 10000 // α = 1.0
+	// Lottery: each active node passes a keccak256(seed ‖ addr) < threshold
+	// check independently. We oversubscribe by 1.5× so spare eligibles can
+	// absorb last-moment no-shows without triggering an extendRegistration
+	// reseed. On average ~1.5 × committeeSize nodes pass the check; the first
+	// committeeSize to call claimSlot fill the committee.
+	const lotteryAlphaBps uint16 = 15000 // α = 1.5
 	const seedDelay uint16 = 1           // 1 block gap between createRound and seedBlock
 	tx, err := manager.CreateRound(auth, t, n, t,
 		lotteryAlphaBps, seedDelay,

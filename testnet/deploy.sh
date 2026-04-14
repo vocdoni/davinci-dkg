@@ -36,14 +36,24 @@ if [ ! -f "$BROADCAST" ]; then
   exit 1
 fi
 
-REGISTRY=$(jq -r '.transactions[] | select(.contractName=="DKGRegistry") | .contractAddress' "$BROADCAST")
-MANAGER=$(jq -r '.transactions[] | select(.contractName=="DKGManager") | .contractAddress' "$BROADCAST")
-CONTRIBUTION_VERIFIER=$(jq -r '.transactions[] | select(.contractName=="ContributionVerifier") | .contractAddress' "$BROADCAST")
-FINALIZE_VERIFIER=$(jq -r '.transactions[] | select(.contractName=="FinalizeVerifier") | .contractAddress' "$BROADCAST")
-PARTIAL_DECRYPT_VERIFIER=$(jq -r '.transactions[] | select(.contractName=="PartialDecryptVerifier") | .contractAddress' "$BROADCAST")
-DECRYPT_COMBINE_VERIFIER=$(jq -r '.transactions[] | select(.contractName=="DecryptCombineVerifier") | .contractAddress' "$BROADCAST")
-REVEAL_SUBMIT_VERIFIER=$(jq -r '.transactions[] | select(.contractName=="RevealSubmitVerifier") | .contractAddress' "$BROADCAST")
-REVEAL_SHARE_VERIFIER=$(jq -r '.transactions[] | select(.contractName=="RevealShareVerifier") | .contractAddress' "$BROADCAST")
+# Only match CREATE transactions — otherwise post-deploy CALL transactions
+# (e.g. `registry.setManager(manager)`) show up under the same `contractName`
+# and make jq return duplicate addresses, corrupting addresses.env.
+extract_address() {
+  local name="$1"
+  jq -r --arg name "$name" \
+    '.transactions[] | select(.contractName==$name and .transactionType=="CREATE") | .contractAddress' \
+    "$BROADCAST"
+}
+
+REGISTRY=$(extract_address DKGRegistry)
+MANAGER=$(extract_address DKGManager)
+CONTRIBUTION_VERIFIER=$(extract_address ContributionVerifier)
+FINALIZE_VERIFIER=$(extract_address FinalizeVerifier)
+PARTIAL_DECRYPT_VERIFIER=$(extract_address PartialDecryptVerifier)
+DECRYPT_COMBINE_VERIFIER=$(extract_address DecryptCombineVerifier)
+REVEAL_SUBMIT_VERIFIER=$(extract_address RevealSubmitVerifier)
+REVEAL_SHARE_VERIFIER=$(extract_address RevealShareVerifier)
 
 cat > "$OUTPUT_DIR/addresses.env" <<EOF
 REGISTRY=$REGISTRY

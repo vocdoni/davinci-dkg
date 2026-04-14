@@ -26,8 +26,10 @@ contract DKGManagerTest is Test, TestHelpers {
     MockRevealShareVerifier public revealShareVerifier;
     DKGManager public manager;
 
+    uint64 internal constant INACTIVITY_WINDOW = 1_000;
+
     function setUp() public {
-        registry = new DKGRegistry();
+        registry = new DKGRegistry(INACTIVITY_WINDOW);
         registry.registerKey(101, 201);
         vm.prank(address(0xBEEF));
         registry.registerKey(102, 202);
@@ -47,6 +49,9 @@ contract DKGManagerTest is Test, TestHelpers {
             address(revealSubmitVerifier),
             address(revealShareVerifier)
         );
+        // Wire the liveness callback so submitContribution can refresh
+        // the contributor's lastActiveBlock on the registry.
+        registry.setManager(address(manager));
     }
 
     function createSelectedRound() internal returns (bytes12 roundId) {
@@ -662,6 +667,83 @@ contract DKGManagerTest is Test, TestHelpers {
             revealShareProof(),
             revealShareInput(roundId, 2, 2, DISCLOSURE_HASH, RECONSTRUCTED_SECRET_HASH)
         );
+    }
+
+    // ── liveness integration ───────────────────────────────────────────────
+
+    function test_CreateRound_UsesActiveCountAsDenominator() public {
+        // Register a third node that we'll reap before the round is created.
+        address ghost = address(0xDEAD);
+        vm.prank(ghost);
+        registry.registerKey(33, 44);
+        assertEq(registry.activeCount(), 3);
+        assertEq(registry.nodeCount(), 3);
+
+        // Age the ghost out and reap.
+        vm.roll(block.number + INACTIVITY_WINDOW + 1);
+        registry.reap(ghost);
+        assertEq(registry.activeCount(), 2);
+        assertEq(registry.nodeCount(), 3);
+
+        // Round created now sees registered = activeCount = 2, not 3.
+        bytes12 roundId = _createLotteryRound(false);
+
+        // With α=1.0 and active=2, the threshold should be uint256.max
+        // (numerator 20000 ≥ 10000) — same as the vanilla 2-node setup.
+        IDKGManager.Round memory round = manager.getRound(roundId);
+        assertEq(round.lotteryThreshold, type(uint256).max);
+    }
+
+    function test_ClaimSlot_RejectsReapedNode() public {
+        // Reap address(0xBEEF) (one of the two registered test nodes).
+        vm.roll(block.number + INACTIVITY_WINDOW + 1);
+        registry.reap(address(0xBEEF));
+
+        // Start a fresh round with activeCount = 1.
+        bytes12 roundId = manager.createRound(
+            1,
+            1,
+            1,
+            10000,
+            1,
+            uint64(block.number + 5),
+            uint64(block.number + 20),
+            false
+        );
+        vm.roll(block.number + 2);
+
+        // Reaped node cannot claim — the existing status check in claimSlot
+        // now triggers because the registry flipped them to INACTIVE.
+        vm.prank(address(0xBEEF));
+        vm.expectRevert(IDKGManager.NotRegistered.selector);
+        manager.claimSlot(roundId);
+
+        // The still-active node can.
+        manager.claimSlot(roundId);
+    }
+
+    function test_SubmitContribution_RefreshesLastActiveBlock() public {
+        bytes12 roundId = createSelectedRound();
+
+        // Record the pre-contribution lastActiveBlock for address(this).
+        uint64 before = registry.getNode(address(this)).lastActiveBlock;
+
+        // Advance a few blocks so the SSTORE actually changes value.
+        vm.roll(block.number + 10);
+
+        manager.submitContribution(
+            roundId,
+            1,
+            CONTRIBUTION_COMMITMENTS_HASH,
+            CONTRIBUTION_ENCRYPTED_SHARES_HASH,
+            contributionTranscript(2),
+            contributionProof(),
+            contributionInput(roundId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH)
+        );
+
+        uint64 afterBlock = registry.getNode(address(this)).lastActiveBlock;
+        assertEq(uint256(afterBlock), block.number);
+        assertTrue(afterBlock > before);
     }
 
     function test_AbortRound_PersistsAbortedStatus() public {

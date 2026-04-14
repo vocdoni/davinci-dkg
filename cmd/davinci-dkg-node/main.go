@@ -48,6 +48,11 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Emit the full startup banner *after* EnsureRegistered so the on-chain
+	// snapshot reflects the post-registration state (status=ACTIVE, fresh
+	// lastActiveBlock).
+	node.LogStartupSnapshot(ctx, cfg)
+
 	go node.Run(ctx, cfg.PollInterval)
 	waitForSignal()
 }

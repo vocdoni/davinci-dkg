@@ -138,6 +138,32 @@ export function useRegistry() {
   });
 }
 
+export function useActiveNodeCount() {
+  return useQuery({
+    queryKey: ['registry-active-count'],
+    queryFn: async () => {
+      const cfg = await loadConfig();
+      const r = await registry(cfg);
+      const count = (await r.read.activeCount()) as bigint;
+      return count;
+    },
+  });
+}
+
+export function useInactivityWindow() {
+  return useQuery({
+    queryKey: ['registry-inactivity-window'],
+    queryFn: async () => {
+      const cfg = await loadConfig();
+      const r = await registry(cfg);
+      const window = (await r.read.INACTIVITY_WINDOW()) as bigint;
+      return window;
+    },
+    staleTime: Infinity,
+    refetchInterval: false,
+  });
+}
+
 export function useRoundEvents(roundId: `0x${string}` | undefined) {
   return useQuery({
     queryKey: ['round-events', roundId],

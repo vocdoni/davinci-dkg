@@ -220,15 +220,30 @@ you invoke `go build` directly, first run `make webapp-build`.
 
 First-run behaviour (identical for all three install options):
 
-1. The node derives a BabyJubJub encryption key from your Ethereum private
-   key and calls `DKGRegistry.registerKey(pubX, pubY)` once. This is the
-   **only** time you pay registration gas. On subsequent starts the node
-   detects it is already registered and skips the call.
-2. After registration the node polls `DKGManager` for active rounds and
+1. The node derives a BabyJubJub encryption key from your Ethereum
+   private key, reads its current registry row, and depending on what it
+   finds either calls `registerKey` (first time), `updateKey` (key needs
+   rotation or previous row was `INACTIVE`, which auto-reactivates), or
+   skips the call entirely (already `ACTIVE` with the right key).
+2. Immediately after, the node prints a verbose startup banner: local
+   config (identity, RPC, contracts, poll interval, webapp settings),
+   on-chain state (chain head, round prefix + nonce, `nodeCount`,
+   `activeCount`, `INACTIVITY_WINDOW`), and its own registry row
+   (`status`, `lastActiveBlock`, `blocksSinceActive`, and the remaining
+   liveness budget before reap). Grepping the logs for `self:` is usually
+   the fastest way to see whether you joined the network correctly.
+3. From then on the node polls `DKGManager` for active rounds and
    reacts to every phase it is eligible for (`claimSlot`, then
    `submitContribution`, then `submitPartialDecryption`, and so on).
-3. Each phase emits a structured log line (`log.level=info` by default).
-   Enable `log.level=debug` if you want the full protocol trace.
+4. **Liveness is automatic.** Every poll tick the node refreshes its
+   own `lastActiveBlock` if it has drifted past 80% of
+   `INACTIVITY_WINDOW` (by sending `heartbeat()`), and if the row has
+   been reaped out-of-band it immediately calls `reactivate()` to
+   rejoin the active set. You never need to touch the registry
+   manually unless you want to rotate your BabyJubJub key.
+5. Each phase emits a structured log line (`log.level=info` by
+   default). Enable `log.level=debug` if you want the full protocol
+   trace.
 
 ```bash
 # With Docker Compose (Option A):
@@ -256,10 +271,13 @@ Three independent checks:
    "Active" badge and its BabyJubJub public key.
 2. **On-chain**: `cast call $REGISTRY "getNode(address)(address,uint256,uint256,uint8)" $YOUR_ADDR`
    against your RPC should return a non-zero public key.
-3. **Logs**: on startup the node prints
-   `starting davinci-dkg-node` followed by either
-   `registering key …` (first run) or `node already registered`. A
-   healthy node then cycles through `polling for rounds` messages.
+3. **Logs**: on startup the node prints a banner delimited by
+   `==================== davinci-dkg-node startup ====================`
+   lines. Inside you should see a `self: registry row` entry with
+   `status=ACTIVE` and a recent `lastActiveBlock`, plus a `self: liveness
+   budget` entry showing `blocksUntilReap > 0`. A healthy node then
+   cycles through poll ticks; `liveness: heartbeat` and `liveness:
+   reactivate` entries appear only when the mechanism actually kicks in.
 
 When the next round is created you will see `claiming slot`, `submitting
 contribution`, and so on. Every phase emits a log line with the round ID
@@ -478,6 +496,34 @@ of storage.
 - *Liveness under node failure.* If fewer than `committeeSize` eligible nodes
   claim before `registrationDeadlineBlock`, `extendRegistration` reseeds and
   reopens — no round is stuck waiting for a node that went offline.
+
+**Keeping the registry honest.** `DKGRegistry` is append-only at the storage
+level, but it tracks an `activeCount` alongside `nodeCount` and a
+per-operator `lastActiveBlock` that `DKGManager` refreshes on every
+accepted contribution (via a one-shot `setManager` callback). The lottery
+uses `activeCount` as the denominator, not `nodeCount`, so stragglers are
+automatically excluded the moment they are demoted. Any address can call
+`reap(operator)` once
+`block.number > lastActiveBlock + INACTIVITY_WINDOW`; the target flips to
+`INACTIVE`, `activeCount--`, and a reaped node's subsequent `claimSlot`
+calls revert. An operator who is simply unlucky — healthy, but never
+selected — can call the cheap `heartbeat()` entry point to refresh their
+timestamp; reaped operators rejoin via `reactivate()` (or by rotating
+their key with `updateKey`). The per-round cost of this mechanism is a
+single cross-contract SSTORE on each successful `submitContribution`, and
+none of the other phases pay anything.
+
+```bash
+# Demote a known-dead operator (permissionless, anyone can call).
+cast send $DKG_REGISTRY "reap(address)" 0xDeadOperator --rpc-url $RPC_URL --private-key $KEY
+
+# Self-refresh as an unlucky-but-healthy operator.
+cast send $DKG_REGISTRY "heartbeat()" --rpc-url $RPC_URL --private-key $KEY
+```
+
+`INACTIVITY_WINDOW` is set once at registry deployment (default: 50 400
+blocks ≈ 7 days at 12-second block time, overridable via the
+`INACTIVITY_WINDOW` env var on `make solidity-deploy`).
 
 ### Threshold Decryption
 

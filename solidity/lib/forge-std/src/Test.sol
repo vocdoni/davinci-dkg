@@ -17,4 +17,12 @@ abstract contract Test {
     function assertEq(address left, address right) internal pure {
         require(left == right, "assertEq(address)");
     }
+
+    function assertTrue(bool condition) internal pure {
+        require(condition, "assertTrue");
+    }
+
+    function assertFalse(bool condition) internal pure {
+        require(!condition, "assertFalse");
+    }
 }

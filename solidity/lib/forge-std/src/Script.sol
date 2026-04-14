@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 interface VmSafe {
     function envUint(string calldata name) external returns (uint256);
+    function envOr(string calldata name, uint256 defaultValue) external returns (uint256);
     function startBroadcast(uint256 privateKey) external;
     function stopBroadcast() external;
 }
@@ -13,4 +14,5 @@ abstract contract Script {
 
 library console {
     function log(string memory, address) internal pure {}
+    function log(string memory, uint256) internal pure {}
 }

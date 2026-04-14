@@ -278,6 +278,27 @@ export const dkgRegistryAbi = [
   },
   {
     type: 'function',
+    name: 'activeCount',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'uint64' }],
+  },
+  {
+    type: 'function',
+    name: 'INACTIVITY_WINDOW',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'uint64' }],
+  },
+  {
+    type: 'function',
+    name: 'isActive',
+    stateMutability: 'view',
+    inputs: [{ name: 'operator', type: 'address' }],
+    outputs: [{ name: '', type: 'bool' }],
+  },
+  {
+    type: 'function',
     name: 'getNode',
     stateMutability: 'view',
     inputs: [{ name: 'operator', type: 'address' }],
@@ -290,6 +311,7 @@ export const dkgRegistryAbi = [
           { name: 'pubX', type: 'uint256' },
           { name: 'pubY', type: 'uint256' },
           { name: 'status', type: 'uint8' },
+          { name: 'lastActiveBlock', type: 'uint64' },
         ],
       },
     ],
@@ -312,7 +334,58 @@ export const dkgRegistryAbi = [
       { name: 'pubY', type: 'uint256', indexed: false },
     ],
   },
+  {
+    type: 'event',
+    name: 'NodeMarkedActive',
+    inputs: [
+      { name: 'operator', type: 'address', indexed: true },
+      { name: 'atBlock', type: 'uint64', indexed: false },
+    ],
+  },
+  {
+    type: 'event',
+    name: 'NodeReaped',
+    inputs: [
+      { name: 'operator', type: 'address', indexed: true },
+      { name: 'lastActiveBlock', type: 'uint64', indexed: false },
+    ],
+  },
+  {
+    type: 'event',
+    name: 'NodeReactivated',
+    inputs: [{ name: 'operator', type: 'address', indexed: true }],
+  },
 ] as const;
+
+export const NodeStatus = {
+  None: 0,
+  Active: 1,
+  Inactive: 2,
+} as const;
+
+export const nodeStatusLabel = (status: number): string => {
+  switch (status) {
+    case NodeStatus.None:
+      return 'None';
+    case NodeStatus.Active:
+      return 'Active';
+    case NodeStatus.Inactive:
+      return 'Inactive';
+    default:
+      return `Unknown (${status})`;
+  }
+};
+
+export const nodeStatusColor = (status: number): string => {
+  switch (status) {
+    case NodeStatus.Active:
+      return 'green';
+    case NodeStatus.Inactive:
+      return 'orange';
+    default:
+      return 'gray';
+  }
+};
 
 // Round status enum values mirror DKGTypes.RoundStatus.
 export const RoundStatus = {

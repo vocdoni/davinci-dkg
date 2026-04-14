@@ -189,9 +189,12 @@ contract DKGManager is IDKGManager {
                 || contributionDeadlineBlock <= registrationDeadlineBlock
         ) revert InvalidPolicy();
 
-        // Snapshot the registered node count and derive the per-node lottery threshold
-        // so that on average `lotteryAlpha × committeeSize` nodes pass.
-        uint256 registered = uint256(IDKGRegistry(REGISTRY).nodeCount());
+        // Snapshot the currently ACTIVE node count and derive the per-node lottery
+        // threshold so that on average `lotteryAlpha × committeeSize` live nodes pass.
+        // Using activeCount (rather than nodeCount) keeps the lottery denominator
+        // aligned with the set of nodes that can actually produce a contribution —
+        // reaped stragglers are automatically excluded.
+        uint256 registered = uint256(IDKGRegistry(REGISTRY).activeCount());
         if (registered == 0) revert InvalidPolicy();
         // numerator = α × committeeSize (in basis points domain); 10000 = α × 1.0
         // expectedPass = registered × (numerator / 10000)
@@ -448,6 +451,11 @@ contract DKGManager is IDKGManager {
         rec.commitmentVectorDigest = commitmentDigest;
         rec.accepted = true;
         round.contributionCount++;
+
+        // Refresh the contributor's liveness timestamp on the registry.
+        // A successful proof-gated contribution is the strongest possible
+        // signal that the operator is alive and well-configured.
+        IDKGRegistry(REGISTRY).markActive(msg.sender);
 
         emit ContributionSubmitted(roundId, msg.sender, contributorIndex, commitmentsHash, encryptedSharesHash);
     }

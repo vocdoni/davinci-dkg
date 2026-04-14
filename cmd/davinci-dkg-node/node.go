@@ -138,6 +138,115 @@ func deriveBJJSecret(ethPrivKey string) (*big.Int, error) {
 	return s, nil
 }
 
+// LogStartupSnapshot emits a verbose banner describing the node's runtime
+// configuration and the current on-chain state. Called once on startup so
+// operators can verify at a glance that the node is pointed at the right
+// network, knows the right contracts, and has found an active row.
+func (n *Node) LogStartupSnapshot(ctx context.Context, cfg *Config) {
+	log.Infow("==================== davinci-dkg-node startup ====================")
+
+	// ── local configuration ──────────────────────────────────────────────
+	log.Infow("config: node identity",
+		"address", n.address,
+		"datadir", cfg.Datadir,
+		"sharedDir", cfg.SharedDir)
+	log.Infow("config: chain connection",
+		"network", cfg.Web3.Network,
+		"chainId", n.contracts.ChainID,
+		"rpc", cfg.Web3.RPC[0],
+		"gasMultiplier", cfg.Web3.GasMultiplier)
+	log.Infow("config: contracts",
+		"registry", cfg.RegistryAddr,
+		"manager", cfg.ManagerAddr)
+	log.Infow("config: participation",
+		"pollInterval", cfg.PollInterval)
+	log.Infow("config: explorer webapp",
+		"enabled", cfg.Webapp.Enabled,
+		"listen", cfg.Webapp.Listen,
+		"publicRpc", cfg.Webapp.PublicRPC)
+
+	// ── on-chain state ───────────────────────────────────────────────────
+	callOpts := &bind.CallOpts{Context: ctx}
+
+	head, err := n.contracts.Client().BlockNumber(ctx)
+	if err != nil {
+		log.Warnw("startup: failed to read chain head", "err", err)
+	}
+
+	prefix, err := n.manager.ROUNDPREFIX(callOpts)
+	if err != nil {
+		log.Warnw("startup: failed to read ROUND_PREFIX", "err", err)
+	}
+	roundNonce, err := n.manager.RoundNonce(callOpts)
+	if err != nil {
+		log.Warnw("startup: failed to read roundNonce", "err", err)
+	}
+	log.Infow("chain: snapshot",
+		"head", head,
+		"roundPrefix", fmt.Sprintf("0x%08x", prefix),
+		"roundNonce", roundNonce)
+
+	nodeCount, err := n.registry.NodeCount(callOpts)
+	if err != nil {
+		log.Warnw("startup: failed to read nodeCount", "err", err)
+	}
+	activeCount, err := n.registry.ActiveCount(callOpts)
+	if err != nil {
+		log.Warnw("startup: failed to read activeCount", "err", err)
+	}
+	window, err := n.registry.INACTIVITYWINDOW(callOpts)
+	if err != nil {
+		log.Warnw("startup: failed to read INACTIVITY_WINDOW", "err", err)
+	}
+	log.Infow("registry: snapshot",
+		"nodeCount", nodeCount,
+		"activeCount", activeCount,
+		"inactivityWindow", window,
+		"windowRemainingBlocks", window)
+
+	// ── own registry row ─────────────────────────────────────────────────
+	own, err := n.registry.GetNode(callOpts, n.address)
+	if err != nil {
+		log.Warnw("startup: failed to read own registry row", "err", err)
+		log.Infow("==================================================================")
+		return
+	}
+	statusLabel := "UNKNOWN"
+	switch own.Status {
+	case nodeStatusNone:
+		statusLabel = "NONE"
+	case nodeStatusActive:
+		statusLabel = "ACTIVE"
+	case nodeStatusInactive:
+		statusLabel = "INACTIVE"
+	}
+	blocksSinceActive := uint64(0)
+	if head > own.LastActiveBlock {
+		blocksSinceActive = head - own.LastActiveBlock
+	}
+	log.Infow("self: registry row",
+		"status", statusLabel,
+		"lastActiveBlock", own.LastActiveBlock,
+		"blocksSinceActive", blocksSinceActive,
+		"pubX", own.PubX,
+		"pubY", own.PubY)
+
+	if own.Status == nodeStatusActive && window > 0 {
+		deadline := own.LastActiveBlock + window
+		var headroom int64
+		if deadline >= head {
+			headroom = int64(deadline - head)
+		} else {
+			headroom = -int64(head - deadline)
+		}
+		log.Infow("self: liveness budget",
+			"reapDeadlineBlock", deadline,
+			"blocksUntilReap", headroom)
+	}
+
+	log.Infow("==================================================================")
+}
+
 // bjjPublicKey returns (pubX, pubY) for this node's BabyJubJub key.
 func (n *Node) bjjPublicKey() (*big.Int, *big.Int) {
 	pub := group.NewPoint()
@@ -146,8 +255,20 @@ func (n *Node) bjjPublicKey() (*big.Int, *big.Int) {
 	return enc.X, enc.Y
 }
 
-// EnsureRegistered registers the node's BabyJubJub key in DKGRegistry if not
-// already present and correct.
+// RoundStatus enum mirror (matches IDKGRegistry.NodeStatus in Solidity).
+const (
+	nodeStatusNone     uint8 = 0
+	nodeStatusActive   uint8 = 1
+	nodeStatusInactive uint8 = 2
+)
+
+// EnsureRegistered makes sure the node's BabyJubJub key is registered in
+// DKGRegistry and that the row is in the ACTIVE state. It covers three cases:
+//
+//  1. brand-new node (status == NONE) → `registerKey`
+//  2. already registered, key matches, ACTIVE → no-op
+//  3. already registered but stale (wrong key or status == INACTIVE) →
+//     `updateKey`, which rotates the key *and* auto-reactivates the row
 func (n *Node) EnsureRegistered(ctx context.Context) error {
 	callOpts := &bind.CallOpts{Context: ctx}
 	existing, err := n.registry.GetNode(callOpts, n.address)
@@ -155,27 +276,152 @@ func (n *Node) EnsureRegistered(ctx context.Context) error {
 		return fmt.Errorf("get node: %w", err)
 	}
 	wantX, wantY := n.bjjPublicKey()
-	if existing.Status != 0 && existing.PubX.Cmp(wantX) == 0 && existing.PubY.Cmp(wantY) == 0 {
-		log.Infow("bjj key already registered", "address", n.address)
+
+	// Happy fast-path: already registered, key matches, row is ACTIVE.
+	if existing.Status == nodeStatusActive &&
+		existing.PubX.Cmp(wantX) == 0 && existing.PubY.Cmp(wantY) == 0 {
+		log.Infow("bjj key already registered and active",
+			"address", n.address,
+			"lastActiveBlock", existing.LastActiveBlock)
 		return nil
 	}
+
 	auth, err := n.txm.NewTransactOpts(ctx)
 	if err != nil {
 		return err
 	}
 	var tx *ethtypes.Transaction
-	if existing.Status == 0 {
+	switch existing.Status {
+	case nodeStatusNone:
+		log.Infow("registering bjj key on-chain (first time)",
+			"address", n.address)
 		tx, err = n.registry.RegisterKey(auth, wantX, wantY)
-	} else {
+	case nodeStatusInactive:
+		log.Warnw("node is INACTIVE on-chain, reactivating via updateKey",
+			"address", n.address,
+			"lastActiveBlock", existing.LastActiveBlock)
+		tx, err = n.registry.UpdateKey(auth, wantX, wantY)
+	default: // ACTIVE but stale key
+		log.Infow("rotating bjj key on-chain",
+			"address", n.address,
+			"oldPubX", existing.PubX, "newPubX", wantX)
 		tx, err = n.registry.UpdateKey(auth, wantX, wantY)
 	}
 	if err != nil {
-		return fmt.Errorf("register key tx: %w", err)
+		return fmt.Errorf("register/update key tx: %w", err)
 	}
 	if err := n.txm.WaitTxByHash(tx.Hash(), 60*time.Second); err != nil {
 		return fmt.Errorf("wait register: %w", err)
 	}
-	log.Infow("bjj key registered", "address", n.address)
+	log.Infow("bjj key registration confirmed", "address", n.address)
+	return nil
+}
+
+// maintainLiveness runs on every tick and keeps the node's on-chain liveness
+// row healthy without any operator action:
+//
+//  1. If we have drifted above the heartbeat trigger (80% of
+//     INACTIVITY_WINDOW has elapsed since the last refresh) we call
+//     heartbeat() proactively. The call is a single SSTORE (~5k gas).
+//  2. If we have been reaped out-of-band (status flipped to INACTIVE)
+//     — e.g. because the reaper ran before our first lucky round —
+//     we call reactivate() to rejoin the active set.
+//
+// The method is tolerant of transient RPC errors: anything unexpected is
+// logged at warn and the next tick retries.
+func (n *Node) maintainLiveness(ctx context.Context) {
+	callOpts := &bind.CallOpts{Context: ctx}
+	node, err := n.registry.GetNode(callOpts, n.address)
+	if err != nil {
+		log.Warnw("liveness: getNode failed", "err", err)
+		return
+	}
+	window, err := n.registry.INACTIVITYWINDOW(callOpts)
+	if err != nil {
+		log.Warnw("liveness: INACTIVITY_WINDOW read failed", "err", err)
+		return
+	}
+	head, err := n.contracts.Client().BlockNumber(ctx)
+	if err != nil {
+		log.Warnw("liveness: blockNumber read failed", "err", err)
+		return
+	}
+
+	// Case: we got reaped while running. Rejoin the active set.
+	if node.Status == nodeStatusInactive {
+		log.Warnw("liveness: node is INACTIVE on-chain, calling reactivate()",
+			"address", n.address,
+			"lastActiveBlock", node.LastActiveBlock,
+			"head", head)
+		if err := n.sendReactivate(ctx); err != nil {
+			log.Warnw("liveness: reactivate failed", "err", err)
+		}
+		return
+	}
+	if node.Status != nodeStatusActive {
+		// NONE status — not registered. EnsureRegistered handles this on
+		// startup; if we get here something is very wrong.
+		log.Warnw("liveness: node not registered on-chain",
+			"address", n.address, "status", node.Status)
+		return
+	}
+
+	// Case: we are ACTIVE but drifting. Refresh preemptively.
+	// The heartbeat threshold is 80% of the window so we always leave a
+	// generous safety margin against slow RPC, reorg variance, or a
+	// temporarily stuck poller.
+	elapsed := uint64(0)
+	if head > node.LastActiveBlock {
+		elapsed = head - node.LastActiveBlock
+	}
+	threshold := (window * 4) / 5
+	if elapsed < threshold {
+		return
+	}
+
+	log.Infow("liveness: sending heartbeat preemptively",
+		"address", n.address,
+		"elapsed", elapsed,
+		"window", window,
+		"threshold", threshold,
+		"lastActiveBlock", node.LastActiveBlock,
+		"head", head)
+	if err := n.sendHeartbeat(ctx); err != nil {
+		log.Warnw("liveness: heartbeat failed", "err", err)
+	}
+}
+
+// sendHeartbeat dispatches a registry.heartbeat() transaction.
+func (n *Node) sendHeartbeat(ctx context.Context) error {
+	auth, err := n.txm.NewTransactOpts(ctx)
+	if err != nil {
+		return err
+	}
+	tx, err := n.registry.Heartbeat(auth)
+	if err != nil {
+		return fmt.Errorf("heartbeat tx: %w", err)
+	}
+	if err := n.txm.WaitTxByHash(tx.Hash(), 60*time.Second); err != nil {
+		return fmt.Errorf("wait heartbeat: %w", err)
+	}
+	log.Infow("liveness: heartbeat confirmed", "address", n.address)
+	return nil
+}
+
+// sendReactivate dispatches a registry.reactivate() transaction.
+func (n *Node) sendReactivate(ctx context.Context) error {
+	auth, err := n.txm.NewTransactOpts(ctx)
+	if err != nil {
+		return err
+	}
+	tx, err := n.registry.Reactivate(auth)
+	if err != nil {
+		return fmt.Errorf("reactivate tx: %w", err)
+	}
+	if err := n.txm.WaitTxByHash(tx.Hash(), 60*time.Second); err != nil {
+		return fmt.Errorf("wait reactivate: %w", err)
+	}
+	log.Infow("liveness: reactivate confirmed", "address", n.address)
 	return nil
 }
 
@@ -189,6 +435,10 @@ func (n *Node) Run(ctx context.Context, pollInterval time.Duration) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			// Keep our on-chain liveness row healthy before scanning rounds.
+			// This guarantees heartbeat()/reactivate() fire even when there
+			// are no active rounds to participate in.
+			n.maintainLiveness(ctx)
 			if err := n.tick(ctx); err != nil {
 				log.Errorw(err, "participation tick")
 			}
