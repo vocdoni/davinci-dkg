@@ -129,8 +129,10 @@ func fetchChainID(rpcURL string) (uint64, error) {
 // ciphertextAPIHandler returns an HTTP handler for GET/POST /api/ciphertext/{roundId}.
 //
 // POST: accepts a JSON body {ciphertext_index, c1x, c1y, c2x, c2y} and writes
-//       it to sharedDir/ciphertext-{roundId}.json so the node can pick it up
-//       for partial decryption on the next poll cycle.
+//
+//	it to sharedDir/ciphertext-{roundId}.json so the node can pick it up
+//	for partial decryption on the next poll cycle.
+//
 // GET:  reads and returns the stored ciphertext JSON.
 func ciphertextAPIHandler(sharedDir string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

@@ -22,7 +22,6 @@ import (
 	"github.com/vocdoni/davinci-dkg/circuits/decryptcombine"
 	"github.com/vocdoni/davinci-dkg/circuits/partialdecrypt"
 	"github.com/vocdoni/davinci-dkg/crypto/group"
-	"github.com/vocdoni/davinci-node/crypto/ecc"
 	dkghash "github.com/vocdoni/davinci-dkg/crypto/hash"
 	"github.com/vocdoni/davinci-dkg/crypto/shareenc"
 	"github.com/vocdoni/davinci-dkg/log"
@@ -30,6 +29,7 @@ import (
 	nodetypes "github.com/vocdoni/davinci-dkg/types"
 	"github.com/vocdoni/davinci-dkg/web3"
 	"github.com/vocdoni/davinci-dkg/web3/txmanager"
+	"github.com/vocdoni/davinci-node/crypto/ecc"
 )
 
 // bjjKeyDomain must match tests/helpers/nodekeys.go so registry keys are consistent.
@@ -73,6 +73,7 @@ type Node struct {
 	contributed   map[[12]byte]bool
 	decrypted     map[[12]byte]map[uint16]bool
 	combined      map[[12]byte]bool
+	terminal      map[[12]byte]bool // rounds where no further work is possible
 	privateShares map[[12]byte]*big.Int
 	ownContribs   map[[12]byte]*savedContrib
 }
@@ -124,6 +125,7 @@ func newNode(cfg *Config) (*Node, error) {
 		contributed:   make(map[[12]byte]bool),
 		decrypted:     make(map[[12]byte]map[uint16]bool),
 		combined:      make(map[[12]byte]bool),
+		terminal:      make(map[[12]byte]bool),
 		privateShares: make(map[[12]byte]*big.Int),
 		ownContribs:   make(map[[12]byte]*savedContrib),
 	}, nil
@@ -505,6 +507,9 @@ func (n *Node) tick(ctx context.Context) error {
 	}
 	for i := uint64(1); i <= roundNonce; i++ {
 		roundID := makeRoundID(prefix, i)
+		if n.terminal[roundID] {
+			continue // round is in a terminal state; no further work possible
+		}
 		if err := n.participate(ctx, roundID, callOpts); err != nil {
 			log.Warnw("participate failed", "round", roundHex(roundID), "err", err)
 		}
@@ -518,34 +523,66 @@ func (n *Node) participate(ctx context.Context, roundID [12]byte, callOpts *bind
 		return fmt.Errorf("get round: %w", err)
 	}
 	switch round.Status {
+	case 0: // None — round slot exists on-chain but is uninitialised (should not happen)
+		return nil
+
 	case 1: // Registration — try to claim a slot in the lottery
 		return n.doClaimSlot(ctx, roundID, round)
-	case 2: // Contribution
+
+	case 2: // Contribution — selected participants submit ZK shares
 		selected, err := n.contracts.SelectedParticipants(ctx, roundID)
 		if err != nil {
 			return fmt.Errorf("selected participants: %w", err)
 		}
 		idx := myIndex(selected, n.address)
 		if idx == 0 {
-			return nil // not selected
+			return nil // not selected for this round
 		}
-		return n.doContribution(ctx, roundID, idx, round.Policy.Threshold, round.Policy.CommitteeSize, selected)
-	case 3: // Finalized
+		return n.doContribution(ctx, roundID, idx, round, selected)
+
+	case 3: // Finalized — partial decryptions, then combine
 		selected, err := n.contracts.SelectedParticipants(ctx, roundID)
 		if err != nil {
 			return fmt.Errorf("selected participants: %w", err)
 		}
 		idx := myIndex(selected, n.address)
 		if idx == 0 {
-			// Not a selected participant but still try to combine if enough partials are in.
-			return n.doCombineDecryption(ctx, roundID, round, selected, callOpts)
+			// Not a selected participant; try to combine if threshold partials exist.
+			if err := n.doCombineDecryption(ctx, roundID, round, selected, callOpts); err != nil {
+				return err
+			}
+		} else {
+			if err := n.doDecryption(ctx, roundID, idx, round, selected, callOpts); err != nil {
+				return err
+			}
+			if err := n.doCombineDecryption(ctx, roundID, round, selected, callOpts); err != nil {
+				return err
+			}
 		}
-		if err := n.doDecryption(ctx, roundID, idx, round, selected, callOpts); err != nil {
-			return err
+		// Once combined, this round requires no further work — mark terminal so
+		// future ticks skip the GetRound RPC call entirely.
+		if n.combined[roundID] {
+			n.terminal[roundID] = true
+			log.Infow("round fully processed, marked terminal",
+				"round", roundHex(roundID))
 		}
-		return n.doCombineDecryption(ctx, roundID, round, selected, callOpts)
+		return nil
+
+	case 4: // Aborted — organizer cancelled the round
+		log.Warnw("round aborted — no further participation possible",
+			"round", roundHex(roundID))
+		n.terminal[roundID] = true
+		return nil
+
+	case 5: // Completed — secret reconstructed (disclosureAllowed path)
+		log.Infow("round completed (secret disclosed)", "round", roundHex(roundID))
+		n.terminal[roundID] = true
+		return nil
+
+	default:
+		log.Warnw("unknown round status — skipping", "round", roundHex(roundID), "status", round.Status)
+		return nil
 	}
-	return nil
 }
 
 // ---- Lottery slot claim ----
@@ -558,6 +595,17 @@ func (n *Node) participate(ctx context.Context, roundID [12]byte, callOpts *bind
 func (n *Node) doClaimSlot(ctx context.Context, roundID [12]byte, round web3.RoundView) error {
 	if n.signaled[roundID] {
 		return nil
+	}
+	// Pre-flight: check registration deadline before sending any tx.
+	if head, err := n.contracts.Client().BlockNumber(ctx); err == nil {
+		if head >= round.Policy.RegistrationDeadlineBlock {
+			log.Warnw("registration deadline already passed — skipping slot claim",
+				"round", roundHex(roundID),
+				"head", head,
+				"deadline", round.Policy.RegistrationDeadlineBlock)
+			n.signaled[roundID] = true
+			return nil
+		}
 	}
 	auth, err := n.txm.NewTransactOpts(ctx)
 	if err != nil {
@@ -593,7 +641,8 @@ func (n *Node) doClaimSlot(ctx context.Context, roundID [12]byte, round web3.Rou
 func (n *Node) doContribution(
 	ctx context.Context,
 	roundID [12]byte,
-	idx, threshold, committeeSize uint16,
+	idx uint16,
+	round web3.RoundView,
 	selected []common.Address,
 ) error {
 	if n.contributed[roundID] {
@@ -602,9 +651,27 @@ func (n *Node) doContribution(
 	// Check on-chain (handles restarts).
 	rec, err := n.manager.GetContribution(&bind.CallOpts{Context: ctx}, roundID, n.address)
 	if err == nil && rec.Accepted {
+		log.Infow("contribution already accepted on-chain", "round", roundHex(roundID))
 		n.contributed[roundID] = true
 		return nil
 	}
+
+	// Pre-flight: check contribution deadline before burning time on ZK proof.
+	head, err := n.contracts.Client().BlockNumber(ctx)
+	if err != nil {
+		log.Warnw("doContribution: failed to read block number", "round", roundHex(roundID), "err", err)
+		// Proceed optimistically; worst case the tx reverts and we catch it below.
+	} else if head >= round.Policy.ContributionDeadlineBlock {
+		log.Warnw("contribution deadline already passed — skipping round",
+			"round", roundHex(roundID),
+			"head", head,
+			"deadline", round.Policy.ContributionDeadlineBlock)
+		n.contributed[roundID] = true
+		return nil
+	}
+
+	threshold := round.Policy.Threshold
+	committeeSize := round.Policy.CommitteeSize
 
 	roundHash := roundScalar(roundID)
 	coeffs := make([]*big.Int, threshold)
@@ -638,8 +705,14 @@ func (n *Node) doContribution(
 		nonces[i] = big.NewInt(int64(1000 + recipientIdxs[i]))
 	}
 
-	// Debug print for witness
-	log.Infow("contribution assignment", "coeffs", coeffs, "nonces", nonces, "recip_keys", recipientKeys)
+	log.Infow("contribution assignment",
+		"round", roundHex(roundID),
+		"index", idx,
+		"threshold", threshold,
+		"committeeSize", committeeSize,
+		"deadline", round.Policy.ContributionDeadlineBlock,
+		"head", head,
+	)
 
 	asgn := contribution.Assignment{
 		RoundHash:        roundHash,
@@ -687,9 +760,19 @@ func (n *Node) doContribution(
 		transcriptBytes, proofBytes, inputBytes,
 	)
 	if err != nil {
+		if isPermanentRevert(err) {
+			log.Warnw("contribution tx permanently rejected — will not retry this round",
+				"round", roundHex(roundID), "err", err)
+			n.contributed[roundID] = true
+		}
 		return fmt.Errorf("submit contribution: %w", err)
 	}
 	if err := n.txm.WaitTxByHash(tx.Hash(), 120*time.Second); err != nil {
+		if isPermanentRevert(err) {
+			log.Warnw("contribution tx reverted on-chain — will not retry this round",
+				"round", roundHex(roundID), "err", err)
+			n.contributed[roundID] = true
+		}
 		return fmt.Errorf("wait contribution tx: %w", err)
 	}
 	n.contributed[roundID] = true
@@ -780,9 +863,19 @@ func (n *Node) doDecryption(
 	}
 	tx, err := n.manager.SubmitPartialDecryption(auth, roundID, idx, ctIdx, dHash, proofBytes, inputBytes)
 	if err != nil {
+		if isPermanentRevert(err) {
+			log.Warnw("partial decryption tx permanently rejected — will not retry",
+				"round", roundHex(roundID), "err", err)
+			n.decrypted[roundID][ctIdx] = true
+		}
 		return fmt.Errorf("submit partial decryption: %w", err)
 	}
 	if err := n.txm.WaitTxByHash(tx.Hash(), 120*time.Second); err != nil {
+		if isPermanentRevert(err) {
+			log.Warnw("partial decryption tx reverted on-chain — will not retry",
+				"round", roundHex(roundID), "err", err)
+			n.decrypted[roundID][ctIdx] = true
+		}
 		return fmt.Errorf("wait partial decryption tx: %w", err)
 	}
 	n.decrypted[roundID][ctIdx] = true
@@ -791,8 +884,13 @@ func (n *Node) doDecryption(
 }
 
 // buildPrivateShare computes d_i = Σ_j f_j(i) by:
-//   - Own contribution: evaluate own polynomial at i directly
+//   - Own contribution (in-memory cache): evaluate own polynomial directly
+//   - Own contribution (after restart, cache lost): fall back to calldata recovery
 //   - Other contributions: scan on-chain txs for calldata and decrypt
+//
+// fromBlock is used as the lower bound for the calldata scan; passing the round's
+// registration deadline block keeps the scan tight and avoids the O(n) hit of
+// scanning from genesis.
 func (n *Node) buildPrivateShare(
 	ctx context.Context,
 	roundID [12]byte,
@@ -808,36 +906,64 @@ func (n *Node) buildPrivateShare(
 	roundHash := roundScalar(roundID)
 	total := new(big.Int)
 
+	// Use the registration deadline as the natural lower bound for calldata scans.
+	// Contributions must appear between registration end and contribution deadline,
+	// so this avoids scanning blocks before the round even started.
+	fromBlock := round.Policy.RegistrationDeadlineBlock
+
+	recovered := 0
+	expected := 0
 	for i, addr := range selected {
 		contribIdx := uint16(i + 1)
 		rec, err := n.manager.GetContribution(callOpts, roundID, addr)
 		if err != nil || !rec.Accepted {
 			continue
 		}
+		expected++
+
 		if addr == n.address {
-			// Own contribution: evaluate polynomial directly
+			// Own contribution: use in-memory polynomial if available (normal path).
 			if sc := n.ownContribs[roundID]; sc != nil {
 				x := big.NewInt(int64(myIdx))
 				share, err := ccommon.EvaluatePolynomialNative(sc.coefficients, x)
 				if err == nil {
 					total.Add(total, share)
 					total.Mod(total, modulus)
+					recovered++
+					continue
 				}
+				log.Warnw("own polynomial evaluation failed, falling back to calldata",
+					"round", roundHex(roundID), "err", err)
+			} else {
+				log.Warnw("own contribution cache missing (node restarted?), recovering from calldata",
+					"round", roundHex(roundID))
 			}
-			continue
+			// Fall through to calldata recovery for own contribution too.
 		}
-		// Other contributor: recover encrypted share from calldata
-		share, err := n.recoverShareFrom(ctx, roundID, addr, contribIdx, roundHash, myIdx)
+
+		// Recover encrypted share from on-chain calldata.
+		share, err := n.recoverShareFrom(ctx, roundID, addr, contribIdx, roundHash, myIdx, fromBlock)
 		if err != nil {
-			log.Warnw("share recovery failed", "contributor", addr.Hex(), "err", err)
+			log.Warnw("share recovery failed — contribution will be excluded from private share",
+				"round", roundHex(roundID), "contributor", addr.Hex(), "idx", contribIdx, "err", err)
 			continue
 		}
 		total.Add(total, share)
 		total.Mod(total, modulus)
+		recovered++
 	}
 
+	log.Infow("private share built",
+		"round", roundHex(roundID),
+		"recovered", recovered,
+		"expected", expected,
+		"myIdx", myIdx)
+
+	if recovered == 0 {
+		return nil, fmt.Errorf("private share: recovered 0/%d contributions — calldata not yet available or no contributions accepted", expected)
+	}
 	if total.Sign() == 0 {
-		return nil, fmt.Errorf("private share is zero (insufficient calldata recovery)")
+		return nil, fmt.Errorf("private share is zero after %d/%d contributions — possible Shamir evaluation issue", recovered, expected)
 	}
 	n.privateShares[roundID] = total
 	return total, nil
@@ -845,6 +971,10 @@ func (n *Node) buildPrivateShare(
 
 // recoverShareFrom fetches the submitContribution tx calldata for `contributor`
 // and decrypts the share slot destined for myIdx.
+//
+// fromBlock is the earliest block to scan. Pass the round's
+// registrationDeadlineBlock so the scan starts at the earliest plausible point
+// instead of walking back an arbitrary fixed number of blocks from the head.
 func (n *Node) recoverShareFrom(
 	ctx context.Context,
 	roundID [12]byte,
@@ -852,6 +982,7 @@ func (n *Node) recoverShareFrom(
 	contribIdx uint16,
 	roundHash *big.Int,
 	myIdx uint16,
+	fromBlock uint64,
 ) (*big.Int, error) {
 	client := n.contracts.Client()
 	chainID := new(big.Int).SetUint64(n.contracts.ChainID)
@@ -860,11 +991,7 @@ func (n *Node) recoverShareFrom(
 	if err != nil {
 		return nil, err
 	}
-	// Scan back at most 2000 blocks (sufficient for a local testnet)
-	start := uint64(0)
-	if latest > 2000 {
-		start = latest - 2000
-	}
+	start := fromBlock
 
 	managerAddr := n.contracts.Addresses.Manager
 	signer := ethtypes.NewCancunSigner(chainID)
@@ -910,7 +1037,7 @@ func (n *Node) recoverShareFrom(
 			}
 		}
 	}
-	return nil, fmt.Errorf("share not found in calldata")
+	return nil, fmt.Errorf("share not found in calldata for round %s contributor %s", roundHex(roundID), contributor.Hex())
 }
 
 // decodeContributionTranscript extracts (ephemerals, maskedShares, recipientIndexes)
@@ -1061,10 +1188,15 @@ func (n *Node) doCombineDecryption(
 
 	ct, err := n.readCiphertext(roundID)
 	if err != nil {
-		return nil // ciphertext not written yet
+		log.Debugw("combine: waiting for ciphertext file",
+			"round", roundHex(roundID), "sharedDir", n.sharedDir)
+		return nil
 	}
 	if ct.C2X == "" || ct.C2Y == "" {
-		return nil // C2 missing — old-style file, cannot combine
+		log.Warnw("combine: ciphertext file present but missing C2 coordinates — cannot combine; "+
+			"resubmit ciphertext with c2x/c2y fields",
+			"round", roundHex(roundID))
+		return nil
 	}
 
 	// Gather accepted partial decryptions.
@@ -1118,7 +1250,11 @@ func (n *Node) doCombineDecryption(
 	// Brute-force discrete log to recover the plaintext scalar.
 	plaintext, err := bruteForceLog(mG)
 	if err != nil {
-		return fmt.Errorf("combine: dlog (plaintext may be too large): %w", err)
+		// DLOG failed — plaintext is ≥ 2²⁰. Retrying will always produce the
+		// same failure, so mark the round terminal to avoid burning CPU every tick.
+		n.combined[roundID] = true
+		n.terminal[roundID] = true
+		return fmt.Errorf("combine: dlog failed (plaintext must be < 2²⁰ ≈ 1M): %w", err)
 	}
 
 	// Build the ZK witness.
@@ -1167,13 +1303,22 @@ func (n *Node) doCombineDecryption(
 		transcriptBytes, proofBytes, inputBytes,
 	)
 	if err != nil {
-		if strings.Contains(err.Error(), "AlreadyCombined") {
+		if strings.Contains(err.Error(), "AlreadyCombined") || isPermanentRevert(err) {
+			log.Warnw("combine decryption tx permanently rejected — will not retry",
+				"round", roundHex(roundID), "err", err)
 			n.combined[roundID] = true
-			return nil
+			if strings.Contains(err.Error(), "AlreadyCombined") {
+				return nil
+			}
 		}
 		return fmt.Errorf("combine: submit tx: %w", err)
 	}
 	if err := n.txm.WaitTxByHash(tx.Hash(), 120*time.Second); err != nil {
+		if isPermanentRevert(err) {
+			log.Warnw("combine decryption tx reverted on-chain — will not retry",
+				"round", roundHex(roundID), "err", err)
+			n.combined[roundID] = true
+		}
 		return fmt.Errorf("combine: wait tx: %w", err)
 	}
 	n.combined[roundID] = true
@@ -1224,6 +1369,21 @@ func roundHex(id [12]byte) string { return fmt.Sprintf("%x", id) }
 // the node should silently accept it (not eligible, slot already gone, seed not
 // yet available). The node will retry on the next poll for the SeedNotReady case
 // since `signaled` only flips on definitively-final reverts.
+// isPermanentRevert returns true when the error indicates the EVM rejected the
+// transaction in a way that retrying will never succeed. Transient errors (RPC
+// timeouts, network issues) do NOT match, so the node retries those naturally.
+//
+// We match the exact phrase "execution reverted" (the standard Ethereum error
+// returned by both eth_call simulation and mined-but-reverted receipts).
+// We intentionally do NOT match plain "reverted" to avoid false-positives from
+// RPC provider error messages that happen to contain that word.
+func isPermanentRevert(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "execution reverted")
+}
+
 func isExpectedClaimRevert(err error) bool {
 	if err == nil {
 		return false
