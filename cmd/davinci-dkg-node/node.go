@@ -19,8 +19,10 @@ import (
 	"github.com/vocdoni/davinci-dkg/circuits"
 	ccommon "github.com/vocdoni/davinci-dkg/circuits/common"
 	"github.com/vocdoni/davinci-dkg/circuits/contribution"
+	"github.com/vocdoni/davinci-dkg/circuits/decryptcombine"
 	"github.com/vocdoni/davinci-dkg/circuits/partialdecrypt"
 	"github.com/vocdoni/davinci-dkg/crypto/group"
+	"github.com/vocdoni/davinci-node/crypto/ecc"
 	dkghash "github.com/vocdoni/davinci-dkg/crypto/hash"
 	"github.com/vocdoni/davinci-dkg/crypto/shareenc"
 	"github.com/vocdoni/davinci-dkg/log"
@@ -33,11 +35,16 @@ import (
 // bjjKeyDomain must match tests/helpers/nodekeys.go so registry keys are consistent.
 const bjjKeyDomain = "davinci-dkg/bjj-key/v1"
 
-// CiphertextFile is written to sharedDir/<roundHex>.json by the dkg-runner.
+// CiphertextFile is written to sharedDir/ciphertext-{roundHex}.json by the
+// dkg-runner or by the webapp playground via the /api/ciphertext/ endpoint.
+// C1 is the ephemeral ciphertext half (k*G); C2 is the encrypted half (m*G + k*PubKey).
+// C2 is needed by the first node that combines the partial decryptions.
 type CiphertextFile struct {
 	CiphertextIndex uint16 `json:"ciphertext_index"`
 	C1X             string `json:"c1x"`
 	C1Y             string `json:"c1y"`
+	C2X             string `json:"c2x,omitempty"`
+	C2Y             string `json:"c2y,omitempty"`
 }
 
 // savedContrib caches data from the node's own submitted contribution
@@ -65,6 +72,7 @@ type Node struct {
 	signaled      map[[12]byte]bool
 	contributed   map[[12]byte]bool
 	decrypted     map[[12]byte]map[uint16]bool
+	combined      map[[12]byte]bool
 	privateShares map[[12]byte]*big.Int
 	ownContribs   map[[12]byte]*savedContrib
 }
@@ -115,6 +123,7 @@ func newNode(cfg *Config) (*Node, error) {
 		signaled:      make(map[[12]byte]bool),
 		contributed:   make(map[[12]byte]bool),
 		decrypted:     make(map[[12]byte]map[uint16]bool),
+		combined:      make(map[[12]byte]bool),
 		privateShares: make(map[[12]byte]*big.Int),
 		ownContribs:   make(map[[12]byte]*savedContrib),
 	}, nil
@@ -528,9 +537,13 @@ func (n *Node) participate(ctx context.Context, roundID [12]byte, callOpts *bind
 		}
 		idx := myIndex(selected, n.address)
 		if idx == 0 {
-			return nil // not selected
+			// Not a selected participant but still try to combine if enough partials are in.
+			return n.doCombineDecryption(ctx, roundID, round, selected, callOpts)
 		}
-		return n.doDecryption(ctx, roundID, idx, round, selected, callOpts)
+		if err := n.doDecryption(ctx, roundID, idx, round, selected, callOpts); err != nil {
+			return err
+		}
+		return n.doCombineDecryption(ctx, roundID, round, selected, callOpts)
 	}
 	return nil
 }
@@ -1014,6 +1027,173 @@ func (n *Node) readCiphertext(roundID [12]byte) (*CiphertextFile, error) {
 		return nil, err
 	}
 	return &ct, nil
+}
+
+// doCombineDecryption attempts to combine threshold-many partial decryptions
+// into a single on-chain combined decryption proof. It is called on every
+// Finalized-round poll cycle by any selected participant; the first node to
+// succeed wins the race.
+//
+// Prerequisites:
+//   - A ciphertext file (including C2X, C2Y) must be present in sharedDir.
+//   - partialDecryptionCount >= threshold accepted partial decryptions on-chain.
+func (n *Node) doCombineDecryption(
+	ctx context.Context,
+	roundID [12]byte,
+	round web3.RoundView,
+	selected []common.Address,
+	callOpts *bind.CallOpts,
+) error {
+	if n.combined[roundID] {
+		return nil
+	}
+	// Check whether already combined on-chain.
+	rec, err := n.contracts.GetCombinedDecryption(ctx, roundID, 1)
+	if err == nil && rec.Completed {
+		n.combined[roundID] = true
+		return nil
+	}
+
+	threshold := round.Policy.Threshold
+	if round.PartialDecryptionCount < threshold {
+		return nil // not enough partial decryptions yet
+	}
+
+	ct, err := n.readCiphertext(roundID)
+	if err != nil {
+		return nil // ciphertext not written yet
+	}
+	if ct.C2X == "" || ct.C2Y == "" {
+		return nil // C2 missing — old-style file, cannot combine
+	}
+
+	// Gather accepted partial decryptions.
+	var partialIndexes []uint16
+	var partialDeltas []nodetypes.CurvePoint
+	for _, addr := range selected {
+		pd, err := n.manager.GetPartialDecryption(callOpts, roundID, addr, 1)
+		if err != nil || !pd.Accepted {
+			continue
+		}
+		partialIndexes = append(partialIndexes, pd.ParticipantIndex)
+		partialDeltas = append(partialDeltas, nodetypes.CurvePoint{X: pd.Delta.X, Y: pd.Delta.Y})
+		if len(partialIndexes) >= int(threshold) {
+			break
+		}
+	}
+	if len(partialIndexes) < int(threshold) {
+		return nil // not enough accepted partial decryptions yet
+	}
+
+	// Parse ciphertext points.
+	c1X, ok1 := new(big.Int).SetString(ct.C1X, 10)
+	c1Y, ok2 := new(big.Int).SetString(ct.C1Y, 10)
+	c2X, ok3 := new(big.Int).SetString(ct.C2X, 10)
+	c2Y, ok4 := new(big.Int).SetString(ct.C2Y, 10)
+	if !ok1 || !ok2 || !ok3 || !ok4 {
+		return fmt.Errorf("combine: parse ciphertext coordinates")
+	}
+
+	// Interpolate partial decryptions to recover k*PubKey.
+	indexes := ccommon.Uint16sToBigInts(partialIndexes)
+	combinedEncoded, err := ccommon.InterpolatePointsAtZeroNative(indexes, partialDeltas)
+	if err != nil {
+		return fmt.Errorf("combine: interpolate partial decryptions: %w", err)
+	}
+	combined, err := group.Decode(combinedEncoded)
+	if err != nil {
+		return fmt.Errorf("combine: decode combined point: %w", err)
+	}
+
+	// mG = C2 - combined.
+	c2, err := group.Decode(nodetypes.CurvePoint{X: c2X, Y: c2Y})
+	if err != nil {
+		return fmt.Errorf("combine: decode C2: %w", err)
+	}
+	negCombined := group.NewPoint()
+	negCombined.Neg(combined)
+	mG := group.NewPoint()
+	mG.Add(c2, negCombined)
+
+	// Brute-force discrete log to recover the plaintext scalar.
+	plaintext, err := bruteForceLog(mG)
+	if err != nil {
+		return fmt.Errorf("combine: dlog (plaintext may be too large): %w", err)
+	}
+
+	// Build the ZK witness.
+	assignment := decryptcombine.Assignment{
+		RoundHash:          roundScalar(roundID),
+		Threshold:          threshold,
+		CiphertextC1:       nodetypes.CurvePoint{X: c1X, Y: c1Y},
+		CiphertextC2:       nodetypes.CurvePoint{X: c2X, Y: c2Y},
+		ParticipantIndexes: partialIndexes,
+		PartialDecryptions: partialDeltas,
+		Plaintext:          plaintext,
+	}
+	witness, pi, err := decryptcombine.BuildWitness(assignment)
+	if err != nil {
+		return fmt.Errorf("combine: build witness: %w", err)
+	}
+	runtime, err := decryptcombine.Artifacts.LoadOrSetupForCircuit(ctx, &decryptcombine.DecryptCombineCircuit{})
+	if err != nil {
+		return fmt.Errorf("combine: load circuit: %w", err)
+	}
+	proof, err := runtime.ProveAndVerify(witness)
+	if err != nil {
+		return fmt.Errorf("combine: prove: %w", err)
+	}
+	proofBytes, err := marshalSolidityProof(proof)
+	if err != nil {
+		return fmt.Errorf("combine: marshal proof: %w", err)
+	}
+	inputBytes, err := encodePublicWitness(pi.PublicWitness())
+	if err != nil {
+		return fmt.Errorf("combine: encode input: %w", err)
+	}
+	transcriptBytes, err := encodeWords(pi.TranscriptScalars()...)
+	if err != nil {
+		return fmt.Errorf("combine: encode transcript: %w", err)
+	}
+
+	auth, err := n.txm.NewTransactOpts(ctx)
+	if err != nil {
+		return fmt.Errorf("combine: tx opts: %w", err)
+	}
+	tx, err := n.manager.CombineDecryption(
+		auth, roundID, 1,
+		common.BigToHash(pi.CombineHash),
+		common.BigToHash(pi.PlaintextHash),
+		transcriptBytes, proofBytes, inputBytes,
+	)
+	if err != nil {
+		if strings.Contains(err.Error(), "AlreadyCombined") {
+			n.combined[roundID] = true
+			return nil
+		}
+		return fmt.Errorf("combine: submit tx: %w", err)
+	}
+	if err := n.txm.WaitTxByHash(tx.Hash(), 120*time.Second); err != nil {
+		return fmt.Errorf("combine: wait tx: %w", err)
+	}
+	n.combined[roundID] = true
+	log.Infow("decryption combined", "round", roundHex(roundID), "plaintext", plaintext.String())
+	return nil
+}
+
+// bruteForceLog recovers scalar m from m*G via brute-force DLOG.
+// Only feasible for small plaintexts (m < 2^20 ≈ 1 million).
+func bruteForceLog(target ecc.Point) (*big.Int, error) {
+	gen := group.Generator()
+	candidate := group.NewPoint()
+	candidate.SetZero()
+	for i := int64(0); i < 1<<20; i++ {
+		if candidate.Equal(target) {
+			return big.NewInt(i), nil
+		}
+		candidate.Add(candidate, gen)
+	}
+	return nil, fmt.Errorf("message out of brute-force range (>= 2^20)")
 }
 
 // ---- small helpers ----

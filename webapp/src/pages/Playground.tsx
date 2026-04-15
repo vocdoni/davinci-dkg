@@ -166,16 +166,18 @@ export function Playground() {
   } | null>(null);
 
   // ── Crypto state
-  const [keyPair, setKeyPair] = useState<{ privKey: bigint; pubKey: BabyJubPoint } | null>(null);
+  const [collectivePubKey, setCollectivePubKey] = useState<{ x: bigint; y: bigint } | null>(null);
+  const [collectivePubKeyBusy, setCollectivePubKeyBusy] = useState(false);
   const [plaintext, setPlaintext] = useState('42');
   const [ciphertext, setCiphertext] = useState<ElGamalCiphertext | null>(null);
   const [encryptDetails, setEncryptDetails] = useState<{
     k: bigint; c1: BabyJubPoint; s: BabyJubPoint; mPoint: BabyJubPoint;
   } | null>(null);
-  const [decryptDetails, setDecryptDetails] = useState<{
-    s: BabyJubPoint; negS: BabyJubPoint; mPoint: BabyJubPoint; iterations: number;
+  const [submittedCiphertext, setSubmittedCiphertext] = useState(false);
+  const [submitBusy, setSubmitBusy] = useState(false);
+  const [combinedRecord, setCombinedRecord] = useState<{
+    completed: boolean; plaintextHash: string; ciphertextIndex: number;
   } | null>(null);
-  const [recovered, setRecovered] = useState<bigint | null>(null);
 
   // ── Activity log
   const [log, setLog] = useState<LogEntry[]>([]);
@@ -191,9 +193,10 @@ export function Playground() {
   const stepWallet: StepStatus = address ? 'done' : walletError ? 'error' : walletBusy ? 'active' : 'active';
   const stepCreate: StepStatus = !address ? 'pending' : roundId ? 'done' : createError ? 'error' : createBusy ? 'active' : 'active';
   const stepWatch: StepStatus = !roundId ? 'pending' : finalizedInfo ? 'done' : round?.status === RoundStatus.Aborted ? 'error' : 'active';
-  const stepKey: StepStatus = !finalizedInfo ? 'pending' : keyPair ? 'done' : 'active';
-  const stepEncrypt: StepStatus = !keyPair ? 'pending' : ciphertext ? 'done' : 'active';
-  const stepDecrypt: StepStatus = !ciphertext ? 'pending' : recovered !== null ? 'done' : 'active';
+  const stepKey: StepStatus = !finalizedInfo ? 'pending' : collectivePubKey ? 'done' : 'active';
+  const stepEncrypt: StepStatus = !collectivePubKey ? 'pending' : ciphertext ? 'done' : 'active';
+  const stepSubmit: StepStatus = !ciphertext ? 'pending' : combinedRecord?.completed ? 'done' : submittedCiphertext ? 'active' : 'active';
+  const stepVerify: StepStatus = !combinedRecord?.completed ? 'pending' : 'done';
 
   // ── Connect wallet
   async function handleConnect() {
@@ -338,6 +341,20 @@ export function Playground() {
             addLog(`collectivePublicKeyHash: ${ev.collectivePublicKeyHash}`, 'success');
             addLog(`aggregateCommitmentsHash: ${ev.aggregateCommitmentsHash}`, 'info');
             addLog(`shareCommitmentHash:      ${ev.shareCommitmentHash}`, 'info');
+
+            // Auto-fetch the actual collective public key coordinates from calldata
+            setCollectivePubKeyBusy(true);
+            try {
+              const pk = await writer!.getCollectivePublicKey(roundId!);
+              setCollectivePubKey(pk);
+              addLog(`Collective public key extracted from finalizeRound calldata:`, 'crypto');
+              addLog(`  x: ${hex(pk.x)}`, 'crypto');
+              addLog(`  y: ${hex(pk.y)}`, 'crypto');
+            } catch (err) {
+              addLog(`Failed to extract collective pubkey: ${err instanceof Error ? err.message : String(err)}`, 'error');
+            } finally {
+              setCollectivePubKeyBusy(false);
+            }
           }
           clearInterval(pollRef.current!);
           pollRef.current = null;
@@ -356,78 +373,103 @@ export function Playground() {
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, [roundId, writer, finalizedInfo, addLog]); // eslint-disable-line
 
-  // ── Generate demo key pair
-  async function handleGenerateKey() {
-    addLog('─── Generating BabyJubJub key pair ───', 'crypto');
-    const eg = await buildElGamal();
-    const kp = eg.generateKeyPair();
-    setKeyPair(kp);
-    addLog(`privKey: ${hex(kp.privKey)}`, 'crypto');
-    addLog(`pubKey.x: ${hex(kp.pubKey[0])}`, 'crypto');
-    addLog(`pubKey.y: ${hex(kp.pubKey[1])}`, 'crypto');
-  }
+  // ── Poll for combined decryption once ciphertext is submitted
+  const combinePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  useEffect(() => {
+    if (!submittedCiphertext || !roundId || !writer || combinedRecord?.completed) return;
 
-  // ── Encrypt
+    let lastPartials = -1;
+    async function pollCombined() {
+      try {
+        const [r, rec] = await Promise.all([
+          writer!.getRound(roundId!),
+          writer!.getCombinedDecryption(roundId!, 1),
+        ]);
+        const partials = Number(r.partialDecryptionCount);
+        if (partials !== lastPartials) {
+          lastPartials = partials;
+          addLog(`Partial decryptions on-chain: ${partials} / ${r.policy.threshold}`, 'chain');
+        }
+        if (rec.completed) {
+          setCombinedRecord({ completed: true, plaintextHash: rec.plaintextHash, ciphertextIndex: rec.ciphertextIndex });
+          addLog('─── Decryption combined on-chain ───', 'success');
+          addLog(`plaintextHash: ${rec.plaintextHash}`, 'success');
+          clearInterval(combinePollRef.current!);
+          combinePollRef.current = null;
+        }
+      } catch { /* ignore transient RPC errors */ }
+    }
+
+    pollCombined();
+    combinePollRef.current = setInterval(pollCombined, 3000);
+    return () => { if (combinePollRef.current) clearInterval(combinePollRef.current); };
+  }, [submittedCiphertext, roundId, writer, combinedRecord, addLog]); // eslint-disable-line
+
+  // ── Encrypt with the DKG collective public key
   async function handleEncrypt() {
-    if (!keyPair) return;
+    if (!collectivePubKey) return;
     const msg = BigInt(plaintext || '0');
-    addLog(`─── Encrypting plaintext m=${msg} ───`, 'crypto');
+    addLog(`─── Encrypting plaintext m=${msg} with DKG collective public key ───`, 'crypto');
 
+    const pubKey: BabyJubPoint = [collectivePubKey.x, collectivePubKey.y];
     const eg = await buildElGamal();
     const k = eg.randomScalar();
     addLog(`Ephemeral k: ${hex(k)}`, 'crypto');
 
-    const c1 = eg.mulPoint([5299619240641551281634865583518297030282874472190772894086521144482721001553n,
-      16950150798460657717958625567821834550301663161624707787222815936182638968203n], k);
-    const s = eg.mulPoint(keyPair.pubKey, k);
-    const mPoint = eg.mulPoint([5299619240641551281634865583518297030282874472190772894086521144482721001553n,
-      16950150798460657717958625567821834550301663161624707787222815936182638968203n], msg);
+    // BabyJubJub generator = Base8
+    const G: BabyJubPoint = [
+      5299619240641551281634865583518297030282874472190772894086521144482721001553n,
+      16950150798460657717958625567821834550301663161624707787222815936182638968203n,
+    ];
+    const c1 = eg.mulPoint(G, k);
+    const s = eg.mulPoint(pubKey, k);
+    const mPoint = eg.mulPoint(G, msg);
 
     addLog(`c1 = k × G:     (${hex(c1[0])}, ${hex(c1[1])})`, 'crypto');
-    addLog(`s  = k × Q:     (${hex(s[0])}, ${hex(s[1])})   Q = pubKey`, 'crypto');
+    addLog(`s  = k × Q:     (${hex(s[0])}, ${hex(s[1])})`, 'crypto');
     addLog(`m × G:          (${hex(mPoint[0])}, ${hex(mPoint[1])})`, 'crypto');
 
-    const ct = eg.encrypt(msg, keyPair.pubKey, k);
+    const ct = eg.encrypt(msg, pubKey, k);
     addLog(`c2 = m×G + s:   (${hex(ct.c2[0])}, ${hex(ct.c2[1])})`, 'crypto');
     addLog(`Ciphertext ready.`, 'success');
 
     setEncryptDetails({ k, c1, s, mPoint });
     setCiphertext(ct);
-    setDecryptDetails(null);
-    setRecovered(null);
+    setSubmittedCiphertext(false);
+    setCombinedRecord(null);
   }
 
-  // ── Decrypt
-  async function handleDecrypt() {
-    if (!ciphertext || !keyPair) return;
-    const msg = BigInt(plaintext || '0');
-    addLog('─── Decrypting ───', 'crypto');
-
-    const eg = await buildElGamal();
-
-    const s = eg.mulPoint(ciphertext.c1, keyPair.privKey);
-    addLog(`s = privKey × c1: (${hex(s[0])}, ${hex(s[1])})`, 'crypto');
-
-    // Negate s: -(x,y) = (-x mod p, y) on twisted Edwards
-    // BabyJubJub base field prime (same as the BN254 scalar field)
-    const BJJ_P = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
-    const negS: BabyJubPoint = [(BJJ_P - s[0]) % BJJ_P, s[1]];
-    addLog(`-s (x negated):   (${hex(negS[0])}, ${hex(negS[1])})`, 'crypto');
-
-    const mPoint = eg.addPoint(ciphertext.c2, negS);
-    addLog(`mPoint = c2 + (-s): (${hex(mPoint[0])}, ${hex(mPoint[1])})`, 'crypto');
-    addLog('Solving discrete log (brute-force, valid for m < 2²⁰)…', 'crypto');
-
-    const recovered = eg.decrypt(ciphertext, keyPair.privKey);
-    addLog(`Found m = ${recovered} (after ${recovered + 1n} iterations)`, 'success');
-
-    setDecryptDetails({ s, negS, mPoint, iterations: Number(recovered) + 1 });
-    setRecovered(recovered);
-
-    if (recovered === msg) {
-      addLog(`✓ Verified: decrypted value ${recovered} matches original plaintext ${msg}`, 'success');
-    } else {
-      addLog(`✗ Mismatch: decrypted ${recovered} ≠ original ${msg}`, 'error');
+  // ── Submit ciphertext to node for threshold decryption
+  async function handleSubmitCiphertext() {
+    if (!ciphertext || !roundId) return;
+    setSubmitBusy(true);
+    try {
+      addLog('Submitting ciphertext to node…', 'chain');
+      const roundHex = roundId.slice(2); // strip '0x'
+      const body = JSON.stringify({
+        ciphertext_index: 1,
+        c1x: ciphertext.c1[0].toString(10),
+        c1y: ciphertext.c1[1].toString(10),
+        c2x: ciphertext.c2[0].toString(10),
+        c2y: ciphertext.c2[1].toString(10),
+      });
+      const res = await fetch(`/api/ciphertext/${roundHex}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`API error ${res.status}: ${text}`);
+      }
+      addLog('Ciphertext stored — nodes will compute partial decryptions.', 'success');
+      addLog('Polling for combined decryption…', 'chain');
+      setSubmittedCiphertext(true);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      addLog(`Submit failed: ${msg}`, 'error');
+    } finally {
+      setSubmitBusy(false);
     }
   }
 
@@ -613,8 +655,8 @@ export function Playground() {
                   <Alert status="info" variant="left-accent" borderRadius="sm" mt={3} fontSize="xs">
                     <AlertIcon />
                     The <strong>collectivePublicKeyHash</strong> = keccak256(pubKey.x, pubKey.y). The actual
-                    coordinates are encoded in the <Code fontSize="2xs">finalizeRound</Code> calldata
-                    (transcript field). For this demo we generate a local BabyJubJub key pair in Step 4.
+                    coordinates are extracted from the <Code fontSize="2xs">finalizeRound</Code> calldata
+                    (transcript field) and shown in Step 4.
                   </Alert>
                 </Box>
               </>
@@ -639,39 +681,32 @@ export function Playground() {
         )}
       </StepCard>
 
-      {/* ── Step 4: Public Key ────────────────────────────────────────────── */}
-      <StepCard n={4} title="Encryption Key Setup" status={stepKey}>
+      {/* ── Step 4: Collective Public Key ────────────────────────────────── */}
+      <StepCard n={4} title="DKG Collective Public Key" status={stepKey}>
         {!finalizedInfo ? (
           <Text fontSize="sm" color="gray.500">Waiting for round finalization…</Text>
         ) : (
           <VStack align="stretch" spacing={4}>
             <Text fontSize="sm" color="gray.400">
-              In a production DKG flow the collective public key coordinates are recovered
-              by decoding the <Code fontSize="xs">transcript</Code> parameter of the
-              <Code fontSize="xs"> finalizeRound</Code> transaction. Below we generate a
-              fresh BabyJubJub key pair to demonstrate the cryptographic primitives.
-              The curve and operations are identical to those used for the actual DKG key.
+              The collective public key is the aggregated BabyJubJub point produced by the
+              DKG ceremony. It is recovered by decoding the <Code fontSize="xs">transcript</Code>{' '}
+              parameter from the <Code fontSize="xs">finalizeRound</Code> calldata. The
+              x/y coordinates sit at word offset 528–529 (N + 2N² with N=16) in the transcript.
             </Text>
-            <Text fontSize="xs" color="gray.500" fontFamily="mono">
-              Curve: BabyJubJub (twisted Edwards form on BN254 scalar field)
-              ax² + y² = 1 + dx²y²  where a=168700, d=168696
-            </Text>
-            {!keyPair ? (
-              <Button colorScheme="purple" size="sm" onClick={handleGenerateKey} alignSelf="start">
-                Generate Key Pair
-              </Button>
-            ) : (
+            {collectivePubKeyBusy && (
+              <HStack spacing={2}>
+                <Spinner size="sm" color="purple.300" />
+                <Text fontSize="xs" color="gray.400">Fetching from on-chain calldata…</Text>
+              </HStack>
+            )}
+            {collectivePubKey && (
               <VStack align="start" spacing={2}>
-                <KV label="Private key (scalar)" value={hex(keyPair.privKey)} />
-                <KV label="Public key x" value={hex(keyPair.pubKey[0])} />
-                <KV label="Public key y" value={hex(keyPair.pubKey[1])} />
+                <KV label="Curve" value="BabyJubJub (twisted Edwards / BN254 scalar field)" mono={false} />
+                <KV label="Public key x" value={hex(collectivePubKey.x)} />
+                <KV label="Public key y" value={hex(collectivePubKey.y)} />
                 <Text fontSize="xs" color="gray.500">
-                  pubKey = privKey × Base8  where Base8 is the standard BabyJubJub generator
+                  Q = privKey₁·G + privKey₂·G + … (Shamir secret sharing over BabyJubJub)
                 </Text>
-                <Button colorScheme="purple" variant="outline" size="xs"
-                  onClick={async () => { setKeyPair(null); setCiphertext(null); setRecovered(null); setTimeout(handleGenerateKey, 50); }}>
-                  Regenerate
-                </Button>
               </VStack>
             )}
           </VStack>
@@ -680,20 +715,20 @@ export function Playground() {
 
       {/* ── Step 5: Encrypt ────────────────────────────────────────────────── */}
       <StepCard n={5} title="ElGamal Encrypt" status={stepEncrypt}>
-        {!keyPair ? (
-          <Text fontSize="sm" color="gray.500">Waiting for key pair generation…</Text>
+        {!collectivePubKey ? (
+          <Text fontSize="sm" color="gray.500">Waiting for collective public key…</Text>
         ) : (
           <VStack align="stretch" spacing={4}>
             <Text fontSize="sm" color="gray.400">
               ElGamal on BabyJubJub: the message <em>m</em> is encoded as a scalar,
               a random ephemeral key <em>k</em> is chosen, and the ciphertext is
-              (c₁, c₂) = (k·G, m·G + k·Q) where Q is the public key and G = Base8.
+              (c₁, c₂) = (k·G, m·G + k·Q) where Q is the DKG collective public key and G = Base8.
             </Text>
             <HStack spacing={3} align="end">
               <FormControl w="200px">
                 <FormLabel fontSize="xs" color="gray.300" mb={1}>Plaintext (integer)</FormLabel>
                 <Input size="sm" fontFamily="mono" value={plaintext}
-                  onChange={e => { setPlaintext(e.target.value); setCiphertext(null); setRecovered(null); }} />
+                  onChange={e => { setPlaintext(e.target.value); setCiphertext(null); setSubmittedCiphertext(false); setCombinedRecord(null); }} />
               </FormControl>
               <Button colorScheme="purple" size="sm" onClick={handleEncrypt}>Encrypt →</Button>
             </HStack>
@@ -745,71 +780,92 @@ export function Playground() {
         )}
       </StepCard>
 
-      {/* ── Step 6: Decrypt ────────────────────────────────────────────────── */}
-      <StepCard n={6} title="ElGamal Decrypt" status={stepDecrypt}>
+      {/* ── Step 6: Submit to Nodes ───────────────────────────────────────── */}
+      <StepCard n={6} title="Submit Ciphertext & Await Threshold Decryption" status={stepSubmit}>
         {!ciphertext ? (
           <Text fontSize="sm" color="gray.500">Waiting for ciphertext…</Text>
         ) : (
           <VStack align="stretch" spacing={4}>
             <Text fontSize="sm" color="gray.400">
-              Decryption: compute <em>s = privKey · c₁</em> (the shared secret), then
-              <em> mPoint = c₂ − s = c₂ + (−s)</em>. In twisted Edwards −(x,y) = (−x, y).
-              Finally recover <em>m</em> by brute-force discrete log: iterate <em>i·G</em>
-              until it equals mPoint (practical only for small m).
+              The ciphertext is stored via the node's <Code fontSize="xs">/api/ciphertext/</Code> endpoint.
+              Nodes pick it up on their next poll cycle, compute a ZK partial decryption, and submit it
+              on-chain. Once the threshold is reached, one node runs <Code fontSize="xs">combineDecryptions</Code>{' '}
+              to produce the final combined decryption and write it on-chain.
             </Text>
-            {recovered === null ? (
-              <Button colorScheme="green" size="sm" alignSelf="start" onClick={handleDecrypt}>
-                Decrypt →
+            {!submittedCiphertext ? (
+              <Button colorScheme="teal" size="sm" alignSelf="start"
+                isLoading={submitBusy} onClick={handleSubmitCiphertext}>
+                Send Ciphertext to Nodes →
               </Button>
             ) : (
-              <>
-                {decryptDetails && (
-                  <VStack align="start" spacing={2} pl={2} borderLeft="2px solid" borderColor="green.700">
-                    <KV label="s = privKey · c₁" value={
-                      <VStack align="start" spacing={0}>
-                        <Text>x: {hex(decryptDetails.s[0])}</Text>
-                        <Text>y: {hex(decryptDetails.s[1])}</Text>
-                      </VStack>
-                    } />
-                    <KV label="−s  (negate x)" value={
-                      <VStack align="start" spacing={0}>
-                        <Text>x: {hex(decryptDetails.negS[0])}</Text>
-                        <Text>y: {hex(decryptDetails.negS[1])}</Text>
-                      </VStack>
-                    } />
-                    <KV label="mPoint = c₂ + (−s)" value={
-                      <VStack align="start" spacing={0}>
-                        <Text>x: {hex(decryptDetails.mPoint[0])}</Text>
-                        <Text>y: {hex(decryptDetails.mPoint[1])}</Text>
-                      </VStack>
-                    } />
-                    <KV label="DLOG search" value={`${decryptDetails.iterations} iteration(s)`} />
-                  </VStack>
-                )}
-                <Box bg={recovered === BigInt(plaintext || '0') ? 'green.900' : 'red.900'}
-                  border="1px solid" borderColor={recovered === BigInt(plaintext || '0') ? 'green.500' : 'red.500'}
-                  borderRadius="md" p={4}>
-                  <HStack>
-                    <Text fontSize="lg" fontFamily="mono" fontWeight="bold" color="white">
-                      {recovered === BigInt(plaintext || '0') ? '✓' : '✗'} Recovered plaintext: {recovered.toString()}
+              <VStack align="start" spacing={3}>
+                <HStack spacing={2}>
+                  <Badge colorScheme="teal">Submitted</Badge>
+                  <Text fontSize="xs" color="gray.400">
+                    Ciphertext stored — waiting for threshold decryption…
+                  </Text>
+                  {!combinedRecord?.completed && <Spinner size="xs" color="teal.300" />}
+                </HStack>
+                {combinedRecord?.completed ? (
+                  <HStack spacing={2}>
+                    <Badge colorScheme="green">Combined on-chain</Badge>
+                    <Text fontSize="xs" color="green.300">
+                      plaintextHash: {short(combinedRecord.plaintextHash)}
                     </Text>
                   </HStack>
-                  {recovered === BigInt(plaintext || '0') ? (
-                    <Text fontSize="xs" color="green.300" mt={1}>
-                      Matches original plaintext {plaintext}. Encrypt/decrypt roundtrip verified.
-                    </Text>
-                  ) : (
-                    <Text fontSize="xs" color="red.300" mt={1}>
-                      Mismatch — recovered {recovered.toString()} ≠ {plaintext}.
-                    </Text>
-                  )}
-                </Box>
+                ) : (
+                  <Text fontSize="xs" color="gray.500" fontFamily="mono">
+                    Polling every 3 s for CombinedDecryption event…
+                  </Text>
+                )}
                 <Button variant="outline" colorScheme="gray" size="xs" alignSelf="start"
-                  onClick={() => { setCiphertext(null); setRecovered(null); setEncryptDetails(null); }}>
-                  ← Reset encrypt/decrypt
+                  onClick={() => { setCiphertext(null); setEncryptDetails(null); setSubmittedCiphertext(false); setCombinedRecord(null); }}>
+                  ← Reset
                 </Button>
-              </>
+              </VStack>
             )}
+          </VStack>
+        )}
+      </StepCard>
+
+      {/* ── Step 7: Verify ───────────────────────────────────────────────── */}
+      <StepCard n={7} title="Verify Recovered Plaintext" status={stepVerify}>
+        {!combinedRecord?.completed ? (
+          <Text fontSize="sm" color="gray.500">Waiting for combined decryption on-chain…</Text>
+        ) : (
+          <VStack align="stretch" spacing={4}>
+            <Text fontSize="sm" color="gray.400">
+              The <Code fontSize="xs">plaintextHash</Code> stored on-chain is the raw plaintext
+              scalar (not a keccak256 hash — the circuit stores the plaintext itself as bytes32).
+              We compare it to the original plaintext entered in Step 5.
+            </Text>
+            {(() => {
+              const onChainPlaintext = BigInt(combinedRecord.plaintextHash);
+              const originalPlaintext = BigInt(plaintext || '0');
+              const match = onChainPlaintext === originalPlaintext;
+              return (
+                <Box
+                  bg={match ? 'green.900' : 'red.900'}
+                  border="1px solid" borderColor={match ? 'green.500' : 'red.500'}
+                  borderRadius="md" p={4}
+                >
+                  <Text fontSize="lg" fontFamily="mono" fontWeight="bold" color="white" mb={2}>
+                    {match ? '✓' : '✗'} Recovered plaintext: {onChainPlaintext.toString()}
+                  </Text>
+                  <VStack align="start" spacing={1}>
+                    <KV label="Original plaintext" value={originalPlaintext.toString()} />
+                    <KV label="On-chain plaintextHash (bytes32)" value={combinedRecord.plaintextHash} />
+                    <KV label="Ciphertext index" value={combinedRecord.ciphertextIndex.toString()} />
+                  </VStack>
+                  <Text fontSize="xs" color={match ? 'green.300' : 'red.300'} mt={3}>
+                    {match
+                      ? `Full roundtrip verified: encrypted ${originalPlaintext} with DKG key → threshold decryption → recovered ${onChainPlaintext}.`
+                      : `Mismatch — on-chain value ${onChainPlaintext} ≠ original ${originalPlaintext}.`
+                    }
+                  </Text>
+                </Box>
+              );
+            })()}
           </VStack>
         )}
       </StepCard>

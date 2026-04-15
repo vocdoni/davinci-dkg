@@ -116,6 +116,23 @@ export function useInactivityWindow() {
   });
 }
 
+export function useCollectivePublicKey(roundId: `0x${string}` | undefined) {
+  const configQ = useConfig();
+  return useQuery({
+    queryKey: ['collective-pubkey', roundId],
+    enabled: !!roundId && configQ.data !== undefined,
+    queryFn: async () => {
+      const client = await getDKGClient();
+      const fromBlock = configQ.data?.startBlock !== undefined
+        ? BigInt(configQ.data.startBlock)
+        : 0n;
+      return client.getCollectivePublicKey(roundId!, fromBlock);
+    },
+    staleTime: Infinity, // pubkey is immutable once set
+    refetchInterval: false,
+  });
+}
+
 export function useRoundEvents(roundId: `0x${string}` | undefined) {
   const configQ = useConfig();
   return useQuery({

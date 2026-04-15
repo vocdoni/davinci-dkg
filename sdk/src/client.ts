@@ -1,5 +1,6 @@
 import {
   getContract,
+  decodeFunctionData,
   type PublicClient,
   type Address,
   type GetContractReturnType,
@@ -288,6 +289,7 @@ export class DKGClient {
       collectivePublicKeyHash: `0x${string}`;
       shareCommitmentHash: `0x${string}`;
       blockNumber: bigint;
+      transactionHash: `0x${string}` | null;
     }>
   > {
     const logs = await this.publicClient.getLogs({
@@ -311,7 +313,54 @@ export class DKGClient {
       collectivePublicKeyHash: (l.args as any).collectivePublicKeyHash as `0x${string}`,
       shareCommitmentHash: (l.args as any).shareCommitmentHash as `0x${string}`,
       blockNumber: l.blockNumber ?? 0n,
+      transactionHash: (l.transactionHash ?? null) as `0x${string}` | null,
     }));
+  }
+
+  /**
+   * Extract the collective public key (x, y) for a finalized round.
+   *
+   * The coordinates are recovered from the `finalizeRound` transaction
+   * calldata: the `transcript` parameter encodes the aggregate commitment
+   * points as 32-byte words, and the first aggregate commitment
+   * (AggregateCommitments[0]) is the collective public key.
+   *
+   * Transcript layout (MAX_N = 16 words):
+   *   words [0..N)          participantIndexes
+   *   words [N..N+2N²)      contributionCommitments (N*N points × 2 coords)
+   *   words [N+2N²..+2N)    aggregateCommitments    (N points × 2 coords)
+   *   words [N+2N²+2N..+2N) shareCommitments
+   *
+   * AggregateCommitments[0].x is at word index N + 2*N*N = 528 (N=16).
+   */
+  async getCollectivePublicKey(
+    roundId: `0x${string}`,
+    fromBlock?: bigint,
+  ): Promise<{ x: bigint; y: bigint }> {
+    const events = await this.getRoundFinalizedEvents(roundId);
+    if (events.length === 0) {
+      throw new Error(`No RoundFinalized event found for round ${roundId}`);
+    }
+    const txHash = events[events.length - 1].transactionHash;
+    if (!txHash) throw new Error('RoundFinalized log has no transaction hash');
+
+    const tx = await this.publicClient.getTransaction({ hash: txHash });
+
+    // Decode calldata: finalizeRound(bytes12, bytes32, bytes32, bytes32, bytes, bytes, bytes)
+    const decoded = decodeFunctionData({ abi: dkgManagerAbi, data: tx.input });
+    if (decoded.functionName !== 'finalizeRound') {
+      throw new Error(`Unexpected function: ${decoded.functionName}`);
+    }
+    // args: [roundId, aggregateCommitmentsHash, collectivePublicKeyHash, shareCommitmentHash, transcript, proof, input]
+    const transcript = decoded.args[4] as `0x${string}`;
+
+    // Each word is 32 bytes = 64 hex chars.  MAX_N = 16.
+    const N = 16;
+    const aggOffset = N + 2 * N * N; // = 528
+    const hexBody = transcript.slice(2);   // strip '0x'
+    const x = BigInt('0x' + hexBody.slice(aggOffset * 64, (aggOffset + 1) * 64));
+    const y = BigInt('0x' + hexBody.slice((aggOffset + 1) * 64, (aggOffset + 2) * 64));
+    return { x, y };
   }
 
   /**

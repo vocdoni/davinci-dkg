@@ -5,9 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -31,7 +34,8 @@ type runtimeConfig struct {
 // the *http.Server so callers can shut it down with the rest of the node.
 // Returns nil if the webapp is disabled.
 // registryAddress is the resolved DKGRegistry address (may be empty in idle mode).
-func startWebapp(ctx context.Context, cfg *Config, chainID uint64, registryAddress string) (*http.Server, error) {
+// sharedDir is the directory where ciphertext files are read/written by the node.
+func startWebapp(ctx context.Context, cfg *Config, chainID uint64, registryAddress, sharedDir string) (*http.Server, error) {
 	if !cfg.Webapp.Enabled {
 		log.Infow("webapp disabled")
 		return nil, nil
@@ -67,6 +71,9 @@ func startWebapp(ctx context.Context, cfg *Config, chainID uint64, registryAddre
 		w.Header().Set("Cache-Control", "no-store")
 		_ = json.NewEncoder(w).Encode(rc)
 	})
+	if sharedDir != "" {
+		mux.HandleFunc("/api/ciphertext/", ciphertextAPIHandler(sharedDir))
+	}
 	mux.Handle("/", spaHandler(assets))
 
 	srv := &http.Server{
@@ -117,6 +124,78 @@ func fetchChainID(rpcURL string) (uint64, error) {
 	}
 	s := strings.TrimPrefix(out.Result, "0x")
 	return strconv.ParseUint(s, 16, 64)
+}
+
+// ciphertextAPIHandler returns an HTTP handler for GET/POST /api/ciphertext/{roundId}.
+//
+// POST: accepts a JSON body {ciphertext_index, c1x, c1y, c2x, c2y} and writes
+//       it to sharedDir/ciphertext-{roundId}.json so the node can pick it up
+//       for partial decryption on the next poll cycle.
+// GET:  reads and returns the stored ciphertext JSON.
+func ciphertextAPIHandler(sharedDir string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Extract the round ID hex from the URL: /api/ciphertext/{hex}
+		hex := strings.TrimPrefix(r.URL.Path, "/api/ciphertext/")
+		hex = strings.TrimSuffix(hex, "/")
+		if len(hex) == 0 {
+			http.Error(w, "missing round id", http.StatusBadRequest)
+			return
+		}
+
+		// Allow CORS for browser playground use.
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		if r.Method == http.MethodOptions {
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		path := filepath.Join(sharedDir, fmt.Sprintf("ciphertext-%s.json", hex))
+
+		switch r.Method {
+		case http.MethodPost:
+			body, err := io.ReadAll(io.LimitReader(r.Body, 4096))
+			if err != nil {
+				http.Error(w, "read body: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+			// Validate JSON
+			var ct CiphertextFile
+			if err := json.Unmarshal(body, &ct); err != nil {
+				http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+			if err := os.MkdirAll(sharedDir, 0o700); err != nil {
+				http.Error(w, "mkdir: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if err := os.WriteFile(path, body, 0o600); err != nil {
+				http.Error(w, "write: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+			log.Infow("ciphertext written", "round", hex, "index", ct.CiphertextIndex)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+
+		case http.MethodGet:
+			data, err := os.ReadFile(path)
+			if err != nil {
+				if errors.Is(err, os.ErrNotExist) {
+					http.Error(w, "not found", http.StatusNotFound)
+					return
+				}
+				http.Error(w, "read: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(data)
+
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	}
 }
 
 // spaHandler serves the embedded assets and falls back to index.html for any
