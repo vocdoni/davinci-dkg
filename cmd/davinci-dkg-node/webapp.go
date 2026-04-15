@@ -28,6 +28,11 @@ type runtimeConfig struct {
 	RegistryAddress string `json:"registryAddress"`
 	ChainID         uint64 `json:"chainId"`
 	ChainName       string `json:"chainName"`
+	// StartBlock is the block at which the DKGManager was deployed. The webapp
+	// uses this as the lower bound for getLogs queries to avoid scanning from
+	// genesis (free-tier RPC providers cap ranges at ≈10 000 blocks).
+	// Zero means "unknown"; the SDK will fall back to a recent-block heuristic.
+	StartBlock uint64 `json:"startBlock,omitempty"`
 }
 
 // startWebapp serves the embedded explorer SPA on cfg.Webapp.Listen. It returns
@@ -50,6 +55,7 @@ func startWebapp(ctx context.Context, cfg *Config, chainID uint64, registryAddre
 		RegistryAddress: registryAddress,
 		ChainID:         chainID,
 		ChainName:       cfg.resolvedNetworkName(),
+		StartBlock:      cfg.resolvedStartBlock(),
 	}
 	if len(cfg.Web3.RPC) > 0 {
 		rc.RPCURL = cfg.Web3.RPC[0]

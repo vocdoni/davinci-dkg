@@ -159,6 +159,19 @@ func (c *Config) resolvedManagerAddr() string {
 	return ""
 }
 
+// resolvedStartBlock returns the contract deployment block for the current
+// network preset, or 0 when no preset is active. The webapp uses this value
+// as the lower bound for getLogs queries so it never scans from genesis.
+func (c *Config) resolvedStartBlock() uint64 {
+	if c.Network != "" {
+		dep, err := config.NetworkByName(c.Network)
+		if err == nil {
+			return dep.StartBlock
+		}
+	}
+	return 0
+}
+
 // resolvedNetworkName returns the canonical network name for display/logging.
 func (c *Config) resolvedNetworkName() string {
 	if c.Network != "" {

@@ -23,6 +23,88 @@ import { buildRoundId } from './utils.js';
 type ManagerContract = GetContractReturnType<typeof dkgManagerAbi, PublicClient>;
 type RegistryContract = GetContractReturnType<typeof dkgRegistryAbi, PublicClient>;
 
+/** Default chunk size for chunked getLogs (blocks per request). */
+const DEFAULT_LOG_CHUNK = 2000n;
+/** Minimum chunk size before giving up on adaptive reduction. */
+const MIN_LOG_CHUNK = 100n;
+/** Default fallback window when fromBlock is unknown (0). */
+const DEFAULT_FALLBACK_WINDOW = 50_000n;
+
+/**
+ * Returns true when the error message indicates that the requested block
+ * range exceeds the provider's getLogs limit.
+ */
+function isRangeTooLargeError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return (
+    msg.includes('range') ||
+    msg.includes('block range') ||
+    msg.includes('10000') ||
+    msg.includes('10,000') ||
+    msg.includes('exceed') ||
+    msg.includes('too large') ||
+    msg.includes('too many blocks') ||
+    msg.includes('eth_getLogs is limited')
+  );
+}
+
+/**
+ * Compute the effective fromBlock for a log query.
+ *
+ * When `fromBlock` is 0n (unknown deployment block), clamp it to
+ * `latestBlock - fallbackWindow` so queries never scan from genesis.
+ */
+function effectiveFromBlock(fromBlock: bigint, latestBlock: bigint, fallbackWindow: bigint): bigint {
+  if (fromBlock === 0n && fallbackWindow > 0n) {
+    return latestBlock > fallbackWindow ? latestBlock - fallbackWindow : 0n;
+  }
+  return fromBlock;
+}
+
+/**
+ * Fetch logs over a potentially large block range by splitting it into chunks.
+ * Uses `any` for the opts parameter to avoid viem's complex getLogs union types.
+ * The caller is responsible for passing valid getLogs parameters.
+ *
+ * When `fromBlock` is 0n and `fallbackWindow > 0`, the scan floor is clamped
+ * to `latestBlock - fallbackWindow` to avoid scanning from genesis.
+ */
+async function getLogsChunked(
+  client: PublicClient,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  opts: any,
+  options: { chunkSize?: bigint; fallbackWindow?: bigint } = {},
+): Promise<any[]> {
+  const chunkSize = options.chunkSize ?? DEFAULT_LOG_CHUNK;
+  const fallbackWindow = options.fallbackWindow ?? DEFAULT_FALLBACK_WINDOW;
+
+  const latest = await client.getBlockNumber();
+  const toBlock: bigint =
+    opts.toBlock === 'latest' || opts.toBlock == null ? latest : BigInt(opts.toBlock as string | bigint);
+  const rawFrom: bigint = opts.fromBlock != null ? BigInt(opts.fromBlock as string | bigint) : 0n;
+  const fromBlock = effectiveFromBlock(rawFrom, latest, fallbackWindow);
+
+  const all: any[] = [];
+  let currentChunk = chunkSize;
+  let cursor = fromBlock;
+
+  while (cursor <= toBlock) {
+    const end = cursor + currentChunk - 1n > toBlock ? toBlock : cursor + currentChunk - 1n;
+    try {
+      const chunk = await client.getLogs({ ...opts, fromBlock: cursor, toBlock: end });
+      all.push(...chunk);
+      cursor = end + 1n;
+    } catch (err) {
+      if (isRangeTooLargeError(err) && currentChunk > MIN_LOG_CHUNK) {
+        currentChunk = currentChunk / 2n;
+        continue;
+      }
+      throw err;
+    }
+  }
+  return all;
+}
+
 /**
  * Read-only client for the DKG Manager and Registry contracts.
  *
@@ -256,21 +338,25 @@ export class DKGClient {
       blockNumber: bigint;
     }>
   > {
-    const logs = await this.publicClient.getLogs({
-      address: this.managerAddress,
-      event: {
-        type: 'event',
-        name: 'RoundCreated',
-        inputs: [
-          { name: 'roundId', type: 'bytes12', indexed: true },
-          { name: 'organizer', type: 'address', indexed: true },
-          { name: 'seedBlock', type: 'uint64', indexed: false },
-          { name: 'lotteryThreshold', type: 'uint256', indexed: false },
-        ],
-      } as const,
-      fromBlock: options?.fromBlock ?? 0n,
-      toBlock: options?.toBlock ?? 'latest',
-    });
+    const logs = await getLogsChunked(
+      this.publicClient,
+      {
+        address: this.managerAddress,
+        event: {
+          type: 'event',
+          name: 'RoundCreated',
+          inputs: [
+            { name: 'roundId', type: 'bytes12', indexed: true },
+            { name: 'organizer', type: 'address', indexed: true },
+            { name: 'seedBlock', type: 'uint64', indexed: false },
+            { name: 'lotteryThreshold', type: 'uint256', indexed: false },
+          ],
+        } as const,
+        fromBlock: options?.fromBlock,
+        toBlock: options?.toBlock,
+      },
+      { fallbackWindow: 50_000n },
+    );
     return logs.map((l) => ({
       roundId: (l.args as any).roundId as `0x${string}`,
       organizer: (l.args as any).organizer as Address,
@@ -292,22 +378,26 @@ export class DKGClient {
       transactionHash: `0x${string}` | null;
     }>
   > {
-    const logs = await this.publicClient.getLogs({
-      address: this.managerAddress,
-      event: {
-        type: 'event',
-        name: 'RoundFinalized',
-        inputs: [
-          { name: 'roundId', type: 'bytes12', indexed: true },
-          { name: 'aggregateCommitmentsHash', type: 'bytes32', indexed: false },
-          { name: 'collectivePublicKeyHash', type: 'bytes32', indexed: false },
-          { name: 'shareCommitmentHash', type: 'bytes32', indexed: false },
-        ],
-      } as const,
-      args: { roundId: roundId as any },
-      fromBlock: 0n,
-      toBlock: 'latest',
-    });
+    const logs = await getLogsChunked(
+      this.publicClient,
+      {
+        address: this.managerAddress,
+        event: {
+          type: 'event',
+          name: 'RoundFinalized',
+          inputs: [
+            { name: 'roundId', type: 'bytes12', indexed: true },
+            { name: 'aggregateCommitmentsHash', type: 'bytes32', indexed: false },
+            { name: 'collectivePublicKeyHash', type: 'bytes32', indexed: false },
+            { name: 'shareCommitmentHash', type: 'bytes32', indexed: false },
+          ],
+        } as const,
+        args: { roundId: roundId as any },
+        fromBlock: 0n,
+        toBlock: 'latest',
+      },
+      { fallbackWindow: 50_000n },
+    );
     return logs.map((l) => ({
       aggregateCommitmentsHash: (l.args as any).aggregateCommitmentsHash as `0x${string}`,
       collectivePublicKeyHash: (l.args as any).collectivePublicKeyHash as `0x${string}`,
@@ -404,20 +494,24 @@ export class DKGClient {
    */
   async getRegistryNodes(fromBlock = 0n): Promise<NodeKey[]> {
     const registryAddr = await this._getRegistryAddress();
-    const logs = await this.publicClient.getLogs({
-      address: registryAddr,
-      event: {
-        type: 'event',
-        name: 'NodeRegistered',
-        inputs: [
-          { name: 'operator', type: 'address', indexed: true },
-          { name: 'pubX', type: 'uint256', indexed: false },
-          { name: 'pubY', type: 'uint256', indexed: false },
-        ],
-      } as const,
-      fromBlock,
-      toBlock: 'latest',
-    });
+    const logs = await getLogsChunked(
+      this.publicClient,
+      {
+        address: registryAddr,
+        event: {
+          type: 'event',
+          name: 'NodeRegistered',
+          inputs: [
+            { name: 'operator', type: 'address', indexed: true },
+            { name: 'pubX', type: 'uint256', indexed: false },
+            { name: 'pubY', type: 'uint256', indexed: false },
+          ],
+        } as const,
+        fromBlock,
+        toBlock: 'latest',
+      },
+      { fallbackWindow: 50_000n },
+    );
 
     // De-duplicate by lower-cased address; preserve insertion order.
     const seen = new Set<string>();
@@ -449,12 +543,36 @@ export class DKGClient {
    * by `eventName` to isolate e.g. only `ContributionSubmitted` events.
    */
   async getAllRoundEvents(roundId: `0x${string}`, fromBlock = 0n): Promise<RoundEvent[]> {
-    const logs = await this.publicClient.getContractEvents({
-      address: this.managerAddress,
-      abi: dkgManagerAbi,
-      fromBlock,
-      toBlock: 'latest',
-    });
+    const latest = await this.publicClient.getBlockNumber();
+    let start = fromBlock;
+    // Apply fallback window when fromBlock is unknown (0).
+    if (start === 0n) {
+      start = latest > 50_000n ? latest - 50_000n : 0n;
+    }
+    let currentChunk = DEFAULT_LOG_CHUNK;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const allLogs: any[] = [];
+    let cursor = start;
+    while (cursor <= latest) {
+      const end = cursor + currentChunk - 1n > latest ? latest : cursor + currentChunk - 1n;
+      try {
+        const chunk = await this.publicClient.getContractEvents({
+          address: this.managerAddress,
+          abi: dkgManagerAbi,
+          fromBlock: cursor,
+          toBlock: end,
+        });
+        allLogs.push(...chunk);
+        cursor = end + 1n;
+      } catch (err) {
+        if (isRangeTooLargeError(err) && currentChunk > MIN_LOG_CHUNK) {
+          currentChunk = currentChunk / 2n;
+          continue;
+        }
+        throw err;
+      }
+    }
+    const logs = allLogs;
     return logs
       .filter((l) => 'args' in l && (l.args as any).roundId === roundId)
       .map((l) => ({
