@@ -321,7 +321,7 @@ func (n *Node) EnsureRegistered(ctx context.Context) error {
 
 	auth, err := n.txm.NewTransactOpts(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("tx opts for registration: %w", err)
 	}
 	var tx *ethtypes.Transaction
 	switch existing.Status {
@@ -506,7 +506,7 @@ func (n *Node) tick(ctx context.Context) error {
 func (n *Node) participate(ctx context.Context, roundID [12]byte, callOpts *bind.CallOpts) error {
 	round, err := n.contracts.GetRound(ctx, roundID)
 	if err != nil {
-		return err
+		return fmt.Errorf("get round: %w", err)
 	}
 	switch round.Status {
 	case 1: // Registration — try to claim a slot in the lottery
@@ -514,21 +514,21 @@ func (n *Node) participate(ctx context.Context, roundID [12]byte, callOpts *bind
 	case 2: // Contribution
 		selected, err := n.contracts.SelectedParticipants(ctx, roundID)
 		if err != nil {
-			return err
+			return fmt.Errorf("selected participants: %w", err)
 		}
 		idx := myIndex(selected, n.address)
 		if idx == 0 {
-			return nil
+			return nil // not selected
 		}
 		return n.doContribution(ctx, roundID, idx, round.Policy.Threshold, round.Policy.CommitteeSize, selected)
 	case 3: // Finalized
 		selected, err := n.contracts.SelectedParticipants(ctx, roundID)
 		if err != nil {
-			return err
+			return fmt.Errorf("selected participants: %w", err)
 		}
 		idx := myIndex(selected, n.address)
 		if idx == 0 {
-			return nil
+			return nil // not selected
 		}
 		return n.doDecryption(ctx, roundID, idx, round, selected, callOpts)
 	}
@@ -552,9 +552,16 @@ func (n *Node) doClaimSlot(ctx context.Context, roundID [12]byte, round web3.Rou
 	}
 	tx, err := n.manager.ClaimSlot(auth, roundID)
 	if err != nil {
-		// Common benign cases: not eligible, slot already taken, slots full,
-		// already claimed, seed not yet ready. Don't spam the log on first sight.
+		// SeedNotReady: the seed block hasn't been mined yet. Retry next poll
+		// without setting signaled so we keep trying until the seed arrives.
+		if strings.Contains(err.Error(), "SeedNotReady") {
+			log.Debugw("claim slot: seed not ready yet, retrying next poll", "round", roundHex(roundID))
+			return nil
+		}
+		// Definitively final reverts: the committee is decided without us.
+		// Set signaled so we stop sending txs for this round.
 		if isExpectedClaimRevert(err) {
+			log.Debugw("claim slot: not selected for committee", "round", roundHex(roundID), "reason", err.Error())
 			n.signaled[roundID] = true
 			return nil
 		}
@@ -645,20 +652,20 @@ func (n *Node) doContribution(
 	}
 	proofBytes, err := marshalSolidityProof(proof)
 	if err != nil {
-		return err
+		return fmt.Errorf("marshal contribution proof: %w", err)
 	}
 	inputBytes, err := encodePublicWitness(pi.PublicWitness())
 	if err != nil {
-		return err
+		return fmt.Errorf("encode contribution public witness: %w", err)
 	}
 	transcriptBytes, err := encodeWords(pi.TranscriptScalars()...)
 	if err != nil {
-		return err
+		return fmt.Errorf("encode contribution transcript: %w", err)
 	}
 
 	auth, err := n.txm.NewTransactOpts(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("tx opts for contribution: %w", err)
 	}
 	tx, err := n.manager.SubmitContribution(
 		auth, roundID, idx,
@@ -670,7 +677,7 @@ func (n *Node) doContribution(
 		return fmt.Errorf("submit contribution: %w", err)
 	}
 	if err := n.txm.WaitTxByHash(tx.Hash(), 120*time.Second); err != nil {
-		return err
+		return fmt.Errorf("wait contribution tx: %w", err)
 	}
 	n.contributed[roundID] = true
 	n.ownContribs[roundID] = &savedContrib{
@@ -743,11 +750,11 @@ func (n *Node) doDecryption(
 	}
 	proofBytes, err := marshalSolidityProof(proof)
 	if err != nil {
-		return err
+		return fmt.Errorf("marshal partial decrypt proof: %w", err)
 	}
 	inputBytes, err := encodePublicWitness(pi.PublicWitness())
 	if err != nil {
-		return err
+		return fmt.Errorf("encode partial decrypt public witness: %w", err)
 	}
 	dHash := ethcrypto.Keccak256Hash(
 		common.LeftPadBytes(pi.Delta.X.Bytes(), 32),
@@ -756,14 +763,14 @@ func (n *Node) doDecryption(
 
 	auth, err := n.txm.NewTransactOpts(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("tx opts for partial decryption: %w", err)
 	}
 	tx, err := n.manager.SubmitPartialDecryption(auth, roundID, idx, ctIdx, dHash, proofBytes, inputBytes)
 	if err != nil {
 		return fmt.Errorf("submit partial decryption: %w", err)
 	}
 	if err := n.txm.WaitTxByHash(tx.Hash(), 120*time.Second); err != nil {
-		return err
+		return fmt.Errorf("wait partial decryption tx: %w", err)
 	}
 	n.decrypted[roundID][ctIdx] = true
 	log.Infow("partial decryption submitted", "round", roundHex(roundID), "index", idx)
@@ -1044,7 +1051,8 @@ func isExpectedClaimRevert(err error) bool {
 	s := err.Error()
 	// Definitive: don't retry. NotEligible & SlotsFull & InvalidPhase mean the
 	// committee is decided without us. AlreadyClaimed means we already won.
-	for _, tok := range []string{"NotEligible", "SlotsFull", "AlreadyClaimed", "InvalidPhase"} {
+	// SeedExpired means the seed beacon data is gone — round is unrecoverable.
+	for _, tok := range []string{"NotEligible", "SlotsFull", "AlreadyClaimed", "InvalidPhase", "SeedExpired"} {
 		if strings.Contains(s, tok) {
 			return true
 		}

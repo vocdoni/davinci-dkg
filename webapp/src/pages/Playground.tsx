@@ -24,6 +24,7 @@ import { DKGWriter, RoundStatus, buildElGamal, buildRoundId } from '@vocdoni/dav
 import type { Round, BabyJubPoint, ElGamalCiphertext, RoundEvent } from '@vocdoni/davinci-dkg-sdk';
 import type { WalletClient, Address } from 'viem';
 import { getDKGClient, getClient, loadConfig } from '../lib/client';
+import { blocksRemaining, formatBlocksRemaining } from '../lib/format';
 import { connectWallet, hasWallet } from '../lib/wallet';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -154,6 +155,7 @@ export function Playground() {
   const [txHash, setTxHash] = useState('');
   const [roundId, setRoundId] = useState<`0x${string}` | null>(null);
   const [round, setRound] = useState<Round | null>(null);
+  const [currentBlock, setCurrentBlock] = useState<bigint | null>(null);
   const [participants, setParticipants] = useState<Address[]>([]);
   const [events, setEvents] = useState<RoundEvent[]>([]);
   const [finalizedInfo, setFinalizedInfo] = useState<{
@@ -289,10 +291,12 @@ export function Playground() {
 
     async function poll() {
       try {
-        const [r, parts] = await Promise.all([
+        const [r, parts, blk] = await Promise.all([
           writer!.getRound(roundId!),
           writer!.selectedParticipants(roundId!),
+          writer!.blockNumber(),
         ]);
+        setCurrentBlock(blk);
         setRound(r);
         setParticipants(parts);
 
@@ -561,6 +565,22 @@ export function Playground() {
                     value={BigInt(round.seed) === 0n ? <Badge colorScheme="gray">pending</Badge> : short(round.seed)} />
                   <KV label="Claimed slots" value={`${round.claimedCount} / ${round.policy.committeeSize}`} />
                   <KV label="Contributions" value={`${round.contributionCount} / ${round.policy.committeeSize}`} />
+                  {round.status === RoundStatus.Registration && (() => {
+                    const delta = blocksRemaining(currentBlock, round.policy.registrationDeadlineBlock);
+                    const color = delta === null ? 'gray.400' : delta > 20 ? 'green.300' : delta > 0 ? 'yellow.300' : 'red.400';
+                    return (
+                      <KV label="Registration closes"
+                        value={<Text fontFamily="mono" fontSize="xs" color={color}>{formatBlocksRemaining(delta)} (block #{round.policy.registrationDeadlineBlock.toString()})</Text>} />
+                    );
+                  })()}
+                  {round.status === RoundStatus.Contribution && (() => {
+                    const delta = blocksRemaining(currentBlock, round.policy.contributionDeadlineBlock);
+                    const color = delta === null ? 'gray.400' : delta > 20 ? 'green.300' : delta > 0 ? 'yellow.300' : 'red.400';
+                    return (
+                      <KV label="Contribution closes"
+                        value={<Text fontFamily="mono" fontSize="xs" color={color}>{formatBlocksRemaining(delta)} (block #{round.policy.contributionDeadlineBlock.toString()})</Text>} />
+                    );
+                  })()}
                 </Grid>
                 {participants.length > 0 && (
                   <Box>

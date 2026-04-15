@@ -16,8 +16,8 @@ import {
 import { useParams } from 'react-router-dom';
 import { HashCell } from '../components/HashCell';
 import { StatusBadge } from '../components/StatusBadge';
-import { isZeroHash } from '../lib/format';
-import { useRound, useRoundEvents } from '../lib/hooks';
+import { blocksRemaining, formatBlocksRemaining, isZeroHash } from '../lib/format';
+import { useBlockNumber, useRound, useRoundEvents } from '../lib/hooks';
 
 const ROUND_ID_RE = /^0x[0-9a-fA-F]{24}$/;
 
@@ -50,11 +50,47 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
+function DeadlineField({
+  label,
+  deadline,
+  currentBlock,
+  activeWhen,
+  status,
+}: {
+  label: string;
+  deadline: bigint;
+  currentBlock: bigint | undefined;
+  activeWhen: number; // the round status value when this deadline is relevant
+  status: number;
+}) {
+  const delta = blocksRemaining(currentBlock, deadline);
+  const isActive = status === activeWhen;
+  const color =
+    delta === null ? 'gray.400'
+    : delta > 20   ? 'green.300'
+    : delta > 0    ? 'yellow.300'
+    : 'red.400';
+
+  return (
+    <Field label={label}>
+      <HStack spacing={2} align="baseline" wrap="wrap">
+        <Text>#{deadline.toString()}</Text>
+        {isActive && delta !== null && (
+          <Text fontSize="xs" color={color} fontFamily="mono">
+            ({formatBlocksRemaining(delta)})
+          </Text>
+        )}
+      </HStack>
+    </Field>
+  );
+}
+
 export function RoundDetail() {
   const { id } = useParams<{ id: string }>();
   const roundId = parseRoundId(id);
   const roundQ = useRound(roundId ?? undefined);
   const eventsQ = useRoundEvents(roundId ?? undefined);
+  const blockQ = useBlockNumber();
 
   if (!roundId) {
     return (
@@ -129,12 +165,20 @@ export function RoundDetail() {
           <Field label="Min valid contribs">{policy.minValidContributions}</Field>
           <Field label="Lottery α (bps)">{policy.lotteryAlphaBps}</Field>
           <Field label="Seed delay">{policy.seedDelay}</Field>
-          <Field label="Registration deadline">
-            #{policy.registrationDeadlineBlock.toString()}
-          </Field>
-          <Field label="Contribution deadline">
-            #{policy.contributionDeadlineBlock.toString()}
-          </Field>
+          <DeadlineField
+            label="Registration deadline"
+            deadline={policy.registrationDeadlineBlock}
+            currentBlock={blockQ.data}
+            activeWhen={1}
+            status={Number(r.status)}
+          />
+          <DeadlineField
+            label="Contribution deadline"
+            deadline={policy.contributionDeadlineBlock}
+            currentBlock={blockQ.data}
+            activeWhen={2}
+            status={Number(r.status)}
+          />
           <Field label="Disclosure">
             {policy.disclosureAllowed ? (
               <Tag size="sm" colorScheme="green">

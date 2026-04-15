@@ -115,7 +115,14 @@ func event(level zerolog.Level, msg string, keysAndValues ...any) {
 	e := logger.WithLevel(level)
 	for i := 0; i+1 < len(keysAndValues); i += 2 {
 		key := fmt.Sprint(keysAndValues[i])
-		e = e.Interface(key, keysAndValues[i+1])
+		val := keysAndValues[i+1]
+		// Use AnErr so the error's .Error() string is logged instead of trying
+		// to JSON-marshal the error struct (which produces "{}").
+		if err, ok := val.(error); ok {
+			e = e.AnErr(key, err)
+		} else {
+			e = e.Interface(key, val)
+		}
 	}
 	e.Msg(msg)
 }

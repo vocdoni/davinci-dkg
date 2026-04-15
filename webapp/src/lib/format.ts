@@ -42,6 +42,31 @@ export function isZeroHash(hex: string | undefined | null): boolean {
   return hex.toLowerCase() === ZERO_HASH;
 }
 
+/**
+ * Compute blocks remaining until a deadline.
+ * Returns a positive number when deadline is in the future, negative when past.
+ * Returns null when either argument is undefined.
+ */
+export function blocksRemaining(
+  current: bigint | undefined | null,
+  deadline: bigint | number | undefined | null,
+): number | null {
+  if (current === undefined || current === null) return null;
+  if (deadline === undefined || deadline === null) return null;
+  return Number(BigInt(deadline) - current);
+}
+
+/**
+ * Format a blocks-remaining value as a human-readable string.
+ * e.g. "+47 blocks" / "0 blocks" / "−12 blocks ago"
+ */
+export function formatBlocksRemaining(delta: number | null): string {
+  if (delta === null) return '—';
+  if (delta > 0) return `+${delta} block${delta === 1 ? '' : 's'}`;
+  if (delta === 0) return 'closing now';
+  return `${delta} blocks ago`;
+}
+
 export function formatTimestamp(ts: bigint | number | undefined | null): string {
   if (ts === undefined || ts === null) return '—';
   const n = Number(ts);

@@ -22,6 +22,22 @@ export function useChainTip() {
   });
 }
 
+/**
+ * Current block number, refreshed every 12 seconds (≈ one Sepolia block).
+ * Returns `undefined` while loading.
+ */
+export function useBlockNumber() {
+  return useQuery<bigint>({
+    queryKey: ['block-number'],
+    queryFn: async () => {
+      const client = await getDKGClient();
+      return client.blockNumber();
+    },
+    refetchInterval: 12_000,
+    staleTime: 10_000,
+  });
+}
+
 export function useRoundNonce() {
   return useQuery({
     queryKey: ['round-nonce'],
