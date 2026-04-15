@@ -72,9 +72,10 @@ type Manager struct {
 	from    common.Address
 	config  Config
 
-	mu        sync.Mutex
-	nextNonce uint64
-	pending   map[uint64]*pendingTx
+	mu            sync.Mutex
+	nextNonce     uint64
+	pending       map[uint64]*pendingTx
+	totalGasSpent *big.Int // accumulated gas cost in wei across confirmed txs
 
 	monitorCancel context.CancelFunc
 }
@@ -90,12 +91,13 @@ func New(client *ethclient.Client, chainID uint64, privateKey string) (*Manager,
 		return nil, fmt.Errorf("invalid public key type")
 	}
 	return &Manager{
-		client:  client,
-		key:     key,
-		chainID: new(big.Int).SetUint64(chainID),
-		from:    crypto.PubkeyToAddress(*publicKey),
-		config:  DefaultConfig(),
-		pending: make(map[uint64]*pendingTx),
+		client:        client,
+		key:           key,
+		chainID:       new(big.Int).SetUint64(chainID),
+		from:          crypto.PubkeyToAddress(*publicKey),
+		config:        DefaultConfig(),
+		pending:       make(map[uint64]*pendingTx),
+		totalGasSpent: new(big.Int),
 	}, nil
 }
 
@@ -189,6 +191,8 @@ func (m *Manager) WaitTxByHash(hash common.Hash, timeout time.Duration) error {
 			receipt, err := m.client.TransactionReceipt(ctx, hash)
 			switch {
 			case err == nil:
+				// Always record gas cost — reverted txs still consume gas.
+				m.recordGasSpent(receipt)
 				if receipt.Status != gethtypes.ReceiptStatusSuccessful {
 					return fmt.Errorf("transaction %s reverted (status %d)", hash.Hex(), receipt.Status)
 				}
@@ -201,6 +205,33 @@ func (m *Manager) WaitTxByHash(hash common.Hash, timeout time.Duration) error {
 			}
 		}
 	}
+}
+
+// Balance returns the current ETH balance of the managed account.
+func (m *Manager) Balance(ctx context.Context) (*big.Int, error) {
+	return m.client.BalanceAt(ctx, m.from, nil)
+}
+
+// TotalGasSpent returns the accumulated gas cost in wei for all confirmed
+// transactions tracked by this manager since it was created.
+func (m *Manager) TotalGasSpent() *big.Int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return new(big.Int).Set(m.totalGasSpent)
+}
+
+// recordGasSpent adds the gas cost of a confirmed receipt to the running total.
+func (m *Manager) recordGasSpent(receipt *gethtypes.Receipt) {
+	if receipt == nil || receipt.EffectiveGasPrice == nil {
+		return
+	}
+	cost := new(big.Int).Mul(
+		new(big.Int).SetUint64(receipt.GasUsed),
+		receipt.EffectiveGasPrice,
+	)
+	m.mu.Lock()
+	m.totalGasSpent.Add(m.totalGasSpent, cost)
+	m.mu.Unlock()
 }
 
 // suggestFees returns (gasTipCap, gasFeeCap) for an EIP-1559 transaction.

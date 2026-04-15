@@ -2,19 +2,28 @@ package helpers
 
 import (
 	"context"
-	"crypto/sha256"
 	"fmt"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
+	ethcrypto "github.com/ethereum/go-ethereum/crypto"
 	"github.com/vocdoni/davinci-dkg/crypto/group"
+	dkghash "github.com/vocdoni/davinci-dkg/crypto/hash"
 )
 
-const localNodeKeyDerivationDomain = "davinci-dkg:test:registry-key:v1"
+// localNodeKeyDerivationDomain must match bjjKeyDomain in
+// cmd/davinci-dkg-node/node.go so that keys derived here match the node.
+const localNodeKeyDerivationDomain = "davinci-dkg/bjj-key/v1"
 
 func deterministicNodeKeyMaterial(privateKey string) (*big.Int, *big.Int, *big.Int, error) {
-	seed := sha256.Sum256(append([]byte(localNodeKeyDerivationDomain), common.FromHex(privateKey)...))
-	secret := new(big.Int).SetBytes(seed[:])
+	preimage := append(common.FromHex(privateKey), []byte(localNodeKeyDerivationDomain)...)
+	digest := ethcrypto.Keccak256(preimage)
+	lo := new(big.Int).SetBytes(digest[:16])
+	hi := new(big.Int).SetBytes(digest[16:])
+	secret, err := dkghash.HashFieldElements(lo, hi)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("poseidon hash: %w", err)
+	}
 	secret.Mod(secret, group.ScalarField())
 	if secret.Sign() == 0 {
 		secret.SetInt64(1)

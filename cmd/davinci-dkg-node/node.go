@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -32,7 +31,7 @@ import (
 )
 
 // bjjKeyDomain must match tests/helpers/nodekeys.go so registry keys are consistent.
-const bjjKeyDomain = "davinci-dkg:test:registry-key:v1"
+const bjjKeyDomain = "davinci-dkg/bjj-key/v1"
 
 // CiphertextFile is written to sharedDir/<roundHex>.json by the dkg-runner.
 type CiphertextFile struct {
@@ -123,9 +122,19 @@ func newNode(cfg *Config) (*Node, error) {
 
 // deriveBJJSecret derives a BabyJubJub private scalar from an Ethereum private
 // key using the same domain as tests/helpers/nodekeys.go.
+//
+// Derivation: poseidon2(keccak256(privKey || domain)[0:16], keccak256(...)[16:32])
+// mod BJJ scalar field. Using keccak for pre-image binding and Poseidon for
+// ZK-friendly output keeps the derivation compatible with in-circuit proofs.
 func deriveBJJSecret(ethPrivKey string) (*big.Int, error) {
-	seed := sha256.Sum256(append([]byte(bjjKeyDomain), common.FromHex(ethPrivKey)...))
-	s := new(big.Int).SetBytes(seed[:])
+	preimage := append(common.FromHex(ethPrivKey), []byte(bjjKeyDomain)...)
+	digest := ethcrypto.Keccak256(preimage)
+	lo := new(big.Int).SetBytes(digest[:16])
+	hi := new(big.Int).SetBytes(digest[16:])
+	s, err := dkghash.HashFieldElements(lo, hi)
+	if err != nil {
+		return nil, fmt.Errorf("poseidon hash: %w", err)
+	}
 	s.Mod(s, group.ScalarField())
 	if s.Sign() == 0 {
 		s.SetInt64(1)
@@ -239,7 +248,36 @@ func (n *Node) LogStartupSnapshot(ctx context.Context, cfg *Config) {
 			"blocksUntilReap", headroom)
 	}
 
+	// ── wallet funds ─────────────────────────────────────────────────────
+	n.logFunds(ctx)
+
 	log.Infow("==================================================================")
+}
+
+// logFunds queries the on-chain ETH balance and logs it alongside the
+// accumulated gas cost tracked by the transaction manager since startup.
+func (n *Node) logFunds(ctx context.Context) {
+	balance, err := n.txm.Balance(ctx)
+	if err != nil {
+		log.Warnw("funds: failed to query balance", "address", n.address, "err", err)
+		return
+	}
+	spent := n.txm.TotalGasSpent()
+	log.Infow("funds: account",
+		"address", n.address,
+		"balance", formatETH(balance),
+		"gasSpentThisSession", formatETH(spent))
+}
+
+// formatETH converts a wei amount to a human-readable ETH string.
+func formatETH(wei *big.Int) string {
+	if wei == nil {
+		return "0.000000 ETH"
+	}
+	eth := new(big.Float).SetPrec(64).SetInt(wei)
+	eth.Quo(eth, new(big.Float).SetPrec(64).SetFloat64(1e18))
+	s, _ := eth.Float64()
+	return fmt.Sprintf("%.6f ETH", s)
 }
 
 // bjjPublicKey returns (pubX, pubY) for this node's BabyJubJub key.
@@ -424,11 +462,16 @@ func (n *Node) sendReactivate(ctx context.Context) error {
 func (n *Node) Run(ctx context.Context, pollInterval time.Duration) {
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
+	// Emit balance and gas-spent info every 10 minutes regardless of poll interval.
+	fundsTicker := time.NewTicker(10 * time.Minute)
+	defer fundsTicker.Stop()
 	log.Infow("node running", "address", n.address, "poll", pollInterval)
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-fundsTicker.C:
+			n.logFunds(ctx)
 		case <-ticker.C:
 			// Keep our on-chain liveness row healthy before scanning rounds.
 			// This guarantees heartbeat()/reactivate() fire even when there
