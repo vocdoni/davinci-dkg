@@ -454,6 +454,117 @@ export class DKGClient {
   }
 
   /**
+   * Derive the collective public key directly from the `submitContribution`
+   * calldata of accepted contributors — without waiting for `finalizeRound`.
+   *
+   * The collective public key is the sum of each contributor's zeroth Feldman
+   * commitment point: sum_i( commitment_i[0] ) = sum_i( a_{i,0} * G ).
+   *
+   * This is mathematically identical to what `finalizeRound` computes, so the
+   * result can be used for ElGamal encryption even while the round is still in
+   * the Contribution phase (status 2).  No ZK-proof verification is performed;
+   * callers should treat this as an optimistic/early value and cross-check
+   * against `collectivePublicKeyHash` once the round is finalized.
+   *
+   * Transcript layout of `submitContribution` (N = 16 = MaxN):
+   *   bytes [0..2N×32)    commitment points  (N points, X then Y, 32 bytes each)
+   *   bytes [2N×32..3N×32) recipient indexes
+   *   bytes [3N×32..5N×32) recipient pub keys
+   *   bytes [5N×32..7N×32) ephemerals
+   *   bytes [7N×32..8N×32) masked shares
+   *
+   * @param participants  Addresses of the accepted contributors.  If omitted the
+   *                      method calls `selectedParticipants` on-chain to obtain them.
+   */
+  async getCollectivePublicKeyFromContributions(
+    roundId: `0x${string}`,
+    participants?: Address[],
+  ): Promise<{ x: bigint; y: bigint }> {
+    const { addPoint } = await import('@zk-kit/baby-jubjub');
+
+    const addrs = participants ?? await this.selectedParticipants(roundId);
+    if (addrs.length === 0) {
+      throw new Error('getCollectivePublicKeyFromContributions: no participants');
+    }
+
+    // Fetch all ContributionSubmitted events for this round to get tx hashes.
+    const events = await getLogsChunked(this.publicClient, {
+      address: this.managerAddress,
+      event: {
+        type: 'event',
+        name: 'ContributionSubmitted',
+        inputs: [
+          { name: 'roundId',           type: 'bytes12', indexed: true  },
+          { name: 'contributor',       type: 'address',  indexed: true  },
+          { name: 'contributorIndex',  type: 'uint16',   indexed: false },
+          { name: 'commitmentsHash',   type: 'bytes32',  indexed: false },
+          { name: 'encryptedSharesHash', type: 'bytes32', indexed: false },
+        ],
+      },
+      args: { roundId: roundId as any },
+    }, { fallbackWindow: 50_000n });
+
+    // Index events by contributor address (lowercase) for O(1) lookup.
+    const txByContributor = new Map<string, `0x${string}`>();
+    for (const ev of events) {
+      const contributor = (ev.args as any).contributor as string | undefined;
+      if (contributor && ev.transactionHash) {
+        txByContributor.set(contributor.toLowerCase(), ev.transactionHash);
+      }
+    }
+
+    // For each accepted participant, fetch their tx, decode commitment[0], and add.
+    // BabyJubJub identity = (0, 1) in twisted-Edwards affine coordinates.
+    const N = 16; // MaxN
+    let acc: [bigint, bigint] = [0n, 1n];
+
+    for (const addr of addrs) {
+      const txHash = txByContributor.get(addr.toLowerCase());
+      if (!txHash) {
+        throw new Error(`getCollectivePublicKeyFromContributions: no ContributionSubmitted event for ${addr}`);
+      }
+
+      const tx = await this.publicClient.getTransaction({ hash: txHash });
+      const calldata = tx.input; // hex string with '0x' prefix
+
+      // ABI-decode the transcript bytes from submitContribution calldata.
+      // Head layout (32 bytes each): roundId | contributorIndex | commitmentsHash |
+      //   encryptedSharesHash | transcript_offset | proof_offset | input_offset
+      // transcript_offset is at bytes 128..159 of the payload (after 4-byte selector).
+      const hex = calldata.slice(2); // strip '0x'
+      if (hex.length < (4 + 160) * 2) {
+        throw new Error(`calldata too short for ${addr}`);
+      }
+      // payload starts at char 8 (4 bytes selector × 2 hex chars/byte)
+      const payload = hex.slice(8);
+      const transcriptOffsetHex = payload.slice(128 * 2, 160 * 2);
+      const transcriptOffset = Number(BigInt('0x' + transcriptOffsetHex));
+
+      if ((transcriptOffset + 32) * 2 > payload.length) {
+        throw new Error(`transcript offset out of range for ${addr}`);
+      }
+      const transcriptLen = Number(BigInt('0x' + payload.slice(transcriptOffset * 2, (transcriptOffset + 32) * 2)));
+      const transcriptStart = transcriptOffset + 32;
+
+      if ((transcriptStart + transcriptLen) * 2 > payload.length) {
+        throw new Error(`transcript out of range for ${addr}`);
+      }
+      const tr = payload.slice(transcriptStart * 2, (transcriptStart + transcriptLen) * 2);
+
+      // commitment[0] = first 64 bytes of transcript (X at [0..32), Y at [32..64))
+      if (tr.length < N * 2 * 64) {
+        throw new Error(`transcript too short for ${addr}: ${tr.length / 2} bytes`);
+      }
+      const cx = BigInt('0x' + tr.slice(0, 64));
+      const cy = BigInt('0x' + tr.slice(64, 128));
+
+      acc = addPoint(acc, [cx, cy]) as [bigint, bigint];
+    }
+
+    return { x: acc[0], y: acc[1] };
+  }
+
+  /**
    * Watch for any DKG Manager event and call the handler with the parsed log.
    * Returns an unsubscribe function.
    */

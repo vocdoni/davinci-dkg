@@ -143,8 +143,8 @@ export function Playground() {
   // ── Round creation form
   const [form, setForm] = useState({
     threshold: '2', committeeSize: '3', minValidContributions: '2',
-    lotteryAlphaBps: '15000', seedDelay: '5',
-    regDeadlineOffset: '100', contribDeadlineOffset: '200',
+    lotteryAlphaBps: '15000', seedDelay: '2',
+    regDeadlineOffset: '10', contribDeadlineOffset: '20',
     disclosureAllowed: false,
   });
 
@@ -158,6 +158,7 @@ export function Playground() {
   const [currentBlock, setCurrentBlock] = useState<bigint | null>(null);
   const [participants, setParticipants] = useState<Address[]>([]);
   const [events, setEvents] = useState<RoundEvent[]>([]);
+  const [abortBusy, setAbortBusy] = useState(false);
   const [finalizedInfo, setFinalizedInfo] = useState<{
     collectivePublicKeyHash: string;
     aggregateCommitmentsHash: string;
@@ -192,8 +193,8 @@ export function Playground() {
   // ── Step statuses
   const stepWallet: StepStatus = address ? 'done' : walletError ? 'error' : walletBusy ? 'active' : 'active';
   const stepCreate: StepStatus = !address ? 'pending' : roundId ? 'done' : createError ? 'error' : createBusy ? 'active' : 'active';
-  const stepWatch: StepStatus = !roundId ? 'pending' : finalizedInfo ? 'done' : round?.status === RoundStatus.Aborted ? 'error' : 'active';
-  const stepKey: StepStatus = !finalizedInfo ? 'pending' : collectivePubKey ? 'done' : 'active';
+  const stepWatch: StepStatus = !roundId ? 'pending' : (finalizedInfo || collectivePubKey) ? 'done' : round?.status === RoundStatus.Aborted ? 'error' : 'active';
+  const stepKey: StepStatus = !roundId ? 'pending' : collectivePubKey ? 'done' : collectivePubKeyBusy ? 'active' : (finalizedInfo || (round && Number(round.contributionCount) >= Number(round.policy.minValidContributions))) ? 'active' : 'pending';
   const stepEncrypt: StepStatus = !collectivePubKey ? 'pending' : ciphertext ? 'done' : 'active';
   const stepSubmit: StepStatus = !ciphertext ? 'pending' : combinedRecord?.completed ? 'done' : submittedCiphertext ? 'active' : 'active';
   const stepVerify: StepStatus = !combinedRecord?.completed ? 'pending' : 'done';
@@ -237,8 +238,8 @@ export function Playground() {
     setCreateError('');
     try {
       const currentBlock = await writer.blockNumber();
-      const regOffset = BigInt(form.regDeadlineOffset || '100');
-      const contribOffset = BigInt(form.contribDeadlineOffset || '200');
+      const regOffset = BigInt(form.regDeadlineOffset || '10');
+      const contribOffset = BigInt(form.contribDeadlineOffset || '20');
 
       const policy = {
         threshold: Number(form.threshold),
@@ -291,6 +292,7 @@ export function Playground() {
     let lastClaimed = -1;
     let lastContribs = -1;
     let lastEventCount = 0;
+    let earlyKeyFetched = false;  // guard: only attempt early extraction once
 
     async function poll() {
       try {
@@ -314,7 +316,36 @@ export function Playground() {
         }
         if (Number(r.contributionCount) !== lastContribs) {
           lastContribs = Number(r.contributionCount);
-          if (lastContribs > 0) addLog(`Contributions submitted: ${lastContribs}/${r.policy.committeeSize}`, 'info');
+          if (lastContribs > 0) addLog(`Contributions submitted: ${lastContribs}/${r.policy.minValidContributions}`, 'info');
+        }
+
+        // ── Early collective public key extraction ──────────────────────────
+        // Once we have at least minValidContributions, compute the collective
+        // public key directly from contribution calldata without waiting for
+        // finalizeRound.  This is mathematically identical to the verified key.
+        if (
+          !earlyKeyFetched &&
+          !collectivePubKey &&
+          r.status === RoundStatus.Contribution &&
+          Number(r.contributionCount) >= Number(r.policy.minValidContributions) &&
+          parts.length > 0
+        ) {
+          earlyKeyFetched = true;
+          setCollectivePubKeyBusy(true);
+          try {
+            addLog('─── Enough contributions — deriving collective public key ───', 'crypto');
+            const pk = await writer!.getCollectivePublicKeyFromContributions(roundId!, parts);
+            setCollectivePubKey(pk);
+            addLog('Collective public key derived from contribution calldata:', 'crypto');
+            addLog(`  x: ${hex(pk.x)}`, 'crypto');
+            addLog(`  y: ${hex(pk.y)}`, 'crypto');
+            addLog('Steps 4–6 are now unlocked.  The key will be verified on-chain once finalizeRound is mined.', 'success');
+          } catch (err) {
+            earlyKeyFetched = false; // allow retry on next tick
+            addLog(`Early key extraction failed (will retry): ${err instanceof Error ? err.message : String(err)}`, 'error');
+          } finally {
+            setCollectivePubKeyBusy(false);
+          }
         }
 
         // Fetch events
@@ -337,27 +368,31 @@ export function Playground() {
               shareCommitmentHash: ev.shareCommitmentHash,
               blockNumber: ev.blockNumber,
             });
-            addLog('─── Round finalized ───', 'success');
+            addLog('─── Round finalized on-chain ───', 'success');
             addLog(`collectivePublicKeyHash: ${ev.collectivePublicKeyHash}`, 'success');
             addLog(`aggregateCommitmentsHash: ${ev.aggregateCommitmentsHash}`, 'info');
             addLog(`shareCommitmentHash:      ${ev.shareCommitmentHash}`, 'info');
 
-            // Auto-fetch the actual collective public key coordinates from calldata
-            setCollectivePubKeyBusy(true);
-            try {
-              const pk = await writer!.getCollectivePublicKey(roundId!);
-              setCollectivePubKey(pk);
-              addLog(`Collective public key extracted from finalizeRound calldata:`, 'crypto');
-              addLog(`  x: ${hex(pk.x)}`, 'crypto');
-              addLog(`  y: ${hex(pk.y)}`, 'crypto');
-            } catch (err) {
-              addLog(`Failed to extract collective pubkey: ${err instanceof Error ? err.message : String(err)}`, 'error');
-            } finally {
-              setCollectivePubKeyBusy(false);
+            // If the early key wasn't extracted yet, fall back to finalizeRound calldata.
+            if (!collectivePubKey) {
+              setCollectivePubKeyBusy(true);
+              try {
+                const pk = await writer!.getCollectivePublicKey(roundId!);
+                setCollectivePubKey(pk);
+                addLog('Collective public key extracted from finalizeRound calldata:', 'crypto');
+                addLog(`  x: ${hex(pk.x)}`, 'crypto');
+                addLog(`  y: ${hex(pk.y)}`, 'crypto');
+              } catch (err) {
+                addLog(`Failed to extract collective pubkey: ${err instanceof Error ? err.message : String(err)}`, 'error');
+              } finally {
+                setCollectivePubKeyBusy(false);
+              }
             }
+            // Stop polling only after we've successfully processed the finalized event.
+            clearInterval(pollRef.current!);
+            pollRef.current = null;
           }
-          clearInterval(pollRef.current!);
-          pollRef.current = null;
+          // If finEvents is empty, don't stop — keep polling until the event is indexed.
         }
 
         if (r.status === RoundStatus.Aborted) {
@@ -404,6 +439,24 @@ export function Playground() {
     combinePollRef.current = setInterval(pollCombined, 3000);
     return () => { if (combinePollRef.current) clearInterval(combinePollRef.current); };
   }, [submittedCiphertext, roundId, writer, combinedRecord, addLog]); // eslint-disable-line
+
+  // ── Abort round (organizer only)
+  async function handleAbort() {
+    if (!writer || !roundId) return;
+    setAbortBusy(true);
+    try {
+      addLog('─── Aborting round ───', 'error');
+      const hash = await writer.abortRound(roundId);
+      addLog(`Abort TX submitted: ${hash}`, 'tx');
+      const receipt = await writer.waitForTransaction(hash);
+      addLog(`Abort TX mined: block #${receipt.blockNumber}`, 'tx');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      addLog(`Abort failed: ${msg}`, 'error');
+    } finally {
+      setAbortBusy(false);
+    }
+  }
 
   // ── Encrypt with the DKG collective public key
   async function handleEncrypt() {
@@ -624,6 +677,40 @@ export function Playground() {
                     );
                   })()}
                 </Grid>
+
+                {/* Hint text explaining what the round is waiting for */}
+                {round.status === RoundStatus.Registration && (
+                  <Text fontSize="xs" color="gray.500">
+                    Waiting for DKG nodes to claim committee slots. After the registration deadline,
+                    participants submit their key contributions.
+                  </Text>
+                )}
+                {round.status === RoundStatus.Contribution && (
+                  <Text fontSize="xs" color="gray.500">
+                    Waiting for DKG nodes to submit ZK contributions and for one node to call{' '}
+                    <Code fontSize="2xs">finalizeRound</Code> once the threshold is reached.
+                    Contributions: {round.contributionCount}/{round.policy.minValidContributions} needed.
+                  </Text>
+                )}
+                {round.status === RoundStatus.Finalized && (
+                  <Text fontSize="xs" color="cyan.400">
+                    Round finalized on-chain. Waiting to index the RoundFinalized event…
+                  </Text>
+                )}
+
+                {/* Abort button — visible while round is non-terminal and not yet finalized */}
+                {(round.status === RoundStatus.Registration || round.status === RoundStatus.Contribution) && (
+                  <Box pt={1}>
+                    <Button size="xs" colorScheme="red" variant="outline"
+                      isLoading={abortBusy} onClick={handleAbort}>
+                      Abort Round
+                    </Button>
+                    <Text fontSize="2xs" color="gray.600" mt={1}>
+                      Organizer only — aborts the round so you can start fresh.
+                    </Text>
+                  </Box>
+                )}
+
                 {participants.length > 0 && (
                   <Box>
                     <Text fontSize="xs" color="gray.400" mb={1}>Selected participants:</Text>
@@ -683,20 +770,25 @@ export function Playground() {
 
       {/* ── Step 4: Collective Public Key ────────────────────────────────── */}
       <StepCard n={4} title="DKG Collective Public Key" status={stepKey}>
-        {!finalizedInfo ? (
-          <Text fontSize="sm" color="gray.500">Waiting for round finalization…</Text>
+        {!roundId || (Number(round?.contributionCount ?? 0) < Number(round?.policy.minValidContributions ?? 1) && !finalizedInfo) ? (
+          <Text fontSize="sm" color="gray.500">
+            Waiting for at least {round?.policy.minValidContributions ?? '?'} contribution(s)…
+          </Text>
         ) : (
           <VStack align="stretch" spacing={4}>
             <Text fontSize="sm" color="gray.400">
-              The collective public key is the aggregated BabyJubJub point produced by the
-              DKG ceremony. It is recovered by decoding the <Code fontSize="xs">transcript</Code>{' '}
-              parameter from the <Code fontSize="xs">finalizeRound</Code> calldata. The
-              x/y coordinates sit at word offset 528–529 (N + 2N² with N=16) in the transcript.
+              The collective public key = sum of each contributor's zeroth Feldman commitment
+              point (a<sub>i,0</sub>·G).{' '}
+              {finalizedInfo
+                ? 'Extracted from the on-chain finalizeRound calldata.'
+                : 'Derived directly from contribution calldatas — identical to the finalized key.'}
             </Text>
             {collectivePubKeyBusy && (
               <HStack spacing={2}>
                 <Spinner size="sm" color="purple.300" />
-                <Text fontSize="xs" color="gray.400">Fetching from on-chain calldata…</Text>
+                <Text fontSize="xs" color="gray.400">
+                  {finalizedInfo ? 'Fetching from finalizeRound calldata…' : 'Summing contribution commitments…'}
+                </Text>
               </HStack>
             )}
             {collectivePubKey && (

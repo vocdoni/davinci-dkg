@@ -11,8 +11,8 @@ import {
   Tr,
   VStack,
 } from '@chakra-ui/react';
+import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ErrorBanner } from '../components/ErrorBanner';
 import { HashCell } from '../components/HashCell';
 import { StatusBadge } from '../components/StatusBadge';
 import { useRecentRounds } from '../lib/hooks';
@@ -20,13 +20,17 @@ import { useRecentRounds } from '../lib/hooks';
 export function Rounds() {
   const rounds = useRecentRounds(64);
   const navigate = useNavigate();
+
+  useEffect(() => {
+    if (rounds.isError) console.error('[Rounds] Failed to load rounds:', rounds.error);
+  }, [rounds.isError, rounds.error]);
+
   return (
     <VStack align="stretch" spacing={4}>
       <Heading size="lg">Rounds</Heading>
       <Text color="gray.400" fontSize="sm">
         Showing the most recent rounds retained in the on-chain ring buffer (max 64).
       </Text>
-      {rounds.isError && <ErrorBanner error={rounds.error} title="Failed to load rounds" />}
       <Box bg="gray.800" borderRadius="md" borderWidth="1px" borderColor="gray.700">
         <TableContainer>
           <Table size="sm" variant="simple">

@@ -13,6 +13,7 @@ import {
   Text,
   VStack,
 } from '@chakra-ui/react';
+import { useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { HashCell } from '../components/HashCell';
 import { StatusBadge } from '../components/StatusBadge';
@@ -105,16 +106,15 @@ export function RoundDetail() {
       </Alert>
     );
   }
-  if (roundQ.isError) {
-    return (
-      <Alert status="error" variant="left-accent" borderRadius="md">
-        <AlertIcon />
-        <Text>Failed to load round: {(roundQ.error as Error).message}</Text>
-      </Alert>
-    );
-  }
-  if (roundQ.isLoading || !roundQ.data) {
+  useEffect(() => {
+    if (roundQ.isError) console.error('[RoundDetail] Failed to load round:', roundQ.error);
+  }, [roundQ.isError, roundQ.error]);
+
+  if (roundQ.isLoading || (!roundQ.data && !roundQ.isError)) {
     return <Text color="gray.400">Loading round…</Text>;
+  }
+  if (!roundQ.data) {
+    return <Text color="gray.400">Round data unavailable (check console for errors).</Text>;
   }
   const r = roundQ.data;
   const policy = r.policy;

@@ -8,8 +8,8 @@ import {
   Text,
   VStack,
 } from '@chakra-ui/react';
+import { useEffect } from 'react';
 import { Link as RouterLink } from 'react-router-dom';
-import { ErrorBanner } from '../components/ErrorBanner';
 import { StatusBadge } from '../components/StatusBadge';
 import { HashCell } from '../components/HashCell';
 import {
@@ -44,11 +44,16 @@ export function Home() {
   const tip = useChainTip();
   const recent = useRecentRounds(5);
 
+  useEffect(() => {
+    if (cfg.isError) console.error('[Home] Failed to load config:', cfg.error);
+  }, [cfg.isError, cfg.error]);
+  useEffect(() => {
+    if (recent.isError) console.error('[Home] Failed to load rounds:', recent.error);
+  }, [recent.isError, recent.error]);
+
   return (
     <VStack align="stretch" spacing={6}>
       <Heading size="lg">Overview</Heading>
-      {cfg.isError && <ErrorBanner error={cfg.error} title="Failed to load config" />}
-      {recent.isError && <ErrorBanner error={recent.error} title="Failed to load rounds" />}
       <SimpleGrid columns={{ base: 1, md: 4 }} spacing={4}>
         <StatCard
           label="Total rounds"

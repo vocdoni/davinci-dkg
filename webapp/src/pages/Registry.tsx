@@ -17,8 +17,8 @@ import {
   Tr,
   VStack,
 } from '@chakra-ui/react';
+import { useEffect } from 'react';
 import { nodeStatusColor, nodeStatusLabel } from '../lib/abi';
-import { ErrorBanner } from '../components/ErrorBanner';
 import { HashCell } from '../components/HashCell';
 import {
   useActiveNodeCount,
@@ -61,6 +61,10 @@ export function Registry() {
   const tip = useChainTip();
   const window = useInactivityWindow();
 
+  useEffect(() => {
+    if (nodes.isError) console.error('[Registry] Failed to load nodes:', nodes.error);
+  }, [nodes.isError, nodes.error]);
+
   return (
     <VStack align="stretch" spacing={4}>
       <Heading size="lg">Registry</Heading>
@@ -92,7 +96,6 @@ export function Registry() {
         />
       </SimpleGrid>
 
-      {nodes.isError && <ErrorBanner error={nodes.error} title="Failed to load registry" />}
       <Box bg="gray.800" borderRadius="md" borderWidth="1px" borderColor="gray.700">
         <TableContainer>
           <Table size="sm" variant="simple">
