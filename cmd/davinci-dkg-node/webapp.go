@@ -42,10 +42,10 @@ func startWebapp(ctx context.Context, cfg *Config, chainID uint64, registryAddre
 	}
 
 	rc := runtimeConfig{
-		ManagerAddress:  cfg.ManagerAddr,
+		ManagerAddress:  cfg.resolvedManagerAddr(),
 		RegistryAddress: registryAddress,
 		ChainID:         chainID,
-		ChainName:       cfg.Web3.Network,
+		ChainName:       cfg.resolvedNetworkName(),
 	}
 	if len(cfg.Web3.RPC) > 0 {
 		rc.RPCURL = cfg.Web3.RPC[0]
