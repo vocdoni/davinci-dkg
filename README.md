@@ -297,12 +297,14 @@ so you can trace progress against the explorer.
 - **Gas**: a full n=16 round costs ≈ 15.4 M gas spread across every
   committee member. Your node pays gas only on the phases it actually
   executes; see [Gas Profile](#gas-profile) for the per-call breakdown.
-- **Upgrades**: replace the binary, restart the process. State that must
-  persist across restarts (claimed rounds, private shares) lives on disk
-  under `--datadir` (default `$HOME/.davinci-dkg`).
+- **Upgrades**: replace the binary and restart the process. All per-round
+  in-flight state (claimed rounds, own VSS contributions, decryption
+  partials) is held in memory. It is rebuilt automatically from calldata
+  and on-chain records when the node restarts — a restart mid-round is
+  safe.
 - **Multiple operators on the same host**: each node needs its own
-  `--datadir`, private key, and port for the webapp. Keep one binary per
-  operator to avoid confused state.
+  private key and port for the webapp. Keep one process per operator to
+  avoid confused state.
 - **Key loss = slot loss**: losing your operator key (or its funded
   balance) means you can no longer participate until you register a new
   address. The chain still advances without you, the DKG is `t`-of-`n`.
@@ -987,12 +989,12 @@ The runner will:
 
 ## Web Explorer
 
-`webapp/` contains a single-page React application — a read-only
-block-explorer for a live `DKGManager` / `DKGRegistry` pair. It is a Vite +
-React + TypeScript + Chakra UI + React Query stack talking to the chain
-directly via `viem`, and it is **embedded into the `davinci-dkg-node` binary
-via `//go:embed`**, so any running node can serve the UI with no external
-assets.
+`webapp/` contains a single-page React application that acts as both a
+block-explorer and an interactive playground for a live `DKGManager` /
+`DKGRegistry` pair. It is a Vite + React + TypeScript + Chakra UI + React
+Query stack talking to the chain directly via `viem`, and it is **embedded
+into the `davinci-dkg-node` binary via `//go:embed`**, so any running node
+can serve the UI with no external assets.
 
 In the testnet the explorer is available at `http://<host>:8081/` as soon as
 `make testnet-up` returns — the `dkg-webapp` compose service starts
@@ -1016,6 +1018,19 @@ addresses pulled from `/addresses/addresses.env`.
   `RoundEvicted`, `RoundAborted`).
 - **Registry**: every registered operator and their BabyJubJub public key
   coordinates.
+- **Playground**: an interactive end-to-end demo of the full DKG + threshold
+  decryption flow in seven steps:
+  1. Connect a browser wallet (e.g. MetaMask).
+  2. Create a new DKG round with configurable policy.
+  3. Watch the round progress live through registration, contribution, and
+     finalization phases.
+  4. Extract the collective public key `(x, y)` from the on-chain
+     `finalizeRound` calldata.
+  5. Enter a plaintext integer and ElGamal-encrypt it with the collective
+     public key (BabyJubJub, in-browser).
+  6. Submit the ciphertext to the node via `POST /api/ciphertext/{roundId}`,
+     then poll until the threshold decryption is combined on-chain.
+  7. Verify that the recovered plaintext matches the original input.
 - **Settings**: live-editable **RPC endpoint** override (stored in the
   browser's `localStorage`, per-user) plus the chain / contract info from
   `/config.json`.
@@ -1032,6 +1047,17 @@ Because the RPC URL is a runtime field (not baked into the bundle), the same
 embedded SPA works against local, testnet, or public deployments without any
 rebuild — override `WEBAPP_PUBLIC_RPC` for the compose service or flip
 the endpoint in the Settings page.
+
+The node also exposes a small REST endpoint used by the Playground tab to
+hand ciphertexts to the running node for threshold decryption:
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/api/ciphertext/{roundId}` | `POST` | Write a ciphertext JSON `{ciphertext_index, c1x, c1y, c2x, c2y}` to the node's shared directory so it can be picked up on the next poll cycle |
+| `/api/ciphertext/{roundId}` | `GET` | Read back the stored ciphertext for a given round |
+
+This endpoint is only registered when `--shared-dir` (or `DAVINCI_DKG_SHARED_DIR`) is set, which is
+done automatically for nodes that also run the Playground.
 
 ### Running it outside the testnet
 

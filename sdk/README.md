@@ -220,7 +220,8 @@ In the DKG protocol the private key is never held by a single party. To decrypt 
 | `roundNonce()` | Next round nonce |
 | `buildRoundId(nonce)` | Derive round ID from nonce |
 | `getRoundCreatedEvents(opts?)` | Historical RoundCreated logs |
-| `getRoundFinalizedEvents(roundId)` | Historical RoundFinalized logs |
+| `getRoundFinalizedEvents(roundId)` | Historical RoundFinalized logs (includes `transactionHash`) |
+| `getCollectivePublicKey(roundId, fromBlock?)` | Decode the collective public key `(x, y)` from the `finalizeRound` calldata |
 | `getAllRoundEvents(roundId, fromBlock?)` | All DKGManager events for a specific round |
 | `getRecentRounds(limit?)` | Most recent N rounds (default 20) as `RoundEntry[]` |
 | `getRegistryNodes(fromBlock?)` | All registered nodes via NodeRegistered events |
