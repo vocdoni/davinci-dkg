@@ -45,7 +45,7 @@ func (c *Contracts) GetRound(ctx context.Context, roundID [12]byte) (RoundView, 
 	if err != nil {
 		return RoundView{}, fmt.Errorf("pack getRound: %w", err)
 	}
-	output, err := c.client.CallContract(ctx, ethereum.CallMsg{
+	output, err := c.pool.Current().CallContract(ctx, ethereum.CallMsg{
 		To:   &c.Addresses.Manager,
 		Data: input,
 	}, nil)
@@ -90,7 +90,7 @@ func (c *Contracts) SelectedParticipants(ctx context.Context, roundID [12]byte) 
 	if err != nil {
 		return nil, fmt.Errorf("pack selectedParticipants: %w", err)
 	}
-	output, err := c.client.CallContract(ctx, ethereum.CallMsg{
+	output, err := c.pool.Current().CallContract(ctx, ethereum.CallMsg{
 		To:   &c.Addresses.Manager,
 		Data: input,
 	}, nil)

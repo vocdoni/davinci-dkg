@@ -75,13 +75,13 @@ func NewTestServices(ctx context.Context) (*TestServices, func(), error) {
 		return nil, nil, err
 	}
 
-	contracts, err := web3.New(cfg.RPCURL, cfg.Addresses)
+	contracts, err := web3.New([]string{cfg.RPCURL}, cfg.Addresses)
 	if err != nil {
 		cleanup()
 		return nil, nil, err
 	}
 
-	txm, err := txmanager.New(contracts.Client(), contracts.ChainID, cfg.PrivateKey)
+	txm, err := txmanager.New(contracts.Pool().Current, contracts.ChainID, cfg.PrivateKey)
 	if err != nil {
 		_ = contracts.Close()
 		cleanup()

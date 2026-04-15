@@ -27,12 +27,12 @@ func NewTestServicesFromExternal(
 		return nil, nil, fmt.Errorf("parse contract addresses: %w", err)
 	}
 
-	contracts, err := web3.New(rpcURL, addresses)
+	contracts, err := web3.New([]string{rpcURL}, addresses)
 	if err != nil {
 		return nil, nil, fmt.Errorf("connect to chain: %w", err)
 	}
 
-	txm, err := txmanager.New(contracts.Client(), contracts.ChainID, LocalAccountPrivKey)
+	txm, err := txmanager.New(contracts.Pool().Current, contracts.ChainID, LocalAccountPrivKey)
 	if err != nil {
 		_ = contracts.Close()
 		return nil, nil, fmt.Errorf("create tx manager: %w", err)

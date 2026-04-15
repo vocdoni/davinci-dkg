@@ -16,6 +16,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
 	ethcrypto "github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/vocdoni/davinci-dkg/circuits"
 	ccommon "github.com/vocdoni/davinci-dkg/circuits/common"
 	"github.com/vocdoni/davinci-dkg/circuits/contribution"
@@ -85,19 +86,19 @@ func newNode(cfg *Config) (*Node, error) {
 	}
 	// web3.New() derives Registry and all verifier addresses from the manager's
 	// public immutable fields when they are not supplied (zero address).
-	c, err := web3.New(cfg.Web3.RPC[0], addrs)
+	c, err := web3.New(cfg.Web3.RPC, addrs)
 	if err != nil {
 		return nil, fmt.Errorf("web3 connect: %w", err)
 	}
-	txm, err := txmanager.New(c.Client(), c.ChainID, cfg.PrivKey)
+	txm, err := txmanager.New(c.Pool().Current, c.ChainID, cfg.PrivKey)
 	if err != nil {
 		return nil, fmt.Errorf("tx manager: %w", err)
 	}
-	manager, err := gtypes.NewDKGManager(c.Addresses.Manager, c.Client())
+	manager, err := gtypes.NewDKGManager(c.Addresses.Manager, c.PooledBackend())
 	if err != nil {
 		return nil, fmt.Errorf("manager binding: %w", err)
 	}
-	registry, err := gtypes.NewDKGRegistry(c.Addresses.Registry, c.Client())
+	registry, err := gtypes.NewDKGRegistry(c.Addresses.Registry, c.PooledBackend())
 	if err != nil {
 		return nil, fmt.Errorf("registry binding: %w", err)
 	}
@@ -596,8 +597,34 @@ func (n *Node) doClaimSlot(ctx context.Context, roundID [12]byte, round web3.Rou
 	if n.signaled[roundID] {
 		return nil
 	}
+
+	// Read the current head once; used by all pre-flight checks below.
+	head, headErr := n.contracts.Client().BlockNumber(ctx)
+
+	// Pre-flight: if the seed block hasn't been reached yet, skip this tick silently.
+	// The slot lottery cannot be resolved before the seed is committed, and the
+	// contract will revert with SeedNotReady — but many RPC providers return a
+	// bare "execution reverted" without the named error, generating false warnings.
+	if headErr == nil && head > 0 && round.SeedBlock > 0 && head < round.SeedBlock {
+		log.Debugw("claim slot: seed block not yet reached — waiting",
+			"round", roundHex(roundID),
+			"head", head,
+			"seedBlock", round.SeedBlock)
+		return nil
+	}
+
+	// Pre-flight: if the committee is already full, we were not selected.
+	if round.ClaimedCount >= round.Policy.CommitteeSize {
+		log.Infow("claim slot: committee already full — not selected for this round",
+			"round", roundHex(roundID),
+			"claimed", round.ClaimedCount,
+			"size", round.Policy.CommitteeSize)
+		n.signaled[roundID] = true
+		return nil
+	}
+
 	// Pre-flight: check registration deadline before sending any tx.
-	if head, err := n.contracts.Client().BlockNumber(ctx); err == nil {
+	if headErr == nil {
 		if head >= round.Policy.RegistrationDeadlineBlock {
 			log.Warnw("registration deadline already passed — skipping slot claim",
 				"round", roundHex(roundID),
@@ -607,6 +634,7 @@ func (n *Node) doClaimSlot(ctx context.Context, roundID [12]byte, round web3.Rou
 			return nil
 		}
 	}
+
 	auth, err := n.txm.NewTransactOpts(ctx)
 	if err != nil {
 		return err
@@ -622,14 +650,29 @@ func (n *Node) doClaimSlot(ctx context.Context, roundID [12]byte, round web3.Rou
 		// Definitively final reverts: the committee is decided without us.
 		// Set signaled so we stop sending txs for this round.
 		if isExpectedClaimRevert(err) {
-			log.Debugw("claim slot: not selected for committee", "round", roundHex(roundID), "reason", err.Error())
+			log.Debugw("claim slot: not selected for committee", "round", roundHex(roundID), "reason", decodeContractError(err))
+			n.signaled[roundID] = true
+			return nil
+		}
+		// Unexpected permanent revert — all pre-flights passed but the contract
+		// still rejected us. Accept the result and stop retrying.
+		if isPermanentRevert(err) {
+			log.Warnw("claim slot: unexpected permanent revert — marking as not selected",
+				"round", roundHex(roundID), "err", decodeContractError(err))
 			n.signaled[roundID] = true
 			return nil
 		}
 		return fmt.Errorf("claim slot: %w", err)
 	}
 	if err := n.txm.WaitTxByHash(tx.Hash(), 60*time.Second); err != nil {
-		return err
+		// On-chain revert — committee race or not eligible. Accept and stop retrying.
+		if isPermanentRevert(err) {
+			log.Infow("claim slot: tx reverted on-chain (race condition or not eligible) — will not retry",
+				"round", roundHex(roundID), "err", err)
+			n.signaled[roundID] = true
+			return nil
+		}
+		return fmt.Errorf("wait claim slot tx: %w", err)
 	}
 	n.signaled[roundID] = true
 	log.Infow("slot claimed", "round", roundHex(roundID))
@@ -1398,4 +1441,29 @@ func isExpectedClaimRevert(err error) bool {
 		}
 	}
 	return false
+}
+
+// decodeContractError attempts to extract a named custom-error identifier from
+// an "execution reverted" error returned by go-ethereum. It uses
+// ethclient.RevertErrorData to retrieve the raw revert bytes and then looks up
+// the 4-byte selector against all errors defined in the DKGManager ABI.
+// Returns the error name if found, or the original error string unchanged.
+func decodeContractError(err error) string {
+	if err == nil {
+		return ""
+	}
+	data, ok := ethclient.RevertErrorData(err)
+	if !ok || len(data) < 4 {
+		return err.Error()
+	}
+	var sel [4]byte
+	copy(sel[:], data[:4])
+	parsed, parseErr := gtypes.DKGManagerMetaData.GetAbi()
+	if parseErr != nil {
+		return err.Error()
+	}
+	if abiErr, lookupErr := parsed.ErrorByID(sel); lookupErr == nil {
+		return fmt.Sprintf("execution reverted: %s", abiErr.Name)
+	}
+	return err.Error()
 }

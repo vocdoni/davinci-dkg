@@ -19,7 +19,7 @@ func (c *Contracts) GetCombinedDecryption(
 	if err != nil {
 		return CombinedDecryptionView{}, fmt.Errorf("pack getCombinedDecryption: %w", err)
 	}
-	output, err := c.client.CallContract(ctx, ethereum.CallMsg{
+	output, err := c.pool.Current().CallContract(ctx, ethereum.CallMsg{
 		To:   &c.Addresses.Manager,
 		Data: input,
 	}, nil)
@@ -53,7 +53,7 @@ func (c *Contracts) GetRevealedShare(
 	if err != nil {
 		return RevealedShareView{}, fmt.Errorf("pack getRevealedShare: %w", err)
 	}
-	output, err := c.client.CallContract(ctx, ethereum.CallMsg{
+	output, err := c.pool.Current().CallContract(ctx, ethereum.CallMsg{
 		To:   &c.Addresses.Manager,
 		Data: input,
 	}, nil)

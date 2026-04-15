@@ -36,7 +36,7 @@ type testRPCError struct {
 func TestNewRejectsMissingAddresses(t *testing.T) {
 	c := qt.New(t)
 
-	_, err := New("http://127.0.0.1:8545", types.ContractAddresses{})
+	_, err := New([]string{"http://127.0.0.1:8545"}, types.ContractAddresses{})
 
 	c.Assert(err, qt.Not(qt.IsNil))
 	c.Assert(err.Error(), qt.Contains, "manager address is required")
@@ -48,7 +48,7 @@ func TestVerifierKeyHashes(t *testing.T) {
 	server := testRPCServer()
 	defer server.Close()
 
-	contracts, err := New(server.URL, types.ContractAddresses{
+	contracts, err := New([]string{server.URL}, types.ContractAddresses{
 		Registry:               common.HexToAddress("0x1000000000000000000000000000000000000001"),
 		Manager:                common.HexToAddress("0x2000000000000000000000000000000000000002"),
 		ContributionVerifier:   common.HexToAddress("0x3000000000000000000000000000000000000003"),
@@ -87,7 +87,7 @@ func TestGetNodeAndRoundViews(t *testing.T) {
 	server := testRPCServer()
 	defer server.Close()
 
-	contracts, err := New(server.URL, types.ContractAddresses{
+	contracts, err := New([]string{server.URL}, types.ContractAddresses{
 		Registry:               common.HexToAddress("0x1000000000000000000000000000000000000001"),
 		Manager:                common.HexToAddress("0x2000000000000000000000000000000000000002"),
 		ContributionVerifier:   common.HexToAddress("0x3000000000000000000000000000000000000003"),

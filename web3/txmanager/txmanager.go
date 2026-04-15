@@ -66,11 +66,11 @@ type pendingTx struct {
 // Manager handles nonce management, EIP-1559 gas estimation, and basic
 // stuck-transaction recovery. It is safe for concurrent use.
 type Manager struct {
-	client  *ethclient.Client
-	key     *ecdsa.PrivateKey
-	chainID *big.Int
-	from    common.Address
-	config  Config
+	clientFn func() *ethclient.Client
+	key      *ecdsa.PrivateKey
+	chainID  *big.Int
+	from     common.Address
+	config   Config
 
 	mu            sync.Mutex
 	nextNonce     uint64
@@ -80,8 +80,9 @@ type Manager struct {
 	monitorCancel context.CancelFunc
 }
 
-// New creates a new Manager.
-func New(client *ethclient.Client, chainID uint64, privateKey string) (*Manager, error) {
+// New creates a new Manager. clientFn is called each time an ethclient is needed,
+// allowing the caller to supply a pool's Current() method for failover support.
+func New(clientFn func() *ethclient.Client, chainID uint64, privateKey string) (*Manager, error) {
 	key, err := crypto.HexToECDSA(strings.TrimPrefix(privateKey, "0x"))
 	if err != nil {
 		return nil, fmt.Errorf("parse private key: %w", err)
@@ -91,7 +92,7 @@ func New(client *ethclient.Client, chainID uint64, privateKey string) (*Manager,
 		return nil, fmt.Errorf("invalid public key type")
 	}
 	return &Manager{
-		client:        client,
+		clientFn:      clientFn,
 		key:           key,
 		chainID:       new(big.Int).SetUint64(chainID),
 		from:          crypto.PubkeyToAddress(*publicKey),
@@ -188,7 +189,7 @@ func (m *Manager) WaitTxByHash(hash common.Hash, timeout time.Duration) error {
 		case <-ctx.Done():
 			return fmt.Errorf("timeout waiting for transaction %s", hash.Hex())
 		case <-ticker.C:
-			receipt, err := m.client.TransactionReceipt(ctx, hash)
+			receipt, err := m.clientFn().TransactionReceipt(ctx, hash)
 			switch {
 			case err == nil:
 				// Always record gas cost — reverted txs still consume gas.
@@ -209,7 +210,7 @@ func (m *Manager) WaitTxByHash(hash common.Hash, timeout time.Duration) error {
 
 // Balance returns the current ETH balance of the managed account.
 func (m *Manager) Balance(ctx context.Context) (*big.Int, error) {
-	return m.client.BalanceAt(ctx, m.from, nil)
+	return m.clientFn().BalanceAt(ctx, m.from, nil)
 }
 
 // TotalGasSpent returns the accumulated gas cost in wei for all confirmed
@@ -236,11 +237,11 @@ func (m *Manager) recordGasSpent(receipt *gethtypes.Receipt) {
 
 // suggestFees returns (gasTipCap, gasFeeCap) for an EIP-1559 transaction.
 func (m *Manager) suggestFees(ctx context.Context) (*big.Int, *big.Int, error) {
-	tipCap, err := m.client.SuggestGasTipCap(ctx)
+	tipCap, err := m.clientFn().SuggestGasTipCap(ctx)
 	if err != nil {
 		tipCap = big.NewInt(1_000_000_000) // 1 gwei fallback
 	}
-	header, err := m.client.HeaderByNumber(ctx, nil)
+	header, err := m.clientFn().HeaderByNumber(ctx, nil)
 	if err != nil || header.BaseFee == nil {
 		// Legacy chain or no base fee available — just use a high gas price.
 		return tipCap, new(big.Int).Add(tipCap, big.NewInt(1_000_000_000)), nil
@@ -265,7 +266,7 @@ func (m *Manager) retryStuck(ctx context.Context) error {
 		}
 
 		// Check if already confirmed.
-		receipt, err := m.client.TransactionReceipt(ctx, ptx.hash)
+		receipt, err := m.clientFn().TransactionReceipt(ctx, ptx.hash)
 		if err == nil && receipt != nil {
 			// Confirmed — remove.
 			delete(m.pending, nonce)
@@ -291,7 +292,7 @@ func (m *Manager) retryStuck(ctx context.Context) error {
 		if err != nil {
 			continue
 		}
-		if err := m.client.SendTransaction(ctx, signed); err != nil {
+		if err := m.clientFn().SendTransaction(ctx, signed); err != nil {
 			// Ignore "already known" errors; the original tx may still confirm.
 			continue
 		}
@@ -325,7 +326,7 @@ func (m *Manager) pruneConfirmed(blockNumber *big.Int) {
 	// Refresh confirmed nonce to detect externally mined transactions.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	confirmed, err := m.client.NonceAt(ctx, m.from, blockNumber)
+	confirmed, err := m.clientFn().NonceAt(ctx, m.from, blockNumber)
 	if err != nil {
 		return
 	}
@@ -345,7 +346,7 @@ func (m *Manager) pruneConfirmed(blockNumber *big.Int) {
 func (m *Manager) ResetNonce(ctx context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	nonce, err := m.client.NonceAt(ctx, m.from, nil)
+	nonce, err := m.clientFn().NonceAt(ctx, m.from, nil)
 	if err != nil {
 		return fmt.Errorf("reset nonce: %w", err)
 	}

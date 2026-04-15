@@ -28,7 +28,7 @@ func (a *TestActor) CallOpts(ctx context.Context) *bind.CallOpts {
 }
 
 func (s *TestServices) ActorFromPrivateKey(privateKey string) (*TestActor, error) {
-	txm, err := txmanager.New(s.Contracts.Client(), s.Contracts.ChainID, privateKey)
+	txm, err := txmanager.New(s.Contracts.Pool().Current, s.Contracts.ChainID, privateKey)
 	if err != nil {
 		return nil, fmt.Errorf("new tx manager: %w", err)
 	}

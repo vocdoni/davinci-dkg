@@ -172,11 +172,11 @@ func runScenario(c *cfg) error {
 	addrs := nodetypes.ContractAddresses{
 		Manager: common.HexToAddress(managerAddr),
 	}
-	contracts, err := web3.New(c.RPC, addrs)
+	contracts, err := web3.New([]string{c.RPC}, addrs)
 	if err != nil {
 		return fmt.Errorf("web3: %w", err)
 	}
-	txm, err := txmanager.New(contracts.Client(), contracts.ChainID, c.PrivKey)
+	txm, err := txmanager.New(contracts.Pool().Current, contracts.ChainID, c.PrivKey)
 	if err != nil {
 		return fmt.Errorf("txmanager: %w", err)
 	}

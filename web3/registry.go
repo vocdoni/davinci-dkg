@@ -15,7 +15,7 @@ func (c *Contracts) GetNode(ctx context.Context, operator common.Address) (Regis
 	if err != nil {
 		return RegistryNode{}, fmt.Errorf("pack getNode: %w", err)
 	}
-	output, err := c.client.CallContract(ctx, ethereum.CallMsg{
+	output, err := c.pool.Current().CallContract(ctx, ethereum.CallMsg{
 		To:   &c.Addresses.Registry,
 		Data: input,
 	}, nil)

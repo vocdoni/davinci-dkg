@@ -48,7 +48,7 @@ type Contracts struct {
 	ChainID   uint64
 	Addresses types.ContractAddresses
 
-	client      *ethclient.Client
+	pool        *RPCPool
 	managerABI  *abi.ABI
 	registryABI *abi.ABI
 }
@@ -100,7 +100,7 @@ type RevealedShareView struct {
 	Accepted         bool
 }
 
-// New creates a Contracts handle connected to the given RPC endpoint.
+// New creates a Contracts handle connected to the given RPC endpoints.
 //
 // The only required address is Manager. All other addresses (Registry plus the
 // six verifiers) may be left as zero: New will query the manager's public
@@ -110,22 +110,27 @@ type RevealedShareView struct {
 //
 // Explicitly-supplied non-zero addresses always take precedence over the
 // on-chain values, so individual verifier overrides still work as before.
-func New(rpcURL string, addresses types.ContractAddresses) (*Contracts, error) {
+//
+// Multiple RPC URLs may be provided; they are used in a round-robin pool with
+// automatic failover (see RPCPool).
+func New(rpcURLs []string, addresses types.ContractAddresses) (*Contracts, error) {
 	if addresses.Manager == (common.Address{}) {
 		return nil, fmt.Errorf("manager address is required")
 	}
-	if rpcURL == "" {
-		return nil, fmt.Errorf("rpc url is required")
+	if len(rpcURLs) == 0 {
+		return nil, fmt.Errorf("at least one rpc url is required")
 	}
 
-	client, err := ethclient.Dial(rpcURL)
+	pool, err := NewRPCPool(rpcURLs)
 	if err != nil {
 		return nil, fmt.Errorf("dial rpc: %w", err)
 	}
 
+	client := pool.Current()
+
 	chainID, err := client.ChainID(context.Background())
 	if err != nil {
-		client.Close()
+		pool.Close()
 		return nil, fmt.Errorf("get chain id: %w", err)
 	}
 
@@ -133,7 +138,7 @@ func New(rpcURL string, addresses types.ContractAddresses) (*Contracts, error) {
 	if addresses.Registry == (common.Address{}) {
 		addr, err := fetchAddressFromManager(client, addresses.Manager, "REGISTRY")
 		if err != nil {
-			client.Close()
+			pool.Close()
 			return nil, fmt.Errorf("derive registry from manager: %w", err)
 		}
 		addresses.Registry = addr
@@ -159,21 +164,21 @@ func New(rpcURL string, addresses types.ContractAddresses) (*Contracts, error) {
 		}
 		addr, err := fetchAddressFromManager(client, addresses.Manager, vf.method)
 		if err != nil {
-			client.Close()
+			pool.Close()
 			return nil, fmt.Errorf("derive %s from manager: %w", vf.method, err)
 		}
 		*vf.dest = addr
 	}
 
 	if err := addresses.Validate(); err != nil {
-		client.Close()
+		pool.Close()
 		return nil, err
 	}
 
 	return &Contracts{
 		ChainID:     chainID.Uint64(),
 		Addresses:   addresses,
-		client:      client,
+		pool:        pool,
 		managerABI:  managerABI,
 		registryABI: registryABI,
 	}, nil
@@ -209,12 +214,23 @@ func fetchAddressFromManager(client *ethclient.Client, manager common.Address, m
 }
 
 func (c *Contracts) Close() error {
-	c.client.Close()
+	c.pool.Close()
 	return nil
 }
 
+// Client returns the current active RPC client from the pool.
 func (c *Contracts) Client() *ethclient.Client {
-	return c.client
+	return c.pool.Current()
+}
+
+// Pool returns the underlying RPCPool.
+func (c *Contracts) Pool() *RPCPool {
+	return c.pool
+}
+
+// PooledBackend returns a bind.ContractBackend backed by the pool.
+func (c *Contracts) PooledBackend() *PooledBackend {
+	return NewPooledBackend(c.pool)
 }
 
 func (c *Contracts) callHash(ctx context.Context, contract common.Address, contractABI *abi.ABI, method string) (common.Hash, error) {
@@ -223,7 +239,7 @@ func (c *Contracts) callHash(ctx context.Context, contract common.Address, contr
 		return common.Hash{}, fmt.Errorf("pack %s: %w", method, err)
 	}
 
-	output, err := c.client.CallContract(ctx, ethereum.CallMsg{
+	output, err := c.pool.Current().CallContract(ctx, ethereum.CallMsg{
 		To:   &contract,
 		Data: input,
 	}, nil)
