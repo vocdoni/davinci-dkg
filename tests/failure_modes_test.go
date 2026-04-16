@@ -46,6 +46,8 @@ func TestContributionRejectsMalformedProof(t *testing.T) {
 		1,
 		submission.CommitmentsHash,
 		submission.EncryptedSharesHash,
+		submission.Commitment0X,
+		submission.Commitment0Y,
 		submission.Transcript,
 		submission.Proof,
 		submission.Input,
@@ -191,8 +193,8 @@ func TestRoundCanFinalizeWithMissingContributorWhenPolicyPermits(t *testing.T) {
 	c.Assert(err, qt.IsNil)
 
 	selfActor := &helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager}
-	c.Assert(helpers.SubmitContributionAs(ctx, selfActor, roundID, 1, submission0.CommitmentsHash, submission0.EncryptedSharesHash, submission0.Transcript, submission0.Proof, submission0.Input), qt.IsNil)
-	c.Assert(helpers.SubmitContributionAs(ctx, actor1, roundID, 2, submission1.CommitmentsHash, submission1.EncryptedSharesHash, submission1.Transcript, submission1.Proof, submission1.Input), qt.IsNil)
+	c.Assert(helpers.SubmitContributionAs(ctx, selfActor, roundID, 1, submission0.CommitmentsHash, submission0.EncryptedSharesHash, submission0.Commitment0X, submission0.Commitment0Y, submission0.Transcript, submission0.Proof, submission0.Input), qt.IsNil)
+	c.Assert(helpers.SubmitContributionAs(ctx, actor1, roundID, 2, submission1.CommitmentsHash, submission1.EncryptedSharesHash, submission1.Commitment0X, submission1.Commitment0Y, submission1.Transcript, submission1.Proof, submission1.Input), qt.IsNil)
 
 	auth, err := services.TxManager.NewTransactOpts(ctx)
 	c.Assert(err, qt.IsNil)

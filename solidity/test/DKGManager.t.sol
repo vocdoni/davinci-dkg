@@ -92,9 +92,11 @@ contract DKGManagerTest is Test, TestHelpers {
             1,
             CONTRIBUTION_COMMITMENTS_HASH,
             CONTRIBUTION_ENCRYPTED_SHARES_HASH,
+            0, // commitment0X
+            1, // commitment0Y
             contributionTranscript(2),
             contributionProof(),
-            contributionInput(roundId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH)
+            contributionInput(roundId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH, 0, 1)
         );
 
         vm.prank(address(0xBEEF));
@@ -103,6 +105,8 @@ contract DKGManagerTest is Test, TestHelpers {
             2,
             bytes32(uint256(CONTRIBUTION_COMMITMENTS_HASH) + 1),
             bytes32(uint256(CONTRIBUTION_ENCRYPTED_SHARES_HASH) + 1),
+            0, // commitment0X
+            1, // commitment0Y
             contributionTranscript(2),
             contributionProof(),
             contributionInput(
@@ -111,7 +115,9 @@ contract DKGManagerTest is Test, TestHelpers {
                 2,
                 2,
                 bytes32(uint256(CONTRIBUTION_COMMITMENTS_HASH) + 1),
-                bytes32(uint256(CONTRIBUTION_ENCRYPTED_SHARES_HASH) + 1)
+                bytes32(uint256(CONTRIBUTION_ENCRYPTED_SHARES_HASH) + 1),
+                0,
+                1
             )
         );
 
@@ -143,9 +149,11 @@ contract DKGManagerTest is Test, TestHelpers {
             1,
             CONTRIBUTION_COMMITMENTS_HASH,
             CONTRIBUTION_ENCRYPTED_SHARES_HASH,
+            0, // commitment0X
+            1, // commitment0Y
             contributionTranscript(2),
             contributionProof(),
-            contributionInput(roundId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH)
+            contributionInput(roundId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH, 0, 1)
         );
 
         vm.prank(address(0xBEEF));
@@ -154,6 +162,8 @@ contract DKGManagerTest is Test, TestHelpers {
             2,
             bytes32(uint256(CONTRIBUTION_COMMITMENTS_HASH) + 1),
             bytes32(uint256(CONTRIBUTION_ENCRYPTED_SHARES_HASH) + 1),
+            0, // commitment0X
+            1, // commitment0Y
             contributionTranscript(2),
             contributionProof(),
             contributionInput(
@@ -162,7 +172,9 @@ contract DKGManagerTest is Test, TestHelpers {
                 2,
                 2,
                 bytes32(uint256(CONTRIBUTION_COMMITMENTS_HASH) + 1),
-                bytes32(uint256(CONTRIBUTION_ENCRYPTED_SHARES_HASH) + 1)
+                bytes32(uint256(CONTRIBUTION_ENCRYPTED_SHARES_HASH) + 1),
+                0,
+                1
             )
         );
 
@@ -247,9 +259,11 @@ contract DKGManagerTest is Test, TestHelpers {
             1,
             CONTRIBUTION_COMMITMENTS_HASH,
             CONTRIBUTION_ENCRYPTED_SHARES_HASH,
+            0, // commitment0X
+            1, // commitment0Y
             contributionTranscript(2),
             contributionProof(),
-            contributionInput(roundId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH)
+            contributionInput(roundId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH, 0, 1)
         );
 
         DKGTypes.ContributionRecord memory record = manager.getContribution(roundId, address(this));
@@ -273,9 +287,11 @@ contract DKGManagerTest is Test, TestHelpers {
             1,
             CONTRIBUTION_COMMITMENTS_HASH,
             CONTRIBUTION_ENCRYPTED_SHARES_HASH,
+            0, // commitment0X
+            1, // commitment0Y
             contributionTranscript(2),
             contributionProof(),
-            contributionInput(roundId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH)
+            contributionInput(roundId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH, 0, 1)
         );
     }
 
@@ -287,9 +303,11 @@ contract DKGManagerTest is Test, TestHelpers {
             1,
             CONTRIBUTION_COMMITMENTS_HASH,
             CONTRIBUTION_ENCRYPTED_SHARES_HASH,
+            0, // commitment0X
+            1, // commitment0Y
             contributionTranscript(2),
             contributionProof(),
-            contributionInput(roundId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH)
+            contributionInput(roundId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH, 0, 1)
         );
 
         vm.expectRevert(IDKGManager.AlreadyContributed.selector);
@@ -298,9 +316,11 @@ contract DKGManagerTest is Test, TestHelpers {
             1,
             CONTRIBUTION_COMMITMENTS_HASH,
             CONTRIBUTION_ENCRYPTED_SHARES_HASH,
+            0, // commitment0X
+            1, // commitment0Y
             contributionTranscript(2),
             contributionProof(),
-            contributionInput(roundId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH)
+            contributionInput(roundId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH, 0, 1)
         );
     }
 
@@ -313,6 +333,8 @@ contract DKGManagerTest is Test, TestHelpers {
             1,
             CONTRIBUTION_COMMITMENTS_HASH,
             CONTRIBUTION_ENCRYPTED_SHARES_HASH,
+            0, // commitment0X
+            1, // commitment0Y
             contributionTranscript(2),
             contributionProof(),
             CONTRIBUTION_INPUT_BAD
@@ -345,9 +367,11 @@ contract DKGManagerTest is Test, TestHelpers {
             1,
             CONTRIBUTION_COMMITMENTS_HASH,
             CONTRIBUTION_ENCRYPTED_SHARES_HASH,
+            0, // commitment0X
+            1, // commitment0Y
             contributionTranscript(2),
             contributionProof(),
-            contributionInput(roundId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH)
+            contributionInput(roundId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH, 0, 1)
         );
 
         vm.expectRevert(IDKGManager.InsufficientContributions.selector);
@@ -571,9 +595,11 @@ contract DKGManagerTest is Test, TestHelpers {
             1,
             CONTRIBUTION_COMMITMENTS_HASH,
             CONTRIBUTION_ENCRYPTED_SHARES_HASH,
+            0, // commitment0X
+            1, // commitment0Y
             contributionTranscript(1),
             contributionProof(),
-            contributionInput(roundId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH)
+            contributionInput(roundId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH, 0, 1)
         );
     }
 
@@ -736,9 +762,11 @@ contract DKGManagerTest is Test, TestHelpers {
             1,
             CONTRIBUTION_COMMITMENTS_HASH,
             CONTRIBUTION_ENCRYPTED_SHARES_HASH,
+            0, // commitment0X
+            1, // commitment0Y
             contributionTranscript(2),
             contributionProof(),
-            contributionInput(roundId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH)
+            contributionInput(roundId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH, 0, 1)
         );
 
         uint64 afterBlock = registry.getNode(address(this)).lastActiveBlock;

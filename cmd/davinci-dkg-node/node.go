@@ -800,6 +800,8 @@ func (n *Node) doContribution(
 		auth, roundID, idx,
 		common.BigToHash(pi.CommitmentHash),
 		common.BigToHash(pi.ShareHash),
+		pi.CommitmentX0,
+		pi.CommitmentY0,
 		transcriptBytes, proofBytes, inputBytes,
 	)
 	if err != nil {
@@ -932,8 +934,9 @@ func (n *Node) doDecryption(
 //   - Other contributions: scan on-chain txs for calldata and decrypt
 //
 // fromBlock is used as the lower bound for the calldata scan; passing the round's
-// registration deadline block keeps the scan tight and avoids the O(n) hit of
-// scanning from genesis.
+// seed block keeps the scan tight while still capturing contributions that arrive
+// during the registration phase (nodes can contribute immediately after claiming a
+// slot, which is only possible from seedBlock onward).
 func (n *Node) buildPrivateShare(
 	ctx context.Context,
 	roundID [12]byte,
@@ -949,10 +952,10 @@ func (n *Node) buildPrivateShare(
 	roundHash := roundScalar(roundID)
 	total := new(big.Int)
 
-	// Use the registration deadline as the natural lower bound for calldata scans.
-	// Contributions must appear between registration end and contribution deadline,
-	// so this avoids scanning blocks before the round even started.
-	fromBlock := round.Policy.RegistrationDeadlineBlock
+	// Use seedBlock as the lower bound: no slot claim (and hence no contribution)
+	// can appear before the seed block, so scanning from there is both tight and
+	// correct even when contributions arrive before the registration deadline.
+	fromBlock := round.SeedBlock
 
 	recovered := 0
 	expected := 0
@@ -1088,7 +1091,7 @@ func (n *Node) recoverShareFrom(
 //
 // submitContribution ABI:
 //
-//	(bytes12,uint16,bytes32,bytes32,bytes transcript,bytes proof,bytes input)
+//	(bytes12,uint16,bytes32,bytes32,uint256 commitment0X,uint256 commitment0Y,bytes transcript,bytes proof,bytes input)
 //
 // transcript layout = abi.encode(
 //
@@ -1107,14 +1110,16 @@ func decodeContributionTranscript(data []byte) (ephemerals [][2]*big.Int, masked
 	// Skip 4-byte selector
 	payload := data[4:]
 
-	// ABI-decode 7 parameters; each static head is 32 bytes.
-	// roundId (bytes12)=32, contributorIndex (uint16)=32, commitmentsHash=32, encSharesHash=32
+	// ABI-decode 9 parameters; each static head is 32 bytes.
+	// roundId (bytes12)=32, contributorIndex (uint16)=32, commitmentsHash=32, encSharesHash=32,
+	// commitment0X (uint256)=32, commitment0Y (uint256)=32,
 	// transcript=offset(32), proof=offset(32), input=offset(32)
-	// Total head = 7*32 = 224 bytes
-	if len(payload) < 224 {
+	// Total head = 9*32 = 288 bytes
+	if len(payload) < 288 {
 		return nil, nil, nil, fmt.Errorf("payload too short for head")
 	}
-	transcriptOffset := int(new(big.Int).SetBytes(padTo32(payload[128:160])).Int64())
+	// transcript offset is at payload[192:224] (after 6 static params × 32 bytes each)
+	transcriptOffset := int(new(big.Int).SetBytes(padTo32(payload[192:224])).Int64())
 	if transcriptOffset+32 > len(payload) {
 		return nil, nil, nil, fmt.Errorf("transcript offset out of range")
 	}

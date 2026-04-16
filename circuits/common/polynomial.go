@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"math/big"
 
-	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark/frontend"
+	"github.com/vocdoni/davinci-dkg/crypto/group"
 	"github.com/vocdoni/davinci-dkg/crypto/shamir"
 )
 
@@ -39,12 +39,14 @@ func EvaluatePolynomial(api frontend.API, coeffs, mask []frontend.Variable, x fr
 	return result
 }
 
-// EvaluatePolynomialNative evaluates a Shamir polynomial over the DKG scalar field.
+// EvaluatePolynomialNative evaluates a Shamir polynomial over the BabyJubJub subgroup order.
+// Shares must live in the same field as the BabyJubJub scalar field so that
+// AddModSubgroupOrder in the contribution circuit can bound the carry to {0,1}.
 func EvaluatePolynomialNative(coefficients []*big.Int, x *big.Int) (*big.Int, error) {
 	if x == nil {
 		return nil, fmt.Errorf("x is required")
 	}
-	poly, err := shamir.NewPolynomial(coefficients, ecc.BN254.ScalarField())
+	poly, err := shamir.NewPolynomial(coefficients, group.ScalarField())
 	if err != nil {
 		return nil, err
 	}

@@ -25,13 +25,11 @@ import { RoundStatus } from './types.js';
 export interface CollectivePublicKey {
   /**
    * The BabyJubJub point that is the collective public key.
-   * Encoded as the AggregateCommitments[0] point from the finalize proof.
-   * x and y are the field-element coordinates.
+   * Equals PK = Σ_i a_{i,0}·G, the sum of each contributor's zeroth Feldman
+   * commitment. The contract accumulates this incrementally as contributions
+   * are accepted. Retrieve it with `client.getCollectivePublicKey(roundId)`.
    *
    * NOTE: The on-chain `collectivePublicKeyHash` is keccak256(x, y).
-   * To obtain the actual (x, y) coordinates you must decode the calldata of
-   * the `finalizeRound` transaction that triggered the RoundFinalized event.
-   * The `transcript` argument of that call contains the proof's public inputs.
    */
   x: bigint;
   y: bigint;
@@ -39,11 +37,10 @@ export interface CollectivePublicKey {
 
 /**
  * Wait until a round is Finalized, then return the collective public key hash
- * (the value stored on-chain in the RoundFinalized event).
+ * (keccak256 of the key point, emitted in the RoundFinalized event).
  *
- * To get the actual curve point (x, y) you need to decode the `finalizeRound`
- * calldata. This helper returns the on-chain hash so callers can verify a
- * candidate public key against it.
+ * To get the actual curve point (x, y) call `client.getCollectivePublicKey(roundId)` —
+ * a simple view-call that returns the key accumulated on-chain during contribution.
  */
 export async function waitForCollectivePublicKeyHash(
   client: DKGClient,
@@ -117,8 +114,8 @@ export async function waitForCombinedDecryption(
  *
  * @param client         Read-only DKGClient
  * @param roundId        The round ID
- * @param collectivePub  The collective public key point [x, y] derived from the
- *                       finalizeRound calldata
+ * @param collectivePub  The collective public key point [x, y] (from
+ *                       `client.getCollectivePublicKey(roundId)`)
  * @param plaintext      Small integer to encrypt/decrypt
  * @param ciphertextIndex  Index to identify which ciphertext to wait for (1-based)
  */

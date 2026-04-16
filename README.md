@@ -603,8 +603,13 @@ and proof-time comparison against a `MaxN = 32` build.
 
 **Package**: `circuits/contribution`  
 **Constraints**: ~802 k (MaxN=16) / ~2.84 M (MaxN=32) — `O(MaxN²)`  
-**Public inputs** (8 scalars): `RoundHash`, `Threshold`, `CommitteeSize`, `ContributorIndex`,
-`CommitmentHash`, `ShareHash`, `Challenge`, `TranscriptCommitment`
+**Public inputs** (10 scalars): `RoundHash`, `Threshold`, `CommitteeSize`, `ContributorIndex`,
+`CommitmentHash`, `ShareHash`, `Challenge`, `TranscriptCommitment`, `CommitmentX0`, `CommitmentY0`
+
+The last two inputs (`CommitmentX0`, `CommitmentY0`) are the BabyJubJub coordinates of the
+contributor's zeroth Feldman commitment point `a_{i,0}·G` — their individual public key share.
+The `DKGManager` reads these from the ZK public inputs and accumulates them on-chain into the
+round's collective public key via `_collectiveKey[roundId] += (CommitmentX0, CommitmentY0)`.
 
 **Private inputs** (112 scalars): polynomial coefficients, encryption nonces, Shamir shares,
 mask quotients, share masks, carry bits
@@ -618,6 +623,7 @@ mask quotients, share masks, carry bits
 6. Commitment hash: `CommitmentHash = Poseidon1(RoundHash, ContributorIndex, t, C_i(0), …)`
 7. Share hash: `ShareHash = Poseidon1(RoundHash, ContributorIndex, n, idx_1, R_1, σ_1, …)`
 8. BRLC transcript: `TranscriptCommitment = BRLC(Challenge, transcript_vector)`
+9. Individual public key: `CommitmentX0 = C_i(0).X` and `CommitmentY0 = C_i(0).Y` (i.e., `a_{i,0}·G` — the contributor's public key share)
 
 The transcript vector encodes all commitments, recipient indexes, recipient public keys,
 ephemeral points, and masked shares.
@@ -762,7 +768,7 @@ event log.
 | `createRound(threshold, committeeSize, minValidContributions, lotteryAlphaBps, seedDelay, registrationDeadlineBlock, contributionDeadlineBlock, disclosureAllowed)` | Any | Open | Create a new DKG round. Snapshots `nodeCount` from the registry and derives the per-round lottery threshold. Pins `seedBlock = block.number + seedDelay`. Returns `bytes12 roundId`. |
 | `claimSlot(roundId)` | Registration | Any registered eligible node | First-come-first-served self-claim. The first call after `block.number ≥ seedBlock` lazily resolves `seed = blockhash(seedBlock)`. The caller is admitted iff `keccak256(seed ‖ msg.sender) < lotteryThreshold`. The contract stops accepting claims once `committeeSize` slots are filled and immediately advances to Contribution. |
 | `extendRegistration(roundId)` | Registration, after deadline | Open | Reroll the seed if the round failed to fill in its registration window. Captures a fresh `blockhash` and pushes the deadline forward. |
-| `submitContribution(roundId, contributorIndex, commitmentsHash, encryptedSharesHash, transcript, proof, input)` | Contribution | Selected participant | Submit polynomial commitments and encrypted shares with a Groth16 proof. The committee membership / pubkey list is verified against a single keccak snapshot taken when the lottery filled (no per-recipient registry calls). |
+| `submitContribution(roundId, contributorIndex, commitmentsHash, encryptedSharesHash, commitment0X, commitment0Y, transcript, proof, input)` | Contribution | Selected participant | Submit polynomial commitments and encrypted shares with a Groth16 proof. `commitment0X`/`commitment0Y` are the coordinates of the contributor's zeroth Feldman commitment `a_{i,0}·G` (verified against the ZK public inputs); the contract accumulates them into the round's collective public key. The committee membership / pubkey list is verified against a single keccak snapshot taken when the lottery filled (no per-recipient registry calls). |
 | `finalizeRound(roundId, aggregateCommitmentsHash, collectivePublicKeyHash, shareCommitmentHash, transcript, proof, input)` | After min contributions | Open | Aggregate commitments, publish collective public key and share commitments. Advances to Finalized. The transcript is read directly from calldata; share commitments are stored as `keccak256(x,y)` (1 slot each). |
 | `submitPartialDecryption(roundId, participantIndex, ciphertextIndex, deltaHash, proof, input)` | Finalized | Selected participant | Submit a partial decryption `δ_i = d_i · C_1` with a Chaum-Pedersen DLEQ proof. Keyed by `(roundId, participant, ciphertextIndex)` to support multiple ciphertexts per round. |
 | `combineDecryption(roundId, ciphertextIndex, combineHash, plaintextHash, transcript, proof, input)` | Finalized | Open | Combine `t` partial decryptions via Lagrange interpolation. Emits the recovered plaintext hash. |
@@ -775,6 +781,7 @@ event log.
 | Function | Returns |
 |---|---|
 | `getRound(roundId)` | `Round` struct: organizer, policy, status, nonce, seedBlock, seed, lotteryThreshold, claimedCount, contributionCount, partialDecryptionCount, revealedShareCount |
+| `getCollectivePublicKey(roundId)` | `Point {x, y}` — the collective public key `PK = Σ_i a_{i,0}·G`, accumulated incrementally on each accepted `submitContribution`. Returns the identity `(0,1)` before any contribution is accepted. Available from the first accepted contribution onward; does not require waiting for `finalizeRound`. |
 | `selectedParticipants(roundId)` | `address[]` — ordered committee in claim order |
 | `getContribution(roundId, contributor)` | `ContributionRecord` (only `contributorIndex`, `commitmentVectorDigest`, `accepted` are persisted; the rest live in `ContributionSubmitted` events) |
 | `getPartialDecryption(roundId, participant, ciphertextIndex)` | `PartialDecryptionRecord` (only `participantIndex`, `ciphertextIndex`, `accepted`, `delta` are persisted) |
@@ -1024,8 +1031,9 @@ addresses pulled from `/addresses/addresses.env`.
   2. Create a new DKG round with configurable policy.
   3. Watch the round progress live through registration, contribution, and
      finalization phases.
-  4. Extract the collective public key `(x, y)` from the on-chain
-     `finalizeRound` calldata.
+  4. Read the collective public key `(x, y)` from `getCollectivePublicKey(roundId)` —
+     a simple view-call; the key is accumulated on-chain by each accepted
+     `submitContribution` and is available from the first contribution onward.
   5. Enter a plaintext integer and ElGamal-encrypt it with the collective
      public key (BabyJubJub, in-browser).
   6. Submit the ciphertext to the node via `POST /api/ciphertext/{roundId}`,

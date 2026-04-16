@@ -17,6 +17,7 @@ type TestActor struct {
 	Manager   *golangtypes.DKGManager
 	Registry  *golangtypes.DKGRegistry
 	TxManager *txmanager.Manager
+	PrivKey   string // hex private key; used for deterministic BJJ key derivation
 }
 
 func (a *TestActor) Address() common.Address {
@@ -37,6 +38,7 @@ func (s *TestServices) ActorFromPrivateKey(privateKey string) (*TestActor, error
 		Manager:   s.Manager,
 		Registry:  s.Registry,
 		TxManager: txm,
+		PrivKey:   privateKey,
 	}, nil
 }
 
@@ -66,6 +68,8 @@ func SubmitContributionAs(
 	contributorIndex uint16,
 	commitmentsHash [32]byte,
 	encryptedSharesHash [32]byte,
+	commitment0X *big.Int,
+	commitment0Y *big.Int,
 	transcript []byte,
 	proof []byte,
 	input []byte,
@@ -80,6 +84,8 @@ func SubmitContributionAs(
 		contributorIndex,
 		commitmentsHash,
 		encryptedSharesHash,
+		commitment0X,
+		commitment0Y,
 		transcript,
 		proof,
 		input,
@@ -211,4 +217,141 @@ func ReconstructSecretAs(
 		return fmt.Errorf("reconstruct secret: %w", err)
 	}
 	return actor.TxManager.WaitTxByHash(tx.Hash(), DefaultTxTimeout)
+}
+
+// EnsureNodeKeyRegistered registers or updates the BJJ key for actor if it is
+// not already registered with the correct key. The key is derived deterministically
+// from actor.PrivKey using the same domain as the DKG node binary.
+func EnsureNodeKeyRegistered(ctx context.Context, services *TestServices, actor *TestActor) error {
+	expectedX, expectedY, _, err := deterministicNodeKeyMaterial(actor.PrivKey)
+	if err != nil {
+		return fmt.Errorf("derive deterministic node key for %s: %w", actor.Address().Hex(), err)
+	}
+
+	node, err := services.Contracts.GetNode(ctx, actor.Address())
+	if err != nil {
+		return fmt.Errorf("get node for %s: %w", actor.Address().Hex(), err)
+	}
+	if node.Status != 0 &&
+		node.Operator == actor.Address() &&
+		node.PubX != nil && node.PubY != nil &&
+		node.PubX.Cmp(expectedX) == 0 &&
+		node.PubY.Cmp(expectedY) == 0 {
+		return nil
+	}
+
+	auth, err := actor.TxManager.NewTransactOpts(ctx)
+	if err != nil {
+		return fmt.Errorf("tx opts for %s: %w", actor.Address().Hex(), err)
+	}
+
+	var txHash common.Hash
+	if node.Status == 0 {
+		tx, err := actor.Registry.RegisterKey(auth, expectedX, expectedY)
+		if err != nil {
+			return fmt.Errorf("register key for %s: %w", actor.Address().Hex(), err)
+		}
+		txHash = tx.Hash()
+	} else {
+		tx, err := actor.Registry.UpdateKey(auth, expectedX, expectedY)
+		if err != nil {
+			return fmt.Errorf("update key for %s: %w", actor.Address().Hex(), err)
+		}
+		txHash = tx.Hash()
+	}
+	return actor.TxManager.WaitTxByHash(txHash, DefaultTxTimeout)
+}
+
+// ClaimSlotMeasured claims a slot for actor and returns the gas used.
+func ClaimSlotMeasured(ctx context.Context, services *TestServices, actor *TestActor, roundID [12]byte) (uint64, error) {
+	auth, err := actor.TxManager.NewTransactOpts(ctx)
+	if err != nil {
+		return 0, err
+	}
+	tx, err := actor.Manager.ClaimSlot(auth, roundID)
+	if err != nil {
+		return 0, fmt.Errorf("claim slot: %w", err)
+	}
+	if err := actor.TxManager.WaitTxByHash(tx.Hash(), DefaultTxTimeout); err != nil {
+		return 0, err
+	}
+	receipt, err := services.Contracts.Client().TransactionReceipt(ctx, tx.Hash())
+	if err != nil {
+		return 0, err
+	}
+	return receipt.GasUsed, nil
+}
+
+// SubmitContributionMeasured submits a contribution for actor and returns the gas used.
+func SubmitContributionMeasured(
+	ctx context.Context,
+	services *TestServices,
+	actor *TestActor,
+	roundID [12]byte,
+	contributorIndex uint16,
+	sub *ContributionSubmission,
+) (uint64, error) {
+	auth, err := actor.TxManager.NewTransactOpts(ctx)
+	if err != nil {
+		return 0, err
+	}
+	tx, err := actor.Manager.SubmitContribution(
+		auth,
+		roundID,
+		contributorIndex,
+		sub.CommitmentsHash,
+		sub.EncryptedSharesHash,
+		sub.Commitment0X,
+		sub.Commitment0Y,
+		sub.Transcript,
+		sub.Proof,
+		sub.Input,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("submit contribution: %w", err)
+	}
+	if err := actor.TxManager.WaitTxByHash(tx.Hash(), DefaultTxTimeout); err != nil {
+		return 0, err
+	}
+	receipt, err := services.Contracts.Client().TransactionReceipt(ctx, tx.Hash())
+	if err != nil {
+		return 0, err
+	}
+	return receipt.GasUsed, nil
+}
+
+// SubmitPartialDecryptionMeasured submits a partial decryption for actor and returns the gas used.
+func SubmitPartialDecryptionMeasured(
+	ctx context.Context,
+	services *TestServices,
+	actor *TestActor,
+	roundID [12]byte,
+	participantIndex uint16,
+	ciphertextIndex uint16,
+	partial *PartialDecryptionSubmission,
+) (uint64, error) {
+	auth, err := actor.TxManager.NewTransactOpts(ctx)
+	if err != nil {
+		return 0, err
+	}
+	tx, err := actor.Manager.SubmitPartialDecryption(
+		auth,
+		roundID,
+		participantIndex,
+		ciphertextIndex,
+		partial.DeltaHash,
+		partial.Proof,
+		partial.Input,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("submit partial decryption: %w", err)
+	}
+	if err := actor.TxManager.WaitTxByHash(tx.Hash(), DefaultTxTimeout); err != nil {
+		return 0, err
+	}
+	receipt, err := services.Contracts.Client().TransactionReceipt(ctx, tx.Hash())
+	if err != nil {
+		return 0, err
+	}
+	return receipt.GasUsed, nil
 }

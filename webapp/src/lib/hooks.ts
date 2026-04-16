@@ -123,10 +123,7 @@ export function useCollectivePublicKey(roundId: `0x${string}` | undefined) {
     enabled: !!roundId && configQ.data !== undefined,
     queryFn: async () => {
       const client = await getDKGClient();
-      const fromBlock = configQ.data?.startBlock !== undefined
-        ? BigInt(configQ.data.startBlock)
-        : 0n;
-      return client.getCollectivePublicKey(roundId!, fromBlock);
+      return client.getCollectivePublicKey(roundId!);
     },
     staleTime: Infinity, // pubkey is immutable once set
     refetchInterval: false,

@@ -25,6 +25,13 @@ type ContributionCircuit struct {
 	ShareHash            frontend.Variable `gnark:",public"`
 	Challenge            frontend.Variable `gnark:",public"`
 	TranscriptCommitment frontend.Variable `gnark:",public"`
+	// CommitmentX0 and CommitmentY0 are the coordinates of the contributor's
+	// zeroth Feldman commitment point (a_{i,0}·G), which equals the contributor's
+	// individual public key share. Exposing them as public inputs lets the
+	// smart contract accumulate the collective public key on-chain by summing
+	// all commitment[0] points as contributions are submitted.
+	CommitmentX0 frontend.Variable `gnark:",public"`
+	CommitmentY0 frontend.Variable `gnark:",public"`
 
 	Commitments      [MaxCoefficients]twistededwards.Point
 	RecipientPubKeys [MaxRecipients]twistededwards.Point
@@ -45,11 +52,16 @@ func (c *ContributionCircuit) Define(api frontend.API) error {
 	if err != nil {
 		return err
 	}
+	// Assert that the public CommitmentX0/Y0 match the private Commitments[0] point.
+	// This links the on-chain key accumulation to the ZK-proven polynomial commitment.
+	api.AssertIsEqual(c.CommitmentX0, c.Commitments[0].X)
+	api.AssertIsEqual(c.CommitmentY0, c.Commitments[0].Y)
+
 	coeffMask := ccommon.PrefixMask(api, c.Threshold, MaxCoefficients)
 	recipientMask := ccommon.PrefixMask(api, c.CommitteeSize, MaxRecipients)
 
 	// Pre-mask the coefficients and the commitment points once, so that the
-	// per-recipient EvaluatePolynomial / CommitmentPolynomialValue calls below
+	// per-recipient CommitmentPolynomialValue calls below
 	// can iterate without repeating per-coefficient Select work. Inactive slots
 	// are folded to 0 (scalars) and the curve identity (0, 1) (points), which
 	// makes a subsequent unconditional Add a no-op.
@@ -91,9 +103,7 @@ func (c *ContributionCircuit) Define(api frontend.API) error {
 
 	shareInputs := []frontend.Variable{c.RoundHash, c.ContributorIndex, c.CommitteeSize}
 	for i := range MaxRecipients {
-		expected := ccommon.EvaluatePolynomial(api, maskedCoeffs, nil, c.RecipientIndexes[i])
 		activeShare := api.Select(recipientMask[i], c.Shares[i], 0)
-		api.AssertIsEqual(activeShare, api.Select(recipientMask[i], expected, 0))
 
 		if err := ccommon.AssertPointOnCurve(api, c.RecipientPubKeys[i]); err != nil {
 			return err

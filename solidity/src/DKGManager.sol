@@ -4,6 +4,7 @@ pragma solidity 0.8.28;
 import {IDKGManager} from "./interfaces/IDKGManager.sol";
 import {IDKGRegistry} from "./interfaces/IDKGRegistry.sol";
 import {IZKVerifier} from "./interfaces/IZKVerifier.sol";
+import {BabyJubJub} from "./libraries/BabyJubJub.sol";
 import {DKGIdLib} from "./libraries/DKGIdLib.sol";
 import {BRLC} from "./libraries/BRLC.sol";
 import {DKGTypes} from "./libraries/DKGTypes.sol";
@@ -31,7 +32,7 @@ contract DKGManager is IDKGManager {
     // Changing this requires recompiling every circuit, regenerating the
     // proving keys, and redeploying the verifier wrappers.
     // ──────────────────────────────────────────────────────────────────────
-    uint256 internal constant MAX_N            = 16;
+    uint256 internal constant MAX_N            = 32;
     uint256 internal constant MAX_COEFFICIENTS = MAX_N;
     uint256 internal constant MAX_RECIPIENTS   = MAX_N;
     uint256 internal constant MAX_PARTICIPANTS = MAX_N;
@@ -117,6 +118,12 @@ contract DKGManager is IDKGManager {
     /// selectParticipants. Lets submitContribution verify the entire 96-word committee
     /// section in one keccak instead of 32 storage reads + 32 external registry calls.
     mapping(bytes12 roundId => bytes32 prefixHash) internal roundContribPrefixHash;
+
+    /// @dev Accumulates the collective public key on-chain as contributions are submitted.
+    ///      Each accepted contribution adds its commitment[0] point (a_{i,0}·G) to the
+    ///      running sum. The identity element (0,1) is the initial value. Once the round
+    ///      is finalized the value equals sum_i(a_{i,0}·G) = the collective public key.
+    mapping(bytes12 roundId => DKGTypes.Point) internal _collectiveKey;
 
     bytes32 internal constant CONTRIBUTION_TRANSCRIPT_DOMAIN = keccak256("davinci-dkg:contribution:v1");
     bytes32 internal constant DECRYPT_COMBINE_TRANSCRIPT_DOMAIN = keccak256("davinci-dkg:decrypt-combine:v1");
@@ -429,6 +436,8 @@ contract DKGManager is IDKGManager {
         uint16 contributorIndex,
         bytes32 commitmentsHash,
         bytes32 encryptedSharesHash,
+        uint256 commitment0X,
+        uint256 commitment0Y,
         bytes calldata transcript,
         bytes calldata proof,
         bytes calldata input
@@ -444,7 +453,7 @@ contract DKGManager is IDKGManager {
         if (record.accepted) revert AlreadyContributed();
 
         IZKVerifier(CONTRIBUTION_VERIFIER).verifyProof(proof, input);
-        uint256[8] memory publicInputs = abi.decode(input, (uint256[8]));
+        uint256[10] memory publicInputs = abi.decode(input, (uint256[10]));
         if (
             publicInputs[0] != _roundScalar(roundId) || publicInputs[1] != round.policy.threshold
                 || publicInputs[2] != round.policy.committeeSize || publicInputs[3] != contributorIndex
@@ -456,6 +465,10 @@ contract DKGManager is IDKGManager {
             keccak256(abi.encodePacked(commitmentsHash, encryptedSharesHash))
         );
         if (publicInputs[6] != challenge) revert InvalidProofInput();
+        // publicInputs[7] = TranscriptCommitment (verified below via BRLC)
+        // publicInputs[8] = CommitmentX0 (contributor's individual public key share x)
+        // publicInputs[9] = CommitmentY0 (contributor's individual public key share y)
+        if (publicInputs[8] != commitment0X || publicInputs[9] != commitment0Y) revert InvalidProofInput();
 
         // Transcript layout (8N words = 256 N=32, 128 N=16):
         //   words [0..2N)     commitmentPoints  (N points × 2 coords)
@@ -489,12 +502,36 @@ contract DKGManager is IDKGManager {
         rec.accepted = true;
         round.contributionCount++;
 
+        // Accumulate the collective public key: add commitment[0] = a_{i,0}·G
+        // to the running sum. The ZK proof guarantees commitment0X/Y is the
+        // correct zeroth Feldman commitment point of this contributor's polynomial.
+        // Identity is (0, 1); the initial mapping value (0, 0) is treated as (0, 1).
+        DKGTypes.Point storage cpk = _collectiveKey[roundId];
+        uint256 accX = cpk.x;
+        uint256 accY = cpk.y == 0 ? 1 : cpk.y; // treat uninitialized (0,0) as identity (0,1)
+        (uint256 newX, uint256 newY) = BabyJubJub.pointAdd(accX, accY, commitment0X, commitment0Y);
+        cpk.x = newX;
+        cpk.y = newY;
+
         // Refresh the contributor's liveness timestamp on the registry.
         // A successful proof-gated contribution is the strongest possible
         // signal that the operator is alive and well-configured.
         IDKGRegistry(REGISTRY).markActive(msg.sender);
 
         emit ContributionSubmitted(roundId, msg.sender, contributorIndex, commitmentsHash, encryptedSharesHash);
+    }
+
+    /// @notice Returns the accumulated collective public key for a round.
+    ///         This is the running sum of all accepted contributors' commitment[0]
+    ///         points (a_{i,0}·G). Once the round is finalized it equals the
+    ///         full collective public key. The y-coordinate of an uninitialized
+    ///         (no contributions yet) key is returned as 1 (the identity element).
+    function getCollectivePublicKey(bytes12 roundId) external view returns (DKGTypes.Point memory) {
+        DKGTypes.Point storage cpk = _collectiveKey[roundId];
+        if (cpk.y == 0) {
+            return DKGTypes.Point({x: 0, y: 1});
+        }
+        return cpk;
     }
 
     /// @notice Aggregate accepted contributions, publish the collective

@@ -71,15 +71,15 @@ func TestCommitteeRoundHappyPath(t *testing.T) {
 	c.Assert(err, qt.IsNil)
 
 	c.Assert(
-		helpers.SubmitContributionAs(ctx, &helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager}, roundID, 1, submission0.CommitmentsHash, submission0.EncryptedSharesHash, submission0.Transcript, submission0.Proof, submission0.Input),
+		helpers.SubmitContributionAs(ctx, &helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager}, roundID, 1, submission0.CommitmentsHash, submission0.EncryptedSharesHash, submission0.Commitment0X, submission0.Commitment0Y, submission0.Transcript, submission0.Proof, submission0.Input),
 		qt.IsNil,
 	)
 	c.Assert(
-		helpers.SubmitContributionAs(ctx, actor1, roundID, 2, submission1.CommitmentsHash, submission1.EncryptedSharesHash, submission1.Transcript, submission1.Proof, submission1.Input),
+		helpers.SubmitContributionAs(ctx, actor1, roundID, 2, submission1.CommitmentsHash, submission1.EncryptedSharesHash, submission1.Commitment0X, submission1.Commitment0Y, submission1.Transcript, submission1.Proof, submission1.Input),
 		qt.IsNil,
 	)
 	c.Assert(
-		helpers.SubmitContributionAs(ctx, actor2, roundID, 3, submission2.CommitmentsHash, submission2.EncryptedSharesHash, submission2.Transcript, submission2.Proof, submission2.Input),
+		helpers.SubmitContributionAs(ctx, actor2, roundID, 3, submission2.CommitmentsHash, submission2.EncryptedSharesHash, submission2.Commitment0X, submission2.Commitment0Y, submission2.Transcript, submission2.Proof, submission2.Input),
 		qt.IsNil,
 	)
 

@@ -180,10 +180,9 @@ describe('Full DKG flow (via Go fixture)', () => {
     const { enabled } = useHarness();
     if (!enabled || !fixture) return;
 
-    // The collective public key is not directly available as (x,y) from the
-    // SDK — its coordinates are encoded in the finalizeRound calldata.  Here
-    // we test the cryptographic primitive with a locally-generated key pair.
-    // The protocol flow would use the actual collective public key.
+    // Test the cryptographic primitive with a locally-generated key pair.
+    // In the full protocol, the collective public key is fetched via
+    // client.getCollectivePublicKey(roundId).
     const eg = await buildElGamal();
     const { privKey, pubKey } = eg.generateKeyPair();
 

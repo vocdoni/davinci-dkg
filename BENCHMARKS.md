@@ -5,10 +5,7 @@ Two compile-time builds are compared:
 - **MaxN = 32** — committees up to 32 participants per round.
 - **MaxN = 16** — committees up to 16 participants per round (current default).
 
-Both share identical contract logic, lottery selection, and circuit
-optimizations. The only difference is the single source-of-truth constant
-`circuits/common.MaxN` (mirrored in `solidity/src/DKGManager.sol::MAX_N`).
-Threshold per run is `t = ⌈2n/3⌉`.
+Tested on AMD Ryzen 7 7840U with 64 GiB RAM.
 
 ---
 
@@ -16,13 +13,13 @@ Threshold per run is `t = ⌈2n/3⌉`.
 
 | Circuit | MaxN = 32 | MaxN = 16 | Δ | Scaling |
 |---|---|---|---|---|
-| Contribution    | 2,836,382 | 802,476 | **−71.7%** | O(N²) |
+| Contribution    | 2,835,328 | 802,476 | **−71.7%** | O(N²) |
 | Finalize        | 2,490,861 | 625,522 | **−74.9%** | O(N²) |
 | DecryptCombine  |    84,314 |  43,635 | −48.3%     | O(N)  |
 | RevealShare     |     3,342 |   1,904 | −43.0%     | O(N)  |
 | PartialDecrypt  |    20,361 |  20,361 | —          | O(1)  |
 | RevealSubmit    |     2,346 |   2,346 | —          | O(1)  |
-| **Total**       | **5,437,606** | **1,496,244** | **−72.5%** | |
+| **Total**       | **5,436,552** | **1,496,244** | **−72.5%** | |
 
 ---
 
@@ -57,123 +54,79 @@ threshold decryption run.
 
 | n | t | submitContribution | finalizeRound | submitPartialDecryption | combineDecryption |
 |---|---|---|---|---|---|
-| 4  | 3  | 407,460 |   590,581 | 427,131 | 356,288 |
-| 8  | 6  | 417,324 |   754,440 | 427,155 | 392,804 |
-| 12 | 8  | 426,432 |   926,624 | 427,155 | 417,152 |
-| 16 | 11 | 436,332 | 1,123,645 | 427,155 | 453,584 |
+| 4  | 3  | 454,701 |   610,016 | 427,826 | 358,595 |
+| 8  | 6  | 464,469 |   774,651 | 427,802 | 395,672 |
+| 12 | 8  | 473,625 |   947,599 | 427,826 | 420,426 |
+| 16 | 11 | 483,525 | 1,145,456 | 427,814 | 457,539 |
 
 ### MaxN = 32
 
 | n | t | submitContribution | finalizeRound | submitPartialDecryption | combineDecryption |
 |---|---|---|---|---|---|
-| 4  | 3  | 500,533 | 1,056,772 | 425,105 | 373,929 |
-| 8  | 6  | 559,110 | 1,221,403 | 425,069 | 410,469 |
-| 12 | 8  | 616,911 | 1,394,615 | 425,069 | 434,793 |
-| 16 | 11 | 675,508 | 1,593,124 | 425,069 | 471,261 |
-| 20 | 14 | 734,085 | 1,809,766 | 425,033 | 507,825 |
-| 24 | 16 | 791,922 | 2,026,049 | 425,033 | 532,137 |
-| 28 | 19 | 850,494 | 2,276,365 | 425,057 | 568,641 |
-| 32 | 22 | 909,011 | 2,494,009 | 425,069 | 605,097 |
+| 4  | 3  | 491,224 | 1,062,448 | 427,802 | 374,675 |
+| 8  | 6  | 501,028 | 1,228,943 | 427,802 | 411,788 |
+| 12 | 8  | 510,148 | 1,404,019 | 427,802 | 436,518 |
+| 16 | 11 | 520,000 | 1,604,080 | 427,838 | 473,607 |
+| 20 | 14 | 529,852 | 1,822,634 | 427,814 | 510,756 |
+| 24 | 16 | 539,008 | 2,040,793 | 427,802 | 535,402 |
+| 28 | 19 | 548,836 | 2,292,901 | 427,838 | 572,575 |
+| 32 | 22 | 558,676 | 2,563,382 | 427,802 | 609,652 |
 
 ### Side-by-side at the sizes both builds support (n = 4, 8, 12, 16)
 
 | n  | Call | MaxN=32 | MaxN=16 | Δ |
 |---|---|---|---|---|
-| 4  | submitContribution | 500,533   |   407,460 | −18.6% |
-| 4  | finalizeRound      | 1,056,772 |   590,581 | **−44.1%** |
-| 4  | combineDecryption  | 373,929   |   356,288 | −4.7%  |
-| 8  | submitContribution | 559,110   |   417,324 | −25.4% |
-| 8  | finalizeRound      | 1,221,403 |   754,440 | **−38.2%** |
-| 8  | combineDecryption  | 410,469   |   392,804 | −4.3%  |
-| 12 | submitContribution | 616,911   |   426,432 | −30.9% |
-| 12 | finalizeRound      | 1,394,615 |   926,624 | **−33.6%** |
-| 12 | combineDecryption  | 434,793   |   417,152 | −4.1%  |
-| 16 | submitContribution | 675,508   |   436,332 | **−35.4%** |
-| 16 | finalizeRound      | 1,593,124 | 1,123,645 | **−29.5%** |
-| 16 | combineDecryption  | 471,261   |   453,584 | −3.7%  |
+| 4  | submitContribution | 491,224   |   454,701 | −7.4%      |
+| 4  | finalizeRound      | 1,062,448 |   610,016 | **−42.6%** |
+| 4  | combineDecryption  | 374,675   |   358,595 | −4.3%      |
+| 8  | submitContribution | 501,028   |   464,469 | −7.3%      |
+| 8  | finalizeRound      | 1,228,943 |   774,651 | **−37.0%** |
+| 8  | combineDecryption  | 411,788   |   395,672 | −4.1%      |
+| 12 | submitContribution | 510,148   |   473,625 | −7.2%      |
+| 12 | finalizeRound      | 1,404,019 |   947,599 | **−32.5%** |
+| 12 | combineDecryption  | 436,518   |   420,426 | −3.7%      |
+| 16 | submitContribution | 520,000   |   483,525 | **−7.0%**  |
+| 16 | finalizeRound      | 1,604,080 | 1,145,456 | **−28.6%** |
+| 16 | combineDecryption  | 473,607   |   457,539 | −3.4%      |
 
 `submitPartialDecryption` is essentially identical between builds (~425–427 k);
 its dominant cost is the Groth16 verifier base which doesn't scale with N.
 
 ### Setup overhead (createRound + n × claimSlot)
 
-`createRound` ≈ 194 k in both builds. `claimSlot` ≈ 120 k average per node
-(first claimer pays the seed-resolve, last claimer pays the committee snapshot).
-Setup overhead scales linearly with `n` and is essentially identical between
-the two builds — none of it depends on MaxN.
+`createRound` ≈ 144–196 k in both builds (varies by round nonce / storage state).
+`claimSlot` ≈ 122–137 k average per node (first claimer pays the seed-resolve,
+last claimer pays the committee snapshot). Setup overhead scales linearly with `n`
+and is essentially identical between the two builds — none of it depends on MaxN.
 
 ### Whole-round totals at n = 16
 
+Using measured gas figures (MaxN=16: n=16 row; MaxN=32: n=16 row):
+
 | Phase | MaxN = 32 | MaxN = 16 | Saved |
 |---|---|---|---|
-| Setup (create + 16× claim)  |  2,108,488 |  2,118,801 |     −10,313 |
-| 16× submitContribution      | 10,808,128 |  6,981,312 |   3,826,816 |
-| 1×  finalizeRound           |  1,593,124 |  1,123,645 |     469,479 |
-| 11× submitPartialDecryption |  4,675,759 |  4,698,705 |     −22,946 |
-| 1×  combineDecryption       |    471,261 |    453,584 |      17,677 |
-| **Round total at n=16**     | **19,656,760** | **15,376,047** | **4,280,713 (−21.8%)** |
+| Setup (create + 16× claim)  |  2,105,263 |  2,096,647 |       8,616 |
+| 16× submitContribution      |  8,320,000 |  7,736,400 |     583,600 |
+| 1×  finalizeRound           |  1,604,080 |  1,145,456 |     458,624 |
+| 11× submitPartialDecryption |  4,706,218 |  4,705,954 |        −264 |
+| 1×  combineDecryption       |    473,607 |    457,539 |      16,068 |
+| **Round total at n=16**     | **17,209,168** | **16,141,996** | **1,067,172 (−6.2%)** |
 
-The largest absolute saving comes from the 16 contribution calls (each shrinks
-~239 k). The largest relative saving is in `finalizeRound` (−29.5%), driven by
+### Whole-round totals at n = 32 (MaxN = 32 only)
+
+| Phase | Gas |
+|---|---|
+| Setup (create + 32× claim)  |  3,976,227 |
+| 32× submitContribution      | 17,877,632 |
+| 1×  finalizeRound           |  2,563,382 |
+| 22× submitPartialDecryption |  9,411,644 |
+| 1×  combineDecryption       |    609,652 |
+| **Round total at n=32**     | **34,438,537** |
+
+The largest absolute saving comes from `finalizeRound` (−28.6%), driven by
 the smaller calldata transcript and the smaller per-contributor digest input.
-
----
-
-## Why MaxN = 16 is cheaper
-
-1. **Smaller transcripts** → cheaper BRLC stream. The on-chain BRLC commitment
-   is a streaming linear combination over the transcript at ~30 gas per word.
-
-   | Transcript        | Word count | MaxN = 32 | MaxN = 16 |
-   |---|---|---|---|
-   | `submitContribution` | `8N`     | 256       | **128** |
-   | `finalizeRound`      | `2N²+5N` | 2,208     | **592**  |
-   | `combineDecryption`  | `4+3N`   | 100       | **52**   |
-   | `reconstructSecret`  | `2N`     | 64        | **32**   |
-
-   The `finalizeRound` transcript shrinks **3.7×**, which is why finalize gas
-   drops the most in absolute terms.
-
-2. **Smaller per-contributor digest in `finalizeRound`.** Each contributor's
-   commitment slice is `2N` words = `64N` bytes:
-
-   | Build  | Per-contributor digest input | `keccak256` cost / iter |
-   |---|---|---|
-   | MaxN=32 | 2,048 bytes | ~6.5 k gas |
-   | MaxN=16 |   512 bytes | ~2.0 k gas |
-
-3. **Smaller circuits** → ~4× constraint reduction in `contribution` and
-   `finalize` (both dominated by `O(N²)` scalar multiplications inside
-   `CommitmentPolynomialValue`), proportionally smaller proving keys, ~3-4×
-   faster proving.
-
-4. **What does NOT change**: Groth16 verifier base cost (~270 k per call,
-   independent of N), cold SSTORE prices (22.1 k each), the lottery setup, and
-   `submitPartialDecryption` (its cost is 100% verifier-base + 1 keccak + a
-   couple of SSTOREs, none of which scale with N).
-
----
-
-## Trade-offs
-
-| Concern | MaxN = 32 | MaxN = 16 |
-|---|---|---|
-| Max committee per round           | 32        | **16** (hard cap) |
-| `finalizeRound` worst case        | ~2.55 M (n=32) | ~1.12 M (n=16) |
-| Whole round at n=16               | ~19.7 M   | **~15.4 M** (−22%) |
-| Whole round at n=32               | ~33.0 M   | not supported |
-| Per-node proof time (contribution)| ~3.4 s    | **~0.9 s** |
-| Total proving wall-clock at full house | ~109 s | **~14 s** |
-| Proving key size                  | ~2-4 GB   | **~0.5-1 GB** |
-| Trusted-setup time                | minutes   | seconds |
-
-**Choose MaxN = 16** if your protocol caps at 16 participants and you want the
-cheapest per-round gas, the fastest provers, and the smallest proving-key
-download.
-
-**Choose MaxN = 32** if you need rounds of up to 32 participants under any
-circumstances. The extra capacity costs ~3-4× in per-node proving time and
-~22% more whole-round gas at n=16, but you maintain only one build.
+The contribution savings are smaller than before because the BabyJubJub point
+accumulation overhead now dominates the calldata savings at small n.
 
 ---
 
@@ -195,8 +148,6 @@ uint256 internal constant MAX_N = 16;   // ← keep equal to circuits/common.Max
 make circuits   # compile circuits → patch hashes → rebuild Solidity → regen Go bindings
 ```
 
-Pipeline takes ~1 minute at MaxN=16, ~3 minutes at MaxN=32.
-
 ---
 
 ## Gas Cost Model (MaxN-aware)
@@ -217,23 +168,6 @@ Gas per call breaks down into N-independent and N-dependent parts:
 
 Halving MaxN cuts items 2 and 5 by roughly the same factor, which is why
 `finalizeRound` shrinks the most when you switch to MaxN=16.
-
----
-
-## Practical Limits
-
-- **Block gas limit** (Anvil default): 30,000,000. Worst-case per call:
-  - MaxN=32, n=32: `finalizeRound` ≈ 2.55 M (~8.5% of a block).
-  - MaxN=16, n=16: `finalizeRound` ≈ 1.12 M (~3.7% of a block).
-- **Throughput bottleneck** is proof generation, not on-chain gas. All calls
-  fit in a single block in both builds.
-- **Long-term storage** is bounded by a fixed-size ring buffer
-  (`ROUND_HISTORY_SIZE = 64`). On every `createRound`, the oldest live round is
-  evicted (`delete rounds[…]`), partially refunded by EIP-3529. Off-chain
-  consumers reconstruct historical round data from the event log.
-- **Memory** for proving:
-  - MaxN=32: ~2-4 GB peak.
-  - MaxN=16: ~0.5-1 GB peak.
 
 ---
 

@@ -320,29 +320,29 @@ export function Playground() {
         }
 
         // ── Early collective public key extraction ──────────────────────────
-        // Once we have at least minValidContributions, compute the collective
-        // public key directly from contribution calldata without waiting for
-        // finalizeRound.  This is mathematically identical to the verified key.
+        // Once we have at least minValidContributions, read the accumulated
+        // collective public key directly from the contract.  The contract
+        // accumulates commitment[0] points as contributions are submitted,
+        // so the key is available without waiting for finalizeRound.
         if (
           !earlyKeyFetched &&
           !collectivePubKey &&
           r.status === RoundStatus.Contribution &&
-          Number(r.contributionCount) >= Number(r.policy.minValidContributions) &&
-          parts.length > 0
+          Number(r.contributionCount) >= Number(r.policy.minValidContributions)
         ) {
           earlyKeyFetched = true;
           setCollectivePubKeyBusy(true);
           try {
-            addLog('─── Enough contributions — deriving collective public key ───', 'crypto');
-            const pk = await writer!.getCollectivePublicKeyFromContributions(roundId!, parts);
+            addLog('─── Enough contributions — reading collective public key from chain ───', 'crypto');
+            const pk = await writer!.getCollectivePublicKey(roundId!);
             setCollectivePubKey(pk);
-            addLog('Collective public key derived from contribution calldata:', 'crypto');
+            addLog('Collective public key read from on-chain accumulator:', 'crypto');
             addLog(`  x: ${hex(pk.x)}`, 'crypto');
             addLog(`  y: ${hex(pk.y)}`, 'crypto');
-            addLog('Steps 4–6 are now unlocked.  The key will be verified on-chain once finalizeRound is mined.', 'success');
+            addLog('Steps 4–6 are now unlocked.  The key will be finalized on-chain via finalizeRound.', 'success');
           } catch (err) {
             earlyKeyFetched = false; // allow retry on next tick
-            addLog(`Early key extraction failed (will retry): ${err instanceof Error ? err.message : String(err)}`, 'error');
+            addLog(`Key read failed (will retry): ${err instanceof Error ? err.message : String(err)}`, 'error');
           } finally {
             setCollectivePubKeyBusy(false);
           }
@@ -373,13 +373,13 @@ export function Playground() {
             addLog(`aggregateCommitmentsHash: ${ev.aggregateCommitmentsHash}`, 'info');
             addLog(`shareCommitmentHash:      ${ev.shareCommitmentHash}`, 'info');
 
-            // If the early key wasn't extracted yet, fall back to finalizeRound calldata.
+            // If the key wasn't read yet, fetch it now from the on-chain accumulator.
             if (!collectivePubKey) {
               setCollectivePubKeyBusy(true);
               try {
                 const pk = await writer!.getCollectivePublicKey(roundId!);
                 setCollectivePubKey(pk);
-                addLog('Collective public key extracted from finalizeRound calldata:', 'crypto');
+                addLog('Collective public key read from on-chain accumulator (post-finalize):', 'crypto');
                 addLog(`  x: ${hex(pk.x)}`, 'crypto');
                 addLog(`  y: ${hex(pk.y)}`, 'crypto');
               } catch (err) {
@@ -778,16 +778,15 @@ export function Playground() {
           <VStack align="stretch" spacing={4}>
             <Text fontSize="sm" color="gray.400">
               The collective public key = sum of each contributor's zeroth Feldman commitment
-              point (a<sub>i,0</sub>·G).{' '}
-              {finalizedInfo
-                ? 'Extracted from the on-chain finalizeRound calldata.'
-                : 'Derived directly from contribution calldatas — identical to the finalized key.'}
+              point (a<sub>i,0</sub>·G), accumulated on-chain during{' '}
+              <code>submitContribution</code>. Read directly from the contract via{' '}
+              <code>getCollectivePublicKey</code> — no calldata parsing required.
             </Text>
             {collectivePubKeyBusy && (
               <HStack spacing={2}>
                 <Spinner size="sm" color="purple.300" />
                 <Text fontSize="xs" color="gray.400">
-                  {finalizedInfo ? 'Fetching from finalizeRound calldata…' : 'Summing contribution commitments…'}
+                  {'Reading collective public key from contract…'}
                 </Text>
               </HStack>
             )}

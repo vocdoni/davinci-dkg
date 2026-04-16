@@ -99,6 +99,8 @@ func CreateFinalizedSingleParticipantRound(
 		1,
 		submission.CommitmentsHash,
 		submission.EncryptedSharesHash,
+		submission.Commitment0X,
+		submission.Commitment0Y,
 		submission.Transcript,
 		submission.Proof,
 		submission.Input,

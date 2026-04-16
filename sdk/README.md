@@ -181,12 +181,15 @@ In the DKG protocol the private key is never held by a single party. To decrypt 
 [DKG Node]  claimSlot(roundId)           ← lottery via on-chain blockhash seed
                │
                ▼  (registration deadline passes)
-[DKG Node]  submitContribution(...)      ← ZK proof of VSS shares
-               │
+[DKG Node]  submitContribution(...)      ← ZK proof of VSS shares; contract
+               │                            adds commitment[0] to collective key
                ▼  (contribution deadline passes)
 [DKG Node]  finalizeRound(...)           ← ZK proof aggregating all commitments
                │                            collectivePublicKeyHash emitted
                ▼  Round.status = Finalized
+[Anyone]    getCollectivePublicKey(roundId) → {x, y}   ← simple contract read
+               │
+               ▼
 [Anyone]    encrypt(plaintext, collectivePubKey)  ← ElGamal; ciphertext published off-chain
                │
                ▼
@@ -199,7 +202,7 @@ In the DKG protocol the private key is never held by a single party. To decrypt 
 [Anyone]    getCombinedDecryption(roundId, idx)  ← completed: true
 ```
 
-> **Collective public key:** The `RoundFinalized` event contains `collectivePublicKeyHash`, the keccak256 hash of the collective key point. The actual `(x, y)` coordinates are encoded in the `transcript` argument of the `finalizeRound` calldata; decode that transaction to retrieve them.
+> **Collective public key:** The contract accumulates the key incrementally as contributions are accepted — each contributor's `commitment[0]` point is added on-chain during `submitContribution`. The `(x, y)` coordinates are available at any time via `client.getCollectivePublicKey(roundId)`, a simple view-call that requires no calldata parsing. `RoundFinalized` emits `collectivePublicKeyHash` (keccak256 of the final key) for integrity verification.
 
 ## API reference
 
@@ -221,7 +224,7 @@ In the DKG protocol the private key is never held by a single party. To decrypt 
 | `buildRoundId(nonce)` | Derive round ID from nonce |
 | `getRoundCreatedEvents(opts?)` | Historical RoundCreated logs |
 | `getRoundFinalizedEvents(roundId)` | Historical RoundFinalized logs (includes `transactionHash`) |
-| `getCollectivePublicKey(roundId, fromBlock?)` | Decode the collective public key `(x, y)` from the `finalizeRound` calldata |
+| `getCollectivePublicKey(roundId)` | Fetch the collective public key `(x, y)` from the on-chain accumulator (available after the first contribution is accepted) |
 | `getAllRoundEvents(roundId, fromBlock?)` | All DKGManager events for a specific round |
 | `getRecentRounds(limit?)` | Most recent N rounds (default 20) as `RoundEntry[]` |
 | `getRegistryNodes(fromBlock?)` | All registered nodes via NodeRegistered events |

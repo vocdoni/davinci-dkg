@@ -497,20 +497,24 @@ func commitmentPointsFromCalldata(
 }
 
 // parseCommitmentPoints extracts the first t Feldman commitment points from
-// the submitContribution calldata transcript:
+// the submitContribution calldata transcript.
+// submitContribution(roundId, index, commitmentsHash, encryptedSharesHash,
 //
-//	transcript = abi.encode(uint256[16], uint256[8], uint256[16], uint256[16], uint256[8])
-//	commitmentPoints occupy bytes 0..511 (8 points, X then Y, 32 bytes each)
+//	commitment0X, commitment0Y, transcript, proof, input)
+//
+// The transcript is the 7th param (index 6); its ABI offset word sits at
+// payload bytes 192-224 (6 × 32).
 func parseCommitmentPoints(data []byte, t uint16) ([]nodetypes.CurvePoint, error) {
 	if len(data) < 4 {
 		return nil, fmt.Errorf("data too short")
 	}
 	payload := data[4:]
-	// transcript is the 5th parameter (index 4), offset is at head bytes 128..159.
-	if len(payload) < 160 {
+	// transcript is the 7th parameter (index 6, after commitment0X and commitment0Y),
+	// offset is at head bytes 192..223 (9 params × 32 = 288-byte head; word 6 = bytes 192-224).
+	if len(payload) < 224 {
 		return nil, fmt.Errorf("payload head too short")
 	}
-	tOffset := int64(new(big.Int).SetBytes(pad32(payload[128:160])).Uint64())
+	tOffset := int64(new(big.Int).SetBytes(pad32(payload[192:224])).Uint64())
 	if int(tOffset)+32 > len(payload) {
 		return nil, fmt.Errorf("transcript offset out of bounds")
 	}

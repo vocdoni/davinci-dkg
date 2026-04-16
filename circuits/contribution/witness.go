@@ -26,11 +26,15 @@ type PublicInputs struct {
 	ShareHash            *big.Int
 	Challenge            *big.Int
 	TranscriptCommitment *big.Int
-	Commitments          []types.CurvePoint
-	RecipientKeys        []types.CurvePoint
-	Shares               []*big.Int
-	EncryptedShares      []types.EncryptedShare
-	RecipientIndexes     []*big.Int
+	// CommitmentX0 and CommitmentY0 are the coordinates of the contributor's
+	// zeroth Feldman commitment point (a_{i,0}·G = individual public key share).
+	CommitmentX0     *big.Int
+	CommitmentY0     *big.Int
+	Commitments      []types.CurvePoint
+	RecipientKeys    []types.CurvePoint
+	Shares           []*big.Int
+	EncryptedShares  []types.EncryptedShare
+	RecipientIndexes []*big.Int
 }
 
 // BuildWitness materializes the native assignment into a gnark witness and the
@@ -240,6 +244,10 @@ func BuildWitness(a Assignment) (*ContributionCircuit, *PublicInputs, error) {
 		return nil, nil, fmt.Errorf("brlc contribution transcript: %w", err)
 	}
 
+	// Commitment[0] = a_{i,0}·G is the contributor's individual public key share.
+	commitment0X := new(big.Int).Set(commitments[0].X)
+	commitment0Y := new(big.Int).Set(commitments[0].Y)
+
 	witness := &ContributionCircuit{
 		RoundHash:            new(big.Int).Set(a.RoundHash),
 		Threshold:            threshold,
@@ -249,6 +257,8 @@ func BuildWitness(a Assignment) (*ContributionCircuit, *PublicInputs, error) {
 		ShareHash:            shareHash,
 		Challenge:            challenge,
 		TranscriptCommitment: transcriptCommitment,
+		CommitmentX0:         commitment0X,
+		CommitmentY0:         commitment0Y,
 		MaskedShares:         toWitnessScalars(maskedShares),
 	}
 	for i := range MaxCoefficients {
@@ -275,6 +285,8 @@ func BuildWitness(a Assignment) (*ContributionCircuit, *PublicInputs, error) {
 		ShareHash:            new(big.Int).Set(shareHash),
 		Challenge:            new(big.Int).Set(challenge),
 		TranscriptCommitment: new(big.Int).Set(transcriptCommitment),
+		CommitmentX0:         new(big.Int).Set(commitment0X),
+		CommitmentY0:         new(big.Int).Set(commitment0Y),
 		Commitments:          commitments,
 		RecipientKeys:        recipientKeys,
 		Shares:               shares[:len(a.RecipientIndexes)],
@@ -295,10 +307,13 @@ func (p PublicInputs) PublicWitness() *ContributionCircuit {
 		ShareHash:            p.ShareHash,
 		Challenge:            p.Challenge,
 		TranscriptCommitment: p.TranscriptCommitment,
+		CommitmentX0:         p.CommitmentX0,
+		CommitmentY0:         p.CommitmentY0,
 	}
 }
 
 // Scalars returns the ordered public scalars used by the verifier.
+// Order must match the circuit field declaration order.
 func (p PublicInputs) Scalars() []*big.Int {
 	scalars := []*big.Int{
 		p.RoundHash,
@@ -309,6 +324,8 @@ func (p PublicInputs) Scalars() []*big.Int {
 		p.ShareHash,
 		p.Challenge,
 		p.TranscriptCommitment,
+		p.CommitmentX0,
+		p.CommitmentY0,
 	}
 	return scalars
 }

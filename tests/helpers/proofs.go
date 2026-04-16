@@ -31,6 +31,8 @@ type ContributionSubmission struct {
 	Transcript          []byte
 	CommitmentsHash     [32]byte
 	EncryptedSharesHash [32]byte
+	Commitment0X        *big.Int
+	Commitment0Y        *big.Int
 	RoundHash           *big.Int
 }
 
@@ -158,6 +160,8 @@ func BuildContributionSubmission(
 		Transcript:          transcriptBytes,
 		CommitmentsHash:     common.BigToHash(publicInputs.CommitmentHash),
 		EncryptedSharesHash: common.BigToHash(publicInputs.ShareHash),
+		Commitment0X:        new(big.Int).Set(publicInputs.CommitmentX0),
+		Commitment0Y:        new(big.Int).Set(publicInputs.CommitmentY0),
 		RoundHash:           new(big.Int).Set(roundHash),
 	}, nil
 }

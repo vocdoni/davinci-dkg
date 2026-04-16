@@ -56,7 +56,7 @@ help: ## Show this help message
 	@echo "                                     — set to http://<host-ip>:8545"
 	@echo "                                     when accessing from another host."
 	@echo "                  Note: committee size is capped by the circuit"
-	@echo "                  bound MaxN (see circuits/common/sizes.go, currently 16)."
+	@echo "                  bound MaxN (see circuits/common/sizes.go, currently 32)."
 	@echo "  testnet-run     Run the full DKG scenario (create round → encrypt → decrypt)"
 	@echo "                  DKG_NODE_COUNT         (default 3)"
 	@echo "                  DKG_THRESHOLD          (default 2)"

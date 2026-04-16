@@ -42,11 +42,29 @@ export const dkgManagerAbi = [
       { name: 'contributorIndex', type: 'uint16' },
       { name: 'commitmentsHash', type: 'bytes32' },
       { name: 'encryptedSharesHash', type: 'bytes32' },
+      { name: 'commitment0X', type: 'uint256' },
+      { name: 'commitment0Y', type: 'uint256' },
       { name: 'transcript', type: 'bytes' },
       { name: 'proof', type: 'bytes' },
       { name: 'input', type: 'bytes' },
     ],
     outputs: [],
+  },
+  {
+    type: 'function',
+    name: 'getCollectivePublicKey',
+    stateMutability: 'view',
+    inputs: [{ name: 'roundId', type: 'bytes12' }],
+    outputs: [
+      {
+        name: '',
+        type: 'tuple',
+        components: [
+          { name: 'x', type: 'uint256' },
+          { name: 'y', type: 'uint256' },
+        ],
+      },
+    ],
   },
   {
     type: 'function',

@@ -101,6 +101,8 @@ interface IDKGManager {
         uint16 contributorIndex,
         bytes32 commitmentsHash,
         bytes32 encryptedSharesHash,
+        uint256 commitment0X,
+        uint256 commitment0Y,
         bytes calldata transcript,
         bytes calldata proof,
         bytes calldata input
@@ -163,6 +165,7 @@ interface IDKGManager {
         view
         returns (DKGTypes.RevealedShareRecord memory);
     function getShareCommitmentHash(bytes12 roundId, uint16 participantIndex) external view returns (bytes32);
+    function getCollectivePublicKey(bytes12 roundId) external view returns (DKGTypes.Point memory);
     function getContributionVerifierVKeyHash() external view returns (bytes32);
     function getPartialDecryptVerifierVKeyHash() external view returns (bytes32);
     function getFinalizeVerifierVKeyHash() external view returns (bytes32);

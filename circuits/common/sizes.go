@@ -9,4 +9,4 @@ package common
 // and the corresponding Solidity verifier wrappers). The Solidity contract
 // reads `MAX_N` from `solidity/src/DKGManager.sol`, which must be set to the
 // same number; the test `TestSolidityMaxNMatchesGoMaxN` enforces this.
-const MaxN = 16
+const MaxN = 32

@@ -17,23 +17,23 @@ contract ContributionVerifier is BaseContributionVerifier, IZKVerifier {
 
     function verifyProof(bytes calldata proof, bytes calldata input) external view {
         if (proof.length == 32 * 8) {
-            if (input.length != 32 * 8) revert InvalidInputEncoding();
+            if (input.length != 32 * 10) revert InvalidInputEncoding();
             _delegateStaticCall(
                 abi.encodeWithSelector(
                     BaseContributionVerifier.verifyProof.selector,
                     abi.decode(proof, (uint256[8])),
-                    abi.decode(input, (uint256[8]))
+                    abi.decode(input, (uint256[10]))
                 )
             );
             return;
         }
         if (proof.length == 32 * 4) {
-            if (input.length != 32 * 8) revert InvalidInputEncoding();
+            if (input.length != 32 * 10) revert InvalidInputEncoding();
             _delegateStaticCall(
                 abi.encodeWithSelector(
                     BaseContributionVerifier.verifyCompressedProof.selector,
                     abi.decode(proof, (uint256[4])),
-                    abi.decode(input, (uint256[8]))
+                    abi.decode(input, (uint256[10]))
                 )
             );
             return;

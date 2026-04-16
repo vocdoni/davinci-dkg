@@ -474,32 +474,56 @@ func NewCircuitRuntime(
 	}
 }
 
+// maxProveAttempts is the number of times ProveAndVerify will re-prove on
+// a verification failure before giving up. The gnark Groth16 prover is
+// probabilistic (it samples fresh random blinding scalars r,s every call); a
+// spurious invalid proof can be cured by simply re-proving. Four attempts
+// reduce the residual failure probability to <(0.05)^4 ≈ 6 × 10⁻⁶.
+const maxProveAttempts = 4
+
 // ProveAndVerify proves an assignment and immediately verifies it.
+// On a transient prover failure (invalid proof) it retries up to maxProveAttempts
+// times with fresh randomness before returning an error.
 func (cr *CircuitRuntime) ProveAndVerify(assignment frontend.Circuit) (groth16.Proof, error) {
-	proof, err := cr.Prove(assignment)
-	if err != nil {
-		return nil, err
+	var lastErr error
+	for attempt := 0; attempt < maxProveAttempts; attempt++ {
+		proof, err := cr.Prove(assignment)
+		if err != nil {
+			return nil, err // proving key / witness error — not transient, don't retry
+		}
+		if err := cr.Verify(proof, assignment); err != nil {
+			lastErr = err
+			log.Warnw("proof verification failed, retrying with fresh randomness",
+				"circuit", cr.Name(), "attempt", attempt+1, "maxAttempts", maxProveAttempts, "error", err)
+			continue
+		}
+		return proof, nil
 	}
-	if err := cr.Verify(proof, assignment); err != nil {
-		return nil, err
-	}
-	return proof, nil
+	return nil, fmt.Errorf("proof verification failed after %d attempts: %w", maxProveAttempts, lastErr)
 }
 
 // ProveAndVerifyWithWitness proves and verifies using a precomputed witness.
+// It retries up to maxProveAttempts times on a transient prover failure.
 func (cr *CircuitRuntime) ProveAndVerifyWithWitness(fullWitness witness.Witness) (groth16.Proof, error) {
-	proof, err := cr.ProveWithWitness(fullWitness)
-	if err != nil {
-		return nil, err
-	}
 	publicWitness, err := fullWitness.Public()
 	if err != nil {
 		return nil, err
 	}
-	if err := cr.VerifyWithWitness(proof, publicWitness); err != nil {
-		return nil, err
+	var lastErr error
+	for attempt := 0; attempt < maxProveAttempts; attempt++ {
+		proof, err := cr.ProveWithWitness(fullWitness)
+		if err != nil {
+			return nil, err
+		}
+		if err := cr.VerifyWithWitness(proof, publicWitness); err != nil {
+			lastErr = err
+			log.Warnw("proof verification failed, retrying with fresh randomness",
+				"circuit", cr.Name(), "attempt", attempt+1, "maxAttempts", maxProveAttempts, "error", err)
+			continue
+		}
+		return proof, nil
 	}
-	return proof, nil
+	return nil, fmt.Errorf("proof verification failed after %d attempts: %w", maxProveAttempts, lastErr)
 }
 
 // Prove generates a proof from an assignment.

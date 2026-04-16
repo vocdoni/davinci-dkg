@@ -75,6 +75,9 @@ func DeriveChallengeNative(roundHash *big.Int, domain [32]byte, anchor *big.Int)
 	if anchor == nil {
 		return nil, fmt.Errorf("anchor is required")
 	}
+	if roundHash.BitLen() > 96 {
+		return nil, fmt.Errorf("roundHash must fit in 12 bytes (≤96 bits), got %d bits", roundHash.BitLen())
+	}
 	modulus := ecc.BN254.ScalarField()
 	challengeBytes := ethcrypto.Keccak256(
 		roundHash.FillBytes(make([]byte, 12)),
