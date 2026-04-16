@@ -7,6 +7,7 @@ import {IZKVerifier} from "./interfaces/IZKVerifier.sol";
 import {BabyJubJub} from "./libraries/BabyJubJub.sol";
 import {DKGIdLib} from "./libraries/DKGIdLib.sol";
 import {BRLC} from "./libraries/BRLC.sol";
+import {Lagrange} from "./libraries/Lagrange.sol";
 import {DKGTypes} from "./libraries/DKGTypes.sol";
 import {PhaseLib} from "./libraries/PhaseLib.sol";
 
@@ -611,6 +612,35 @@ contract DKGManager is IDKGManager {
         emit RoundFinalized(roundId, aggregateCommitmentsHash, collectivePublicKeyHash, shareCommitmentHash);
     }
 
+    /// @dev SECURITY (C-2). Recompute sk = Σ λ_i d_i mod r from the transcript
+    /// and compare it to the claimed ReconstructedSecretHash public input. The
+    /// transcript layout is `participantIndexes (N words) ‖ revealedShares (N words)`;
+    /// only the first `shareCount` of each are meaningful (validated by
+    /// `_verifyReconstructTranscript`).
+    function _verifyLagrangeReconstruction(
+        uint256 shareCount,
+        bytes32 expectedSecret,
+        bytes calldata transcript
+    ) internal view {
+        uint256[] memory xs = new uint256[](shareCount);
+        uint256[] memory shares = new uint256[](shareCount);
+        uint256 dOff;
+        assembly { dOff := transcript.offset }
+        uint256 piBase = dOff;
+        uint256 svBase = dOff + RECONSTRUCT_VALUES_BYTES_OFFSET;
+        for (uint256 i = 0; i < shareCount; i++) {
+            uint256 xi;
+            uint256 si;
+            assembly ("memory-safe") {
+                xi := calldataload(add(piBase, mul(i, 0x20)))
+                si := calldataload(add(svBase, mul(i, 0x20)))
+            }
+            xs[i] = xi;
+            shares[i] = si;
+        }
+        Lagrange.verifyReconstruction(xs, shares, shareCount, uint256(expectedSecret));
+    }
+
     /// @dev Verifies the reconstructSecret transcript directly from calldata.
     function _verifyReconstructTranscript(
         bytes12 roundId,
@@ -935,9 +965,13 @@ contract DKGManager is IDKGManager {
         assembly { dOff := transcript.offset }
         if (BRLC.commitCalldata(challenge, dOff, RECONSTRUCT_TRANSCRIPT_WORDS) != publicInputs[6]) revert InvalidProofInput();
 
-        if (bytes32(publicInputs[4]) != reconstructedSecretHash) {
-            revert InvalidProofInput();
-        }
+        // SECURITY (C-2): the reveal-share circuit deliberately does NOT
+        // prove the Lagrange identity sk = Σ λ_i d_i. Without this on-chain
+        // recomputation an attacker can publish any value as the round's
+        // reconstructed secret. We recompute it here from the same transcript
+        // calldata that BRLC just committed to and require it to match the
+        // claimed ReconstructedSecretHash public input.
+        _verifyLagrangeReconstruction(publicInputs[2], reconstructedSecretHash, transcript);
 
         round.status = DKGTypes.RoundStatus.Completed;
         // disclosureHash + reconstructedSecretHash are emitted in the event.

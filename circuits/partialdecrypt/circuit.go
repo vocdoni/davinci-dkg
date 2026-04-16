@@ -44,9 +44,21 @@ func (c *PartialDecryptCircuit) Define(api frontend.API) error {
 	ccommon.AssertPointEqual(api, ccommon.FixedBaseMul(api, c.Nonce), a1)
 	ccommon.AssertPointEqual(api, curve.ScalarMul(base, c.Nonce), a2)
 
-	challenge, err := ccommon.HashPointTuple(
+	// SECURITY (H-1 / paper §4.2): bind the challenge to (rid, participant)
+	// in addition to the proof points so a transcript cannot be replayed
+	// across rounds or impersonated for a different participant index.
+	state, err := ccommon.HashFieldElements(
 		api,
 		ccommon.PartialDecryptDomain(),
+		c.RoundHash,
+		c.ParticipantIndex,
+	)
+	if err != nil {
+		return err
+	}
+	challenge, err := ccommon.HashPointTuple(
+		api,
+		state,
 		c.PublicKey,
 		c.Base,
 		c.Delta,

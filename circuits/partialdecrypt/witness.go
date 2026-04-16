@@ -46,17 +46,23 @@ func BuildWitness(a Assignment) (*PartialDecryptCircuit, *PublicInputs, error) {
 	a2Point := group.NewPoint()
 	a2Point.ScalarMult(basePoint, nonce)
 
-	proof, err := dleq.Prove(secret, group.Encode(publicKeyPoint), group.Encode(basePoint), group.Encode(deltaPoint))
-	if err != nil {
-		return nil, nil, fmt.Errorf("build dleq proof: %w", err)
+	// Build the proof skeleton from the caller-provided nonce-derived
+	// commitments. The circuit binds (RoundHash, ParticipantIndex) into the
+	// Fiat-Shamir transcript so the native challenge derivation must match.
+	proof := &dleq.Proof{
+		A1: group.Encode(a1Point),
+		A2: group.Encode(a2Point),
 	}
-	// Override proof randomness with caller-provided nonce-derived commitments.
-	// The circuit proves the public proof equations and the private relation
-	// between the disclosed points and the private secret/nonce.
-	proof.A1 = group.Encode(a1Point)
-	proof.A2 = group.Encode(a2Point)
-	challenge, err := ccommon.HashPointTupleNative(
+	challengeState, err := ccommon.HashFieldElementsNative(
 		ccommon.PartialDecryptDomain(),
+		a.RoundHash,
+		participantIndex,
+	)
+	if err != nil {
+		return nil, nil, fmt.Errorf("hash challenge prefix: %w", err)
+	}
+	challenge, err := ccommon.HashPointTupleNative(
+		challengeState,
 		group.Encode(publicKeyPoint),
 		group.Encode(basePoint),
 		group.Encode(deltaPoint),

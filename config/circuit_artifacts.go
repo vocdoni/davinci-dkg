@@ -10,29 +10,29 @@ const (
 )
 
 var (
-	ContributionCircuitHash         = "a83d50dc880614ce34b1b874eea8961bbbea6dbddb4b1634ca2adc568eaa12cf"
-	ContributionProvingKeyHash      = "0dc0a8dafd381ea3c8130cd45e5d709f4451dc2c0ecb8d3a8409c149f24830df"
-	ContributionVerificationKeyHash = "eef1e0a1f5f98374a2495faad60052ff1d3cfc5b0b68ecbe972f86aac17fa484"
+	ContributionCircuitHash         = "11e527d3b9f4028bfeb6390ff2657cc11f9df9f759c7d88326509bbf5cdbdec4"
+	ContributionProvingKeyHash      = "7876d261fb70a87bf4380dd6d9c8ce38c07478f90adedd7c7aa2cec961e708c1"
+	ContributionVerificationKeyHash = "3f0c884b6100bdf3a1f57abe02c4a0c40948c97c7144f1888d299bf2357af13f"
 
 	FinalizeCircuitHash         = "856e1e6d4d52362e78c8978afe92183443224198b9710eed9a36ec03d1b71035"
-	FinalizeProvingKeyHash      = "59658e24dbee2cf345ab0a9b261f94530692858063b8d41f8409f30f35c1c6a2"
-	FinalizeVerificationKeyHash = "2f0897f87d62ea93bd01010d995860bf4b83bdd5323daff6baf90b517be4203b"
+	FinalizeProvingKeyHash      = "6b559b363dd8b38ff2b84d409ce6b6dc1354714df0d64f7ae54c3af2d9f4ec67"
+	FinalizeVerificationKeyHash = "3c25332a2cb9d4235e78be3c7a6b0b9aebee21609f08d2bf2bb0516b8eac9653"
 
-	PartialDecryptCircuitHash         = "1613282f4e41c31ac10a830294bc866a25a70b132bb2ca6944717e25c08fe321"
-	PartialDecryptProvingKeyHash      = "b7abf78675ebd66835387f8bdff10afbb2c5a489fa25b0f9ffc58e88b25e4938"
-	PartialDecryptVerificationKeyHash = "5a0fd207c45eaf90e70e0215ba598041ad210876a9582212c933b47ce550bfec"
+	PartialDecryptCircuitHash         = "863bc4cf95ea534c14fa074c463aa55afd8a5dfad156db5cbec2faec9a3452ce"
+	PartialDecryptProvingKeyHash      = "32fd77c360964dbc3723d9ac8c06fbd483e21f5db51eda83b57f5a3d08f6245c"
+	PartialDecryptVerificationKeyHash = "b92904744850def22e126d049e36af56d977f0dc554b6d861b3d9da892b7810f"
 
 	DecryptCombineCircuitHash         = "556e91b4798a777d6b8cdb83947cf605d25e88657634c6a75dc9917e1baa5117"
-	DecryptCombineProvingKeyHash      = "f2ec57eb51ebff3dea99e574ca09f572cfeefb0695be372e8e1213124c4f1cd9"
-	DecryptCombineVerificationKeyHash = "b4fd6ae9a1b017179e66994bc326d530a2d0bea3737e94b2dba2ba81471b99ec"
+	DecryptCombineProvingKeyHash      = "67f87142268b13196ad33ce0e18a2d496ccf0abb8b2fa3f8773bea8d68a5f032"
+	DecryptCombineVerificationKeyHash = "8cb823cc7d6e6d668e748e6e70fa238a8e34354428170e7566873e8a3a0752a0"
 
 	RevealShareCircuitHash         = "b942794d9d90da50c24b57eb6c2590f4e6ba92ebb359b9e5482d1daa817d8849"
-	RevealShareProvingKeyHash      = "b17cae649172429ab7bd11b08d78a8db7f8141ebacd90a4f90106c1e4a03ee3c"
-	RevealShareVerificationKeyHash = "478cf42495c1b6de90efcbb2b2fd17a9a6ee60c86ac2d7a8d4eae3bb0aadf90f"
+	RevealShareProvingKeyHash      = "dba7d6b1df657673d3458de8c6844ff71d0464032a8cb3326533139f6006f581"
+	RevealShareVerificationKeyHash = "06110e5ebc8c4b21083d9319efa52385778aaeea449440c7f34cb4c59412ae23"
 
 	RevealSubmitCircuitHash         = "e8a000a5e8d40715d2c9364ab8708cb81c83171e95612a1c9e9e7dce8f0b657f"
-	RevealSubmitProvingKeyHash      = "4d5514e3272098a990ed7edf8494fb96ab783d5c88e5b63755e72bdeeadbbfce"
-	RevealSubmitVerificationKeyHash = "b73bd21a31ea80d1e3ce3a0d97a130b63dc44363291de245dbb8f6f41e4a5575"
+	RevealSubmitProvingKeyHash      = "9cb5cf0083b6d8ddc40cb3fa07af2bf9bf07f4dd6d7e654c7688be8a2780e615"
+	RevealSubmitVerificationKeyHash = "063ca790909b2d7f27573b3a63476ea3b9ba8dcd54bba20df98c0c84e4adcbe2"
 
 	ContributionCircuitURL         = artifactURL(ContributionCircuitHash, "ccs")
 	ContributionProvingKeyURL      = artifactURL(ContributionProvingKeyHash, "pk")

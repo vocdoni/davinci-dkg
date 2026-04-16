@@ -68,10 +68,15 @@ func (c *ContributionCircuit) Define(api frontend.API) error {
 	maskedCoeffs := make([]frontend.Variable, MaxCoefficients)
 	maskedCommitments := make([]twistededwards.Point, MaxCoefficients)
 	commitmentInputs := []frontend.Variable{c.RoundHash, c.ContributorIndex, c.Threshold}
+	subgroupOrderMinusOne := ccommon.SubgroupOrderMinusOne()
 	for i := range MaxCoefficients {
 		if err := ccommon.AssertPointOnCurve(api, c.Commitments[i]); err != nil {
 			return err
 		}
+		// Range-check the coefficient witness to its canonical [0, r) form.
+		// FixedBaseMul itself wraps mod r, so the constraint is defence in
+		// depth against future composition (see SECURITY.md M-1).
+		api.AssertIsLessOrEqual(c.Coefficients[i], subgroupOrderMinusOne)
 		expectedCommitment := ccommon.FixedBaseMul(api, c.Coefficients[i])
 		// Conditional equality: when coeffMask[i] == 1 the witness commitment
 		// must equal the FixedBaseMul of the witness coefficient; otherwise the
@@ -103,6 +108,12 @@ func (c *ContributionCircuit) Define(api frontend.API) error {
 
 	shareInputs := []frontend.Variable{c.RoundHash, c.ContributorIndex, c.CommitteeSize}
 	for i := range MaxRecipients {
+		// SECURITY (C-1): Shares[i] must lie in [0, r). Without this check
+		// the prover can pick s' = honest_share + 7·r (still <p when
+		// honest_share<δ) and have AddModSubgroupOrder publish a
+		// MaskedShare that decrypts to honest_share+(r−δ)≠honest_share.
+		// That breaks recipient-side Feldman and DoSes the round.
+		api.AssertIsLessOrEqual(c.Shares[i], subgroupOrderMinusOne)
 		activeShare := api.Select(recipientMask[i], c.Shares[i], 0)
 
 		if err := ccommon.AssertPointOnCurve(api, c.RecipientPubKeys[i]); err != nil {

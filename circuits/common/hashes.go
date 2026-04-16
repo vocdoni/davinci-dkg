@@ -3,6 +3,7 @@ package common
 import (
 	"math/big"
 
+	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/std/math/bits"
 	"github.com/vocdoni/davinci-dkg/crypto/group"
@@ -15,7 +16,22 @@ var (
 	recipientIndexShift   = big.NewInt(1 << 16)
 	subgroupOrder         = group.ScalarField()
 	subgroupOrderMinusOne = new(big.Int).Sub(new(big.Int).Set(subgroupOrder), big.NewInt(1))
+	// reduceQuotientMax = (p-1)/r = 7. The wider envelope p < 8r leaves a
+	// tiny gap δ := p - 7r at the top of the q=7 stratum where
+	// `value = 7r + remainder (mod p)` admits a second non-canonical
+	// decomposition. ReduceToSubgroupOrder closes that gap by also asserting
+	// `q==7 ⇒ remainder < δ`.
+	deltaMinusOne = new(big.Int).Sub(
+		new(big.Int).Sub(ecc.BN254.ScalarField(), new(big.Int).Mul(big.NewInt(7), subgroupOrder)),
+		big.NewInt(1),
+	)
 )
+
+// SubgroupOrderMinusOne returns r-1 as a *big.Int. Used by callers that need
+// to range-check witnesses against the BabyJubJub scalar field.
+func SubgroupOrderMinusOne() *big.Int {
+	return new(big.Int).Set(subgroupOrderMinusOne)
+}
 
 // MultiHash wraps the gnark Poseidon multihash used by davinci-node circuits.
 func MultiHash(api frontend.API, inputs ...frontend.Variable) (frontend.Variable, error) {
@@ -53,6 +69,12 @@ func ShareMaskHash(
 
 // ReduceToSubgroupOrder proves value = quotient*subgroupOrder + remainder with
 // remainder in [0, subgroupOrder-1] and quotient in [0, 7].
+//
+// Because p = 7·r + δ with 0 < δ < r, the inner equality `value = q·r + r'`
+// is taken modulo p, and a single rawMask in [0, 8r − p) admits two
+// q-decompositions. To force the *unique* canonical decomposition we add the
+// auxiliary constraint `q == 7  ⇒  remainder < δ`, which together with
+// `q ≤ 7` and `remainder < r` makes `q·r + remainder < p` over the integers.
 func ReduceToSubgroupOrder(
 	api frontend.API,
 	value, quotient, remainder frontend.Variable,
@@ -60,6 +82,8 @@ func ReduceToSubgroupOrder(
 	_ = bits.ToBinary(api, quotient, bits.WithNbDigits(3))
 	api.AssertIsLessOrEqual(remainder, subgroupOrderMinusOne)
 	api.AssertIsEqual(value, api.Add(remainder, api.Mul(quotient, subgroupOrder)))
+	isSeven := api.IsZero(api.Sub(quotient, 7))
+	api.AssertIsLessOrEqual(api.Mul(isSeven, remainder), deltaMinusOne)
 	return remainder
 }
 

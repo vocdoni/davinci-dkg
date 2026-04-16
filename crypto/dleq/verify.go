@@ -2,15 +2,24 @@ package dleq
 
 import (
 	"fmt"
+	"math/big"
 
 	"github.com/vocdoni/davinci-dkg/crypto/group"
 	"github.com/vocdoni/davinci-dkg/types"
 )
 
-// Verify checks a DLEQ proof for the relation pubKey = x*G and target = x*base.
-func Verify(proof Proof, pubKey, base, target types.CurvePoint) error {
+// Verify checks a DLEQ proof for the relation pubKey = x*G and target = x*base
+// bound to (roundHash, participantIndex). Must be called with the same context
+// scalars that were passed to Prove.
+func Verify(proof Proof, roundHash, participantIndex *big.Int, pubKey, base, target types.CurvePoint) error {
 	if proof.Response == nil {
 		return fmt.Errorf("response is required")
+	}
+	if roundHash == nil {
+		return fmt.Errorf("round hash is required")
+	}
+	if participantIndex == nil {
+		return fmt.Errorf("participant index is required")
 	}
 
 	pubKeyPoint, err := group.Decode(pubKey)
@@ -34,7 +43,7 @@ func Verify(proof Proof, pubKey, base, target types.CurvePoint) error {
 		return fmt.Errorf("decode a2: %w", err)
 	}
 
-	challenge, err := challenge(pubKeyPoint, basePoint, targetPoint, a1Point, a2Point)
+	challenge, err := challenge(roundHash, participantIndex, pubKeyPoint, basePoint, targetPoint, a1Point, a2Point)
 	if err != nil {
 		return err
 	}

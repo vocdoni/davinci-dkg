@@ -36,6 +36,10 @@ abstract contract TestInputs {
         hex"0000000000000000000000000000000000000000000000000000000000007777";
     bytes32 public constant DISCLOSURE_HASH =
         hex"0000000000000000000000000000000000000000000000000000000000007878";
+    // Lagrange interpolation at 0 of the synthetic two-share fixture
+    // (x=1, d=0x7777) and (x=2, d=0x7778):
+    //   sk = 2·0x7777 + (r−1)·0x7778  ≡  0x7776  (mod r).
+    // The on-chain `_verifyLagrangeReconstruction` enforces this binding.
     bytes32 public constant RECONSTRUCTED_SECRET_HASH =
-        hex"0000000000000000000000000000000000000000000000000000000000008888";
+        hex"0000000000000000000000000000000000000000000000000000000000007776";
 }

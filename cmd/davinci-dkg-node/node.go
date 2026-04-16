@@ -602,10 +602,10 @@ func (n *Node) doClaimSlot(ctx context.Context, roundID [12]byte, round web3.Rou
 	head, headErr := n.contracts.Client().BlockNumber(ctx)
 
 	// Pre-flight: if the seed block hasn't been reached yet, skip this tick silently.
-	// The slot lottery cannot be resolved before the seed is committed, and the
-	// contract will revert with SeedNotReady — but many RPC providers return a
-	// bare "execution reverted" without the named error, generating false warnings.
-	if headErr == nil && head > 0 && round.SeedBlock > 0 && head < round.SeedBlock {
+	// The slot lottery cannot be resolved before the seed is committed; the contract
+	// reverts with SeedNotReady when block.number <= seedBlock. We mirror that
+	// condition exactly (<=) so we never simulate or broadcast at seedBlock itself.
+	if headErr == nil && head > 0 && round.SeedBlock > 0 && head <= round.SeedBlock {
 		log.Debugw("claim slot: seed block not yet reached — waiting",
 			"round", roundHex(roundID),
 			"head", head,
@@ -643,7 +643,9 @@ func (n *Node) doClaimSlot(ctx context.Context, roundID [12]byte, round web3.Rou
 	if err != nil {
 		// SeedNotReady: the seed block hasn't been mined yet. Retry next poll
 		// without setting signaled so we keep trying until the seed arrives.
-		if strings.Contains(err.Error(), "SeedNotReady") {
+		// Use decodeContractError (not err.Error()) because custom errors are
+		// returned as raw ABI bytes; err.Error() is just "execution reverted".
+		if strings.Contains(decodeContractError(err), "SeedNotReady") {
 			log.Debugw("claim slot: seed not ready yet, retrying next poll", "round", roundHex(roundID))
 			return nil
 		}
@@ -805,17 +807,31 @@ func (n *Node) doContribution(
 		transcriptBytes, proofBytes, inputBytes,
 	)
 	if err != nil {
+		// AlreadyContributed: another copy of this node already submitted, or we
+		// restarted after the on-chain pre-check passed but before recording locally.
+		if strings.Contains(decodeContractError(err), "AlreadyContributed") {
+			log.Infow("contribution already on-chain (benign race) — skipping",
+				"round", roundHex(roundID))
+			n.contributed[roundID] = true
+			return nil
+		}
 		if isPermanentRevert(err) {
 			log.Warnw("contribution tx permanently rejected — will not retry this round",
-				"round", roundHex(roundID), "err", err)
+				"round", roundHex(roundID), "err", decodeContractError(err))
 			n.contributed[roundID] = true
 		}
 		return fmt.Errorf("submit contribution: %w", err)
 	}
 	if err := n.txm.WaitTxByHash(tx.Hash(), 120*time.Second); err != nil {
+		if strings.Contains(decodeContractError(err), "AlreadyContributed") {
+			log.Infow("contribution already on-chain (benign race) — skipping",
+				"round", roundHex(roundID))
+			n.contributed[roundID] = true
+			return nil
+		}
 		if isPermanentRevert(err) {
 			log.Warnw("contribution tx reverted on-chain — will not retry this round",
-				"round", roundHex(roundID), "err", err)
+				"round", roundHex(roundID), "err", decodeContractError(err))
 			n.contributed[roundID] = true
 		}
 		return fmt.Errorf("wait contribution tx: %w", err)
@@ -908,17 +924,29 @@ func (n *Node) doDecryption(
 	}
 	tx, err := n.manager.SubmitPartialDecryption(auth, roundID, idx, ctIdx, dHash, proofBytes, inputBytes)
 	if err != nil {
+		if strings.Contains(decodeContractError(err), "AlreadyPartiallyDecrypted") {
+			log.Infow("partial decryption already on-chain (benign race) — skipping",
+				"round", roundHex(roundID), "ctIdx", ctIdx)
+			n.decrypted[roundID][ctIdx] = true
+			return nil
+		}
 		if isPermanentRevert(err) {
 			log.Warnw("partial decryption tx permanently rejected — will not retry",
-				"round", roundHex(roundID), "err", err)
+				"round", roundHex(roundID), "err", decodeContractError(err))
 			n.decrypted[roundID][ctIdx] = true
 		}
 		return fmt.Errorf("submit partial decryption: %w", err)
 	}
 	if err := n.txm.WaitTxByHash(tx.Hash(), 120*time.Second); err != nil {
+		if strings.Contains(decodeContractError(err), "AlreadyPartiallyDecrypted") {
+			log.Infow("partial decryption already on-chain (benign race) — skipping",
+				"round", roundHex(roundID), "ctIdx", ctIdx)
+			n.decrypted[roundID][ctIdx] = true
+			return nil
+		}
 		if isPermanentRevert(err) {
 			log.Warnw("partial decryption tx reverted on-chain — will not retry",
-				"round", roundHex(roundID), "err", err)
+				"round", roundHex(roundID), "err", decodeContractError(err))
 			n.decrypted[roundID][ctIdx] = true
 		}
 		return fmt.Errorf("wait partial decryption tx: %w", err)
@@ -1351,20 +1379,29 @@ func (n *Node) doCombineDecryption(
 		transcriptBytes, proofBytes, inputBytes,
 	)
 	if err != nil {
-		if strings.Contains(err.Error(), "AlreadyCombined") || isPermanentRevert(err) {
-			log.Warnw("combine decryption tx permanently rejected — will not retry",
-				"round", roundHex(roundID), "err", err)
+		if strings.Contains(decodeContractError(err), "AlreadyCombined") {
+			log.Infow("combine decryption already on-chain (benign race) — skipping",
+				"round", roundHex(roundID))
 			n.combined[roundID] = true
-			if strings.Contains(err.Error(), "AlreadyCombined") {
-				return nil
-			}
+			return nil
+		}
+		if isPermanentRevert(err) {
+			log.Warnw("combine decryption tx permanently rejected — will not retry",
+				"round", roundHex(roundID), "err", decodeContractError(err))
+			n.combined[roundID] = true
 		}
 		return fmt.Errorf("combine: submit tx: %w", err)
 	}
 	if err := n.txm.WaitTxByHash(tx.Hash(), 120*time.Second); err != nil {
+		if strings.Contains(decodeContractError(err), "AlreadyCombined") {
+			log.Infow("combine decryption already on-chain (benign race) — skipping",
+				"round", roundHex(roundID))
+			n.combined[roundID] = true
+			return nil
+		}
 		if isPermanentRevert(err) {
 			log.Warnw("combine decryption tx reverted on-chain — will not retry",
-				"round", roundHex(roundID), "err", err)
+				"round", roundHex(roundID), "err", decodeContractError(err))
 			n.combined[roundID] = true
 		}
 		return fmt.Errorf("combine: wait tx: %w", err)
@@ -1436,11 +1473,17 @@ func isExpectedClaimRevert(err error) bool {
 	if err == nil {
 		return false
 	}
-	s := err.Error()
+	// Decode the custom-error name first; err.Error() for custom Solidity errors
+	// is just "execution reverted" without the name.
+	s := decodeContractError(err)
 	// Definitive: don't retry. NotEligible & SlotsFull & InvalidPhase mean the
 	// committee is decided without us. AlreadyClaimed means we already won.
+	// NotRegistered means our node is inactive in the registry.
 	// SeedExpired means the seed beacon data is gone — round is unrecoverable.
-	for _, tok := range []string{"NotEligible", "SlotsFull", "AlreadyClaimed", "InvalidPhase", "SeedExpired"} {
+	for _, tok := range []string{
+		"NotEligible", "SlotsFull", "AlreadyClaimed",
+		"InvalidPhase", "SeedExpired", "NotRegistered",
+	} {
 		if strings.Contains(s, tok) {
 			return true
 		}
