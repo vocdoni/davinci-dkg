@@ -186,6 +186,16 @@ jobs:
     name: Go Integration Tests
     needs: job_webapp
     runs-on: [self-hosted]
+    # Serialize across the whole repo on the shared self-hosted runner.
+    # Prevents two concurrent jobs (from different PRs / branches) from
+    # racing through `foundry-rs/foundry-toolchain@v1`: foundryup aborts
+    # with "'anvil' is currently running" when another job's in-flight
+    # anvil process (host- or container-visible) is still alive.
+    # cancel-in-progress must stay false so a queued job waits instead of
+    # cancelling the one that got there first.
+    concurrency:
+      group: self-hosted-integration
+      cancel-in-progress: false
     env:
       LOG_LEVEL: debug
       RUN_INTEGRATION_TESTS: "true"
