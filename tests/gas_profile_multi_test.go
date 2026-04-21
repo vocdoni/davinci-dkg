@@ -33,6 +33,9 @@ func TestGasProfilesMultiNode(t *testing.T) {
 	if !helpers.IsIntegrationEnabled() {
 		t.Skip("integration tests disabled")
 	}
+	if !helpers.IsBenchmarkEnabled() {
+		t.Skip("benchmark disabled — set RUN_BENCHMARKS=true to run the multi-size gas sweep")
+	}
 
 	maxN := contribution.MaxRecipients // compile-time MaxN
 

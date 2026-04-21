@@ -12,6 +12,15 @@ func IsIntegrationEnabled() bool {
 	return os.Getenv("RUN_INTEGRATION_TESTS") == "true"
 }
 
+// IsBenchmarkEnabled reports whether gas-profile / multi-size benchmark tests
+// should run. Benchmarks are always skipped unless RUN_BENCHMARKS=true, even
+// when integration tests are enabled — they are the data source for
+// BENCHMARKS.md and are far too slow to run on every PR (a full MaxN=32 sweep
+// takes upwards of 15 minutes of proving alone).
+func IsBenchmarkEnabled() bool {
+	return os.Getenv("RUN_BENCHMARKS") == "true"
+}
+
 func MaxTestTimeout(t *testing.T) time.Duration {
 	t.Helper()
 
