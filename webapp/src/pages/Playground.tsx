@@ -21,7 +21,7 @@ import {
   VStack,
 } from '@chakra-ui/react';
 import { DKGWriter, RoundStatus, buildElGamal, buildRoundId } from '@vocdoni/davinci-dkg-sdk';
-import type { Round, BabyJubPoint, ElGamalCiphertext, RoundEvent } from '@vocdoni/davinci-dkg-sdk';
+import type { Round, BabyJubPoint, ElGamalCiphertext, RoundEvent, DecryptionPolicy } from '@vocdoni/davinci-dkg-sdk';
 import type { WalletClient, Address } from 'viem';
 import { getDKGClient, getClient, loadConfig } from '../lib/client';
 import { blocksRemaining, formatBlocksRemaining } from '../lib/format';
@@ -148,6 +148,16 @@ export function Playground() {
     disclosureAllowed: false,
   });
 
+  // ── Decryption policy form (gates submitCiphertext, set at createRound time)
+  const [dpForm, setDpForm] = useState({
+    ownerOnly: false,
+    maxDecryptions: '',          // blank = unlimited
+    notBeforeBlock: '',
+    notBeforeTimestamp: '',
+    notAfterBlock: '',
+    notAfterTimestamp: '',
+  });
+
   // ── Round state
   const [writer, setWriter] = useState<DKGWriter | null>(null);
   const [createBusy, setCreateBusy] = useState(false);
@@ -177,7 +187,7 @@ export function Playground() {
   const [submittedCiphertext, setSubmittedCiphertext] = useState(false);
   const [submitBusy, setSubmitBusy] = useState(false);
   const [combinedRecord, setCombinedRecord] = useState<{
-    completed: boolean; plaintextHash: string; ciphertextIndex: number;
+    completed: boolean; plaintext: bigint; ciphertextIndex: number;
   } | null>(null);
 
   // ── Activity log
@@ -258,9 +268,24 @@ export function Playground() {
         + `minContribs=${policy.minValidContributions}  alphaBps=${policy.lotteryAlphaBps}`, 'info');
       addLog(`Deadlines: reg=#${policy.registrationDeadlineBlock}  contrib=#${policy.contributionDeadlineBlock}`, 'info');
       addLog(`Seed delay: ${policy.seedDelay} blocks  disclosure: ${policy.disclosureAllowed}`, 'info');
+      // Build the optional DecryptionPolicy: blank fields collapse to 0 / no-op.
+      const dp: DecryptionPolicy = {
+        ownerOnly: dpForm.ownerOnly,
+        maxDecryptions: Number(dpForm.maxDecryptions || '0'),
+        notBeforeBlock: BigInt(dpForm.notBeforeBlock || '0'),
+        notBeforeTimestamp: BigInt(dpForm.notBeforeTimestamp || '0'),
+        notAfterBlock: BigInt(dpForm.notAfterBlock || '0'),
+        notAfterTimestamp: BigInt(dpForm.notAfterTimestamp || '0'),
+      };
+      addLog(
+        `DecryptionPolicy: ownerOnly=${dp.ownerOnly}  maxDecryptions=${dp.maxDecryptions}  `
+        + `notBeforeBlock=${dp.notBeforeBlock}  notAfterBlock=${dp.notAfterBlock}  `
+        + `notBeforeTs=${dp.notBeforeTimestamp}  notAfterTs=${dp.notAfterTimestamp}`,
+        'info',
+      );
       addLog('Sending createRound transaction…', 'tx');
 
-      const hash = await writer.createRound(policy);
+      const hash = await writer.createRound(policy, dp);
       setTxHash(hash);
       addLog(`TX submitted: ${hash}`, 'tx');
 
@@ -426,9 +451,9 @@ export function Playground() {
           addLog(`Partial decryptions on-chain: ${partials} / ${r.policy.threshold}`, 'chain');
         }
         if (rec.completed) {
-          setCombinedRecord({ completed: true, plaintextHash: rec.plaintextHash, ciphertextIndex: rec.ciphertextIndex });
+          setCombinedRecord({ completed: true, plaintext: rec.plaintext, ciphertextIndex: rec.ciphertextIndex });
           addLog('─── Decryption combined on-chain ───', 'success');
-          addLog(`plaintextHash: ${rec.plaintextHash}`, 'success');
+          addLog(`plaintext: ${rec.plaintext.toString()}`, 'success');
           clearInterval(combinePollRef.current!);
           combinePollRef.current = null;
         }
@@ -492,35 +517,25 @@ export function Playground() {
     setCombinedRecord(null);
   }
 
-  // ── Submit ciphertext to node for threshold decryption
+  // ── Submit ciphertext on-chain via submitCiphertext (DKGManager)
   async function handleSubmitCiphertext() {
-    if (!ciphertext || !roundId) return;
+    if (!ciphertext || !roundId || !writer) return;
     setSubmitBusy(true);
     try {
-      addLog('Submitting ciphertext to node…', 'chain');
-      const roundHex = roundId.slice(2); // strip '0x'
-      const body = JSON.stringify({
-        ciphertext_index: 1,
-        c1x: ciphertext.c1[0].toString(10),
-        c1y: ciphertext.c1[1].toString(10),
-        c2x: ciphertext.c2[0].toString(10),
-        c2y: ciphertext.c2[1].toString(10),
-      });
-      const res = await fetch(`/api/ciphertext/${roundHex}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body,
-      });
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(`API error ${res.status}: ${text}`);
-      }
-      addLog('Ciphertext stored — nodes will compute partial decryptions.', 'success');
-      addLog('Polling for combined decryption…', 'chain');
+      addLog('Sending submitCiphertext transaction…', 'tx');
+      const hash = await writer.submitCiphertext(
+        roundId, 1,
+        ciphertext.c1[0], ciphertext.c1[1],
+        ciphertext.c2[0], ciphertext.c2[1],
+      );
+      addLog(`TX submitted: ${hash}`, 'tx');
+      const receipt = await writer.waitForTransaction(hash);
+      addLog(`TX mined: block #${receipt.blockNumber}  gas=${receipt.gasUsed}`, 'tx');
+      addLog('Ciphertext on-chain — nodes will watch the CiphertextSubmitted event and compute partial decryptions.', 'success');
       setSubmittedCiphertext(true);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      addLog(`Submit failed: ${msg}`, 'error');
+      addLog(`submitCiphertext failed: ${msg}`, 'error');
     } finally {
       setSubmitBusy(false);
     }
@@ -616,6 +631,50 @@ export function Playground() {
                 </FormControl>
               </GridItem>
             </Grid>
+            <Divider borderColor="gray.700" my={2} />
+            <Box>
+              <Heading size="xs" color="gray.300" mb={2}>Decryption policy (optional)</Heading>
+              <Text fontSize="xs" color="gray.500" mb={3}>
+                Gates <Code fontSize="xs">submitCiphertext</Code> only; once a ciphertext is on-chain,
+                decryption proceeds regardless. Blank = no constraint. The block and timestamp knobs
+                can be set independently or together (most-restrictive wins).
+              </Text>
+              <Grid templateColumns="repeat(2, 1fr)" gap={3}>
+                <GridItem colSpan={2}>
+                  <FormControl display="flex" alignItems="center">
+                    <FormLabel fontSize="xs" color="gray.300" mb={0} mr={2}>Owner-only</FormLabel>
+                    <Switch size="sm"
+                      isChecked={dpForm.ownerOnly}
+                      onChange={e => setDpForm(f => ({ ...f, ownerOnly: e.target.checked }))}
+                      isDisabled={!!roundId || createBusy} />
+                    <FormHelperText ml={3} fontSize="xs" color="gray.500" mb={0}>
+                      Only the round organizer may submit ciphertexts.
+                    </FormHelperText>
+                  </FormControl>
+                </GridItem>
+                {[
+                  ['Max decryptions', 'maxDecryptions', 'Cap on ciphertexts per round (blank = unlimited)'],
+                  ['Not-before block', 'notBeforeBlock', 'Block number before which submitCiphertext reverts'],
+                  ['Not-before timestamp', 'notBeforeTimestamp', 'Unix seconds before which submitCiphertext reverts'],
+                  ['Not-after block', 'notAfterBlock', 'Block number after which submitCiphertext is closed'],
+                  ['Not-after timestamp', 'notAfterTimestamp', 'Unix seconds after which submitCiphertext is closed'],
+                ].map(([label, key, help]) => (
+                  <GridItem key={key}>
+                    <FormControl>
+                      <FormLabel fontSize="xs" color="gray.300" mb={1}>{label}</FormLabel>
+                      <Input
+                        size="sm" fontFamily="mono" fontSize="sm"
+                        value={dpForm[key as keyof typeof dpForm] as string}
+                        onChange={e => setDpForm(f => ({ ...f, [key]: e.target.value }))}
+                        isDisabled={!!roundId || createBusy}
+                        placeholder="0"
+                      />
+                      <FormHelperText fontSize="xs" color="gray.500">{help}</FormHelperText>
+                    </FormControl>
+                  </GridItem>
+                ))}
+              </Grid>
+            </Box>
             {createError && (
               <Alert status="error" variant="left-accent" borderRadius="sm" fontSize="sm">
                 <AlertIcon />{createError}
@@ -878,10 +937,12 @@ export function Playground() {
         ) : (
           <VStack align="stretch" spacing={4}>
             <Text fontSize="sm" color="gray.400">
-              The ciphertext is stored via the node's <Code fontSize="xs">/api/ciphertext/</Code> endpoint.
-              Nodes pick it up on their next poll cycle, compute a ZK partial decryption, and submit it
-              on-chain. Once the threshold is reached, one node runs <Code fontSize="xs">combineDecryptions</Code>{' '}
-              to produce the final combined decryption and write it on-chain.
+              The ciphertext is submitted on-chain by calling{' '}
+              <Code fontSize="xs">DKGManager.submitCiphertext</Code>. The contract stores
+              keccak256(c1x, c1y, c2x, c2y) and emits a <Code fontSize="xs">CiphertextSubmitted</Code>{' '}
+              event carrying the raw coordinates. Nodes watch this event, produce ZK partial decryptions,
+              and a selected node combines them via <Code fontSize="xs">combineDecryption</Code> —
+              the recovered plaintext is then readable via <Code fontSize="xs">getPlaintext</Code>.
             </Text>
             {!submittedCiphertext ? (
               <Button colorScheme="teal" size="sm" alignSelf="start"
@@ -901,7 +962,7 @@ export function Playground() {
                   <HStack spacing={2}>
                     <Badge colorScheme="green">Combined on-chain</Badge>
                     <Text fontSize="xs" color="green.300">
-                      plaintextHash: {short(combinedRecord.plaintextHash)}
+                      plaintext: {combinedRecord.plaintext.toString()}
                     </Text>
                   </HStack>
                 ) : (
@@ -926,12 +987,13 @@ export function Playground() {
         ) : (
           <VStack align="stretch" spacing={4}>
             <Text fontSize="sm" color="gray.400">
-              The <Code fontSize="xs">plaintextHash</Code> stored on-chain is the raw plaintext
-              scalar (not a keccak256 hash — the circuit stores the plaintext itself as bytes32).
-              We compare it to the original plaintext entered in Step 5.
+              The recovered plaintext is stored on-chain as a <Code fontSize="xs">uint256</Code> inside
+              the <Code fontSize="xs">CombinedDecryptionRecord</Code> and emitted by the{' '}
+              <Code fontSize="xs">DecryptionCombined</Code> event. Any consumer can read it via{' '}
+              <Code fontSize="xs">getPlaintext(roundId, ciphertextIndex)</Code>.
             </Text>
             {(() => {
-              const onChainPlaintext = BigInt(combinedRecord.plaintextHash);
+              const onChainPlaintext = combinedRecord.plaintext;
               const originalPlaintext = BigInt(plaintext || '0');
               const match = onChainPlaintext === originalPlaintext;
               return (
@@ -945,7 +1007,7 @@ export function Playground() {
                   </Text>
                   <VStack align="start" spacing={1}>
                     <KV label="Original plaintext" value={originalPlaintext.toString()} />
-                    <KV label="On-chain plaintextHash (bytes32)" value={combinedRecord.plaintextHash} />
+                    <KV label="On-chain plaintext (uint256)" value={onChainPlaintext.toString()} />
                     <KV label="Ciphertext index" value={combinedRecord.ciphertextIndex.toString()} />
                   </VStack>
                   <Text fontSize="xs" color={match ? 'green.300' : 'red.300'} mt={3}>

@@ -126,6 +126,28 @@ contract DKGManager is IDKGManager {
     ///      is finalized the value equals sum_i(a_{i,0}·G) = the collective public key.
     mapping(bytes12 roundId => DKGTypes.Point) internal _collectiveKey;
 
+    /// @dev keccak256(abi.encode(c1x, c1y, c2x, c2y)) for each ciphertext submitted to a
+    ///      round. Written once per (roundId, ciphertextIndex) by submitCiphertext and
+    ///      verified by combineDecryption to bind the combine proof to the authoritative
+    ///      on-chain ciphertext (preventing a combiner from swapping in a different ct).
+    ///      The raw coordinates are available via the CiphertextSubmitted event log.
+    mapping(bytes12 roundId => mapping(uint16 ciphertextIndex => bytes32 ciphertextHash)) internal _ciphertexts;
+
+    // BabyJubJub curve parameters in REDUCED twisted-Edwards form over BN254.Fr.
+    //   A·x² + y² = 1 + D·x²·y²  (mod Q)   with A = -1
+    // This matches the form used by gnark's bn254/twistededwards curve and by the
+    // davinci-dkg ZK circuits (and thus by the ciphertexts nodes emit via
+    // `group.Encode`). Do NOT confuse with the iden3/circomlib-style form used
+    // internally by `libraries/BabyJubJub.sol` (A=168700, D=168696) — those are
+    // a different isomorphic affine chart.
+    uint256 private constant BabyJubJub_Q =
+        21888242871839275222246405745257275088548364400416034343698204186575808495617;
+    // A = -1 mod Q
+    uint256 private constant BabyJubJub_A_NEG =
+        21888242871839275222246405745257275088548364400416034343698204186575808495616;
+    uint256 private constant BabyJubJub_D =
+        12181644023421730124874158521699555681764249180949974110617291017600649128846;
+
     bytes32 internal constant CONTRIBUTION_TRANSCRIPT_DOMAIN = keccak256("davinci-dkg:contribution:v1");
     bytes32 internal constant DECRYPT_COMBINE_TRANSCRIPT_DOMAIN = keccak256("davinci-dkg:decrypt-combine:v1");
     bytes32 internal constant FINALIZE_TRANSCRIPT_DOMAIN = keccak256("davinci-dkg:finalize:v1");
@@ -194,7 +216,8 @@ contract DKGManager is IDKGManager {
         uint16 seedDelay,
         uint64 registrationDeadlineBlock,
         uint64 contributionDeadlineBlock,
-        bool disclosureAllowed
+        bool disclosureAllowed,
+        DKGTypes.DecryptionPolicy calldata decryptionPolicy
     ) external returns (bytes12) {
         if (
             threshold == 0 || committeeSize == 0 || threshold > committeeSize
@@ -203,6 +226,16 @@ contract DKGManager is IDKGManager {
                 || registrationDeadlineBlock <= uint64(block.number) + uint64(seedDelay)
                 || contributionDeadlineBlock <= registrationDeadlineBlock
         ) revert InvalidPolicy();
+
+        // DecryptionPolicy sanity: if both directions of the same clock are set,
+        // the window must be non-empty. maxDecryptions is capped at MAX_CIPHERTEXT_INDEX.
+        if (
+            (decryptionPolicy.notBeforeBlock != 0 && decryptionPolicy.notAfterBlock != 0
+                && decryptionPolicy.notAfterBlock <= decryptionPolicy.notBeforeBlock)
+                || (decryptionPolicy.notBeforeTimestamp != 0 && decryptionPolicy.notAfterTimestamp != 0
+                    && decryptionPolicy.notAfterTimestamp <= decryptionPolicy.notBeforeTimestamp)
+                || decryptionPolicy.maxDecryptions > MAX_CIPHERTEXT_INDEX
+        ) revert InvalidDecryptionPolicy();
 
         // Snapshot the currently ACTIVE node count and derive the per-node lottery
         // threshold so that on average `lotteryAlpha × committeeSize` live nodes pass.
@@ -258,6 +291,7 @@ contract DKGManager is IDKGManager {
                 contributionDeadlineBlock: contributionDeadlineBlock,
                 disclosureAllowed: disclosureAllowed
             }),
+            decryptionPolicy: decryptionPolicy,
             status: DKGTypes.RoundStatus.Registration,
             nonce: roundNonce,
             seedBlock: uint64(block.number) + uint64(seedDelay),
@@ -266,7 +300,8 @@ contract DKGManager is IDKGManager {
             claimedCount: 0,
             contributionCount: 0,
             partialDecryptionCount: 0,
-            revealedShareCount: 0
+            revealedShareCount: 0,
+            ciphertextCount: 0
         });
 
         emit RoundCreated(roundId, msg.sender, uint64(block.number) + uint64(seedDelay), lotteryThreshold);
@@ -411,7 +446,7 @@ contract DKGManager is IDKGManager {
                 }
             }
         }
-        // Clear per-ciphertext combined decryption records and counts.
+        // Clear per-ciphertext combined decryption records, counts, and ciphertext hashes.
         for (uint16 ci = 1; ci <= MAX_CIPHERTEXT_INDEX; ci++) {
             if (roundPartialDecryptionCounts[oldRoundId][ci] > 0) {
                 delete roundPartialDecryptionCounts[oldRoundId][ci];
@@ -419,9 +454,13 @@ contract DKGManager is IDKGManager {
             if (roundCombinedDecryptions[oldRoundId][ci].completed) {
                 delete roundCombinedDecryptions[oldRoundId][ci];
             }
+            if (_ciphertexts[oldRoundId][ci] != bytes32(0)) {
+                delete _ciphertexts[oldRoundId][ci];
+            }
         }
         delete roundParticipants[oldRoundId];
         delete roundContribPrefixHash[oldRoundId];
+        delete _collectiveKey[oldRoundId];
         delete rounds[oldRoundId];
         emit RoundEvicted(oldRoundId);
     }
@@ -818,15 +857,78 @@ contract DKGManager is IDKGManager {
         emit PartialDecryptionSubmitted(roundId, msg.sender, participantIndex, ciphertextIndex, deltaHash);
     }
 
-    /// @notice Combine `t` partial decryptions via Lagrange interpolation
-    ///         and emit the recovered plaintext hash for a given ciphertext.
+    /// @notice Submit a ciphertext to be threshold-decrypted by the committee.
+    /// @dev    Enforces the round's DecryptionPolicy: owner-only, block/timestamp
+    ///         windows, and a cap on accepted ciphertexts per round. Write-once
+    ///         per `ciphertextIndex`. Stores `keccak256(c1x, c1y, c2x, c2y)` so
+    ///         `combineDecryption` can bind its proof's ciphertext public inputs
+    ///         to the authoritative on-chain value. The raw coordinates are only
+    ///         exposed via the `CiphertextSubmitted` event (nodes watch it).
+    function submitCiphertext(
+        bytes12 roundId,
+        uint16 ciphertextIndex,
+        uint256 c1x,
+        uint256 c1y,
+        uint256 c2x,
+        uint256 c2y
+    ) external {
+        Round storage round = rounds[roundId];
+        if (round.organizer == address(0)) revert InvalidRound();
+        if (round.status != DKGTypes.RoundStatus.Finalized) revert InvalidPhase();
+        if (ciphertextIndex == 0 || ciphertextIndex > MAX_CIPHERTEXT_INDEX) revert InvalidCiphertext();
+
+        // Well-formedness: coords must be canonical (< Q) and both points must lie on
+        // BabyJubJub. Without this, a griefing submitter could pre-claim every index
+        // with garbage that the ZK combine circuit can never accept, permanently
+        // bricking the round's decryption in open-policy mode. Costs ≈ 4 mulmods per
+        // point (~2k gas total) — negligible vs. the rest of the call.
+        if (!_isOnBabyJubJub(c1x, c1y) || !_isOnBabyJubJub(c2x, c2y)) revert InvalidCiphertext();
+
+        DKGTypes.DecryptionPolicy memory p = round.decryptionPolicy;
+        if (p.ownerOnly && msg.sender != round.organizer) revert NotOwner();
+        if (p.notBeforeBlock     != 0 && uint64(block.number)    < p.notBeforeBlock)     revert DecryptionNotYetAllowed();
+        if (p.notBeforeTimestamp != 0 && uint64(block.timestamp) < p.notBeforeTimestamp) revert DecryptionNotYetAllowed();
+        if (p.notAfterBlock      != 0 && uint64(block.number)    > p.notAfterBlock)      revert DecryptionExpired();
+        if (p.notAfterTimestamp  != 0 && uint64(block.timestamp) > p.notAfterTimestamp)  revert DecryptionExpired();
+        if (p.maxDecryptions     != 0 && round.ciphertextCount   >= p.maxDecryptions)    revert DecryptionLimitReached();
+
+        if (_ciphertexts[roundId][ciphertextIndex] != bytes32(0)) revert CiphertextAlreadySubmitted();
+
+        _ciphertexts[roundId][ciphertextIndex] = keccak256(abi.encode(c1x, c1y, c2x, c2y));
+        unchecked { round.ciphertextCount += 1; }
+
+        emit CiphertextSubmitted(roundId, ciphertextIndex, msg.sender, c1x, c1y, c2x, c2y);
+    }
+
+    /// @dev Returns true iff (x, y) are canonical field elements (< Q) and satisfy the
+    ///      reduced-form BabyJubJub equation  −x² + y² ≡ 1 + D·x²·y² (mod Q).
+    ///      Requiring canonical coords ensures `keccak256(abi.encode(x, y))` in
+    ///      `submitCiphertext` matches the combine transcript's canonical `(x, y)` —
+    ///      any non-canonical form would bind to a different hash and fail combine.
+    function _isOnBabyJubJub(uint256 x, uint256 y) internal pure returns (bool) {
+        uint256 q = BabyJubJub_Q;
+        if (x >= q || y >= q) return false;
+        uint256 xx = mulmod(x, x, q);
+        uint256 yy = mulmod(y, y, q);
+        // lhs = (-1)·x² + y² = (Q - xx) + yy  (all mod Q)
+        uint256 lhs = addmod(mulmod(BabyJubJub_A_NEG, xx, q), yy, q);
+        // rhs = 1 + D·x²·y²
+        uint256 rhs = addmod(1, mulmod(BabyJubJub_D, mulmod(xx, yy, q), q), q);
+        return lhs == rhs;
+    }
+
+    /// @notice Combine `t` partial decryptions via Lagrange interpolation and
+    ///         persist the recovered plaintext on-chain.
     /// @dev    Callable by anyone once at least `threshold` partial
-    ///         decryptions with matching `ciphertextIndex` are on-chain.
+    ///         decryptions with matching `ciphertextIndex` are on-chain and the
+    ///         ciphertext itself has been submitted via `submitCiphertext`.
+    ///         The proof's ciphertext public inputs are bound to the stored
+    ///         ciphertext hash; a combiner cannot substitute a different ct.
     function combineDecryption(
         bytes12 roundId,
         uint16 ciphertextIndex,
         bytes32 combineHash,
-        bytes32 plaintextHash,
+        uint256 plaintext,
         bytes calldata transcript,
         bytes calldata proof,
         bytes calldata input
@@ -834,7 +936,9 @@ contract DKGManager is IDKGManager {
         Round storage round = rounds[roundId];
         if (round.organizer == address(0)) revert InvalidRound();
         if (round.status != DKGTypes.RoundStatus.Finalized) revert InvalidPhase();
-        if (ciphertextIndex == 0 || ciphertextIndex > MAX_CIPHERTEXT_INDEX || combineHash == bytes32(0) || plaintextHash == bytes32(0)) revert InvalidCombinedDecryption();
+        if (ciphertextIndex == 0 || ciphertextIndex > MAX_CIPHERTEXT_INDEX || combineHash == bytes32(0)) revert InvalidCombinedDecryption();
+        bytes32 storedCtHash = _ciphertexts[roundId][ciphertextIndex];
+        if (storedCtHash == bytes32(0)) revert CiphertextNotSubmitted();
         if (roundPartialDecryptionCounts[roundId][ciphertextIndex] < round.policy.threshold) revert InsufficientPartialDecryptions();
 
         DKGTypes.CombinedDecryptionRecord storage record = roundCombinedDecryptions[roundId][ciphertextIndex];
@@ -844,13 +948,13 @@ contract DKGManager is IDKGManager {
         uint256[7] memory publicInputs = abi.decode(input, (uint256[7]));
         if (
             publicInputs[0] != _roundScalar(roundId) || publicInputs[1] != round.policy.threshold
-                || bytes32(publicInputs[3]) != combineHash || bytes32(publicInputs[4]) != plaintextHash
+                || bytes32(publicInputs[3]) != combineHash || publicInputs[4] != plaintext
         ) revert InvalidProofInput();
         if (publicInputs[2] < round.policy.threshold) revert InvalidProofInput();
         uint256 challenge = BRLC.deriveChallenge(
             roundId,
             DECRYPT_COMBINE_TRANSCRIPT_DOMAIN,
-            keccak256(abi.encodePacked(combineHash, plaintextHash))
+            keccak256(abi.encodePacked(combineHash, bytes32(plaintext)))
         );
         if (publicInputs[5] != challenge) revert InvalidProofInput();
 
@@ -859,17 +963,19 @@ contract DKGManager is IDKGManager {
         //   words [4..4+N)       participantIndexes
         //   words [4+N..4+3N)    partialDecryptions  (N points × 2 coords)
         if (transcript.length != COMBINE_TRANSCRIPT_WORDS * 32) revert InvalidProofInput();
+        // Bind the combine proof's ciphertext public inputs (first 4 transcript words)
+        // to the on-chain ciphertext hash written at submitCiphertext time.
+        if (keccak256(transcript[0:128]) != storedCtHash) revert InvalidProofInput();
         _verifyCombineTranscript(roundId, ciphertextIndex, round, publicInputs[2], transcript);
 
         uint256 dOff;
         assembly { dOff := transcript.offset }
         if (BRLC.commitCalldata(challenge, dOff, COMBINE_TRANSCRIPT_WORDS) != publicInputs[6]) revert InvalidProofInput();
 
-        // Only `completed` is needed by the contract for dup prevention.
-        // combineHash + plaintextHash + ciphertextIndex are emitted in the event.
-        roundCombinedDecryptions[roundId][ciphertextIndex].completed = true;
+        record.completed = true;
+        record.plaintext = plaintext;
 
-        emit DecryptionCombined(roundId, ciphertextIndex, combineHash, plaintextHash);
+        emit DecryptionCombined(roundId, ciphertextIndex, combineHash, plaintext);
     }
 
     /// @notice Publish a committee member's secret share `d_i` under the
@@ -1051,6 +1157,25 @@ contract DKGManager is IDKGManager {
         returns (bytes32)
     {
         return roundShareCommitmentHashes[roundId][participantIndex];
+    }
+
+    /// @notice keccak256(abi.encode(c1x, c1y, c2x, c2y)) of the ciphertext stored
+    ///         at `ciphertextIndex` for `roundId`. Returns bytes32(0) if no
+    ///         ciphertext has been submitted at this slot.
+    function getCiphertextHash(bytes12 roundId, uint16 ciphertextIndex) external view returns (bytes32) {
+        return _ciphertexts[roundId][ciphertextIndex];
+    }
+
+    /// @notice Recovered plaintext for (roundId, ciphertextIndex). Returns 0 if
+    ///         the decryption has not been combined yet; callers should also
+    ///         consult `getCombinedDecryption(...)` / `DecryptionCombined`
+    ///         events to disambiguate "not yet combined" from "plaintext is 0".
+    function getPlaintext(bytes12 roundId, uint16 ciphertextIndex) external view returns (uint256) {
+        return roundCombinedDecryptions[roundId][ciphertextIndex].plaintext;
+    }
+
+    function getDecryptionPolicy(bytes12 roundId) external view returns (DKGTypes.DecryptionPolicy memory) {
+        return rounds[roundId].decryptionPolicy;
     }
 
     function getContributionVerifierVKeyHash() external view returns (bytes32) {

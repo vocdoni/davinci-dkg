@@ -216,6 +216,15 @@ func benchmarkGasForN(t *testing.T, n, threshold int) gasProfileResult {
 		ciphertextBase, idxs, deltas, plaintextScalar,
 	)
 	c.Assert(err, qt.IsNil)
+
+	// The combine tx is now bound to an on-chain ciphertext; submit it first.
+	c.Assert(helpers.SubmitCiphertextAs(ctx,
+		&helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager},
+		roundID, 1,
+		combineOut.CiphertextC1.X, combineOut.CiphertextC1.Y,
+		combineOut.CiphertextC2.X, combineOut.CiphertextC2.Y,
+	), qt.IsNil)
+
 	combineGas := combineMeasured(t, ctx, roundID, combineOut)
 
 	t.Logf("n=%d t=%d create=%d claim_avg=%d contrib=%d finalize=%d pdecrypt=%d combine=%d",
@@ -249,6 +258,7 @@ func createRoundMeasured(t *testing.T, ctx context.Context, policy types.RoundPo
 		policy.LotteryAlphaBps, policy.SeedDelay,
 		policy.RegistrationDeadlineBlock, policy.ContributionDeadlineBlock,
 		policy.DisclosureAllowed,
+		helpers.ZeroDecryptionPolicy(),
 	)
 	c.Assert(err, qt.IsNil)
 	c.Assert(services.TxManager.WaitTxByHash(tx.Hash(), helpers.DefaultTxTimeout), qt.IsNil)
@@ -279,7 +289,7 @@ func combineMeasured(t *testing.T, ctx context.Context, roundID [12]byte, output
 	auth, err := services.TxManager.NewTransactOpts(ctx)
 	c.Assert(err, qt.IsNil)
 	tx, err := services.Manager.CombineDecryption(auth, roundID, 1,
-		output.CombineHash, output.PlaintextHash,
+		output.CombineHash, output.Plaintext,
 		output.Transcript, output.Proof, output.Input,
 	)
 	c.Assert(err, qt.IsNil)

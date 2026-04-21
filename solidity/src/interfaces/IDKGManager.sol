@@ -7,6 +7,7 @@ interface IDKGManager {
     struct Round {
         address organizer;
         DKGTypes.RoundPolicy policy;
+        DKGTypes.DecryptionPolicy decryptionPolicy;
         DKGTypes.RoundStatus status;
         uint64 nonce;
         uint64 seedBlock;            // block whose blockhash becomes the lottery seed
@@ -16,6 +17,7 @@ interface IDKGManager {
         uint16 contributionCount;
         uint16 partialDecryptionCount;
         uint16 revealedShareCount;
+        uint16 ciphertextCount;      // number of submitCiphertext calls accepted for this round
     }
 
     event RoundCreated(bytes12 indexed roundId, address indexed organizer, uint64 seedBlock, uint256 lotteryThreshold);
@@ -44,8 +46,17 @@ interface IDKGManager {
         uint16 ciphertextIndex,
         bytes32 deltaHash
     );
+    event CiphertextSubmitted(
+        bytes12 indexed roundId,
+        uint16 indexed ciphertextIndex,
+        address indexed submitter,
+        uint256 c1x,
+        uint256 c1y,
+        uint256 c2x,
+        uint256 c2y
+    );
     event DecryptionCombined(
-        bytes12 indexed roundId, uint16 indexed ciphertextIndex, bytes32 combineHash, bytes32 plaintextHash
+        bytes12 indexed roundId, uint16 indexed ciphertextIndex, bytes32 combineHash, uint256 plaintext
     );
     event RevealedShareSubmitted(bytes12 indexed roundId, address indexed participant, uint16 participantIndex, bytes32 shareHash);
     event SecretReconstructed(bytes12 indexed roundId, bytes32 disclosureHash, bytes32 reconstructedSecretHash);
@@ -82,6 +93,14 @@ interface IDKGManager {
     error InsufficientRevealedShares();
     error DisclosureDisabled();
     error InvalidProofInput();
+    error NotOwner();
+    error InvalidDecryptionPolicy();
+    error DecryptionNotYetAllowed();
+    error DecryptionExpired();
+    error DecryptionLimitReached();
+    error CiphertextAlreadySubmitted();
+    error CiphertextNotSubmitted();
+    error InvalidCiphertext();
 
     function createRound(
         uint16 threshold,
@@ -91,10 +110,19 @@ interface IDKGManager {
         uint16 seedDelay,
         uint64 registrationDeadlineBlock,
         uint64 contributionDeadlineBlock,
-        bool disclosureAllowed
+        bool disclosureAllowed,
+        DKGTypes.DecryptionPolicy calldata decryptionPolicy
     ) external returns (bytes12);
 
     function claimSlot(bytes12 roundId) external;
+    function submitCiphertext(
+        bytes12 roundId,
+        uint16 ciphertextIndex,
+        uint256 c1x,
+        uint256 c1y,
+        uint256 c2x,
+        uint256 c2y
+    ) external;
     function extendRegistration(bytes12 roundId) external;
     function submitContribution(
         bytes12 roundId,
@@ -128,7 +156,7 @@ interface IDKGManager {
         bytes12 roundId,
         uint16 ciphertextIndex,
         bytes32 combineHash,
-        bytes32 plaintextHash,
+        uint256 plaintext,
         bytes calldata transcript,
         bytes calldata proof,
         bytes calldata input
@@ -166,6 +194,9 @@ interface IDKGManager {
         returns (DKGTypes.RevealedShareRecord memory);
     function getShareCommitmentHash(bytes12 roundId, uint16 participantIndex) external view returns (bytes32);
     function getCollectivePublicKey(bytes12 roundId) external view returns (DKGTypes.Point memory);
+    function getCiphertextHash(bytes12 roundId, uint16 ciphertextIndex) external view returns (bytes32);
+    function getPlaintext(bytes12 roundId, uint16 ciphertextIndex) external view returns (uint256);
+    function getDecryptionPolicy(bytes12 roundId) external view returns (DKGTypes.DecryptionPolicy memory);
     function getContributionVerifierVKeyHash() external view returns (bytes32);
     function getPartialDecryptVerifierVKeyHash() external view returns (bytes32);
     function getFinalizeVerifierVKeyHash() external view returns (bytes32);

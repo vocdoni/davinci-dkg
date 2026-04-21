@@ -20,6 +20,5 @@ exec /app/dkg-runner \
   --privkey="${DKG_RUNNER_PRIVKEY:-0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80}" \
   --nodes="${DKG_RUNNER_NODES:-3}" \
   --threshold="${DKG_RUNNER_THRESHOLD:-2}" \
-  --shared-dir="${DKG_RUNNER_SHARED_DIR:-/shared}" \
   --log-level="${DKG_RUNNER_LOG_LEVEL:-info}" \
   --disclosure-allowed="${DKG_RUNNER_DISCLOSURE_ALLOWED:-false}"

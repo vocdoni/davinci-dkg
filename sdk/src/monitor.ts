@@ -140,13 +140,14 @@ export function watchRoundFinalized(
 
 /**
  * Watch for the DecryptionCombined event for a specific ciphertext.
+ * The callback receives the recovered plaintext scalar as a bigint.
  * Returns an unsubscribe function.
  */
 export function watchDecryptionCombined(
   client: DKGClient,
   roundId: `0x${string}`,
   ciphertextIndex: number,
-  onCombined: (combineHash: `0x${string}`, plaintextHash: `0x${string}`) => void,
+  onCombined: (combineHash: `0x${string}`, plaintext: bigint) => void,
 ): () => void {
   return client.publicClient.watchContractEvent({
     address: client.managerAddress,
@@ -158,7 +159,7 @@ export function watchDecryptionCombined(
           { name: 'roundId', type: 'bytes12', indexed: true },
           { name: 'ciphertextIndex', type: 'uint16', indexed: true },
           { name: 'combineHash', type: 'bytes32', indexed: false },
-          { name: 'plaintextHash', type: 'bytes32', indexed: false },
+          { name: 'plaintext', type: 'uint256', indexed: false },
         ],
       },
     ] as const,
@@ -166,9 +167,61 @@ export function watchDecryptionCombined(
     args: { roundId: roundId as any, ciphertextIndex } as any,
     onLogs: (logs) => {
       for (const log of logs) {
-        const { combineHash, plaintextHash } = log.args as any;
-        if (combineHash && plaintextHash)
-          onCombined(combineHash as `0x${string}`, plaintextHash as `0x${string}`);
+        const { combineHash, plaintext } = log.args as any;
+        if (combineHash && typeof plaintext === 'bigint')
+          onCombined(combineHash as `0x${string}`, plaintext);
+      }
+    },
+  });
+}
+
+/**
+ * Watch for CiphertextSubmitted events on a round. The callback receives the
+ * ciphertext index, submitter, and the raw (C1, C2) BabyJubJub coordinates —
+ * the contract stores only the keccak hash, so the event log is the only way
+ * to recover the coordinates nodes need for threshold decryption.
+ * Returns an unsubscribe function.
+ */
+export function watchCiphertextSubmitted(
+  client: DKGClient,
+  roundId: `0x${string}`,
+  onCiphertext: (payload: {
+    ciphertextIndex: number;
+    submitter: Address;
+    c1: { x: bigint; y: bigint };
+    c2: { x: bigint; y: bigint };
+  }) => void,
+): () => void {
+  return client.publicClient.watchContractEvent({
+    address: client.managerAddress,
+    abi: [
+      {
+        type: 'event',
+        name: 'CiphertextSubmitted',
+        inputs: [
+          { name: 'roundId', type: 'bytes12', indexed: true },
+          { name: 'ciphertextIndex', type: 'uint16', indexed: true },
+          { name: 'submitter', type: 'address', indexed: true },
+          { name: 'c1x', type: 'uint256', indexed: false },
+          { name: 'c1y', type: 'uint256', indexed: false },
+          { name: 'c2x', type: 'uint256', indexed: false },
+          { name: 'c2y', type: 'uint256', indexed: false },
+        ],
+      },
+    ] as const,
+    eventName: 'CiphertextSubmitted',
+    args: { roundId: roundId as any } as any,
+    onLogs: (logs) => {
+      for (const log of logs) {
+        const { ciphertextIndex, submitter, c1x, c1y, c2x, c2y } = log.args as any;
+        if (typeof ciphertextIndex === 'number' && submitter) {
+          onCiphertext({
+            ciphertextIndex,
+            submitter: submitter as Address,
+            c1: { x: c1x as bigint, y: c1y as bigint },
+            c2: { x: c2x as bigint, y: c2y as bigint },
+          });
+        }
       }
     },
   });

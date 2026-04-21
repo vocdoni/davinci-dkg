@@ -10,10 +10,12 @@ export { DKGWriter } from './writer.js';
 export {
   RoundStatus,
   NodeStatus,
+  OpenDecryptionPolicy,
   roundStatusLabel,
   type RoundStatusValue,
   type NodeStatusValue,
   type RoundPolicy,
+  type DecryptionPolicy,
   type Round,
   type ContributionRecord,
   type PartialDecryptionRecord,
@@ -37,5 +39,6 @@ export {
   watchNewRounds,
   watchRoundFinalized,
   watchDecryptionCombined,
+  watchCiphertextSubmitted,
   networkSummary,
 } from './monitor.js';

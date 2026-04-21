@@ -6,9 +6,18 @@ import (
 	"fmt"
 	"strings"
 
+	golangtypes "github.com/vocdoni/davinci-dkg/solidity/golang-types"
 	"github.com/vocdoni/davinci-dkg/types"
 	"github.com/vocdoni/davinci-dkg/web3"
 )
+
+// ZeroDecryptionPolicy is an all-zero decryption policy: no owner restriction,
+// no time locks, no submission cap. Used by tests that don't care about
+// submission gating; callers constructing CreateRound calls directly should
+// pass this to keep behaviour equivalent to the pre-DecryptionPolicy era.
+func ZeroDecryptionPolicy() golangtypes.DKGTypesDecryptionPolicy {
+	return golangtypes.DKGTypesDecryptionPolicy{}
+}
 
 func RoundIDFromString(value string) [12]byte {
 	var roundID [12]byte
@@ -53,6 +62,14 @@ func CreateRound(ctx context.Context, services *TestServices, policy types.Round
 		policy.RegistrationDeadlineBlock,
 		policy.ContributionDeadlineBlock,
 		policy.DisclosureAllowed,
+		golangtypes.DKGTypesDecryptionPolicy{
+			OwnerOnly:          policy.DecryptionPolicy.OwnerOnly,
+			MaxDecryptions:     policy.DecryptionPolicy.MaxDecryptions,
+			NotBeforeBlock:     policy.DecryptionPolicy.NotBeforeBlock,
+			NotBeforeTimestamp: policy.DecryptionPolicy.NotBeforeTimestamp,
+			NotAfterBlock:      policy.DecryptionPolicy.NotAfterBlock,
+			NotAfterTimestamp:  policy.DecryptionPolicy.NotAfterTimestamp,
+		},
 	)
 	if err != nil {
 		return zero, fmt.Errorf("create round: %w", err)

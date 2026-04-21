@@ -128,6 +128,13 @@ func TestCommitteeRoundHappyPath(t *testing.T) {
 	)
 	c.Assert(err, qt.IsNil)
 
+	c.Assert(helpers.SubmitCiphertextAs(ctx,
+		&helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager},
+		roundID, 1,
+		combineOutput.CiphertextC1.X, combineOutput.CiphertextC1.Y,
+		combineOutput.CiphertextC2.X, combineOutput.CiphertextC2.Y,
+	), qt.IsNil)
+
 	auth, err = services.TxManager.NewTransactOpts(ctx)
 	c.Assert(err, qt.IsNil)
 	tx, err = services.Manager.CombineDecryption(
@@ -135,7 +142,7 @@ func TestCommitteeRoundHappyPath(t *testing.T) {
 		roundID,
 		1,
 		combineOutput.CombineHash,
-		combineOutput.PlaintextHash,
+		combineOutput.Plaintext,
 		combineOutput.Transcript,
 		combineOutput.Proof,
 		combineOutput.Input,

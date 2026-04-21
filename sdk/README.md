@@ -75,18 +75,29 @@ const node = await client.getNode(operatorAddress);
 ## Writing transactions
 
 ```ts
-// Create a round (organizer role)
+// Create a round (organizer role). The second argument is an optional
+// DecryptionPolicy that gates submitCiphertext; omit for fully open submission.
 const currentBlock = await client.blockNumber();
-const hash = await writer.createRound({
-  threshold:                 2,
-  committeeSize:             3,
-  minValidContributions:     2,
-  lotteryAlphaBps:           15000,   // 1.5× over-subscription
-  seedDelay:                 1,        // blocks before seed is available
-  registrationDeadlineBlock: currentBlock + 25n,
-  contributionDeadlineBlock: currentBlock + 50n,
-  disclosureAllowed:         false,
-});
+const hash = await writer.createRound(
+  {
+    threshold:                 2,
+    committeeSize:             3,
+    minValidContributions:     2,
+    lotteryAlphaBps:           15000,   // 1.5× over-subscription
+    seedDelay:                 1,        // blocks before seed is available
+    registrationDeadlineBlock: currentBlock + 25n,
+    contributionDeadlineBlock: currentBlock + 50n,
+    disclosureAllowed:         false,
+  },
+  {
+    ownerOnly:          true,
+    maxDecryptions:     10,
+    notBeforeBlock:     0n,
+    notBeforeTimestamp: 0n,
+    notAfterBlock:      0n,
+    notAfterTimestamp:  0n,
+  },
+);
 await writer.waitForTransaction(hash);
 
 // Derive the round ID from the nonce that was current at round creation
@@ -98,6 +109,14 @@ await writer.registerKey(pubX, pubY);
 
 // Claim a slot (DKG node role — after seedDelay blocks have passed)
 await writer.claimSlot(roundId);
+
+// Publish a ciphertext for threshold decryption (once the round is Finalized
+// and the decryption policy allows it).
+await writer.submitCiphertext(roundId, 1, c1x, c1y, c2x, c2y);
+
+// Read the recovered plaintext (nodes combine automatically once threshold
+// partial decryptions are on-chain).
+const plaintext = await client.getPlaintext(roundId, 1);
 
 // Abort (organizer only, when below minimum contributions)
 await writer.abortRound(roundId);
@@ -168,9 +187,13 @@ const hash = await waitForCollectivePublicKeyHash(client, roundId);
 
 In the DKG protocol the private key is never held by a single party. To decrypt a ciphertext:
 
-1. DKG nodes each call `submitPartialDecryption` on the `DKGManager` contract.
-2. Once the threshold is met, any party calls `combineDecryption`.
-3. The `DecryptionCombined` event is emitted and `getCombinedDecryption` returns `completed: true`.
+1. The consumer publishes the ciphertext on-chain with `submitCiphertext(...)` — the contract
+   stores `keccak256(c1, c2)` and emits a `CiphertextSubmitted` event carrying the raw coordinates.
+2. DKG nodes watch that event and each call `submitPartialDecryption` on the `DKGManager` contract.
+3. Once the threshold is met, any DKG node calls `combineDecryption`; the proof is bound to the
+   stored ciphertext hash, so combine cannot be mounted against a different ciphertext.
+4. The `DecryptionCombined` event is emitted, `getCombinedDecryption` returns `completed: true`,
+   and `getPlaintext(roundId, ciphertextIndex)` returns the recovered plaintext `uint256`.
 
 ## Full DKG flow overview
 
@@ -190,16 +213,19 @@ In the DKG protocol the private key is never held by a single party. To decrypt 
 [Anyone]    getCollectivePublicKey(roundId) → {x, y}   ← simple contract read
                │
                ▼
-[Anyone]    encrypt(plaintext, collectivePubKey)  ← ElGamal; ciphertext published off-chain
+[Anyone]    encrypt(plaintext, collectivePubKey)    ← ElGamal in the browser
                │
                ▼
-[DKG Node]  submitPartialDecryption(...)
+[Owner]     submitCiphertext(roundId, idx, c1, c2)   ← gated by DecryptionPolicy;
+               │                                        emits CiphertextSubmitted
+               ▼
+[DKG Node]  submitPartialDecryption(...)             ← picked up from the event
                │
                ▼  (threshold met)
-[DKG Node]  combineDecryption(...)       ← DecryptionCombined event
-               │
-               ▼  Round.status = Completed
-[Anyone]    getCombinedDecryption(roundId, idx)  ← completed: true
+[DKG Node]  combineDecryption(...)                   ← proof bound to stored ct hash;
+               │                                        emits DecryptionCombined(plaintext)
+               ▼
+[Anyone]    getPlaintext(roundId, idx)               ← plaintext is on-chain
 ```
 
 > **Collective public key:** The contract accumulates the key incrementally as contributions are accepted — each contributor's `commitment[0]` point is added on-chain during `submitContribution`. The `(x, y)` coordinates are available at any time via `client.getCollectivePublicKey(roundId)`, a simple view-call that requires no calldata parsing. `RoundFinalized` emits `collectivePublicKeyHash` (keccak256 of the final key) for integrity verification.
@@ -214,7 +240,12 @@ In the DKG protocol the private key is never held by a single party. To decrypt 
 | `selectedParticipants(roundId)` | Addresses that claimed a slot |
 | `getContribution(roundId, address)` | Contribution record |
 | `getPartialDecryption(roundId, address, idx)` | Partial decryption record |
-| `getCombinedDecryption(roundId, idx)` | Combined decryption record |
+| `getCombinedDecryption(roundId, idx)` | Combined decryption record (includes `plaintext`) |
+| `getPlaintext(roundId, idx)` | Recovered plaintext scalar `uint256` |
+| `getCiphertextHash(roundId, idx)` | `keccak256(c1,c2)` of the submitted ciphertext |
+| `getDecryptionPolicy(roundId)` | Decryption policy set at `createRound` |
+| `getCiphertextSubmittedEvents(roundId, opts?)` | Historical `CiphertextSubmitted` logs (raw C1/C2 coords) |
+| `getDecryptionCombinedEvents(roundId, opts?)` | Historical `DecryptionCombined` logs (carries `plaintext`) |
 | `getRevealedShare(roundId, address)` | Revealed share (disclosure mode) |
 | `getNode(address)` | Registry node record |
 | `nodeCount()` / `activeCount()` | Registry stats |
@@ -238,13 +269,14 @@ All `DKGClient` methods plus:
 
 | Method | Description |
 |--------|-------------|
-| `createRound(policy)` | Create a new DKG round |
+| `createRound(policy, decryptionPolicy?)` | Create a new DKG round (optional decryption gate) |
 | `claimSlot(roundId)` | Claim a committee slot |
 | `extendRegistration(roundId)` | Extend registration deadline (organizer) |
 | `submitContribution(...)` | Submit VSS contribution + ZK proof |
 | `finalizeRound(...)` | Finalize round + ZK proof |
+| `submitCiphertext(roundId, idx, c1x, c1y, c2x, c2y)` | Publish a ciphertext to be decrypted (on-chain) |
 | `submitPartialDecryption(...)` | Submit partial decryption + ZK proof |
-| `combineDecryption(...)` | Combine partial decryptions + ZK proof |
+| `combineDecryption(roundId, idx, combineHash, plaintext, ...)` | Combine partial decryptions + ZK proof; stores plaintext |
 | `submitRevealedShare(...)` | Disclose share (disclosure mode) |
 | `reconstructSecret(...)` | Reconstruct secret from shares |
 | `abortRound(roundId)` | Abort a round (organizer) |

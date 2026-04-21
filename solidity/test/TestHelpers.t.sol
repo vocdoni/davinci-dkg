@@ -3,9 +3,32 @@ pragma solidity 0.8.28;
 
 import {IZKVerifier} from "../src/interfaces/IZKVerifier.sol";
 import {BRLC} from "../src/libraries/BRLC.sol";
+import {DKGTypes} from "../src/libraries/DKGTypes.sol";
 import {TestInputs} from "./TestInputs.t.sol";
 
 abstract contract TestHelpers is TestInputs {
+    /// @dev All-zero decryption policy: owner-only disabled, no time locks,
+    /// no submission cap. Used by tests that don't care about submission gating.
+    function _emptyDecryptionPolicy() internal pure returns (DKGTypes.DecryptionPolicy memory) {
+        return DKGTypes.DecryptionPolicy({
+            ownerOnly: false,
+            maxDecryptions: 0,
+            notBeforeBlock: 0,
+            notBeforeTimestamp: 0,
+            notAfterBlock: 0,
+            notAfterTimestamp: 0
+        });
+    }
+
+    /// @dev Canonical on-curve ciphertext used by the ZK-mock tests. c1 = identity
+    /// (0, 1); c2 = the gnark bn254/twistededwards generator. Both satisfy the
+    /// reduced form −x² + y² = 1 + D·x²·y² (mod Q) and are canonical (< Q), so
+    /// submitCiphertext accepts them. Matches the form used by the DKG circuits.
+    uint256 internal constant TEST_CT_C1X = 0;
+    uint256 internal constant TEST_CT_C1Y = 1;
+    uint256 internal constant TEST_CT_C2X = 9671717474070082183213120605117400219616337014328744928644933853176787189663;
+    uint256 internal constant TEST_CT_C2Y = 16950150798460657717958625567821834550301663161624707787222815936182638968203;
+
     bytes32 internal constant CONTRIBUTION_TRANSCRIPT_DOMAIN = keccak256("davinci-dkg:contribution:v1");
     bytes32 internal constant DECRYPT_COMBINE_TRANSCRIPT_DOMAIN = keccak256("davinci-dkg:decrypt-combine:v1");
     bytes32 internal constant FINALIZE_TRANSCRIPT_DOMAIN = keccak256("davinci-dkg:finalize:v1");
@@ -206,12 +229,12 @@ abstract contract TestHelpers is TestInputs {
         uint16 threshold,
         uint16 shareCount,
         bytes32 combineHash,
-        bytes32 plaintextHash
+        uint256 plaintext
     ) internal pure returns (bytes memory) {
         uint256 challenge = BRLC.deriveChallenge(
             roundId,
             DECRYPT_COMBINE_TRANSCRIPT_DOMAIN,
-            keccak256(abi.encodePacked(combineHash, plaintextHash))
+            keccak256(abi.encodePacked(combineHash, bytes32(plaintext)))
         );
         return abi.encode(
             [
@@ -219,7 +242,7 @@ abstract contract TestHelpers is TestInputs {
                 uint256(threshold),
                 uint256(shareCount),
                 uint256(combineHash),
-                uint256(plaintextHash),
+                plaintext,
                 challenge,
                 decryptCombineTranscriptCommitment(challenge, shareCount)
             ]
@@ -230,10 +253,10 @@ abstract contract TestHelpers is TestInputs {
         uint256[4] memory ciphertext;
         uint256[32] memory participantIndexes;     // N
         uint256[64] memory partialDecryptions;     // 2N
-        ciphertext[0] = 7001;
-        ciphertext[1] = 8001;
-        ciphertext[2] = 9001;
-        ciphertext[3] = 10001;
+        ciphertext[0] = TEST_CT_C1X;
+        ciphertext[1] = TEST_CT_C1Y;
+        ciphertext[2] = TEST_CT_C2X;
+        ciphertext[3] = TEST_CT_C2Y;
         for (uint256 i = 0; i < 32; i++) {
             partialDecryptions[i * 2 + 1] = 1;
         }
@@ -249,10 +272,10 @@ abstract contract TestHelpers is TestInputs {
         // Layout (4+3N words): [0..4) ciphertext, [4..4+N) participantIndexes,
         //                      [4+N..4+3N) partialDecryptions.
         uint256[] memory values = new uint256[](100); // 4 + 3*32
-        values[0] = 7001;
-        values[1] = 8001;
-        values[2] = 9001;
-        values[3] = 10001;
+        values[0] = TEST_CT_C1X;
+        values[1] = TEST_CT_C1Y;
+        values[2] = TEST_CT_C2X;
+        values[3] = TEST_CT_C2Y;
         for (uint256 i = 0; i < 32; i++) {
             values[36 + i * 2 + 1] = 1; // partialDecryptions y pad (offset 4+N=36)
         }

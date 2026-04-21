@@ -30,16 +30,13 @@ func (c *Contracts) GetCombinedDecryption(
 	if err != nil {
 		return CombinedDecryptionView{}, fmt.Errorf("unpack getCombinedDecryption: %w", err)
 	}
-	if len(values) != 4 {
-		return CombinedDecryptionView{}, fmt.Errorf("unexpected output count for getCombinedDecryption")
+	if len(values) != 3 {
+		return CombinedDecryptionView{}, fmt.Errorf("unexpected output count for getCombinedDecryption: got %d", len(values))
 	}
-	combineHash := values[1].([32]byte)
-	plaintextHash := values[2].([32]byte)
 	return CombinedDecryptionView{
 		CiphertextIndex: values[0].(uint16),
-		CombineHash:     common.BytesToHash(combineHash[:]),
-		PlaintextHash:   common.BytesToHash(plaintextHash[:]),
-		Completed:       values[3].(bool),
+		Completed:       values[1].(bool),
+		Plaintext:       new(big.Int).Set(values[2].(*big.Int)),
 	}, nil
 }
 

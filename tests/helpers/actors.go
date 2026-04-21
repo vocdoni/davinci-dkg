@@ -182,7 +182,7 @@ func CombineDecryptionAs(
 	roundID [12]byte,
 	ciphertextIndex uint16,
 	combineHash [32]byte,
-	plaintextHash [32]byte,
+	plaintext *big.Int,
 	transcript []byte,
 	proof []byte,
 	input []byte,
@@ -191,9 +191,28 @@ func CombineDecryptionAs(
 	if err != nil {
 		return err
 	}
-	tx, err := actor.Manager.CombineDecryption(auth, roundID, ciphertextIndex, combineHash, plaintextHash, transcript, proof, input)
+	tx, err := actor.Manager.CombineDecryption(auth, roundID, ciphertextIndex, combineHash, plaintext, transcript, proof, input)
 	if err != nil {
 		return fmt.Errorf("combine decryption: %w", err)
+	}
+	return actor.TxManager.WaitTxByHash(tx.Hash(), DefaultTxTimeout)
+}
+
+// SubmitCiphertextAs sends a submitCiphertext tx from the given actor.
+func SubmitCiphertextAs(
+	ctx context.Context,
+	actor *TestActor,
+	roundID [12]byte,
+	ciphertextIndex uint16,
+	c1x, c1y, c2x, c2y *big.Int,
+) error {
+	auth, err := actor.TxManager.NewTransactOpts(ctx)
+	if err != nil {
+		return err
+	}
+	tx, err := actor.Manager.SubmitCiphertext(auth, roundID, ciphertextIndex, c1x, c1y, c2x, c2y)
+	if err != nil {
+		return fmt.Errorf("submit ciphertext: %w", err)
 	}
 	return actor.TxManager.WaitTxByHash(tx.Hash(), DefaultTxTimeout)
 }

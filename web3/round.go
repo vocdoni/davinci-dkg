@@ -56,31 +56,52 @@ func (c *Contracts) GetRound(ctx context.Context, roundID [12]byte) (RoundView, 
 	if err != nil {
 		return RoundView{}, fmt.Errorf("unpack getRound: %w", err)
 	}
-	if len(values) != 18 {
+	// Flat layout (per hand-written ABI; tuples count as single values):
+	//   0 organizer                7 lotteryThreshold
+	//   1 policy (tuple)           8 claimedCount
+	//   2 decryptionPolicy (tuple) 9 contributionCount
+	//   3 status                  10 partialDecryptionCount
+	//   4 nonce                   11 revealedShareCount
+	//   5 seedBlock               12 ciphertextCount
+	//   6 seed
+	if len(values) != 13 {
 		return RoundView{}, fmt.Errorf("unexpected output count for getRound: %d", len(values))
 	}
-	seedBytes := values[12].([32]byte)
+	policy, ok := values[1].(struct {
+		Threshold                 uint16 `json:"threshold"`
+		CommitteeSize             uint16 `json:"committeeSize"`
+		MinValidContributions     uint16 `json:"minValidContributions"`
+		LotteryAlphaBps           uint16 `json:"lotteryAlphaBps"`
+		SeedDelay                 uint16 `json:"seedDelay"`
+		RegistrationDeadlineBlock uint64 `json:"registrationDeadlineBlock"`
+		ContributionDeadlineBlock uint64 `json:"contributionDeadlineBlock"`
+		DisclosureAllowed         bool   `json:"disclosureAllowed"`
+	})
+	if !ok {
+		return RoundView{}, fmt.Errorf("unexpected policy tuple shape")
+	}
+	seedBytes := values[6].([32]byte)
 	return RoundView{
 		Organizer: values[0].(common.Address),
 		Policy: RoundPolicy{
-			Threshold:                 values[1].(uint16),
-			CommitteeSize:             values[2].(uint16),
-			MinValidContributions:     values[3].(uint16),
-			LotteryAlphaBps:           values[4].(uint16),
-			SeedDelay:                 values[5].(uint16),
-			RegistrationDeadlineBlock: values[6].(uint64),
-			ContributionDeadlineBlock: values[7].(uint64),
-			DisclosureAllowed:         values[8].(bool),
+			Threshold:                 policy.Threshold,
+			CommitteeSize:             policy.CommitteeSize,
+			MinValidContributions:     policy.MinValidContributions,
+			LotteryAlphaBps:           policy.LotteryAlphaBps,
+			SeedDelay:                 policy.SeedDelay,
+			RegistrationDeadlineBlock: policy.RegistrationDeadlineBlock,
+			ContributionDeadlineBlock: policy.ContributionDeadlineBlock,
+			DisclosureAllowed:         policy.DisclosureAllowed,
 		},
-		Status:                 values[9].(uint8),
-		Nonce:                  values[10].(uint64),
-		SeedBlock:              values[11].(uint64),
+		Status:                 values[3].(uint8),
+		Nonce:                  values[4].(uint64),
+		SeedBlock:              values[5].(uint64),
 		Seed:                   common.BytesToHash(seedBytes[:]),
-		LotteryThreshold:       values[13].(*big.Int),
-		ClaimedCount:           values[14].(uint16),
-		ContributionCount:      values[15].(uint16),
-		PartialDecryptionCount: values[16].(uint16),
-		RevealedShareCount:     values[17].(uint16),
+		LotteryThreshold:       values[7].(*big.Int),
+		ClaimedCount:           values[8].(uint16),
+		ContributionCount:      values[9].(uint16),
+		PartialDecryptionCount: values[10].(uint16),
+		RevealedShareCount:     values[11].(uint16),
 	}, nil
 }
 

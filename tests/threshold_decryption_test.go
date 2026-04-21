@@ -55,6 +55,13 @@ func TestThresholdDecryptionHappyPath(t *testing.T) {
 	combine, err := helpers.BuildDecryptCombineOutput(ctx, result.RoundID, 1, big.NewInt(9), []uint16{1}, []types.CurvePoint{partial.Delta}, big.NewInt(3))
 	c.Assert(err, qt.IsNil)
 
+	c.Assert(helpers.SubmitCiphertextAs(ctx,
+		&helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager},
+		result.RoundID, 1,
+		combine.CiphertextC1.X, combine.CiphertextC1.Y,
+		combine.CiphertextC2.X, combine.CiphertextC2.Y,
+	), qt.IsNil)
+
 	auth, err = services.TxManager.NewTransactOpts(ctx)
 	c.Assert(err, qt.IsNil)
 	tx, err = services.Manager.CombineDecryption(
@@ -62,7 +69,7 @@ func TestThresholdDecryptionHappyPath(t *testing.T) {
 		result.RoundID,
 		1,
 		combine.CombineHash,
-		combine.PlaintextHash,
+		combine.Plaintext,
 		combine.Transcript,
 		combine.Proof,
 		combine.Input,
@@ -73,7 +80,8 @@ func TestThresholdDecryptionHappyPath(t *testing.T) {
 	record, err := helpers.WaitCombinedDecryption(ctx, services, result.RoundID, 1)
 	c.Assert(err, qt.IsNil)
 	c.Assert(record.Completed, qt.IsTrue)
-	// combineHash + plaintextHash are no longer persisted in storage; they live in the DecryptionCombined event.
+	// The recovered plaintext is persisted on-chain in the CombinedDecryptionRecord;
+	// combineHash is only emitted via the DecryptionCombined event, not stored.
 }
 
 func TestThresholdDecryptionSupportsMultipleCiphertextsPerRound(t *testing.T) {
@@ -142,6 +150,13 @@ func TestThresholdDecryptionSupportsMultipleCiphertextsPerRound(t *testing.T) {
 		)
 		c.Assert(err, qt.IsNil)
 
+		c.Assert(helpers.SubmitCiphertextAs(ctx,
+			&helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager},
+			result.RoundID, ciphertextIndex,
+			combine.CiphertextC1.X, combine.CiphertextC1.Y,
+			combine.CiphertextC2.X, combine.CiphertextC2.Y,
+		), qt.IsNil)
+
 		auth, err = services.TxManager.NewTransactOpts(ctx)
 		c.Assert(err, qt.IsNil)
 		tx, err = services.Manager.CombineDecryption(
@@ -149,7 +164,7 @@ func TestThresholdDecryptionSupportsMultipleCiphertextsPerRound(t *testing.T) {
 			result.RoundID,
 			ciphertextIndex,
 			combine.CombineHash,
-			combine.PlaintextHash,
+			combine.Plaintext,
 			combine.Transcript,
 			combine.Proof,
 			combine.Input,
@@ -160,6 +175,7 @@ func TestThresholdDecryptionSupportsMultipleCiphertextsPerRound(t *testing.T) {
 		record, err := helpers.WaitCombinedDecryption(ctx, services, result.RoundID, ciphertextIndex)
 		c.Assert(err, qt.IsNil)
 		c.Assert(record.Completed, qt.IsTrue)
-		// combineHash + plaintextHash are no longer persisted in storage; they live in the DecryptionCombined event.
+		// The recovered plaintext is persisted on-chain in the CombinedDecryptionRecord;
+		// combineHash is only emitted via the DecryptionCombined event, not stored.
 	}
 }

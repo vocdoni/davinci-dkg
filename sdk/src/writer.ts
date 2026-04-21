@@ -6,7 +6,12 @@ import {
   type Hash,
 } from 'viem';
 import { dkgManagerAbi, dkgRegistryAbi } from './abi.js';
-import { type RoundPolicy, type DKGWriterConfig } from './types.js';
+import {
+  type RoundPolicy,
+  type DecryptionPolicy,
+  type DKGWriterConfig,
+  OpenDecryptionPolicy,
+} from './types.js';
 import { DKGClient } from './client.js';
 
 /**
@@ -32,10 +37,18 @@ export class DKGWriter extends DKGClient {
   /**
    * Create a new DKG round.
    *
+   * @param policy            committee / phase policy for the round.
+   * @param decryptionPolicy  gate on `submitCiphertext` (owner-only, time
+   *                          windows, submission cap). Defaults to fully open —
+   *                          anyone can submit, no caps, no windows. Pair with
+   *                          `OpenDecryptionPolicy` for the permissive default.
    * @returns The transaction hash. Use `waitForRoundId` to obtain the round ID
    *          once the tx is mined.
    */
-  async createRound(policy: RoundPolicy): Promise<Hash> {
+  async createRound(
+    policy: RoundPolicy,
+    decryptionPolicy: DecryptionPolicy = OpenDecryptionPolicy,
+  ): Promise<Hash> {
     const { request } = await this.publicClient.simulateContract({
       address: this.managerAddress,
       abi: dkgManagerAbi,
@@ -49,6 +62,7 @@ export class DKGWriter extends DKGClient {
         policy.registrationDeadlineBlock,
         policy.contributionDeadlineBlock,
         policy.disclosureAllowed,
+        decryptionPolicy,
       ],
       account: this._writerAccount,
     });
@@ -174,13 +188,40 @@ export class DKGWriter extends DKGClient {
   }
 
   /**
-   * Combine partial decryptions to complete a decryption.
+   * Submit a ciphertext to be threshold-decrypted by the committee.
+   * The round must be Finalized and the submission must pass the round's
+   * DecryptionPolicy (owner-only, time windows, max count).
+   *
+   * `ciphertextIndex` is caller-chosen and write-once per round.
+   */
+  async submitCiphertext(
+    roundId: `0x${string}`,
+    ciphertextIndex: number,
+    c1x: bigint,
+    c1y: bigint,
+    c2x: bigint,
+    c2y: bigint,
+  ): Promise<Hash> {
+    const { request } = await this.publicClient.simulateContract({
+      address: this.managerAddress,
+      abi: dkgManagerAbi,
+      functionName: 'submitCiphertext',
+      args: [roundId as any, ciphertextIndex, c1x, c1y, c2x, c2y],
+      account: this._writerAccount,
+    });
+    return this.walletClient.writeContract(request);
+  }
+
+  /**
+   * Combine partial decryptions to finalize a decryption. The on-chain
+   * `CombinedDecryptionRecord` will hold the recovered `plaintext` and an
+   * `DecryptionCombined` event is emitted.
    */
   async combineDecryption(
     roundId: `0x${string}`,
     ciphertextIndex: number,
     combineHash: `0x${string}`,
-    plaintextHash: `0x${string}`,
+    plaintext: bigint,
     transcript: `0x${string}`,
     proof: `0x${string}`,
     input: `0x${string}`,
@@ -193,7 +234,7 @@ export class DKGWriter extends DKGClient {
         roundId as any,
         ciphertextIndex,
         combineHash,
-        plaintextHash,
+        plaintext,
         transcript,
         proof,
         input,

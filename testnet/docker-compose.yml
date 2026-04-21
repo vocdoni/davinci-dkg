@@ -32,16 +32,17 @@ x-node-env: &node-env
   DAVINCI_DKG_WEB3_RPC: "http://anvil:8545"
   DAVINCI_DKG_LOG_LEVEL: "debug"
   DAVINCI_DKG_ARTIFACTS_DIR: /artifacts
-  DAVINCI_DKG_SHARED_DIR: /shared
+  # The /shared bind mount is only used to coordinate atomic key-index
+  # allocation between node replicas via mkdir-lock (see entrypoint-node.sh).
+  # Ciphertext distribution is now on-chain via CiphertextSubmitted events.
   # Registry and Manager addresses are read from /addresses/addresses.env
-  # via the entrypoint script
+  # via the entrypoint script.
 
 x-runner-env: &runner-env
   <<: *chain-env
   DKG_RUNNER_RPC: "http://anvil:8545"
   DKG_RUNNER_LOG_LEVEL: "info"
   DAVINCI_DKG_ARTIFACTS_DIR: /artifacts
-  DKG_RUNNER_SHARED_DIR: /shared
   DKG_RUNNER_NODES: "${DKG_NODE_COUNT:-3}"
   DKG_RUNNER_THRESHOLD: "${DKG_THRESHOLD:-2}"
   DKG_RUNNER_DISCLOSURE_ALLOWED: "${DKG_DISCLOSURE_ALLOWED:-false}"
@@ -185,7 +186,6 @@ services:
     volumes:
       - addresses:/addresses:ro
       - ${HOME:-/root}/.davinci/artifacts:/artifacts:ro
-      - shared:/shared
       - ../testnet:/testnet:ro
     # Run on demand:  docker compose run --rm dkg-runner
     profiles: ["runner"]

@@ -236,6 +236,40 @@ export class DKGClient {
     return r as unknown as CombinedDecryptionRecord;
   }
 
+  /**
+   * Fetch the recovered plaintext for (roundId, ciphertextIndex). Returns 0n
+   * when the decryption has not been combined yet — consumers that need to
+   * disambiguate "not combined" from "plaintext is literally zero" should also
+   * check `getCombinedDecryption(...).completed`.
+   */
+  async getPlaintext(
+    roundId: `0x${string}`,
+    ciphertextIndex: number,
+  ): Promise<bigint> {
+    return this._manager.read.getPlaintext([roundId as any, ciphertextIndex]) as Promise<bigint>;
+  }
+
+  /**
+   * keccak256(abi.encode(c1x, c1y, c2x, c2y)) for the ciphertext stored at
+   * (roundId, ciphertextIndex). Returns 0x00..00 when no ciphertext has been
+   * submitted at this slot. The raw coordinates are only in the
+   * `CiphertextSubmitted` event log.
+   */
+  async getCiphertextHash(
+    roundId: `0x${string}`,
+    ciphertextIndex: number,
+  ): Promise<`0x${string}`> {
+    return this._manager.read.getCiphertextHash([roundId as any, ciphertextIndex]);
+  }
+
+  /** Fetch the decryption policy set at round creation. */
+  async getDecryptionPolicy(
+    roundId: `0x${string}`,
+  ): Promise<import('./types.js').DecryptionPolicy> {
+    const r = await this._manager.read.getDecryptionPolicy([roundId as any]);
+    return r as unknown as import('./types.js').DecryptionPolicy;
+  }
+
   /** Fetch the revealed share record for a participant. */
   async getRevealedShare(
     roundId: `0x${string}`,
@@ -404,6 +438,112 @@ export class DKGClient {
       blockNumber: l.blockNumber ?? 0n,
       transactionHash: (l.transactionHash ?? null) as `0x${string}` | null,
     }));
+  }
+
+  /**
+   * Fetch all CiphertextSubmitted events for a specific round. Each entry
+   * carries the raw (C1, C2) coordinates; nodes and consumers need these to
+   * perform threshold decryption since the contract only stores a keccak hash.
+   */
+  async getCiphertextSubmittedEvents(
+    roundId: `0x${string}`,
+    opts?: { ciphertextIndex?: number },
+  ): Promise<
+    Array<{
+      ciphertextIndex: number;
+      submitter: Address;
+      c1: { x: bigint; y: bigint };
+      c2: { x: bigint; y: bigint };
+      blockNumber: bigint;
+      transactionHash: `0x${string}` | null;
+    }>
+  > {
+    const args: Record<string, unknown> = { roundId: roundId as any };
+    if (opts?.ciphertextIndex != null) args.ciphertextIndex = opts.ciphertextIndex;
+    const logs = await getLogsChunked(
+      this.publicClient,
+      {
+        address: this.managerAddress,
+        event: {
+          type: 'event',
+          name: 'CiphertextSubmitted',
+          inputs: [
+            { name: 'roundId', type: 'bytes12', indexed: true },
+            { name: 'ciphertextIndex', type: 'uint16', indexed: true },
+            { name: 'submitter', type: 'address', indexed: true },
+            { name: 'c1x', type: 'uint256', indexed: false },
+            { name: 'c1y', type: 'uint256', indexed: false },
+            { name: 'c2x', type: 'uint256', indexed: false },
+            { name: 'c2y', type: 'uint256', indexed: false },
+          ],
+        } as const,
+        args,
+        fromBlock: 0n,
+        toBlock: 'latest',
+      },
+      { fallbackWindow: 50_000n },
+    );
+    return logs.map((l) => {
+      const a = l.args as any;
+      return {
+        ciphertextIndex: Number(a.ciphertextIndex),
+        submitter: a.submitter as Address,
+        c1: { x: a.c1x as bigint, y: a.c1y as bigint },
+        c2: { x: a.c2x as bigint, y: a.c2y as bigint },
+        blockNumber: l.blockNumber ?? 0n,
+        transactionHash: (l.transactionHash ?? null) as `0x${string}` | null,
+      };
+    });
+  }
+
+  /**
+   * Fetch all DecryptionCombined events for a specific round (optionally
+   * filtered by `ciphertextIndex`). Each entry contains the plaintext scalar.
+   */
+  async getDecryptionCombinedEvents(
+    roundId: `0x${string}`,
+    opts?: { ciphertextIndex?: number },
+  ): Promise<
+    Array<{
+      ciphertextIndex: number;
+      combineHash: `0x${string}`;
+      plaintext: bigint;
+      blockNumber: bigint;
+      transactionHash: `0x${string}` | null;
+    }>
+  > {
+    const args: Record<string, unknown> = { roundId: roundId as any };
+    if (opts?.ciphertextIndex != null) args.ciphertextIndex = opts.ciphertextIndex;
+    const logs = await getLogsChunked(
+      this.publicClient,
+      {
+        address: this.managerAddress,
+        event: {
+          type: 'event',
+          name: 'DecryptionCombined',
+          inputs: [
+            { name: 'roundId', type: 'bytes12', indexed: true },
+            { name: 'ciphertextIndex', type: 'uint16', indexed: true },
+            { name: 'combineHash', type: 'bytes32', indexed: false },
+            { name: 'plaintext', type: 'uint256', indexed: false },
+          ],
+        } as const,
+        args,
+        fromBlock: 0n,
+        toBlock: 'latest',
+      },
+      { fallbackWindow: 50_000n },
+    );
+    return logs.map((l) => {
+      const a = l.args as any;
+      return {
+        ciphertextIndex: Number(a.ciphertextIndex),
+        combineHash: a.combineHash as `0x${string}`,
+        plaintext: a.plaintext as bigint,
+        blockNumber: l.blockNumber ?? 0n,
+        transactionHash: (l.transactionHash ?? null) as `0x${string}` | null,
+      };
+    });
   }
 
   /**

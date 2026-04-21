@@ -89,6 +89,7 @@ func createRoundForGasProfile(t *testing.T, ctx context.Context, policy types.Ro
 		policy.RegistrationDeadlineBlock,
 		policy.ContributionDeadlineBlock,
 		policy.DisclosureAllowed,
+		helpers.ZeroDecryptionPolicy(),
 	)
 	c.Assert(err, qt.IsNil)
 	c.Assert(services.TxManager.WaitTxByHash(tx.Hash(), helpers.DefaultTxTimeout), qt.IsNil)
@@ -214,6 +215,13 @@ func combineDecryptionForGasProfile(t *testing.T, ctx context.Context, roundID [
 	)
 	c.Assert(err, qt.IsNil)
 
+	c.Assert(helpers.SubmitCiphertextAs(ctx,
+		&helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager},
+		roundID, 1,
+		output.CiphertextC1.X, output.CiphertextC1.Y,
+		output.CiphertextC2.X, output.CiphertextC2.Y,
+	), qt.IsNil)
+
 	auth, err := services.TxManager.NewTransactOpts(ctx)
 	c.Assert(err, qt.IsNil)
 	tx, err := services.Manager.CombineDecryption(
@@ -221,7 +229,7 @@ func combineDecryptionForGasProfile(t *testing.T, ctx context.Context, roundID [
 		roundID,
 		1,
 		output.CombineHash,
-		output.PlaintextHash,
+		output.Plaintext,
 		output.Transcript,
 		output.Proof,
 		output.Input,

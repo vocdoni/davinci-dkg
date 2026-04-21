@@ -72,7 +72,8 @@ contract DKGManagerTest is Test, TestHelpers {
             1,                          // seedDelay
             uint64(block.number + 5),  // registrationDeadlineBlock
             uint64(block.number + 20), // contributionDeadlineBlock
-            disclosureAllowed
+            disclosureAllowed,
+            _emptyDecryptionPolicy()
         );
         // Advance past seedBlock so blockhash is available.
         vm.roll(block.number + 2);
@@ -199,7 +200,7 @@ contract DKGManagerTest is Test, TestHelpers {
 
     function test_CreateRound_PersistsPolicy() public {
         // committeeSize=2, registered=2, α=1.0 → all eligible
-        bytes12 roundId = manager.createRound(2, 2, 2, 10000, 1, uint64(block.number + 5), uint64(block.number + 10), false);
+        bytes12 roundId = manager.createRound(2, 2, 2, 10000, 1, uint64(block.number + 5), uint64(block.number + 10), false, _emptyDecryptionPolicy());
 
         IDKGManager.Round memory round = manager.getRound(roundId);
 
@@ -211,7 +212,7 @@ contract DKGManagerTest is Test, TestHelpers {
 
     function test_ClaimSlot_RejectsBeforeSeedReady() public {
         bytes12 roundId =
-            manager.createRound(2, 2, 2, 10000, 1, uint64(block.number + 5), uint64(block.number + 10), false);
+            manager.createRound(2, 2, 2, 10000, 1, uint64(block.number + 5), uint64(block.number + 10), false, _emptyDecryptionPolicy());
         // Don't roll forward — seed block has not been mined yet.
         vm.expectRevert(IDKGManager.SeedNotReady.selector);
         manager.claimSlot(roundId);
@@ -497,6 +498,7 @@ contract DKGManagerTest is Test, TestHelpers {
 
     function test_CombineDecryption_PersistsRecord() public {
         bytes12 roundId = createFinalizedRound();
+        manager.submitCiphertext(roundId, 1, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
 
         manager.submitPartialDecryption(
             roundId,
@@ -516,19 +518,21 @@ contract DKGManagerTest is Test, TestHelpers {
             partialDecryptionInput(roundId, 2, partialDecryptionHash(2))
         );
 
+        uint256 plaintext = uint256(COMBINED_PLAINTEXT_HASH);
         manager.combineDecryption(
             roundId,
             1,
             COMBINED_DECRYPTION_HASH,
-            COMBINED_PLAINTEXT_HASH,
+            plaintext,
             decryptCombineTranscript(2),
             decryptCombineProof(),
-            decryptCombineInput(roundId, 2, 2, COMBINED_DECRYPTION_HASH, COMBINED_PLAINTEXT_HASH)
+            decryptCombineInput(roundId, 2, 2, COMBINED_DECRYPTION_HASH, plaintext)
         );
 
         DKGTypes.CombinedDecryptionRecord memory record = manager.getCombinedDecryption(roundId, 1);
-        // Only `completed` is persisted; the hashes live in the DecryptionCombined event.
         assertEq(record.completed ? uint256(1) : uint256(0), 1);
+        assertEq(record.plaintext, plaintext);
+        assertEq(manager.getPlaintext(roundId, 1), plaintext);
     }
 
     function test_SubmitRevealedShare_PersistsRecord() public {
@@ -605,6 +609,7 @@ contract DKGManagerTest is Test, TestHelpers {
 
     function test_CombineDecryption_RejectsTamperedTranscript() public {
         bytes12 roundId = createFinalizedRound();
+        manager.submitCiphertext(roundId, 1, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
 
         manager.submitPartialDecryption(
             roundId,
@@ -624,20 +629,23 @@ contract DKGManagerTest is Test, TestHelpers {
             partialDecryptionInput(roundId, 2, partialDecryptionHash(2))
         );
 
+        uint256 plaintext = uint256(COMBINED_PLAINTEXT_HASH);
         vm.expectRevert(IDKGManager.InvalidProofInput.selector);
         manager.combineDecryption(
             roundId,
             1,
             COMBINED_DECRYPTION_HASH,
-            COMBINED_PLAINTEXT_HASH,
+            plaintext,
             decryptCombineTranscript(1),
             decryptCombineProof(),
-            decryptCombineInput(roundId, 2, 2, COMBINED_DECRYPTION_HASH, COMBINED_PLAINTEXT_HASH)
+            decryptCombineInput(roundId, 2, 2, COMBINED_DECRYPTION_HASH, plaintext)
         );
     }
 
     function test_CombineDecryption_RejectsMissingPartialsForRequestedCiphertext() public {
         bytes12 roundId = createFinalizedRound();
+        // A ciphertext at index 1 must exist for combine to reach the partial-count check.
+        manager.submitCiphertext(roundId, 1, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
 
         manager.submitPartialDecryption(
             roundId,
@@ -657,15 +665,16 @@ contract DKGManagerTest is Test, TestHelpers {
             partialDecryptionInput(roundId, 2, partialDecryptionHash(2))
         );
 
+        uint256 plaintext = uint256(COMBINED_PLAINTEXT_HASH);
         vm.expectRevert(IDKGManager.InsufficientPartialDecryptions.selector);
         manager.combineDecryption(
             roundId,
             1,
             COMBINED_DECRYPTION_HASH,
-            COMBINED_PLAINTEXT_HASH,
+            plaintext,
             decryptCombineTranscript(2),
             decryptCombineProof(),
-            decryptCombineInput(roundId, 2, 2, COMBINED_DECRYPTION_HASH, COMBINED_PLAINTEXT_HASH)
+            decryptCombineInput(roundId, 2, 2, COMBINED_DECRYPTION_HASH, plaintext)
         );
     }
 
@@ -734,7 +743,8 @@ contract DKGManagerTest is Test, TestHelpers {
             1,
             uint64(block.number + 5),
             uint64(block.number + 20),
-            false
+            false,
+            _emptyDecryptionPolicy()
         );
         vm.roll(block.number + 2);
 
@@ -775,7 +785,7 @@ contract DKGManagerTest is Test, TestHelpers {
     }
 
     function test_AbortRound_PersistsAbortedStatus() public {
-        bytes12 roundId = manager.createRound(2, 2, 2, 10000, 1, uint64(block.number + 5), uint64(block.number + 10), false);
+        bytes12 roundId = manager.createRound(2, 2, 2, 10000, 1, uint64(block.number + 5), uint64(block.number + 10), false, _emptyDecryptionPolicy());
 
         manager.abortRound(roundId);
 
@@ -799,7 +809,8 @@ contract DKGManagerTest is Test, TestHelpers {
             2, 2, 2, 10000, 1,
             uint64(block.number + 3),   // registrationDeadline
             uint64(block.number + 100), // contributionDeadline
-            false
+            false,
+            _emptyDecryptionPolicy()
         );
         IDKGManager.Round memory before = manager.getRound(roundId);
 
@@ -825,7 +836,8 @@ contract DKGManagerTest is Test, TestHelpers {
             2, 2, 2, 10000, 1,
             base + 3,  // registrationDeadline
             base + 4,  // contributionDeadline — very tight
-            false
+            false,
+            _emptyDecryptionPolicy()
         );
 
         // Advance well past the registration deadline.
@@ -884,15 +896,237 @@ contract DKGManagerTest is Test, TestHelpers {
     function test_CombineDecryption_RejectsCiphertextIndexTooLarge() public {
         bytes12 roundId = createFinalizedRound();
 
+        uint256 plaintext = uint256(COMBINED_PLAINTEXT_HASH);
         vm.expectRevert(IDKGManager.InvalidCombinedDecryption.selector);
         manager.combineDecryption(
             roundId,
             257, // > MAX_CIPHERTEXT_INDEX (256)
             COMBINED_DECRYPTION_HASH,
-            COMBINED_PLAINTEXT_HASH,
+            plaintext,
             decryptCombineTranscript(2),
             decryptCombineProof(),
-            decryptCombineInput(roundId, 2, 2, COMBINED_DECRYPTION_HASH, COMBINED_PLAINTEXT_HASH)
+            decryptCombineInput(roundId, 2, 2, COMBINED_DECRYPTION_HASH, plaintext)
+        );
+    }
+
+    // ── submitCiphertext + DecryptionPolicy ──────────────────────────────────
+
+    function test_SubmitCiphertext_StoresHashAndIncrementsCount() public {
+        bytes12 roundId = createFinalizedRound();
+        bytes32 expected = keccak256(abi.encode(TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y));
+
+        manager.submitCiphertext(roundId, 1, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
+
+        assertEq(uint256(manager.getCiphertextHash(roundId, 1)), uint256(expected));
+        assertEq(uint256(manager.getRound(roundId).ciphertextCount), 1);
+    }
+
+    function test_SubmitCiphertext_RejectsDuplicateIndex() public {
+        bytes12 roundId = createFinalizedRound();
+        manager.submitCiphertext(roundId, 1, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
+
+        // Second submission uses on-curve coords (identity) so it passes the
+        // well-formedness check and reaches the write-once guard.
+        vm.expectRevert(IDKGManager.CiphertextAlreadySubmitted.selector);
+        manager.submitCiphertext(roundId, 1, 0, 1, 0, 1);
+    }
+
+    function test_SubmitCiphertext_RejectsBeforeFinalized() public {
+        bytes12 roundId = _createLotteryRound(false);
+
+        vm.expectRevert(IDKGManager.InvalidPhase.selector);
+        manager.submitCiphertext(roundId, 1, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
+    }
+
+    function test_SubmitCiphertext_OwnerOnly_BlocksOthers() public {
+        bytes12 roundId = _createRoundWithDecryptionPolicy(
+            DKGTypes.DecryptionPolicy({
+                ownerOnly: true,
+                maxDecryptions: 0,
+                notBeforeBlock: 0, notBeforeTimestamp: 0,
+                notAfterBlock: 0, notAfterTimestamp: 0
+            })
+        );
+
+        vm.prank(address(0xCAFE));
+        vm.expectRevert(IDKGManager.NotOwner.selector);
+        manager.submitCiphertext(roundId, 1, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
+
+        // Owner can submit.
+        manager.submitCiphertext(roundId, 1, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
+    }
+
+    function test_SubmitCiphertext_NotBeforeBlock_Blocks() public {
+        uint64 unlockBlock = uint64(block.number + 1000);
+        bytes12 roundId = _createRoundWithDecryptionPolicy(
+            DKGTypes.DecryptionPolicy({
+                ownerOnly: false,
+                maxDecryptions: 0,
+                notBeforeBlock: unlockBlock,
+                notBeforeTimestamp: 0,
+                notAfterBlock: 0,
+                notAfterTimestamp: 0
+            })
+        );
+
+        vm.expectRevert(IDKGManager.DecryptionNotYetAllowed.selector);
+        manager.submitCiphertext(roundId, 1, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
+
+        vm.roll(uint256(unlockBlock));
+        manager.submitCiphertext(roundId, 1, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
+    }
+
+    // Note: timestamp-based gates (notBeforeTimestamp / notAfterTimestamp) share the
+    // same revert paths as the block-based gates tested here; the minimal forge-std
+    // shim in this repo does not expose vm.warp, so timestamp cases are exercised via
+    // the Go integration suite (cmd/davinci-dkg-node tests) rather than here.
+
+    function test_SubmitCiphertext_NotAfterBlock_Blocks() public {
+        uint64 cutoff = uint64(block.number + 50);
+        bytes12 roundId = _createRoundWithDecryptionPolicy(
+            DKGTypes.DecryptionPolicy({
+                ownerOnly: false,
+                maxDecryptions: 0,
+                notBeforeBlock: 0,
+                notBeforeTimestamp: 0,
+                notAfterBlock: cutoff,
+                notAfterTimestamp: 0
+            })
+        );
+
+        vm.roll(uint256(cutoff) + 1);
+        vm.expectRevert(IDKGManager.DecryptionExpired.selector);
+        manager.submitCiphertext(roundId, 1, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
+    }
+
+    function test_SubmitCiphertext_MaxDecryptions_Caps() public {
+        bytes12 roundId = _createRoundWithDecryptionPolicy(
+            DKGTypes.DecryptionPolicy({
+                ownerOnly: false,
+                maxDecryptions: 2,
+                notBeforeBlock: 0, notBeforeTimestamp: 0,
+                notAfterBlock: 0, notAfterTimestamp: 0
+            })
+        );
+
+        // Both c1 and c2 = identity for simplicity; the cap check doesn't care about
+        // distinct coordinates, only the submission count.
+        manager.submitCiphertext(roundId, 1, 0, 1, 0, 1);
+        manager.submitCiphertext(roundId, 2, 0, 1, 0, 1);
+
+        vm.expectRevert(IDKGManager.DecryptionLimitReached.selector);
+        manager.submitCiphertext(roundId, 3, 0, 1, 0, 1);
+    }
+
+    function test_SubmitCiphertext_RejectsOffCurvePoint() public {
+        bytes12 roundId = createFinalizedRound();
+
+        // (7001, 8001) does NOT satisfy a·x² + y² = 1 + d·x²·y² (mod Q).
+        vm.expectRevert(IDKGManager.InvalidCiphertext.selector);
+        manager.submitCiphertext(roundId, 1, 7001, 8001, 0, 1);
+
+        // Canonical-range but off-curve: e.g. (1, 1) — 168700 + 1 = 168701; 1 + 168696 = 168697.
+        vm.expectRevert(IDKGManager.InvalidCiphertext.selector);
+        manager.submitCiphertext(roundId, 1, 1, 1, 0, 1);
+
+        // Bad c2 with valid c1 also reverts.
+        vm.expectRevert(IDKGManager.InvalidCiphertext.selector);
+        manager.submitCiphertext(roundId, 1, 0, 1, 1, 1);
+
+        // Coordinates ≥ Q (non-canonical) rejected even if they'd be on-curve post-reduction.
+        uint256 Q = 21888242871839275222246405745257275088548364400416034343698204186575808495617;
+        vm.expectRevert(IDKGManager.InvalidCiphertext.selector);
+        manager.submitCiphertext(roundId, 1, Q, 1, 0, 1);
+    }
+
+    function test_CreateRound_RejectsInvalidDecryptionPolicyWindow() public {
+        // notAfterBlock <= notBeforeBlock is a degenerate window.
+        DKGTypes.DecryptionPolicy memory bad = DKGTypes.DecryptionPolicy({
+            ownerOnly: false,
+            maxDecryptions: 0,
+            notBeforeBlock: 100,
+            notBeforeTimestamp: 0,
+            notAfterBlock: 100, // equal → empty window
+            notAfterTimestamp: 0
+        });
+
+        vm.expectRevert(IDKGManager.InvalidDecryptionPolicy.selector);
+        manager.createRound(
+            2, 2, 2, 10000, 1,
+            uint64(block.number + 5),
+            uint64(block.number + 20),
+            false,
+            bad
+        );
+    }
+
+    function test_CombineDecryption_RejectsWhenCiphertextNotSubmitted() public {
+        bytes12 roundId = createFinalizedRound();
+
+        manager.submitPartialDecryption(
+            roundId, 1, 1, partialDecryptionHash(1),
+            partialDecryptionProof(), partialDecryptionInput(roundId, 1, partialDecryptionHash(1))
+        );
+        vm.prank(address(0xBEEF));
+        manager.submitPartialDecryption(
+            roundId, 2, 1, partialDecryptionHash(2),
+            partialDecryptionProof(), partialDecryptionInput(roundId, 2, partialDecryptionHash(2))
+        );
+
+        uint256 plaintext = uint256(COMBINED_PLAINTEXT_HASH);
+        vm.expectRevert(IDKGManager.CiphertextNotSubmitted.selector);
+        manager.combineDecryption(
+            roundId, 1, COMBINED_DECRYPTION_HASH, plaintext,
+            decryptCombineTranscript(2), decryptCombineProof(),
+            decryptCombineInput(roundId, 2, 2, COMBINED_DECRYPTION_HASH, plaintext)
+        );
+    }
+
+    /// @dev Build a finalized round with a custom DecryptionPolicy.
+    function _createRoundWithDecryptionPolicy(DKGTypes.DecryptionPolicy memory dp)
+        internal
+        returns (bytes12 roundId)
+    {
+        roundId = manager.createRound(
+            2, 2, 2, 10000, 1,
+            uint64(block.number + 5),
+            uint64(block.number + 20),
+            false,
+            dp
+        );
+        vm.roll(block.number + 2);
+        _claimAllSlots(roundId);
+
+        manager.submitContribution(
+            roundId, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH,
+            0, 1, contributionTranscript(2), contributionProof(),
+            contributionInput(roundId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH, 0, 1)
+        );
+        vm.prank(address(0xBEEF));
+        manager.submitContribution(
+            roundId, 2,
+            bytes32(uint256(CONTRIBUTION_COMMITMENTS_HASH) + 1),
+            bytes32(uint256(CONTRIBUTION_ENCRYPTED_SHARES_HASH) + 1),
+            0, 1, contributionTranscript(2), contributionProof(),
+            contributionInput(
+                roundId, 2, 2, 2,
+                bytes32(uint256(CONTRIBUTION_COMMITMENTS_HASH) + 1),
+                bytes32(uint256(CONTRIBUTION_ENCRYPTED_SHARES_HASH) + 1),
+                0, 1
+            )
+        );
+        manager.finalizeRound(
+            roundId,
+            FINALIZED_AGGREGATE_COMMITMENTS_HASH,
+            FINALIZED_COLLECTIVE_PUBLIC_KEY_HASH,
+            FINALIZED_SHARE_COMMITMENT_HASH,
+            finalizeTranscript(2), finalizeProof(),
+            finalizeInput(
+                roundId, 2, 2, 2,
+                FINALIZED_AGGREGATE_COMMITMENTS_HASH,
+                FINALIZED_COLLECTIVE_PUBLIC_KEY_HASH,
+                FINALIZED_SHARE_COMMITMENT_HASH
+            )
         );
     }
 }

@@ -42,5 +42,4 @@ exec /app/davinci-dkg-node \
   --privkey="$KEY" \
   --manager="$MANAGER" \
   --log.level="${DAVINCI_DKG_LOG_LEVEL:-info}" \
-  --shared-dir="${DAVINCI_DKG_SHARED_DIR:-/shared}" \
   --poll-interval=5s

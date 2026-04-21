@@ -22,7 +22,7 @@ const (
 		{"inputs":[],"name":"DECRYPT_COMBINE_VERIFIER","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},
 		{"inputs":[],"name":"REVEAL_SUBMIT_VERIFIER","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},
 		{"inputs":[],"name":"REVEAL_SHARE_VERIFIER","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},
-		{"inputs":[{"internalType":"bytes12","name":"roundId","type":"bytes12"}],"name":"getRound","outputs":[{"name":"organizer","type":"address"},{"name":"threshold","type":"uint16"},{"name":"committeeSize","type":"uint16"},{"name":"minValidContributions","type":"uint16"},{"name":"lotteryAlphaBps","type":"uint16"},{"name":"seedDelay","type":"uint16"},{"name":"registrationDeadlineBlock","type":"uint64"},{"name":"contributionDeadlineBlock","type":"uint64"},{"name":"disclosureAllowed","type":"bool"},{"name":"status","type":"uint8"},{"name":"nonce","type":"uint64"},{"name":"seedBlock","type":"uint64"},{"name":"seed","type":"bytes32"},{"name":"lotteryThreshold","type":"uint256"},{"name":"claimedCount","type":"uint16"},{"name":"contributionCount","type":"uint16"},{"name":"partialDecryptionCount","type":"uint16"},{"name":"revealedShareCount","type":"uint16"}],"stateMutability":"view","type":"function"},
+		{"inputs":[{"internalType":"bytes12","name":"roundId","type":"bytes12"}],"name":"getRound","outputs":[{"name":"organizer","type":"address"},{"components":[{"name":"threshold","type":"uint16"},{"name":"committeeSize","type":"uint16"},{"name":"minValidContributions","type":"uint16"},{"name":"lotteryAlphaBps","type":"uint16"},{"name":"seedDelay","type":"uint16"},{"name":"registrationDeadlineBlock","type":"uint64"},{"name":"contributionDeadlineBlock","type":"uint64"},{"name":"disclosureAllowed","type":"bool"}],"name":"policy","type":"tuple"},{"components":[{"name":"ownerOnly","type":"bool"},{"name":"maxDecryptions","type":"uint16"},{"name":"notBeforeBlock","type":"uint64"},{"name":"notBeforeTimestamp","type":"uint64"},{"name":"notAfterBlock","type":"uint64"},{"name":"notAfterTimestamp","type":"uint64"}],"name":"decryptionPolicy","type":"tuple"},{"name":"status","type":"uint8"},{"name":"nonce","type":"uint64"},{"name":"seedBlock","type":"uint64"},{"name":"seed","type":"bytes32"},{"name":"lotteryThreshold","type":"uint256"},{"name":"claimedCount","type":"uint16"},{"name":"contributionCount","type":"uint16"},{"name":"partialDecryptionCount","type":"uint16"},{"name":"revealedShareCount","type":"uint16"},{"name":"ciphertextCount","type":"uint16"}],"stateMutability":"view","type":"function"},
 		{"inputs":[],"name":"getContributionVerifierVKeyHash","outputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"stateMutability":"view","type":"function"},
 		{"inputs":[],"name":"getFinalizeVerifierVKeyHash","outputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"stateMutability":"view","type":"function"},
 		{"inputs":[],"name":"getPartialDecryptVerifierVKeyHash","outputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"stateMutability":"view","type":"function"},
@@ -31,7 +31,7 @@ const (
 		{"inputs":[],"name":"getRevealShareVerifierVKeyHash","outputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"stateMutability":"view","type":"function"},
 		{"inputs":[{"internalType":"bytes12","name":"roundId","type":"bytes12"},{"internalType":"uint16","name":"participantIndex","type":"uint16"}],"name":"getShareCommitment","outputs":[{"name":"x","type":"uint256"},{"name":"y","type":"uint256"}],"stateMutability":"view","type":"function"},
 		{"inputs":[{"internalType":"bytes12","name":"roundId","type":"bytes12"}],"name":"selectedParticipants","outputs":[{"internalType":"address[]","name":"","type":"address[]"}],"stateMutability":"view","type":"function"},
-		{"inputs":[{"internalType":"bytes12","name":"roundId","type":"bytes12"},{"internalType":"uint16","name":"ciphertextIndex","type":"uint16"}],"name":"getCombinedDecryption","outputs":[{"name":"ciphertextIndex","type":"uint16"},{"name":"combineHash","type":"bytes32"},{"name":"plaintextHash","type":"bytes32"},{"name":"completed","type":"bool"}],"stateMutability":"view","type":"function"},
+		{"inputs":[{"internalType":"bytes12","name":"roundId","type":"bytes12"},{"internalType":"uint16","name":"ciphertextIndex","type":"uint16"}],"name":"getCombinedDecryption","outputs":[{"name":"ciphertextIndex","type":"uint16"},{"name":"completed","type":"bool"},{"name":"plaintext","type":"uint256"}],"stateMutability":"view","type":"function"},
 		{"inputs":[{"internalType":"bytes12","name":"roundId","type":"bytes12"},{"internalType":"address","name":"participant","type":"address"}],"name":"getRevealedShare","outputs":[{"name":"participant","type":"address"},{"name":"participantIndex","type":"uint16"},{"name":"shareValue","type":"uint256"},{"name":"shareHash","type":"bytes32"},{"name":"accepted","type":"bool"}],"stateMutability":"view","type":"function"}
 	]`
 	dkgRegistryABIJSON = `[
@@ -87,9 +87,8 @@ type RoundView struct {
 
 type CombinedDecryptionView struct {
 	CiphertextIndex uint16
-	CombineHash     common.Hash
-	PlaintextHash   common.Hash
 	Completed       bool
+	Plaintext       *big.Int
 }
 
 type RevealedShareView struct {

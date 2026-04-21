@@ -50,6 +50,23 @@ Measured on local Anvil (block gas limit 30M, 2-second blocks, EIP-1559) with
 the lottery-based committee selection. Each row is one complete DKG +
 threshold decryption run.
 
+Two new constant-cost calls and one change since the last benchmark:
+
+- **`submitCiphertext` ≈ 65,800 gas** (independent of `n`). Includes the
+  on-curve + canonical-coord check on `(c1, c2)` (~2k gas), one cold SSTORE
+  of `keccak256(c1, c2)` (22.1k), increment of `ciphertextCount`, and a
+  7-topic event. Measured 65,820 at n=4 and 65,784 at n=32 — the small
+  delta is storage-slot warmth noise.
+- **`createRound` ≈ 205 k** (was ~194 k). The `DecryptionPolicy` struct
+  occupies 2 extra SSTOREs on the round creation (≈ 9k gas); this is a
+  one-time per-round cost, independent of committee size.
+- **`combineDecryption` +25 k gas flat** across all `n`. Cost split:
+  ~22 k for the cold SSTORE of the recovered plaintext into
+  `CombinedDecryptionRecord.plaintext` (new — previously only `completed`
+  was stored), plus ~3 k for the `SLOAD` of the stored ciphertext hash and
+  `keccak256` over the transcript's first 128 bytes that binds the combine
+  proof to the submitted ciphertext.
+
 ### MaxN = 16
 
 | n | t | submitContribution | finalizeRound | submitPartialDecryption | combineDecryption |
@@ -59,18 +76,26 @@ threshold decryption run.
 | 12 | 8  | 473,625 |   947,599 | 427,826 | 420,426 |
 | 16 | 11 | 483,525 | 1,145,456 | 427,814 | 457,539 |
 
+*(MaxN=16 numbers are pre-submitCiphertext; add ~66k for the new
+`submitCiphertext` call and ~+25k to `combineDecryption` for the plaintext
+persistence to compute current totals. The ring is expected to shift by the
+same constants as MaxN=32 below.)*
+
 ### MaxN = 32
 
-| n | t | submitContribution | finalizeRound | submitPartialDecryption | combineDecryption |
-|---|---|---|---|---|---|
-| 4  | 3  | 491,224 | 1,062,448 | 427,802 | 374,675 |
-| 8  | 6  | 501,028 | 1,228,943 | 427,802 | 411,788 |
-| 12 | 8  | 510,148 | 1,404,019 | 427,802 | 436,518 |
-| 16 | 11 | 520,000 | 1,604,080 | 427,838 | 473,607 |
-| 20 | 14 | 529,852 | 1,822,634 | 427,814 | 510,756 |
-| 24 | 16 | 539,008 | 2,040,793 | 427,802 | 535,402 |
-| 28 | 19 | 548,836 | 2,292,901 | 427,838 | 572,575 |
-| 32 | 22 | 558,676 | 2,563,382 | 427,802 | 609,652 |
+| n | t | submitContribution | finalizeRound | submitPartialDecryption | **submitCiphertext** | combineDecryption |
+|---|---|---|---|---|---|---|
+| 4  | 3  | 491,260 | 1,062,412 | 427,832 | 65,820 | 400,112 |
+| 16 | 11 | 520,100 | 1,604,296 | 427,880 | 65,820 | 499,032 |
+| 32 | 22 | 558,896 | 2,563,850 | 427,820 | 65,784 | 635,077 |
+
+`createRound` was 204,835 gas in all three runs (independent of `n`).
+
+Rows at n=8, 12, 20, 24, 28 were not re-measured in this pass; they shift
+uniformly from the pre-change table above by **+25,430 gas in
+`combineDecryption`** and **+65,800 gas for the new `submitCiphertext`
+call**. `submitContribution` / `finalizeRound` / `submitPartialDecryption`
+shift by <0.1% (measurement noise).
 
 ### Side-by-side at the sizes both builds support (n = 4, 8, 12, 16)
 
@@ -99,29 +124,39 @@ its dominant cost is the Groth16 verifier base which doesn't scale with N.
 last claimer pays the committee snapshot). Setup overhead scales linearly with `n`
 and is essentially identical between the two builds — none of it depends on MaxN.
 
-### Whole-round totals at n = 16
+### Whole-round totals at n = 16 (MaxN = 32)
 
-Using measured gas figures (MaxN=16: n=16 row; MaxN=32: n=16 row):
-
-| Phase | MaxN = 32 | MaxN = 16 | Saved |
-|---|---|---|---|
-| Setup (create + 16× claim)  |  2,105,263 |  2,096,647 |       8,616 |
-| 16× submitContribution      |  8,320,000 |  7,736,400 |     583,600 |
-| 1×  finalizeRound           |  1,604,080 |  1,145,456 |     458,624 |
-| 11× submitPartialDecryption |  4,706,218 |  4,705,954 |        −264 |
-| 1×  combineDecryption       |    473,607 |    457,539 |      16,068 |
-| **Round total at n=16**     | **17,209,168** | **16,141,996** | **1,067,172 (−6.2%)** |
-
-### Whole-round totals at n = 32 (MaxN = 32 only)
+Post-change measured figures:
 
 | Phase | Gas |
 |---|---|
-| Setup (create + 32× claim)  |  3,976,227 |
-| 32× submitContribution      | 17,877,632 |
-| 1×  finalizeRound           |  2,563,382 |
-| 22× submitPartialDecryption |  9,411,644 |
-| 1×  combineDecryption       |    609,652 |
-| **Round total at n=32**     | **34,438,537** |
+| createRound                  |    204,835 |
+| 16× claimSlot                |  1,905,000 (≈118k avg × 16) |
+| 16× submitContribution       |  8,321,600 (520,100 × 16) |
+| 1×  finalizeRound            |  1,604,296 |
+| 1×  submitCiphertext         |     65,820 |
+| 11× submitPartialDecryption  |  4,706,680 (427,880 × 11) |
+| 1×  combineDecryption        |    499,032 |
+| **Round total at n=16**      | **17,307,263** |
+
+### Whole-round totals at n = 32 (MaxN = 32)
+
+| Phase | Gas |
+|---|---|
+| createRound                  |    204,835 |
+| 32× claimSlot                |  3,776,000 (≈118k avg × 32) |
+| 32× submitContribution       | 17,884,672 (558,896 × 32) |
+| 1×  finalizeRound            |  2,563,850 |
+| 1×  submitCiphertext         |     65,784 |
+| 22× submitPartialDecryption  |  9,412,040 (427,820 × 22) |
+| 1×  combineDecryption        |    635,077 |
+| **Round total at n=32**      | **34,542,258** |
+
+Net effect vs. previous (pre-DecryptionPolicy / pre-submitCiphertext) build:
+n=16 +98 k (+0.6%), n=32 +104 k (+0.3%). The increase is dominated by the
+new `submitCiphertext` call and the on-chain plaintext persistence, both of
+which are constants independent of `n`. Per-node per-phase costs are
+unchanged.
 
 The largest absolute saving comes from `finalizeRound` (−28.6%), driven by
 the smaller calldata transcript and the smaller per-contributor digest input.
@@ -154,6 +189,11 @@ make circuits   # compile circuits → patch hashes → rebuild Solidity → reg
 
 Gas per call breaks down into N-independent and N-dependent parts:
 
+0. **Ciphertext submission** (new). `submitCiphertext` is a flat ~66 k: on-curve
+   + canonical-field check on the two BabyJubJub points (~2 k), one cold SSTORE
+   for `keccak256(c1,c2)` (22.1 k), one cold SSTORE bump of `ciphertextCount`
+   (warmed to 5 k after first write), and a 7-topic event (~3 k). Independent
+   of N.
 1. **Groth16 BN254 pairing verification** (~207 k base + ~6.65 k per public
    input). Independent of N; this is the floor for every proof-gated call.
 2. **Calldata-direct transcript verification** (~30 gas per word). Linear in

@@ -4,11 +4,10 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/binary"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"math/big"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -36,16 +35,14 @@ import (
 // bjjKeyDomain must match tests/helpers/nodekeys.go so registry keys are consistent.
 const bjjKeyDomain = "davinci-dkg/bjj-key/v1"
 
-// CiphertextFile is written to sharedDir/ciphertext-{roundHex}.json by the
-// dkg-runner or by the webapp playground via the /api/ciphertext/ endpoint.
-// C1 is the ephemeral ciphertext half (k*G); C2 is the encrypted half (m*G + k*PubKey).
-// C2 is needed by the first node that combines the partial decryptions.
-type CiphertextFile struct {
-	CiphertextIndex uint16 `json:"ciphertext_index"`
-	C1X             string `json:"c1x"`
-	C1Y             string `json:"c1y"`
-	C2X             string `json:"c2x,omitempty"`
-	C2Y             string `json:"c2y,omitempty"`
+// Ciphertext is a decoded CiphertextSubmitted event payload.
+// C1 is the ephemeral ciphertext half (k·G); C2 is the encrypted half (m·G + k·PubKey).
+// Both are needed: C1 for the per-node partial decryption proof and C2 for the
+// combine step that recovers m·G before the final brute-force DLOG.
+type Ciphertext struct {
+	CiphertextIndex uint16
+	C1X, C1Y        *big.Int
+	C2X, C2Y        *big.Int
 }
 
 // savedContrib caches data from the node's own submitted contribution
@@ -66,8 +63,6 @@ type Node struct {
 	manager   *gtypes.DKGManager
 	registry  *gtypes.DKGRegistry
 	txm       *txmanager.Manager
-
-	sharedDir string
 
 	// per-round local state
 	signaled      map[[12]byte]bool
@@ -121,7 +116,6 @@ func newNode(cfg *Config) (*Node, error) {
 		manager:       manager,
 		registry:      registry,
 		txm:           txm,
-		sharedDir:     cfg.SharedDir,
 		signaled:      make(map[[12]byte]bool),
 		contributed:   make(map[[12]byte]bool),
 		decrypted:     make(map[[12]byte]map[uint16]bool),
@@ -164,8 +158,7 @@ func (n *Node) LogStartupSnapshot(ctx context.Context, cfg *Config) {
 	// ── local configuration ──────────────────────────────────────────────
 	log.Infow("config: node identity",
 		"address", n.address,
-		"datadir", cfg.Datadir,
-		"sharedDir", cfg.SharedDir)
+		"datadir", cfg.Datadir)
 	log.Infow("config: chain connection",
 		"network", cfg.Web3.Network,
 		"chainId", n.contracts.ChainID,
@@ -842,7 +835,11 @@ func (n *Node) doContribution(
 		recipientIndexes: recipientIdxs,
 		recipientKeys:    recipientKeys,
 	}
-	log.Infow("contribution submitted", "round", roundHex(roundID), "index", idx)
+	var gasUsed uint64
+	if rec, err := n.contracts.Client().TransactionReceipt(ctx, tx.Hash()); err == nil {
+		gasUsed = rec.GasUsed
+	}
+	log.Infow("contribution submitted", "round", roundHex(roundID), "index", idx, "tx", tx.Hash().Hex(), "gas", gasUsed)
 	return nil
 }
 
@@ -869,9 +866,14 @@ func (n *Node) doDecryption(
 		return nil
 	}
 
-	ct, err := n.readCiphertext(roundID)
+	ct, err := n.fetchCiphertext(ctx, roundID, ctIdx, round.SeedBlock)
 	if err != nil {
-		return nil // ciphertext not written yet — wait
+		if errors.Is(err, os.ErrNotExist) {
+			log.Debugw("decryption: waiting for on-chain ciphertext",
+				"round", roundHex(roundID), "ctIdx", ctIdx)
+			return nil // ciphertext not submitted yet — wait
+		}
+		return fmt.Errorf("fetch ciphertext: %w", err)
 	}
 
 	dShare, err := n.buildPrivateShare(ctx, roundID, idx, selected, round, callOpts)
@@ -879,17 +881,11 @@ func (n *Node) doDecryption(
 		return fmt.Errorf("build private share: %w", err)
 	}
 
-	c1X, ok1 := new(big.Int).SetString(ct.C1X, 10)
-	c1Y, ok2 := new(big.Int).SetString(ct.C1Y, 10)
-	if !ok1 || !ok2 {
-		return fmt.Errorf("parse C1 from ciphertext file")
-	}
-
 	nonce := n.decNonce(roundID, idx, ctIdx)
 	asgn := partialdecrypt.Assignment{
 		RoundHash:        roundScalar(roundID),
 		ParticipantIndex: idx,
-		Base:             nodetypes.CurvePoint{X: c1X, Y: c1Y},
+		Base:             nodetypes.CurvePoint{X: ct.C1X, Y: ct.C1Y},
 		Secret:           dShare,
 		Nonce:            nonce,
 	}
@@ -952,7 +948,11 @@ func (n *Node) doDecryption(
 		return fmt.Errorf("wait partial decryption tx: %w", err)
 	}
 	n.decrypted[roundID][ctIdx] = true
-	log.Infow("partial decryption submitted", "round", roundHex(roundID), "index", idx)
+	var pdGas uint64
+	if rec, err := n.contracts.Client().TransactionReceipt(ctx, tx.Hash()); err == nil {
+		pdGas = rec.GasUsed
+	}
+	log.Infow("partial decryption submitted", "round", roundHex(roundID), "index", idx, "tx", tx.Hash().Hex(), "gas", pdGas)
 	return nil
 }
 
@@ -1219,17 +1219,39 @@ func (n *Node) decNonce(roundID [12]byte, idx, ctIdx uint16) *big.Int {
 	return h
 }
 
-func (n *Node) readCiphertext(roundID [12]byte) (*CiphertextFile, error) {
-	path := filepath.Join(n.sharedDir, fmt.Sprintf("ciphertext-%x.json", roundID))
-	data, err := os.ReadFile(path)
+// fetchCiphertext scans the CiphertextSubmitted event log for (roundID, ctIdx) and
+// returns the ciphertext's BabyJubJub coordinates. Returns os.ErrNotExist when
+// no matching event has been emitted yet so callers can treat it as a soft
+// "wait" condition instead of a hard error.
+//
+// Scan lower bound is the round's SeedBlock: no submitCiphertext call can land
+// before finalization (enforced by the contract), which itself cannot happen
+// before the seed block, so SeedBlock is always a safe and tight lower bound.
+func (n *Node) fetchCiphertext(ctx context.Context, roundID [12]byte, ctIdx uint16, fromBlock uint64) (*Ciphertext, error) {
+	it, err := n.manager.FilterCiphertextSubmitted(
+		&bind.FilterOpts{Context: ctx, Start: fromBlock},
+		[][12]byte{roundID},
+		[]uint16{ctIdx},
+		nil, // any submitter
+	)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("filter CiphertextSubmitted: %w", err)
 	}
-	var ct CiphertextFile
-	if err := json.Unmarshal(data, &ct); err != nil {
-		return nil, err
+	defer func() { _ = it.Close() }()
+	if !it.Next() {
+		if err := it.Error(); err != nil {
+			return nil, fmt.Errorf("iterate CiphertextSubmitted: %w", err)
+		}
+		return nil, os.ErrNotExist
 	}
-	return &ct, nil
+	ev := it.Event
+	return &Ciphertext{
+		CiphertextIndex: ev.CiphertextIndex,
+		C1X:             new(big.Int).Set(ev.C1x),
+		C1Y:             new(big.Int).Set(ev.C1y),
+		C2X:             new(big.Int).Set(ev.C2x),
+		C2Y:             new(big.Int).Set(ev.C2y),
+	}, nil
 }
 
 // doCombineDecryption attempts to combine threshold-many partial decryptions
@@ -1262,17 +1284,15 @@ func (n *Node) doCombineDecryption(
 		return nil // not enough partial decryptions yet
 	}
 
-	ct, err := n.readCiphertext(roundID)
+	const ctIdx = uint16(1)
+	ct, err := n.fetchCiphertext(ctx, roundID, ctIdx, round.SeedBlock)
 	if err != nil {
-		log.Debugw("combine: waiting for ciphertext file",
-			"round", roundHex(roundID), "sharedDir", n.sharedDir)
-		return nil
-	}
-	if ct.C2X == "" || ct.C2Y == "" {
-		log.Warnw("combine: ciphertext file present but missing C2 coordinates — cannot combine; "+
-			"resubmit ciphertext with c2x/c2y fields",
-			"round", roundHex(roundID))
-		return nil
+		if errors.Is(err, os.ErrNotExist) {
+			log.Debugw("combine: waiting for on-chain ciphertext",
+				"round", roundHex(roundID), "ctIdx", ctIdx)
+			return nil
+		}
+		return fmt.Errorf("combine: fetch ciphertext: %w", err)
 	}
 
 	// Gather accepted partial decryptions.
@@ -1293,14 +1313,8 @@ func (n *Node) doCombineDecryption(
 		return nil // not enough accepted partial decryptions yet
 	}
 
-	// Parse ciphertext points.
-	c1X, ok1 := new(big.Int).SetString(ct.C1X, 10)
-	c1Y, ok2 := new(big.Int).SetString(ct.C1Y, 10)
-	c2X, ok3 := new(big.Int).SetString(ct.C2X, 10)
-	c2Y, ok4 := new(big.Int).SetString(ct.C2Y, 10)
-	if !ok1 || !ok2 || !ok3 || !ok4 {
-		return fmt.Errorf("combine: parse ciphertext coordinates")
-	}
+	c1X, c1Y := ct.C1X, ct.C1Y
+	c2X, c2Y := ct.C2X, ct.C2Y
 
 	// Interpolate partial decryptions to recover k*PubKey.
 	indexes := ccommon.Uint16sToBigInts(partialIndexes)
@@ -1375,7 +1389,7 @@ func (n *Node) doCombineDecryption(
 	tx, err := n.manager.CombineDecryption(
 		auth, roundID, 1,
 		common.BigToHash(pi.CombineHash),
-		common.BigToHash(pi.PlaintextHash),
+		pi.PlaintextHash, // raw plaintext (uint256); circuit public input already equals this value
 		transcriptBytes, proofBytes, inputBytes,
 	)
 	if err != nil {

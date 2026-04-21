@@ -765,13 +765,14 @@ event log.
 
 | Function | Phase | Access | Description |
 |---|---|---|---|
-| `createRound(threshold, committeeSize, minValidContributions, lotteryAlphaBps, seedDelay, registrationDeadlineBlock, contributionDeadlineBlock, disclosureAllowed)` | Any | Open | Create a new DKG round. Snapshots `nodeCount` from the registry and derives the per-round lottery threshold. Pins `seedBlock = block.number + seedDelay`. Returns `bytes12 roundId`. |
+| `createRound(threshold, committeeSize, minValidContributions, lotteryAlphaBps, seedDelay, registrationDeadlineBlock, contributionDeadlineBlock, disclosureAllowed, decryptionPolicy)` | Any | Open | Create a new DKG round. Snapshots `nodeCount` from the registry and derives the per-round lottery threshold. Pins `seedBlock = block.number + seedDelay`. `decryptionPolicy` gates `submitCiphertext` (owner-only, not-before/not-after block and timestamp, max submissions) — all-zero = no constraint. Returns `bytes12 roundId`. |
 | `claimSlot(roundId)` | Registration | Any registered eligible node | First-come-first-served self-claim. The first call after `block.number ≥ seedBlock` lazily resolves `seed = blockhash(seedBlock)`. The caller is admitted iff `keccak256(seed ‖ msg.sender) < lotteryThreshold`. The contract stops accepting claims once `committeeSize` slots are filled and immediately advances to Contribution. |
 | `extendRegistration(roundId)` | Registration, after deadline | Open | Reroll the seed if the round failed to fill in its registration window. Captures a fresh `blockhash` and pushes the deadline forward. |
 | `submitContribution(roundId, contributorIndex, commitmentsHash, encryptedSharesHash, commitment0X, commitment0Y, transcript, proof, input)` | Contribution | Selected participant | Submit polynomial commitments and encrypted shares with a Groth16 proof. `commitment0X`/`commitment0Y` are the coordinates of the contributor's zeroth Feldman commitment `a_{i,0}·G` (verified against the ZK public inputs); the contract accumulates them into the round's collective public key. The committee membership / pubkey list is verified against a single keccak snapshot taken when the lottery filled (no per-recipient registry calls). |
 | `finalizeRound(roundId, aggregateCommitmentsHash, collectivePublicKeyHash, shareCommitmentHash, transcript, proof, input)` | After min contributions | Open | Aggregate commitments, publish collective public key and share commitments. Advances to Finalized. The transcript is read directly from calldata; share commitments are stored as `keccak256(x,y)` (1 slot each). |
 | `submitPartialDecryption(roundId, participantIndex, ciphertextIndex, deltaHash, proof, input)` | Finalized | Selected participant | Submit a partial decryption `δ_i = d_i · C_1` with a Chaum-Pedersen DLEQ proof. Keyed by `(roundId, participant, ciphertextIndex)` to support multiple ciphertexts per round. |
-| `combineDecryption(roundId, ciphertextIndex, combineHash, plaintextHash, transcript, proof, input)` | Finalized | Open | Combine `t` partial decryptions via Lagrange interpolation. Emits the recovered plaintext hash. |
+| `submitCiphertext(roundId, ciphertextIndex, c1x, c1y, c2x, c2y)` | Finalized | Gated by `DecryptionPolicy` (set at `createRound`): owner-only / block + timestamp windows / max-count caps. Write-once per index. | Publish a ciphertext to be threshold-decrypted. Stores `keccak256(c1,c2)` and emits `CiphertextSubmitted` carrying the raw coordinates so nodes (and consumers) can read them from the event log. |
+| `combineDecryption(roundId, ciphertextIndex, combineHash, plaintext, transcript, proof, input)` | Finalized, ciphertext submitted, ≥t partials | Open | Combine `t` partial decryptions via Lagrange interpolation. Proof is bound to the on-chain ciphertext hash (no substitution possible). Stores the recovered plaintext `uint256`; readable via `getPlaintext`. |
 | `submitRevealedShare(roundId, participantIndex, shareValue, proof, input)` | Finalized, disclosureAllowed | Selected participant | Reveal secret share `d_i` with a proof that `d_i · G = D_i`. |
 | `reconstructSecret(roundId, disclosureHash, reconstructedSecretHash, transcript, proof, input)` | Finalized, disclosureAllowed, ≥t reveals | Open | Reconstruct `sk = F(0)` via Lagrange interpolation. Advances to Completed. |
 | `abortRound(roundId)` | Any non-terminal | Organizer | Abort the round. Advances to Aborted. |
@@ -780,12 +781,15 @@ event log.
 
 | Function | Returns |
 |---|---|
-| `getRound(roundId)` | `Round` struct: organizer, policy, status, nonce, seedBlock, seed, lotteryThreshold, claimedCount, contributionCount, partialDecryptionCount, revealedShareCount |
+| `getRound(roundId)` | `Round` struct: organizer, policy, decryptionPolicy, status, nonce, seedBlock, seed, lotteryThreshold, claimedCount, contributionCount, partialDecryptionCount, revealedShareCount, ciphertextCount |
 | `getCollectivePublicKey(roundId)` | `Point {x, y}` — the collective public key `PK = Σ_i a_{i,0}·G`, accumulated incrementally on each accepted `submitContribution`. Returns the identity `(0,1)` before any contribution is accepted. Available from the first accepted contribution onward; does not require waiting for `finalizeRound`. |
+| `getDecryptionPolicy(roundId)` | `DecryptionPolicy` struct: `ownerOnly`, `maxDecryptions`, `notBeforeBlock`, `notBeforeTimestamp`, `notAfterBlock`, `notAfterTimestamp`. Set at `createRound`. |
 | `selectedParticipants(roundId)` | `address[]` — ordered committee in claim order |
 | `getContribution(roundId, contributor)` | `ContributionRecord` (only `contributorIndex`, `commitmentVectorDigest`, `accepted` are persisted; the rest live in `ContributionSubmitted` events) |
 | `getPartialDecryption(roundId, participant, ciphertextIndex)` | `PartialDecryptionRecord` (only `participantIndex`, `ciphertextIndex`, `accepted`, `delta` are persisted) |
-| `getCombinedDecryption(roundId, ciphertextIndex)` | `CombinedDecryptionRecord` (only `completed` is persisted; hashes live in `DecryptionCombined` events) |
+| `getCombinedDecryption(roundId, ciphertextIndex)` | `CombinedDecryptionRecord`: `ciphertextIndex`, `completed`, `plaintext`. `combineHash` is only in the `DecryptionCombined` event. |
+| `getPlaintext(roundId, ciphertextIndex)` | `uint256` — recovered plaintext scalar; `0` if the decryption has not been combined yet (check `getCombinedDecryption(...).completed` to disambiguate). |
+| `getCiphertextHash(roundId, ciphertextIndex)` | `bytes32` — `keccak256(abi.encode(c1x, c1y, c2x, c2y))` of the submitted ciphertext; raw coordinates are only in the `CiphertextSubmitted` event. |
 | `getRevealedShare(roundId, participant)` | `RevealedShareRecord` (only `participantIndex`, `shareValue`, `accepted` persisted) |
 | `getShareCommitmentHash(roundId, participantIndex)` | `bytes32` = `keccak256(abi.encode(x, y))`. The pre-image lives in the `RoundFinalized` event. |
 | `getContributionVerifierVKeyHash()` | `bytes32` |
@@ -1020,9 +1024,9 @@ addresses pulled from `/addresses/addresses.env`.
   phase progress bars (claims, contributions, partial decryptions, revealed
   shares), the full list of selected participants, and every decoded event
   touching the round (`RoundCreated`, `SeedResolved`, `SlotClaimed`,
-  `ContributionSubmitted`, `RoundFinalized`, `PartialDecryptionSubmitted`,
-  `DecryptionCombined`, `RevealedShareSubmitted`, `SecretReconstructed`,
-  `RoundEvicted`, `RoundAborted`).
+  `ContributionSubmitted`, `RoundFinalized`, `CiphertextSubmitted`,
+  `PartialDecryptionSubmitted`, `DecryptionCombined`, `RevealedShareSubmitted`,
+  `SecretReconstructed`, `RoundEvicted`, `RoundAborted`).
 - **Registry**: every registered operator and their BabyJubJub public key
   coordinates.
 - **Playground**: an interactive end-to-end demo of the full DKG + threshold
@@ -1036,9 +1040,12 @@ addresses pulled from `/addresses/addresses.env`.
      `submitContribution` and is available from the first contribution onward.
   5. Enter a plaintext integer and ElGamal-encrypt it with the collective
      public key (BabyJubJub, in-browser).
-  6. Submit the ciphertext to the node via `POST /api/ciphertext/{roundId}`,
-     then poll until the threshold decryption is combined on-chain.
-  7. Verify that the recovered plaintext matches the original input.
+  6. Submit the ciphertext on-chain via `DKGManager.submitCiphertext(roundId, ctIdx, c1x, c1y, c2x, c2y)` —
+     the contract stores `keccak256(c1x,c1y,c2x,c2y)` and emits a
+     `CiphertextSubmitted` event; nodes watch the event and produce their
+     partial decryptions, then poll until the combined decryption lands.
+  7. Verify that the recovered plaintext (readable via `getPlaintext(roundId, ctIdx)`)
+     matches the original input.
 - **Settings**: live-editable **RPC endpoint** override (stored in the
   browser's `localStorage`, per-user) plus the chain / contract info from
   `/config.json`.
@@ -1056,16 +1063,10 @@ embedded SPA works against local, testnet, or public deployments without any
 rebuild — override `WEBAPP_PUBLIC_RPC` for the compose service or flip
 the endpoint in the Settings page.
 
-The node also exposes a small REST endpoint used by the Playground tab to
-hand ciphertexts to the running node for threshold decryption:
-
-| Endpoint | Method | Description |
-|---|---|---|
-| `/api/ciphertext/{roundId}` | `POST` | Write a ciphertext JSON `{ciphertext_index, c1x, c1y, c2x, c2y}` to the node's shared directory so it can be picked up on the next poll cycle |
-| `/api/ciphertext/{roundId}` | `GET` | Read back the stored ciphertext for a given round |
-
-This endpoint is only registered when `--shared-dir` (or `DAVINCI_DKG_SHARED_DIR`) is set, which is
-done automatically for nodes that also run the Playground.
+Ciphertext submission is fully on-chain — the node runs no custom REST
+endpoints for this. The Playground (and any other consumer) calls
+`DKGManager.submitCiphertext` directly from the browser wallet; nodes
+subscribe to `CiphertextSubmitted` events to pick up work.
 
 ### Running it outside the testnet
 

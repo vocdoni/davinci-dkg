@@ -27,6 +27,19 @@ library DKGTypes {
         bool disclosureAllowed;
     }
 
+    /// @notice Gates `submitCiphertext` for a round. All checks AND together; an
+    ///         unset (zero) field is a no-op for that check.
+    ///         The policy only gates SUBMISSION; once a ciphertext is on-chain,
+    ///         decryption by the committee proceeds regardless of these fields.
+    struct DecryptionPolicy {
+        bool   ownerOnly;           // if true, only the round organizer can submitCiphertext
+        uint16 maxDecryptions;      // max ciphertexts accepted per round; 0 = unlimited (up to MAX_CIPHERTEXT_INDEX)
+        uint64 notBeforeBlock;      // submitCiphertext reverts if block.number < this; 0 = no lock
+        uint64 notBeforeTimestamp;  // submitCiphertext reverts if block.timestamp < this; 0 = no lock
+        uint64 notAfterBlock;       // submitCiphertext reverts if block.number > this; 0 = no deadline
+        uint64 notAfterTimestamp;   // submitCiphertext reverts if block.timestamp > this; 0 = no deadline
+    }
+
     struct ContributionRecord {
         address contributor;
         uint16 contributorIndex;
@@ -47,9 +60,8 @@ library DKGTypes {
 
     struct CombinedDecryptionRecord {
         uint16 ciphertextIndex;
-        bytes32 combineHash;
-        bytes32 plaintextHash;
         bool completed;
+        uint256 plaintext;
     }
 
     struct RevealedShareRecord {

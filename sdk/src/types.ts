@@ -52,9 +52,41 @@ export interface RoundPolicy {
   disclosureAllowed: boolean;
 }
 
+/**
+ * Gates `submitCiphertext` for a round. All checks AND together; a zero-valued
+ * field is a no-op for that check. Policy gates SUBMISSION only — once a
+ * ciphertext is on-chain, committee decryption proceeds regardless of these
+ * fields.
+ */
+export interface DecryptionPolicy {
+  /** If true, only the round organizer may call `submitCiphertext`. */
+  ownerOnly: boolean;
+  /** Maximum accepted ciphertexts per round; 0 = unlimited (bounded by MAX_CIPHERTEXT_INDEX). */
+  maxDecryptions: number;
+  /** submitCiphertext reverts if `block.number < notBeforeBlock`; 0 = no lock. */
+  notBeforeBlock: bigint;
+  /** submitCiphertext reverts if `block.timestamp < notBeforeTimestamp`; 0 = no lock. */
+  notBeforeTimestamp: bigint;
+  /** submitCiphertext reverts if `block.number > notAfterBlock`; 0 = no deadline. */
+  notAfterBlock: bigint;
+  /** submitCiphertext reverts if `block.timestamp > notAfterTimestamp`; 0 = no deadline. */
+  notAfterTimestamp: bigint;
+}
+
+/** Convenience: an all-zero DecryptionPolicy = no submission gating. */
+export const OpenDecryptionPolicy: DecryptionPolicy = {
+  ownerOnly: false,
+  maxDecryptions: 0,
+  notBeforeBlock: 0n,
+  notBeforeTimestamp: 0n,
+  notAfterBlock: 0n,
+  notAfterTimestamp: 0n,
+};
+
 export interface Round {
   organizer: Address;
   policy: RoundPolicy;
+  decryptionPolicy: DecryptionPolicy;
   status: RoundStatusValue;
   nonce: bigint;
   seedBlock: bigint;
@@ -64,6 +96,7 @@ export interface Round {
   contributionCount: number;
   partialDecryptionCount: number;
   revealedShareCount: number;
+  ciphertextCount: number;
 }
 
 export interface ContributionRecord {
@@ -86,9 +119,9 @@ export interface PartialDecryptionRecord {
 
 export interface CombinedDecryptionRecord {
   ciphertextIndex: number;
-  combineHash: Hex;
-  plaintextHash: Hex;
   completed: boolean;
+  /** Recovered plaintext scalar; zero if `completed` is false. */
+  plaintext: bigint;
 }
 
 export interface RevealedShareRecord {

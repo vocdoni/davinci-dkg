@@ -19,11 +19,9 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
 	"math/big"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -46,11 +44,18 @@ import (
 	"github.com/vocdoni/davinci-dkg/web3/txmanager"
 )
 
-// CiphertextFile is read by node daemons from sharedDir/<roundHex>.json.
-type CiphertextFile struct {
-	CiphertextIndex uint16 `json:"ciphertext_index"`
-	C1X             string `json:"c1x"`
-	C1Y             string `json:"c1y"`
+// emptyDecryptionPolicy returns the open-policy default used by the test harness:
+// anyone can submit ciphertexts at any time, no count cap. The real UX will set
+// stricter policies.
+func emptyDecryptionPolicy() gtypes.DKGTypesDecryptionPolicy {
+	return gtypes.DKGTypesDecryptionPolicy{
+		OwnerOnly:          false,
+		MaxDecryptions:     0,
+		NotBeforeBlock:     0,
+		NotBeforeTimestamp: 0,
+		NotAfterBlock:      0,
+		NotAfterTimestamp:  0,
+	}
 }
 
 type cfg struct {
@@ -60,7 +65,6 @@ type cfg struct {
 	Manager                    string
 	Nodes                      int
 	Threshold                  int
-	SharedDir                  string
 	ArtifactsDir               string
 	LogLevel                   string
 	WaitReadiness              time.Duration
@@ -79,7 +83,6 @@ func loadCfg() (*cfg, error) {
 	fs.String("manager", "", "DKGManager contract address (optional when --network is set)")
 	fs.Int("nodes", 3, "number of DKG nodes to wait for")
 	fs.Int("threshold", 2, "decryption threshold")
-	fs.String("shared-dir", "/shared", "directory written with ciphertext files")
 	fs.String("artifacts-dir", "", "circuit artifact cache directory")
 	fs.String("log-level", "info", "log level")
 	fs.Duration("wait-readiness", 4*time.Minute, "timeout for readiness phase")
@@ -106,7 +109,6 @@ func loadCfg() (*cfg, error) {
 		Manager:                    v.GetString("manager"),
 		Nodes:                      v.GetInt("nodes"),
 		Threshold:                  v.GetInt("threshold"),
-		SharedDir:                  v.GetString("shared-dir"),
 		ArtifactsDir:               v.GetString("artifacts-dir"),
 		LogLevel:                   v.GetString("log-level"),
 		WaitReadiness:              v.GetDuration("wait-readiness"),
@@ -217,7 +219,9 @@ func runScenario(c *cfg) error {
 		lotteryAlphaBps, seedDelay,
 		head+uint64(c.ReadinessDeadlineBlocks),
 		head+uint64(c.ContributionDeadlineBlocks),
-		c.DisclosureAllowed)
+		c.DisclosureAllowed,
+		emptyDecryptionPolicy(),
+	)
 	if err != nil {
 		return fmt.Errorf("create round: %w", err)
 	}
@@ -225,7 +229,11 @@ func runScenario(c *cfg) error {
 		return err
 	}
 	roundID := makeRoundID(prefix, nonce0+1)
-	log.Infow("round created", "id", roundHex(roundID))
+	var createGas uint64
+	if rec, err := contracts.Client().TransactionReceipt(ctx, tx.Hash()); err == nil {
+		createGas = rec.GasUsed
+	}
+	log.Infow("round created", "id", roundHex(roundID), "tx", tx.Hash().Hex(), "gas", createGas)
 
 	// ── 2. wait for committee to self-fill via claimSlot ─────────────────────
 	log.Infow("waiting for committee to fill...", "want", n)
@@ -320,16 +328,30 @@ func runScenario(c *cfg) error {
 	c2enc := group.Encode(c2pt)
 	log.Infow("ciphertext created", "m", m.String(), "C1x", c1enc.X.String())
 
-	if err := os.MkdirAll(c.SharedDir, 0o755); err != nil {
-		return err
+	submitAuth, err := txm.NewTransactOpts(ctx)
+	if err != nil {
+		return fmt.Errorf("submitCiphertext tx opts: %w", err)
 	}
-	ctFile := CiphertextFile{CiphertextIndex: 1, C1X: c1enc.X.String(), C1Y: c1enc.Y.String()}
-	ctData, _ := json.MarshalIndent(ctFile, "", "  ")
-	ctPath := filepath.Join(c.SharedDir, fmt.Sprintf("ciphertext-%x.json", roundID))
-	if err := os.WriteFile(ctPath, ctData, 0o644); err != nil {
-		return err
+	submitTx, err := manager.SubmitCiphertext(submitAuth, roundID, 1, c1enc.X, c1enc.Y, c2enc.X, c2enc.Y)
+	if err != nil {
+		return fmt.Errorf("submit ciphertext: %w", err)
 	}
-	log.Infow("ciphertext published to shared dir", "path", ctPath)
+	if err := txm.WaitTxByHash(submitTx.Hash(), 60*time.Second); err != nil {
+		return fmt.Errorf("wait submit ciphertext: %w", err)
+	}
+	submitReceipt, err := contracts.Client().TransactionReceipt(ctx, submitTx.Hash())
+	if err != nil {
+		log.Warnw("failed to read submitCiphertext receipt", "err", err)
+	}
+	var submitGas uint64
+	if submitReceipt != nil {
+		submitGas = submitReceipt.GasUsed
+	}
+	log.Infow("ciphertext submitted on-chain",
+		"round", roundHex(roundID), "ctIdx", 1,
+		"tx", submitTx.Hash().Hex(),
+		"gas", submitGas,
+	)
 
 	// ── 7. wait for t partial decryptions ─────────────────────────────────────
 	log.Infow("waiting for partial decryptions...", "want", t)
@@ -450,6 +472,9 @@ func finalizeRound(
 	}
 	if err := txm.WaitTxByHash(tx.Hash(), 120*time.Second); err != nil {
 		return nil, err
+	}
+	if receipt, err := c.Client().TransactionReceipt(ctx, tx.Hash()); err == nil {
+		log.Infow("finalizeRound tx mined", "tx", tx.Hash().Hex(), "gas", receipt.GasUsed)
 	}
 	return pi.ShareCommitments, nil
 }
@@ -653,13 +678,19 @@ func combineDecryptions(
 	}
 	tx, err := m.CombineDecryption(auth, roundID, 1,
 		common.BigToHash(pi.CombineHash),
-		common.BigToHash(pi.PlaintextHash),
+		pi.PlaintextHash,
 		transcriptBytes, proofBytes, inputBytes,
 	)
 	if err != nil {
 		return err
 	}
-	return txm.WaitTxByHash(tx.Hash(), 120*time.Second)
+	if err := txm.WaitTxByHash(tx.Hash(), 120*time.Second); err != nil {
+		return err
+	}
+	if receipt, err := c.Client().TransactionReceipt(ctx, tx.Hash()); err == nil {
+		log.Infow("combineDecryption tx mined", "tx", tx.Hash().Hex(), "gas", receipt.GasUsed)
+	}
+	return nil
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────

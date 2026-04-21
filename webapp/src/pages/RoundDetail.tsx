@@ -118,15 +118,30 @@ export function RoundDetail() {
   }
   const r = roundQ.data;
   const policy = r.policy;
+  const dp = r.decryptionPolicy;
   const committeeSize = Number(policy.committeeSize);
   const threshold = Number(policy.threshold);
   const claimed = Number(r.claimedCount);
   const contribs = Number(r.contributionCount);
   const partials = Number(r.partialDecryptionCount);
   const reveals = Number(r.revealedShareCount);
+  const ciphertexts = Number(r.ciphertextCount ?? 0);
 
   const phaseProgress = (n: number) =>
     committeeSize > 0 ? Math.min(100, (n / committeeSize) * 100) : 0;
+
+  const dpActive =
+    !!dp && (
+      dp.ownerOnly ||
+      Number(dp.maxDecryptions) > 0 ||
+      dp.notBeforeBlock > 0n ||
+      dp.notBeforeTimestamp > 0n ||
+      dp.notAfterBlock > 0n ||
+      dp.notAfterTimestamp > 0n
+    );
+
+  const formatTs = (ts: bigint) =>
+    ts === 0n ? '—' : new Date(Number(ts) * 1000).toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
 
   return (
     <VStack align="stretch" spacing={5}>
@@ -193,6 +208,38 @@ export function RoundDetail() {
         </SimpleGrid>
       </Section>
 
+      <Section title="Decryption policy">
+        {!dp || !dpActive ? (
+          <HStack spacing={3} color="gray.400" fontSize="sm">
+            <Tag size="sm" colorScheme="gray">open</Tag>
+            <Text>Anyone can call <code>submitCiphertext</code> at any time (no caps).</Text>
+          </HStack>
+        ) : (
+          <SimpleGrid columns={{ base: 2, md: 3 }} spacing={4}>
+            <Field label="Owner-only">
+              {dp.ownerOnly ? (
+                <Tag size="sm" colorScheme="orange">owner-only</Tag>
+              ) : (
+                <Tag size="sm" colorScheme="gray">open</Tag>
+              )}
+            </Field>
+            <Field label="Max decryptions">
+              {Number(dp.maxDecryptions) > 0
+                ? `${ciphertexts} / ${dp.maxDecryptions}`
+                : `${ciphertexts} / unlimited`}
+            </Field>
+            <Field label="Not-before block">
+              {dp.notBeforeBlock === 0n ? '—' : `#${dp.notBeforeBlock.toString()}`}
+            </Field>
+            <Field label="Not-before timestamp">{formatTs(dp.notBeforeTimestamp)}</Field>
+            <Field label="Not-after block">
+              {dp.notAfterBlock === 0n ? '—' : `#${dp.notAfterBlock.toString()}`}
+            </Field>
+            <Field label="Not-after timestamp">{formatTs(dp.notAfterTimestamp)}</Field>
+          </SimpleGrid>
+        )}
+      </Section>
+
       <Section title="Phase progress">
         <Grid templateColumns="160px 1fr 80px" gap={3} alignItems="center">
           <GridItem>
@@ -216,6 +263,29 @@ export function RoundDetail() {
           <GridItem>
             <Text fontFamily="mono" fontSize="sm" textAlign="right">
               {contribs}/{committeeSize}
+            </Text>
+          </GridItem>
+
+          <GridItem>
+            <Text fontSize="sm">Ciphertexts</Text>
+          </GridItem>
+          <GridItem>
+            <Progress
+              value={
+                Number(dp?.maxDecryptions ?? 0) > 0
+                  ? Math.min(100, (ciphertexts / Number(dp!.maxDecryptions)) * 100)
+                  : ciphertexts > 0 ? 100 : 0
+              }
+              colorScheme="teal"
+              size="sm"
+              rounded="sm"
+            />
+          </GridItem>
+          <GridItem>
+            <Text fontFamily="mono" fontSize="sm" textAlign="right">
+              {Number(dp?.maxDecryptions ?? 0) > 0
+                ? `${ciphertexts}/${dp!.maxDecryptions}`
+                : `${ciphertexts}`}
             </Text>
           </GridItem>
 

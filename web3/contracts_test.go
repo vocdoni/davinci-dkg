@@ -128,9 +128,8 @@ func TestGetNodeAndRoundViews(t *testing.T) {
 	combined, err := contracts.GetCombinedDecryption(context.Background(), roundID, 1)
 	c.Assert(err, qt.IsNil)
 	c.Assert(combined.CiphertextIndex, qt.Equals, uint16(1))
-	c.Assert(combined.CombineHash, qt.Equals, common.HexToHash("0x9898"))
-	c.Assert(combined.PlaintextHash, qt.Equals, common.HexToHash("0x9999"))
 	c.Assert(combined.Completed, qt.IsTrue)
+	c.Assert(combined.Plaintext.Cmp(big.NewInt(39321)), qt.Equals, 0) // 0x9999 = 39321
 
 	revealed, err := contracts.GetRevealedShare(context.Background(), roundID, common.HexToAddress("0x5000000000000000000000000000000000000005"))
 	c.Assert(err, qt.IsNil)
@@ -212,16 +211,37 @@ func testRPCServer() *httptest.Server {
 				//  status, nonce, seedBlock, seed, lotteryThreshold,
 				//  claimedCount, contributionCount, partialDecryptionCount,
 				//  revealedShareCount.
+				type policyTuple struct {
+					Threshold                 uint16 `json:"threshold"`
+					CommitteeSize             uint16 `json:"committeeSize"`
+					MinValidContributions     uint16 `json:"minValidContributions"`
+					LotteryAlphaBps           uint16 `json:"lotteryAlphaBps"`
+					SeedDelay                 uint16 `json:"seedDelay"`
+					RegistrationDeadlineBlock uint64 `json:"registrationDeadlineBlock"`
+					ContributionDeadlineBlock uint64 `json:"contributionDeadlineBlock"`
+					DisclosureAllowed         bool   `json:"disclosureAllowed"`
+				}
+				type dpTuple struct {
+					OwnerOnly          bool   `json:"ownerOnly"`
+					MaxDecryptions     uint16 `json:"maxDecryptions"`
+					NotBeforeBlock     uint64 `json:"notBeforeBlock"`
+					NotBeforeTimestamp uint64 `json:"notBeforeTimestamp"`
+					NotAfterBlock      uint64 `json:"notAfterBlock"`
+					NotAfterTimestamp  uint64 `json:"notAfterTimestamp"`
+				}
 				output, _ := managerABI.Methods["getRound"].Outputs.Pack(
 					common.HexToAddress("0x5000000000000000000000000000000000000005"),
-					uint16(2),                  // threshold
-					uint16(2),                  // committeeSize
-					uint16(2),                  // minValidContributions
-					uint16(20000),              // lotteryAlphaBps (α=2)
-					uint16(4),                  // seedDelay
-					uint64(10),                 // registrationDeadlineBlock
-					uint64(20),                 // contributionDeadlineBlock
-					false,                      // disclosureAllowed
+					policyTuple{
+						Threshold:                 2,
+						CommitteeSize:             2,
+						MinValidContributions:     2,
+						LotteryAlphaBps:           20000,
+						SeedDelay:                 4,
+						RegistrationDeadlineBlock: 10,
+						ContributionDeadlineBlock: 20,
+						DisclosureAllowed:         false,
+					},
+					dpTuple{},                  // decryptionPolicy — all zero (no gate)
 					uint8(3),                   // status
 					uint64(1),                  // nonce
 					uint64(8),                  // seedBlock
@@ -231,6 +251,7 @@ func testRPCServer() *httptest.Server {
 					uint16(2),                  // contributionCount
 					uint16(1),                  // partialDecryptionCount
 					uint16(1),                  // revealedShareCount
+					uint16(0),                  // ciphertextCount
 				)
 				resp.Result = "0x" + hex.EncodeToString(output)
 			case strings.HasPrefix(callData, selectedParticipantsSelector):
@@ -242,9 +263,8 @@ func testRPCServer() *httptest.Server {
 			case strings.HasPrefix(callData, getCombinedDecryptionSelector):
 				output, _ := managerABI.Methods["getCombinedDecryption"].Outputs.Pack(
 					uint16(1),
-					common.HexToHash("0x9898"),
-					common.HexToHash("0x9999"),
 					true,
+					big.NewInt(39321), // 0x9999
 				)
 				resp.Result = "0x" + hex.EncodeToString(output)
 			case strings.HasPrefix(callData, getRevealedShareSelector):

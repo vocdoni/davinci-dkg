@@ -44,6 +44,7 @@ export function Rounds() {
                 <Th isNumeric>Threshold</Th>
                 <Th isNumeric>Claimed</Th>
                 <Th isNumeric>Contribs</Th>
+                <Th isNumeric>Cts</Th>
               </Tr>
             </Thead>
             <Tbody>
@@ -75,6 +76,9 @@ export function Rounds() {
                   </Td>
                   <Td isNumeric fontFamily="mono">
                     {round.contributionCount}
+                  </Td>
+                  <Td isNumeric fontFamily="mono">
+                    {round.ciphertextCount ?? 0}
                   </Td>
                 </Tr>
               ))}

@@ -20,7 +20,6 @@ type Config struct {
 	Network      string        `mapstructure:"network"`
 	ManagerAddr  string        `mapstructure:"manager"`
 	PollInterval time.Duration `mapstructure:"poll-interval"`
-	SharedDir    string        `mapstructure:"shared-dir"`
 	Webapp       WebappConfig  `mapstructure:"webapp"`
 }
 
@@ -58,7 +57,6 @@ func defaultConfig() *Config {
 		},
 		Datadir:      filepath.Join(home, ".davinci-dkg"),
 		PollInterval: 5 * time.Second,
-		SharedDir:    "/shared",
 		Webapp: WebappConfig{
 			Enabled: true,
 			Listen:  "0.0.0.0:8081",
@@ -84,7 +82,6 @@ func loadConfigFromArgs(args []string) (*Config, error) {
 	fs.String("privkey", cfg.PrivKey, "hex private key for signing transactions")
 	fs.String("manager", cfg.ManagerAddr, "DKGManager contract address (optional when --network is set)")
 	fs.Duration("poll-interval", cfg.PollInterval, "chain polling interval")
-	fs.String("shared-dir", cfg.SharedDir, "shared directory for ciphertexts (testnet)")
 	fs.Bool("webapp.enabled", cfg.Webapp.Enabled, "serve the embedded DKG explorer webapp")
 	fs.String("webapp.listen", cfg.Webapp.Listen, "address the explorer webapp listens on")
 	fs.String("webapp.public-rpc", cfg.Webapp.PublicRPC, "RPC URL exposed to the browser (defaults to first web3.rpc)")

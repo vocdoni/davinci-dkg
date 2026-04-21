@@ -56,12 +56,13 @@ type PartialDecryptionSubmission struct {
 }
 
 type DecryptCombineOutput struct {
-	Proof         []byte
-	Input         []byte
-	Transcript    []byte
-	CombineHash   [32]byte
-	PlaintextHash [32]byte
-	Plaintext     *big.Int
+	Proof        []byte
+	Input        []byte
+	Transcript   []byte
+	CombineHash  [32]byte
+	Plaintext    *big.Int
+	CiphertextC1 types.CurvePoint
+	CiphertextC2 types.CurvePoint
 }
 
 type RevealShareOutput struct {
@@ -408,12 +409,13 @@ func BuildDecryptCombineOutput(
 	}
 
 	return &DecryptCombineOutput{
-		Proof:         proofBytes,
-		Input:         inputBytes,
-		Transcript:    transcriptBytes,
-		CombineHash:   common.BigToHash(publicInputs.CombineHash),
-		PlaintextHash: common.BigToHash(publicInputs.PlaintextHash),
-		Plaintext:     new(big.Int).Set(plaintext),
+		Proof:        proofBytes,
+		Input:        inputBytes,
+		Transcript:   transcriptBytes,
+		CombineHash:  common.BigToHash(publicInputs.CombineHash),
+		Plaintext:    new(big.Int).Set(plaintext),
+		CiphertextC1: group.Encode(c1Point),
+		CiphertextC2: group.Encode(c2Point),
 	}, nil
 }
 
