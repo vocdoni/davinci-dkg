@@ -15,7 +15,7 @@
 
 import { describe, it, expect, beforeAll } from 'vitest';
 import { inject } from 'vitest';
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -45,20 +45,46 @@ interface FixtureResult {
   collectivePublicKeyHash: `0x${string}`;
 }
 
-function runGoFixture(rpcUrl: string, addressesFile: string): FixtureResult | null {
+async function runGoFixture(rpcUrl: string, addressesFile: string): Promise<FixtureResult | null> {
   // __dirname = sdk/tests → go up to sdk/ then repo root
   const repoRoot    = path.resolve(__dirname, '..', '..');
   const fixtureMain = path.join(repoRoot, 'cmd', 'sdk-test-fixture');
 
-  const result = spawnSync(
-    'go',
-    ['run', fixtureMain, '--rpc-url', rpcUrl, '--addresses-file', addressesFile],
-    {
-      cwd:      repoRoot,
-      encoding: 'utf8',
-      timeout:  600_000, // 10 min — ZK trusted setup can be slow
-    },
-  );
+  // Async spawn — synchronous spawnSync blocks the worker's event loop for
+  // the entire fixture run (up to several minutes during cold-cache ZK setup
+  // in CI), which starves Vitest's worker→main RPC and triggers
+  // "Timeout calling onTaskUpdate" after 60s.
+  const result = await new Promise<{ status: number | null; stdout: string; stderr: string }>((resolve, reject) => {
+    const child = spawn(
+      'go',
+      ['run', fixtureMain, '--rpc-url', rpcUrl, '--addresses-file', addressesFile],
+      { cwd: repoRoot },
+    );
+
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (d) => { stdout += d.toString('utf8'); });
+    child.stderr.on('data', (d) => { stderr += d.toString('utf8'); });
+
+    const killTimer = setTimeout(() => {
+      child.kill('SIGKILL');
+      reject(new Error('Go fixture timed out after 10 min'));
+    }, 600_000);
+
+    child.on('error', (err) => {
+      clearTimeout(killTimer);
+      reject(err);
+    });
+    child.on('close', (code) => {
+      clearTimeout(killTimer);
+      resolve({ status: code, stdout, stderr });
+    });
+  }).catch((err) => {
+    console.warn('[flow-test] Go fixture error — skipping full flow tests:', err);
+    return null;
+  });
+
+  if (!result) return null;
 
   if (result.status !== 0) {
     console.warn('[flow-test] Go fixture failed — skipping full flow tests.');
@@ -101,7 +127,7 @@ describe('Full DKG flow (via Go fixture)', () => {
     });
 
     console.log('[flow-test] Running Go fixture to create a finalized round…');
-    fixture = runGoFixture(rpcUrl, addressesFile);
+    fixture = await runGoFixture(rpcUrl, addressesFile);
 
     if (fixture) {
       console.log(`[flow-test] Fixture round: ${fixture.roundId}`);
