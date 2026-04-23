@@ -80,6 +80,7 @@ describe('Monitor utilities', () => {
       seedDelay:                 1,
       registrationDeadlineBlock: currentBlock + 30n,
       contributionDeadlineBlock: currentBlock + 60n,
+      finalizeNotBeforeBlock:    currentBlock + 61n,
       disclosureAllowed:         false,
     });
     await writer.waitForTransaction(hash);
@@ -115,6 +116,7 @@ describe('Monitor utilities', () => {
       seedDelay:                 1,
       registrationDeadlineBlock: currentBlock + 30n,
       contributionDeadlineBlock: currentBlock + 60n,
+      finalizeNotBeforeBlock:    currentBlock + 61n,
       disclosureAllowed:         false,
     });
     await writer.waitForTransaction(createHash);

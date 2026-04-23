@@ -73,6 +73,7 @@ describe('DKGWriter', () => {
       seedDelay:                 1,
       registrationDeadlineBlock: currentBlock + 25n,
       contributionDeadlineBlock: currentBlock + 50n,
+      finalizeNotBeforeBlock:    currentBlock + 51n,
       disclosureAllowed:         false,
     });
     const receipt = await writer.waitForTransaction(hash);
@@ -129,6 +130,7 @@ describe('DKGWriter', () => {
       seedDelay,
       registrationDeadlineBlock: currentBlock + 30n,
       contributionDeadlineBlock: currentBlock + 60n,
+      finalizeNotBeforeBlock:    currentBlock + 61n,
       disclosureAllowed:         false,
     });
     await writer.waitForTransaction(createHash);

@@ -87,6 +87,7 @@ const hash = await writer.createRound(
     seedDelay:                 1,        // blocks before seed is available
     registrationDeadlineBlock: currentBlock + 25n,
     contributionDeadlineBlock: currentBlock + 50n,
+    finalizeNotBeforeBlock:    currentBlock + 51n, // must be > contributionDeadlineBlock
     disclosureAllowed:         false,
   },
   {
@@ -206,9 +207,12 @@ In the DKG protocol the private key is never held by a single party. To decrypt 
                ▼  (registration deadline passes)
 [DKG Node]  submitContribution(...)      ← ZK proof of VSS shares; contract
                │                            adds commitment[0] to collective key
-               ▼  (contribution deadline passes)
-[DKG Node]  finalizeRound(...)           ← ZK proof aggregating all commitments
-               │                            collectivePublicKeyHash emitted
+               ▼  (contribution deadline + finalize-not-before block reached)
+[DKG Node]  finalizeRound(...)           ← ZK proof aggregating all commitments;
+               │                            nodes auto-call this on a deterministic
+               │                            stagger derived from the lottery seed,
+               │                            so only one node submits per round.
+               │                            collectivePublicKeyHash emitted.
                ▼  Round.status = Finalized
 [Anyone]    getCollectivePublicKey(roundId) → {x, y}   ← simple contract read
                │

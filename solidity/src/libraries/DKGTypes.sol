@@ -23,7 +23,8 @@ library DKGTypes {
         uint16 lotteryAlphaBps;            // candidate-pool size = α × committeeSize, α expressed in basis points (10000 = 1.0)
         uint16 seedDelay;                  // blocks between createRound and the block whose hash becomes the seed
         uint64 registrationDeadlineBlock;  // last block in which claimSlot is accepted
-        uint64 contributionDeadlineBlock;
+        uint64 contributionDeadlineBlock;  // last block in which submitContribution is accepted
+        uint64 finalizeNotBeforeBlock;     // earliest block at which finalizeRound can succeed; must be > contributionDeadlineBlock
         bool disclosureAllowed;
     }
 

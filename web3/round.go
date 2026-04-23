@@ -75,6 +75,7 @@ func (c *Contracts) GetRound(ctx context.Context, roundID [12]byte) (RoundView, 
 		SeedDelay                 uint16 `json:"seedDelay"`
 		RegistrationDeadlineBlock uint64 `json:"registrationDeadlineBlock"`
 		ContributionDeadlineBlock uint64 `json:"contributionDeadlineBlock"`
+		FinalizeNotBeforeBlock    uint64 `json:"finalizeNotBeforeBlock"`
 		DisclosureAllowed         bool   `json:"disclosureAllowed"`
 	})
 	if !ok {
@@ -91,6 +92,7 @@ func (c *Contracts) GetRound(ctx context.Context, roundID [12]byte) (RoundView, 
 			SeedDelay:                 policy.SeedDelay,
 			RegistrationDeadlineBlock: policy.RegistrationDeadlineBlock,
 			ContributionDeadlineBlock: policy.ContributionDeadlineBlock,
+			FinalizeNotBeforeBlock:    policy.FinalizeNotBeforeBlock,
 			DisclosureAllowed:         policy.DisclosureAllowed,
 		},
 		Status:                 values[3].(uint8),

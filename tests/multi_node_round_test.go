@@ -36,6 +36,7 @@ func TestCommitteeRoundHappyPath(t *testing.T) {
 		SeedDelay:                 helpers.DefaultSeedDelay,
 		RegistrationDeadlineBlock: head + 25,
 		ContributionDeadlineBlock: head + 50,
+		FinalizeNotBeforeBlock:    head + 51,
 		DisclosureAllowed:         true,
 	}
 
@@ -85,6 +86,8 @@ func TestCommitteeRoundHappyPath(t *testing.T) {
 
 	finalizeOutput, err := helpers.BuildFinalizeRoundOutput(ctx, roundID, 2, 3, recipientIndexes, contributions)
 	c.Assert(err, qt.IsNil)
+
+	c.Assert(helpers.WaitForFinalizeGate(ctx, services, roundID), qt.IsNil)
 
 	auth, err := services.TxManager.NewTransactOpts(ctx)
 	c.Assert(err, qt.IsNil)

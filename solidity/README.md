@@ -9,6 +9,17 @@ This workspace follows the same structure used by `davinci-contracts`.
 - `src/libraries/`: shared types, phase helpers, BRLC helpers
 - `src/verifiers/`: generated or wrapped verifier contracts
 
+## Round policy notes
+
+The `RoundPolicy` struct has a `finalizeNotBeforeBlock` field (uint64) that
+must satisfy `finalizeNotBeforeBlock > contributionDeadlineBlock`. The
+`finalizeRound` function reverts with `FinalizeTooEarly` when called before
+that block — this gives every selected participant a window to submit before
+the contribution set is frozen at finalize time. In production, `davinci-dkg-node`
+instances finalize automatically once the gate opens, using a deterministic
+per-round stagger derived from the lottery seed so only one node submits at
+a time.
+
 ## Common Commands
 
 ```bash

@@ -23,6 +23,7 @@ func TestSaveAndGetRound(t *testing.T) {
 			MinValidContributions:     3,
 			RegistrationDeadlineBlock: 10,
 			ContributionDeadlineBlock: 20,
+			FinalizeNotBeforeBlock:    21,
 		},
 		Phase: types.RoundPhaseRegistration,
 	}
@@ -50,6 +51,7 @@ func TestMarkReadyTracksDistinctParticipants(t *testing.T) {
 			MinValidContributions:     3,
 			RegistrationDeadlineBlock: 10,
 			ContributionDeadlineBlock: 20,
+			FinalizeNotBeforeBlock:    21,
 		},
 		Phase: types.RoundPhaseRegistration,
 	}
@@ -78,6 +80,7 @@ func TestSetSelectedParticipants(t *testing.T) {
 			MinValidContributions:     2,
 			RegistrationDeadlineBlock: 10,
 			ContributionDeadlineBlock: 20,
+			FinalizeNotBeforeBlock:    21,
 		},
 		Phase: types.RoundPhaseRegistration,
 	}
@@ -110,6 +113,7 @@ func TestSaveContribution(t *testing.T) {
 			MinValidContributions:     2,
 			RegistrationDeadlineBlock: 10,
 			ContributionDeadlineBlock: 20,
+			FinalizeNotBeforeBlock:    21,
 		},
 		Phase: types.RoundPhaseContribution,
 	}
@@ -150,6 +154,7 @@ func TestSavePartialDecryptionAndRevealedShare(t *testing.T) {
 			MinValidContributions:     2,
 			RegistrationDeadlineBlock: 10,
 			ContributionDeadlineBlock: 20,
+			FinalizeNotBeforeBlock:    21,
 		},
 		Phase: types.RoundPhaseDecryption,
 	}
@@ -188,6 +193,7 @@ func TestSavePartialDecryption_AllowsDistinctCiphertextsForSameParticipant(t *te
 			MinValidContributions:     2,
 			RegistrationDeadlineBlock: 10,
 			ContributionDeadlineBlock: 20,
+			FinalizeNotBeforeBlock:    21,
 		},
 	}
 	c.Assert(st.SaveRound(round), qt.IsNil)
@@ -231,6 +237,7 @@ func TestPebbleBackedStorageRoundAndContribution(t *testing.T) {
 			MinValidContributions:     2,
 			RegistrationDeadlineBlock: 10,
 			ContributionDeadlineBlock: 20,
+			FinalizeNotBeforeBlock:    21,
 		},
 		Phase: types.RoundPhaseContribution,
 	}

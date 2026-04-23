@@ -24,6 +24,7 @@ import (
 	"github.com/vocdoni/davinci-dkg/crypto/group"
 	dkghash "github.com/vocdoni/davinci-dkg/crypto/hash"
 	"github.com/vocdoni/davinci-dkg/crypto/shareenc"
+	"github.com/vocdoni/davinci-dkg/finalizer"
 	"github.com/vocdoni/davinci-dkg/log"
 	gtypes "github.com/vocdoni/davinci-dkg/solidity/golang-types"
 	nodetypes "github.com/vocdoni/davinci-dkg/types"
@@ -69,6 +70,7 @@ type Node struct {
 	contributed   map[[12]byte]bool
 	decrypted     map[[12]byte]map[uint16]bool
 	combined      map[[12]byte]bool
+	finalized     map[[12]byte]bool // tracks rounds we've already attempted to auto-finalize
 	terminal      map[[12]byte]bool // rounds where no further work is possible
 	privateShares map[[12]byte]*big.Int
 	ownContribs   map[[12]byte]*savedContrib
@@ -120,6 +122,7 @@ func newNode(cfg *Config) (*Node, error) {
 		contributed:   make(map[[12]byte]bool),
 		decrypted:     make(map[[12]byte]map[uint16]bool),
 		combined:      make(map[[12]byte]bool),
+		finalized:     make(map[[12]byte]bool),
 		terminal:      make(map[[12]byte]bool),
 		privateShares: make(map[[12]byte]*big.Int),
 		ownContribs:   make(map[[12]byte]*savedContrib),
@@ -523,7 +526,8 @@ func (n *Node) participate(ctx context.Context, roundID [12]byte, callOpts *bind
 	case 1: // Registration — try to claim a slot in the lottery
 		return n.doClaimSlot(ctx, roundID, round)
 
-	case 2: // Contribution — selected participants submit ZK shares
+	case 2: // Contribution — selected participants submit ZK shares,
+		//                  then race on a deterministic stagger to call finalizeRound.
 		selected, err := n.contracts.SelectedParticipants(ctx, roundID)
 		if err != nil {
 			return fmt.Errorf("selected participants: %w", err)
@@ -532,7 +536,17 @@ func (n *Node) participate(ctx context.Context, roundID [12]byte, callOpts *bind
 		if idx == 0 {
 			return nil // not selected for this round
 		}
-		return n.doContribution(ctx, roundID, idx, round, selected)
+		if err := n.doContribution(ctx, roundID, idx, round, selected); err != nil {
+			return err
+		}
+		// After contributing, every selected participant rotates through a
+		// deterministic finalize stagger so exactly one node submits at a time
+		// (any race-loser sees AlreadyFinalized and stops).
+		if err := n.tryAutoFinalize(ctx, roundID, idx, selected); err != nil {
+			log.Warnw("auto-finalize attempt failed",
+				"round", roundHex(roundID), "err", err)
+		}
+		return nil
 
 	case 3: // Finalized — partial decryptions, then combine
 		selected, err := n.contracts.SelectedParticipants(ctx, roundID)
@@ -840,6 +854,100 @@ func (n *Node) doContribution(
 		gasUsed = rec.GasUsed
 	}
 	log.Infow("contribution submitted", "round", roundHex(roundID), "index", idx, "tx", tx.Hash().Hex(), "gas", gasUsed)
+	return nil
+}
+
+// ---- Auto-finalize (deterministic stagger across selected participants) ----
+
+// staggerBlocks is the per-slot delay between successive finalize attempts in
+// the rotation. With STAGGER_BLOCKS=3, slot 0 attempts at finalizeNotBefore,
+// slot 1 at +3, slot 2 at +6, etc.
+const staggerBlocks = 3
+
+// tryAutoFinalize is called by every selected participant after their
+// contribution lands. It computes the participant's slot in a round-specific
+// rotation derived from the lottery seed, waits until that slot's window
+// opens, then races with the other slots to submit finalizeRound. The first
+// to land wins; everyone else sees AlreadyFinalized and stops.
+//
+// Pre-checks short-circuit cheaply: if the round is already past Contribution
+// or we've already attempted, skip. If the contribution count is below
+// minValidContributions or block.number is below the wait-until block, defer
+// to the next tick.
+func (n *Node) tryAutoFinalize(
+	ctx context.Context,
+	roundID [12]byte,
+	myIdx uint16,
+	selected []common.Address,
+) error {
+	if n.finalized[roundID] {
+		return nil
+	}
+	round, err := n.contracts.GetRound(ctx, roundID)
+	if err != nil {
+		return fmt.Errorf("get round: %w", err)
+	}
+	if round.Status != 2 { // not in Contribution any more — finalized, aborted, etc.
+		n.finalized[roundID] = true
+		return nil
+	}
+	if round.ContributionCount < round.Policy.MinValidContributions {
+		return nil // not enough contributions yet; retry next tick
+	}
+
+	committeeSize := uint16(len(selected))
+	if committeeSize == 0 {
+		return nil
+	}
+	// Derive the rotation start index from the lottery seed so it varies per round.
+	startSlot := new(big.Int).Mod(new(big.Int).SetBytes(round.Seed[:]), big.NewInt(int64(committeeSize))).Uint64()
+	mySlot := (uint64(myIdx-1) - startSlot + uint64(committeeSize)) % uint64(committeeSize)
+	waitUntil := round.Policy.FinalizeNotBeforeBlock + mySlot*staggerBlocks
+
+	head, err := n.contracts.Client().BlockNumber(ctx)
+	if err != nil {
+		return fmt.Errorf("read head: %w", err)
+	}
+	if head < waitUntil {
+		return nil // not our turn yet; another tick will retry
+	}
+
+	// Re-read status one last time to avoid burning a proof for a round
+	// another node has just finalized.
+	round, err = n.contracts.GetRound(ctx, roundID)
+	if err != nil {
+		return fmt.Errorf("re-read round: %w", err)
+	}
+	if round.Status != 2 {
+		n.finalized[roundID] = true
+		return nil
+	}
+
+	log.Infow("auto-finalize: my turn",
+		"round", roundHex(roundID),
+		"myIdx", myIdx,
+		"startSlot", startSlot,
+		"mySlot", mySlot,
+		"head", head,
+		"finalizeNotBefore", round.Policy.FinalizeNotBeforeBlock,
+	)
+
+	committeeSizePolicy := round.Policy.CommitteeSize
+	t := round.Policy.Threshold
+
+	res, err := finalizer.BuildAndSubmit(ctx, n.contracts, n.manager, n.txm, roundID, t, committeeSizePolicy, selected)
+	if err != nil {
+		// Distinguish AlreadyFinalized (lost the race — benign) from real failures.
+		if strings.Contains(err.Error(), "AlreadyFinalized") || strings.Contains(err.Error(), "execution reverted") {
+			log.Infow("auto-finalize: another node beat us", "round", roundHex(roundID), "err", err)
+			n.finalized[roundID] = true
+			return nil
+		}
+		return fmt.Errorf("auto-finalize submit: %w", err)
+	}
+	n.finalized[roundID] = true
+	log.Infow("auto-finalize: round finalized by us",
+		"round", roundHex(roundID), "gas", res.GasUsed)
 	return nil
 }
 

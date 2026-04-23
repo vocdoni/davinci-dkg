@@ -145,6 +145,7 @@ export function Playground() {
     threshold: '2', committeeSize: '3', minValidContributions: '2',
     lotteryAlphaBps: '15000', seedDelay: '2',
     regDeadlineOffset: '10', contribDeadlineOffset: '20',
+    finalizeDelayBlocks: '1',
     disclosureAllowed: false,
   });
 
@@ -250,6 +251,12 @@ export function Playground() {
       const currentBlock = await writer.blockNumber();
       const regOffset = BigInt(form.regDeadlineOffset || '10');
       const contribOffset = BigInt(form.contribDeadlineOffset || '20');
+      // Finalize-not-before is contribDeadline + finalizeDelayBlocks. The
+      // contract requires finalizeNotBefore > contribDeadline, so the minimum
+      // accepted delay is 1.
+      const finalizeDelay = BigInt(form.finalizeDelayBlocks || '1') < 1n
+        ? 1n
+        : BigInt(form.finalizeDelayBlocks || '1');
 
       const policy = {
         threshold: Number(form.threshold),
@@ -259,6 +266,7 @@ export function Playground() {
         seedDelay: Number(form.seedDelay),
         registrationDeadlineBlock: currentBlock + regOffset,
         contributionDeadlineBlock: currentBlock + contribOffset,
+        finalizeNotBeforeBlock: currentBlock + contribOffset + finalizeDelay,
         disclosureAllowed: form.disclosureAllowed,
       };
 
@@ -266,7 +274,8 @@ export function Playground() {
       addLog(`Current block: #${currentBlock}`, 'info');
       addLog(`Policy: threshold=${policy.threshold}  committee=${policy.committeeSize}  `
         + `minContribs=${policy.minValidContributions}  alphaBps=${policy.lotteryAlphaBps}`, 'info');
-      addLog(`Deadlines: reg=#${policy.registrationDeadlineBlock}  contrib=#${policy.contributionDeadlineBlock}`, 'info');
+      addLog(`Deadlines: reg=#${policy.registrationDeadlineBlock}  contrib=#${policy.contributionDeadlineBlock}  `
+        + `finalize≥#${policy.finalizeNotBeforeBlock}`, 'info');
       addLog(`Seed delay: ${policy.seedDelay} blocks  disclosure: ${policy.disclosureAllowed}`, 'info');
       // Build the optional DecryptionPolicy: blank fields collapse to 0 / no-op.
       const dp: DecryptionPolicy = {
@@ -602,6 +611,7 @@ export function Playground() {
                 ['Seed delay (blocks)', 'seedDelay', 'Blocks to wait after creation before claimSlot opens (1–256)'],
                 ['Reg. deadline (+blocks)', 'regDeadlineOffset', 'Blocks from now until registration closes'],
                 ['Contrib. deadline (+blocks)', 'contribDeadlineOffset', 'Blocks from now until contribution phase closes'],
+                ['Finalize delay (+blocks)', 'finalizeDelayBlocks', 'Blocks past contribution deadline before finalizeRound is callable (≥ 1). Gives stragglers a window before the participant set is frozen.'],
               ].map(([label, key, help]) => (
                 <GridItem key={key}>
                   <FormControl>
@@ -733,6 +743,15 @@ export function Playground() {
                     return (
                       <KV label="Contribution closes"
                         value={<Text fontFamily="mono" fontSize="xs" color={color}>{formatBlocksRemaining(delta)} (block #{round.policy.contributionDeadlineBlock.toString()})</Text>} />
+                    );
+                  })()}
+                  {round.status === RoundStatus.Contribution && (() => {
+                    const delta = blocksRemaining(currentBlock, round.policy.finalizeNotBeforeBlock);
+                    const color = delta === null ? 'gray.400' : delta > 0 ? 'gray.400' : 'green.300';
+                    const label = delta !== null && delta <= 0 ? 'Finalize unlocked' : 'Finalize unlocks';
+                    return (
+                      <KV label={label}
+                        value={<Text fontFamily="mono" fontSize="xs" color={color}>{formatBlocksRemaining(delta)} (block #{round.policy.finalizeNotBeforeBlock.toString()})</Text>} />
                     );
                   })()}
                 </Grid>

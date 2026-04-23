@@ -31,6 +31,7 @@ func TestRoundPolicyValidate(t *testing.T) {
 			SeedDelay:                 4,
 			RegistrationDeadlineBlock: 10,
 			ContributionDeadlineBlock: 20,
+			FinalizeNotBeforeBlock:    21,
 			DisclosureAllowed:         true,
 		}
 
@@ -46,6 +47,7 @@ func TestRoundPolicyValidate(t *testing.T) {
 			MinValidContributions:     3,
 			RegistrationDeadlineBlock: 10,
 			ContributionDeadlineBlock: 20,
+			FinalizeNotBeforeBlock:    21,
 			DisclosureAllowed:         true,
 		}
 
@@ -64,6 +66,7 @@ func TestRoundPolicyValidate(t *testing.T) {
 			SeedDelay:                 4,
 			RegistrationDeadlineBlock: 20,
 			ContributionDeadlineBlock: 10,
+			FinalizeNotBeforeBlock:    11,
 			DisclosureAllowed:         true,
 		}
 

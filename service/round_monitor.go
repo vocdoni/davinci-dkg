@@ -51,6 +51,7 @@ func (m *RoundMonitor) SyncRound(ctx context.Context, roundID [12]byte) error {
 			SeedDelay:                 roundView.Policy.SeedDelay,
 			RegistrationDeadlineBlock: roundView.Policy.RegistrationDeadlineBlock,
 			ContributionDeadlineBlock: roundView.Policy.ContributionDeadlineBlock,
+			FinalizeNotBeforeBlock:    roundView.Policy.FinalizeNotBeforeBlock,
 			DisclosureAllowed:         roundView.Policy.DisclosureAllowed,
 		},
 		Phase:                mapRoundPhase(roundView.Status),

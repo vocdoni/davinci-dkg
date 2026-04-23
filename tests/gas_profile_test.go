@@ -34,6 +34,7 @@ func TestGasProfiles(t *testing.T) {
 		SeedDelay:                 helpers.DefaultSeedDelay,
 		RegistrationDeadlineBlock: head + 25,
 		ContributionDeadlineBlock: head + 50,
+		FinalizeNotBeforeBlock:    head + 51,
 		DisclosureAllowed:         true,
 	}
 
@@ -96,6 +97,7 @@ func createRoundForGasProfile(t *testing.T, ctx context.Context, policy types.Ro
 		policy.SeedDelay,
 		policy.RegistrationDeadlineBlock,
 		policy.ContributionDeadlineBlock,
+		policy.FinalizeNotBeforeBlock,
 		policy.DisclosureAllowed,
 		helpers.ZeroDecryptionPolicy(),
 	)
@@ -165,6 +167,8 @@ func finalizeForGasProfile(t *testing.T, ctx context.Context, roundID [12]byte) 
 
 	output, err := helpers.BuildFinalizeRoundOutput(ctx, roundID, 1, 1, []uint16{1}, [][]*big.Int{{big.NewInt(7)}})
 	c.Assert(err, qt.IsNil)
+
+	c.Assert(helpers.WaitForFinalizeGate(ctx, services, roundID), qt.IsNil)
 
 	auth, err := services.TxManager.NewTransactOpts(ctx)
 	c.Assert(err, qt.IsNil)

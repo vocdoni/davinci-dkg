@@ -204,6 +204,12 @@ contract DKGManager is IDKGManager {
     ///                                    may reroll the seed.
     /// @param  contributionDeadlineBlock  Block height after which the round
     ///                                    may be aborted for inactivity.
+    /// @param  finalizeNotBeforeBlock     Earliest block at which finalizeRound
+    ///                                    can succeed. Must be strictly greater
+    ///                                    than contributionDeadlineBlock so all
+    ///                                    selected participants have a window
+    ///                                    to submit contributions before the
+    ///                                    finalize set is closed.
     /// @param  disclosureAllowed          When true, enables the reveal-share
     ///                                    reconstruction phase on this round.
     /// @return                            The 12-byte round identifier
@@ -216,6 +222,7 @@ contract DKGManager is IDKGManager {
         uint16 seedDelay,
         uint64 registrationDeadlineBlock,
         uint64 contributionDeadlineBlock,
+        uint64 finalizeNotBeforeBlock,
         bool disclosureAllowed,
         DKGTypes.DecryptionPolicy calldata decryptionPolicy
     ) external returns (bytes12) {
@@ -225,6 +232,7 @@ contract DKGManager is IDKGManager {
                 || lotteryAlphaBps < 10000 || seedDelay == 0 || seedDelay > 256
                 || registrationDeadlineBlock <= uint64(block.number) + uint64(seedDelay)
                 || contributionDeadlineBlock <= registrationDeadlineBlock
+                || finalizeNotBeforeBlock <= contributionDeadlineBlock
         ) revert InvalidPolicy();
 
         // DecryptionPolicy sanity: if both directions of the same clock are set,
@@ -289,6 +297,7 @@ contract DKGManager is IDKGManager {
                 seedDelay: seedDelay,
                 registrationDeadlineBlock: registrationDeadlineBlock,
                 contributionDeadlineBlock: contributionDeadlineBlock,
+                finalizeNotBeforeBlock: finalizeNotBeforeBlock,
                 disclosureAllowed: disclosureAllowed
             }),
             decryptionPolicy: decryptionPolicy,
@@ -593,6 +602,9 @@ contract DKGManager is IDKGManager {
         if (round.organizer == address(0)) revert InvalidRound();
         if (round.status == DKGTypes.RoundStatus.Finalized) revert AlreadyFinalized();
         if (round.status != DKGTypes.RoundStatus.Contribution) revert InvalidPhase();
+        // finalizeNotBeforeBlock gate — semantically a "phase not yet open"
+        // condition, so we reuse InvalidPhase to keep the contract small.
+        if (block.number < uint256(round.policy.finalizeNotBeforeBlock)) revert InvalidPhase();
         if (round.contributionCount < round.policy.minValidContributions) revert InsufficientContributions();
         if (
             aggregateCommitmentsHash == bytes32(0) || collectivePublicKeyHash == bytes32(0)

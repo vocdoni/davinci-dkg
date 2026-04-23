@@ -117,6 +117,11 @@ func CreateFinalizedSingleParticipantRound(
 		return nil, err
 	}
 
+	// Wait until block.number >= finalizeNotBeforeBlock so the on-chain gate is open.
+	if err := WaitForFinalizeGate(ctx, services, roundID); err != nil {
+		return nil, err
+	}
+
 	auth, err = services.TxManager.NewTransactOpts(ctx)
 	if err != nil {
 		return nil, err

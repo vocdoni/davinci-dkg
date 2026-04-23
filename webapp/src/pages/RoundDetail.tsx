@@ -194,6 +194,13 @@ export function RoundDetail() {
             activeWhen={2}
             status={Number(r.status)}
           />
+          <DeadlineField
+            label="Finalize unlocks at"
+            deadline={policy.finalizeNotBeforeBlock}
+            currentBlock={blockQ.data}
+            activeWhen={2}
+            status={Number(r.status)}
+          />
           <Field label="Disclosure">
             {policy.disclosureAllowed ? (
               <Tag size="sm" colorScheme="green">

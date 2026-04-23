@@ -86,6 +86,7 @@ func CreateSDKTestFixture(
 		MinValidContributions:     1,
 		RegistrationDeadlineBlock: head + 25,
 		ContributionDeadlineBlock: head + 50,
+		FinalizeNotBeforeBlock:    head + 51,
 		DisclosureAllowed:         false,
 	}
 	coefficients := []*big.Int{big.NewInt(11)}

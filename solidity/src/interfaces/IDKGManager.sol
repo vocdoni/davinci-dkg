@@ -110,6 +110,7 @@ interface IDKGManager {
         uint16 seedDelay,
         uint64 registrationDeadlineBlock,
         uint64 contributionDeadlineBlock,
+        uint64 finalizeNotBeforeBlock,
         bool disclosureAllowed,
         DKGTypes.DecryptionPolicy calldata decryptionPolicy
     ) external returns (bytes12);

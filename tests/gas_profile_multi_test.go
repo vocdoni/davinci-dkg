@@ -133,6 +133,7 @@ func benchmarkGasForN(t *testing.T, n, threshold int) gasProfileResult {
 		SeedDelay:                 helpers.DefaultSeedDelay,
 		RegistrationDeadlineBlock: head + 50,
 		ContributionDeadlineBlock: head + 200,
+		FinalizeNotBeforeBlock:    head + 201,
 		DisclosureAllowed:         false,
 	}
 	roundID, createGas := createRoundMeasured(t, ctx, policy)
@@ -260,6 +261,7 @@ func createRoundMeasured(t *testing.T, ctx context.Context, policy types.RoundPo
 		policy.Threshold, policy.CommitteeSize, policy.MinValidContributions,
 		policy.LotteryAlphaBps, policy.SeedDelay,
 		policy.RegistrationDeadlineBlock, policy.ContributionDeadlineBlock,
+		policy.FinalizeNotBeforeBlock,
 		policy.DisclosureAllowed,
 		helpers.ZeroDecryptionPolicy(),
 	)
@@ -273,6 +275,7 @@ func createRoundMeasured(t *testing.T, ctx context.Context, policy types.RoundPo
 func finalizeRoundMeasured(t *testing.T, ctx context.Context, roundID [12]byte, output *helpers.FinalizeRoundOutput) uint64 {
 	t.Helper()
 	c := qt.New(t)
+	c.Assert(helpers.WaitForFinalizeGate(ctx, services, roundID), qt.IsNil)
 	auth, err := services.TxManager.NewTransactOpts(ctx)
 	c.Assert(err, qt.IsNil)
 	tx, err := services.Manager.FinalizeRound(auth, roundID,

@@ -219,6 +219,7 @@ func testRPCServer() *httptest.Server {
 					SeedDelay                 uint16 `json:"seedDelay"`
 					RegistrationDeadlineBlock uint64 `json:"registrationDeadlineBlock"`
 					ContributionDeadlineBlock uint64 `json:"contributionDeadlineBlock"`
+					FinalizeNotBeforeBlock    uint64 `json:"finalizeNotBeforeBlock"`
 					DisclosureAllowed         bool   `json:"disclosureAllowed"`
 				}
 				type dpTuple struct {
@@ -239,6 +240,7 @@ func testRPCServer() *httptest.Server {
 						SeedDelay:                 4,
 						RegistrationDeadlineBlock: 10,
 						ContributionDeadlineBlock: 20,
+						FinalizeNotBeforeBlock:    21,
 						DisclosureAllowed:         false,
 					},
 					dpTuple{},                  // decryptionPolicy — all zero (no gate)

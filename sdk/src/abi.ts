@@ -15,6 +15,7 @@ export const dkgManagerAbi = [
       { name: 'seedDelay', type: 'uint16' },
       { name: 'registrationDeadlineBlock', type: 'uint64' },
       { name: 'contributionDeadlineBlock', type: 'uint64' },
+      { name: 'finalizeNotBeforeBlock', type: 'uint64' },
       { name: 'disclosureAllowed', type: 'bool' },
       {
         name: 'decryptionPolicy',
@@ -222,6 +223,7 @@ export const dkgManagerAbi = [
               { name: 'seedDelay', type: 'uint16' },
               { name: 'registrationDeadlineBlock', type: 'uint64' },
               { name: 'contributionDeadlineBlock', type: 'uint64' },
+              { name: 'finalizeNotBeforeBlock', type: 'uint64' },
               { name: 'disclosureAllowed', type: 'bool' },
             ],
           },

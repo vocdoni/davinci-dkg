@@ -28,6 +28,7 @@ func TestSecretDisclosureHappyPath(t *testing.T) {
 		MinValidContributions:     1,
 		RegistrationDeadlineBlock: head + 25,
 		ContributionDeadlineBlock: head + 50,
+		FinalizeNotBeforeBlock:    head + 51,
 		DisclosureAllowed:         true,
 	}
 	coefficients := []*big.Int{big.NewInt(13)}

@@ -61,6 +61,7 @@ func CreateRound(ctx context.Context, services *TestServices, policy types.Round
 		policy.SeedDelay,
 		policy.RegistrationDeadlineBlock,
 		policy.ContributionDeadlineBlock,
+		policy.FinalizeNotBeforeBlock,
 		policy.DisclosureAllowed,
 		golangtypes.DKGTypesDecryptionPolicy{
 			OwnerOnly:          policy.DecryptionPolicy.OwnerOnly,

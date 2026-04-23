@@ -34,9 +34,9 @@ import (
 	ccommon "github.com/vocdoni/davinci-dkg/circuits/common"
 	"github.com/vocdoni/davinci-dkg/circuits/contribution"
 	"github.com/vocdoni/davinci-dkg/circuits/decryptcombine"
-	"github.com/vocdoni/davinci-dkg/circuits/finalize"
 	"github.com/vocdoni/davinci-dkg/config"
 	"github.com/vocdoni/davinci-dkg/crypto/group"
+	"github.com/vocdoni/davinci-dkg/finalizer"
 	"github.com/vocdoni/davinci-dkg/log"
 	gtypes "github.com/vocdoni/davinci-dkg/solidity/golang-types"
 	nodetypes "github.com/vocdoni/davinci-dkg/types"
@@ -72,6 +72,7 @@ type cfg struct {
 	WaitDecrypt                time.Duration
 	ReadinessDeadlineBlocks    int
 	ContributionDeadlineBlocks int
+	FinalizeDelayBlocks        int
 	DisclosureAllowed          bool
 }
 
@@ -90,6 +91,7 @@ func loadCfg() (*cfg, error) {
 	fs.Duration("wait-decrypt", 20*time.Minute, "timeout for partial-decryption phase")
 	fs.Int("readiness-deadline-blocks", 30, "block offset from current head for readiness deadline")
 	fs.Int("contribution-deadline-blocks", 600, "block offset from current head for contribution deadline (~20 min at 2s blocks)")
+	fs.Int("finalize-delay-blocks", 1, "blocks past contributionDeadline before finalizeRound is allowed (must be ≥ 1)")
 	fs.Bool("disclosure-allowed", false, "enable the reveal-share disclosure/reconstruction phase on the round")
 
 	if err := fs.Parse(os.Args[1:]); err != nil {
@@ -116,6 +118,7 @@ func loadCfg() (*cfg, error) {
 		WaitDecrypt:                v.GetDuration("wait-decrypt"),
 		ReadinessDeadlineBlocks:    v.GetInt("readiness-deadline-blocks"),
 		ContributionDeadlineBlocks: v.GetInt("contribution-deadline-blocks"),
+		FinalizeDelayBlocks:        v.GetInt("finalize-delay-blocks"),
 		DisclosureAllowed:          v.GetBool("disclosure-allowed"),
 	}
 	if c.PrivKey == "" {
@@ -215,10 +218,15 @@ func runScenario(c *cfg) error {
 	// committeeSize to call claimSlot fill the committee.
 	const lotteryAlphaBps uint16 = 15000 // α = 1.5
 	const seedDelay uint16 = 1           // 1 block gap between createRound and seedBlock
+	finalizeDelay := c.FinalizeDelayBlocks
+	if finalizeDelay < 1 {
+		finalizeDelay = 1
+	}
 	tx, err := manager.CreateRound(auth, t, n, t,
 		lotteryAlphaBps, seedDelay,
 		head+uint64(c.ReadinessDeadlineBlocks),
 		head+uint64(c.ContributionDeadlineBlocks),
+		head+uint64(c.ContributionDeadlineBlocks)+uint64(finalizeDelay),
 		c.DisclosureAllowed,
 		emptyDecryptionPolicy(),
 	)
@@ -280,6 +288,22 @@ func runScenario(c *cfg) error {
 	}
 
 	// ── 5. finalize round ─────────────────────────────────────────────────────
+	// Wait until block.number >= finalizeNotBeforeBlock so the on-chain gate is open.
+	{
+		r, err := contracts.GetRound(ctx, roundID)
+		if err != nil {
+			return fmt.Errorf("read round before finalize: %w", err)
+		}
+		if err := poll(c.WaitContrib, "finalize gate", func() (bool, error) {
+			head, err := contracts.Client().BlockNumber(ctx)
+			if err != nil {
+				return false, err
+			}
+			return head >= r.Policy.FinalizeNotBeforeBlock, nil
+		}); err != nil {
+			return err
+		}
+	}
 	log.Infow("finalizing round...")
 	shareCommitments, err := finalizeRound(ctx, contracts, manager, txm, roundID, t, n, committee)
 	if err != nil {
@@ -392,8 +416,8 @@ func runScenario(c *cfg) error {
 
 // ── finalize ─────────────────────────────────────────────────────────────────
 
-// finalizeRound builds and submits the finalize proof from on-chain commitment
-// points (public data fetched from contribution calldata).
+// finalizeRound is a thin wrapper around the shared finalizer.BuildAndSubmit
+// helper, kept for compatibility with existing call sites.
 func finalizeRound(
 	ctx context.Context,
 	c *web3.Contracts,
@@ -403,80 +427,11 @@ func finalizeRound(
 	t, n uint16,
 	committee []common.Address,
 ) ([]nodetypes.CurvePoint, error) {
-	callOpts := &bind.CallOpts{Context: ctx}
-
-	acceptedIdxs := make([]uint16, 0, n)
-	allPoints := make([][]nodetypes.CurvePoint, 0, n)
-
-	for i, addr := range committee {
-		rec, err := m.GetContribution(callOpts, roundID, addr)
-		if err != nil || !rec.Accepted {
-			continue
-		}
-		pts, err := commitmentPointsFromCalldata(ctx, c, addr, t)
-		if err != nil {
-			return nil, fmt.Errorf("commitment points for %s: %w", addr, err)
-		}
-		acceptedIdxs = append(acceptedIdxs, uint16(i+1))
-		allPoints = append(allPoints, pts)
-	}
-	if len(acceptedIdxs) < int(t) {
-		return nil, fmt.Errorf("only %d/%d accepted contributions", len(acceptedIdxs), t)
-	}
-
-	roundHash := roundScalar(roundID)
-	asgn := finalize.CommitmentPointsAssignment{
-		RoundHash:          roundHash,
-		Threshold:          t,
-		CommitteeSize:      n,
-		ParticipantIndexes: acceptedIdxs,
-		ContributionPoints: allPoints,
-	}
-	witness, pi, err := finalize.BuildWitnessFromCommitmentPoints(asgn)
-	if err != nil {
-		return nil, fmt.Errorf("build finalize witness: %w", err)
-	}
-	runtime, err := finalize.Artifacts.LoadOrSetupForCircuit(ctx, &finalize.FinalizeCircuit{})
-	if err != nil {
-		return nil, fmt.Errorf("load finalize circuit: %w", err)
-	}
-	proof, err := runtime.ProveAndVerify(witness)
-	if err != nil {
-		return nil, fmt.Errorf("prove finalize: %w", err)
-	}
-	proofBytes, err := marshalSolidityProof(proof)
+	res, err := finalizer.BuildAndSubmit(ctx, c, m, txm, roundID, t, n, committee)
 	if err != nil {
 		return nil, err
 	}
-	inputBytes, err := encodePublicWitness(pi.PublicWitness())
-	if err != nil {
-		return nil, err
-	}
-	transcriptBytes, err := encodeWords(pi.TranscriptScalars()...)
-	if err != nil {
-		return nil, err
-	}
-
-	auth, err := txm.NewTransactOpts(ctx)
-	if err != nil {
-		return nil, err
-	}
-	tx, err := m.FinalizeRound(auth, roundID,
-		common.BigToHash(pi.AggregateHash),
-		common.BigToHash(pi.CollectivePublicKey),
-		common.BigToHash(pi.ShareCommitmentHash),
-		transcriptBytes, proofBytes, inputBytes,
-	)
-	if err != nil {
-		return nil, err
-	}
-	if err := txm.WaitTxByHash(tx.Hash(), 120*time.Second); err != nil {
-		return nil, err
-	}
-	if receipt, err := c.Client().TransactionReceipt(ctx, tx.Hash()); err == nil {
-		log.Infow("finalizeRound tx mined", "tx", tx.Hash().Hex(), "gas", receipt.GasUsed)
-	}
-	return pi.ShareCommitments, nil
+	return res.ShareCommitments, nil
 }
 
 // commitmentPointsFromCalldata scans recent blocks for the submitContribution

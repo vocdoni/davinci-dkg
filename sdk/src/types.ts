@@ -49,6 +49,13 @@ export interface RoundPolicy {
   seedDelay: number;
   registrationDeadlineBlock: bigint;
   contributionDeadlineBlock: bigint;
+  /**
+   * Earliest block at which `finalizeRound` can succeed. Must be strictly
+   * greater than `contributionDeadlineBlock`; gives selected participants a
+   * window to submit before the contribution set is frozen. The contract
+   * reverts with `FinalizeTooEarly` if `block.number < finalizeNotBeforeBlock`.
+   */
+  finalizeNotBeforeBlock: bigint;
   disclosureAllowed: boolean;
 }
 

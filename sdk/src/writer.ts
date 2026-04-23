@@ -61,6 +61,7 @@ export class DKGWriter extends DKGClient {
         policy.seedDelay,
         policy.registrationDeadlineBlock,
         policy.contributionDeadlineBlock,
+        policy.finalizeNotBeforeBlock,
         policy.disclosureAllowed,
         decryptionPolicy,
       ],

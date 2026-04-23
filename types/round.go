@@ -46,8 +46,13 @@ type RoundPolicy struct {
 	SeedDelay                 uint16
 	RegistrationDeadlineBlock uint64
 	ContributionDeadlineBlock uint64
-	DisclosureAllowed         bool
-	DecryptionPolicy          DecryptionPolicy
+	// FinalizeNotBeforeBlock is the earliest block at which finalizeRound can
+	// succeed. Must be strictly greater than ContributionDeadlineBlock; allows
+	// every selected participant time to submit before the contribution set is
+	// frozen.
+	FinalizeNotBeforeBlock uint64
+	DisclosureAllowed      bool
+	DecryptionPolicy       DecryptionPolicy
 }
 
 // DecryptionPolicy mirrors the on-chain DKGTypes.DecryptionPolicy struct and
@@ -84,6 +89,9 @@ func (p RoundPolicy) Validate() error {
 	}
 	if p.ContributionDeadlineBlock <= p.RegistrationDeadlineBlock {
 		return fmt.Errorf("contribution deadline must be after registration deadline")
+	}
+	if p.FinalizeNotBeforeBlock <= p.ContributionDeadlineBlock {
+		return fmt.Errorf("finalize-not-before block must be after contribution deadline")
 	}
 	return nil
 }

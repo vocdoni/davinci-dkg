@@ -72,6 +72,7 @@ contract DKGManagerTest is Test, TestHelpers {
             1,                          // seedDelay
             uint64(block.number + 5),  // registrationDeadlineBlock
             uint64(block.number + 20), // contributionDeadlineBlock
+            uint64(block.number + 21), // finalizeNotBeforeBlock
             disclosureAllowed,
             _emptyDecryptionPolicy()
         );
@@ -83,6 +84,14 @@ contract DKGManagerTest is Test, TestHelpers {
         manager.claimSlot(roundId);
         vm.prank(address(0xBEEF));
         manager.claimSlot(roundId);
+    }
+
+    /// @dev Advance to a block at or after `finalizeNotBeforeBlock` for the round.
+    function _advanceToFinalize(bytes12 roundId) internal {
+        IDKGManager.Round memory r = manager.getRound(roundId);
+        if (block.number < uint256(r.policy.finalizeNotBeforeBlock)) {
+            vm.roll(uint256(r.policy.finalizeNotBeforeBlock));
+        }
     }
 
     function createFinalizedRound() internal returns (bytes12 roundId) {
@@ -122,6 +131,7 @@ contract DKGManagerTest is Test, TestHelpers {
             )
         );
 
+        _advanceToFinalize(roundId);
         manager.finalizeRound(
             roundId,
             FINALIZED_AGGREGATE_COMMITMENTS_HASH,
@@ -179,6 +189,7 @@ contract DKGManagerTest is Test, TestHelpers {
             )
         );
 
+        _advanceToFinalize(roundId);
         manager.finalizeRound(
             roundId,
             FINALIZED_AGGREGATE_COMMITMENTS_HASH,
@@ -200,7 +211,7 @@ contract DKGManagerTest is Test, TestHelpers {
 
     function test_CreateRound_PersistsPolicy() public {
         // committeeSize=2, registered=2, α=1.0 → all eligible
-        bytes12 roundId = manager.createRound(2, 2, 2, 10000, 1, uint64(block.number + 5), uint64(block.number + 10), false, _emptyDecryptionPolicy());
+        bytes12 roundId = manager.createRound(2, 2, 2, 10000, 1, uint64(block.number + 5), uint64(block.number + 10), uint64(block.number + 11), false, _emptyDecryptionPolicy());
 
         IDKGManager.Round memory round = manager.getRound(roundId);
 
@@ -212,7 +223,7 @@ contract DKGManagerTest is Test, TestHelpers {
 
     function test_ClaimSlot_RejectsBeforeSeedReady() public {
         bytes12 roundId =
-            manager.createRound(2, 2, 2, 10000, 1, uint64(block.number + 5), uint64(block.number + 10), false, _emptyDecryptionPolicy());
+            manager.createRound(2, 2, 2, 10000, 1, uint64(block.number + 5), uint64(block.number + 10), uint64(block.number + 11), false, _emptyDecryptionPolicy());
         // Don't roll forward — seed block has not been mined yet.
         vm.expectRevert(IDKGManager.SeedNotReady.selector);
         manager.claimSlot(roundId);
@@ -375,6 +386,7 @@ contract DKGManagerTest is Test, TestHelpers {
             contributionInput(roundId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH, 0, 1)
         );
 
+        _advanceToFinalize(roundId);
         vm.expectRevert(IDKGManager.InsufficientContributions.selector);
         manager.finalizeRound(
             roundId,
@@ -392,6 +404,91 @@ contract DKGManagerTest is Test, TestHelpers {
                 FINALIZED_COLLECTIVE_PUBLIC_KEY_HASH,
                 FINALIZED_SHARE_COMMITMENT_HASH
             )
+        );
+    }
+
+    function test_FinalizeRound_RejectsBeforeFinalizeNotBeforeBlock() public {
+        bytes12 roundId = createSelectedRound();
+
+        manager.submitContribution(
+            roundId, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH,
+            0, 1, contributionTranscript(2), contributionProof(),
+            contributionInput(roundId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH, 0, 1)
+        );
+        vm.prank(address(0xBEEF));
+        manager.submitContribution(
+            roundId, 2,
+            bytes32(uint256(CONTRIBUTION_COMMITMENTS_HASH) + 1),
+            bytes32(uint256(CONTRIBUTION_ENCRYPTED_SHARES_HASH) + 1),
+            0, 1, contributionTranscript(2), contributionProof(),
+            contributionInput(
+                roundId, 2, 2, 2,
+                bytes32(uint256(CONTRIBUTION_COMMITMENTS_HASH) + 1),
+                bytes32(uint256(CONTRIBUTION_ENCRYPTED_SHARES_HASH) + 1),
+                0, 1
+            )
+        );
+
+        // Both contributions in, threshold met — but finalizeNotBeforeBlock
+        // not yet reached. Must revert with InvalidPhase (the gate reuses this
+        // selector to keep the contract under the EIP-170 size limit).
+        IDKGManager.Round memory r = manager.getRound(roundId);
+        assertTrue(block.number < uint256(r.policy.finalizeNotBeforeBlock));
+
+        vm.expectRevert(IDKGManager.InvalidPhase.selector);
+        manager.finalizeRound(
+            roundId,
+            FINALIZED_AGGREGATE_COMMITMENTS_HASH,
+            FINALIZED_COLLECTIVE_PUBLIC_KEY_HASH,
+            FINALIZED_SHARE_COMMITMENT_HASH,
+            finalizeTranscript(2), finalizeProof(),
+            finalizeInput(
+                roundId, 2, 2, 2,
+                FINALIZED_AGGREGATE_COMMITMENTS_HASH,
+                FINALIZED_COLLECTIVE_PUBLIC_KEY_HASH,
+                FINALIZED_SHARE_COMMITMENT_HASH
+            )
+        );
+
+        // Roll exactly to finalizeNotBeforeBlock — should succeed.
+        vm.roll(uint256(r.policy.finalizeNotBeforeBlock));
+        manager.finalizeRound(
+            roundId,
+            FINALIZED_AGGREGATE_COMMITMENTS_HASH,
+            FINALIZED_COLLECTIVE_PUBLIC_KEY_HASH,
+            FINALIZED_SHARE_COMMITMENT_HASH,
+            finalizeTranscript(2), finalizeProof(),
+            finalizeInput(
+                roundId, 2, 2, 2,
+                FINALIZED_AGGREGATE_COMMITMENTS_HASH,
+                FINALIZED_COLLECTIVE_PUBLIC_KEY_HASH,
+                FINALIZED_SHARE_COMMITMENT_HASH
+            )
+        );
+        IDKGManager.Round memory after_ = manager.getRound(roundId);
+        assertEq(uint256(after_.status), uint256(DKGTypes.RoundStatus.Finalized));
+    }
+
+    function test_CreateRound_RejectsFinalizeNotBeforeAtOrBelowContribution() public {
+        // finalizeNotBeforeBlock == contributionDeadlineBlock → revert
+        vm.expectRevert(IDKGManager.InvalidPolicy.selector);
+        manager.createRound(
+            2, 2, 2, 10000, 1,
+            uint64(block.number + 5),
+            uint64(block.number + 10),
+            uint64(block.number + 10),
+            false,
+            _emptyDecryptionPolicy()
+        );
+        // finalizeNotBeforeBlock < contributionDeadlineBlock → revert
+        vm.expectRevert(IDKGManager.InvalidPolicy.selector);
+        manager.createRound(
+            2, 2, 2, 10000, 1,
+            uint64(block.number + 5),
+            uint64(block.number + 10),
+            uint64(block.number + 9),
+            false,
+            _emptyDecryptionPolicy()
         );
     }
 
@@ -743,6 +840,7 @@ contract DKGManagerTest is Test, TestHelpers {
             1,
             uint64(block.number + 5),
             uint64(block.number + 20),
+            uint64(block.number + 21),
             false,
             _emptyDecryptionPolicy()
         );
@@ -785,7 +883,7 @@ contract DKGManagerTest is Test, TestHelpers {
     }
 
     function test_AbortRound_PersistsAbortedStatus() public {
-        bytes12 roundId = manager.createRound(2, 2, 2, 10000, 1, uint64(block.number + 5), uint64(block.number + 10), false, _emptyDecryptionPolicy());
+        bytes12 roundId = manager.createRound(2, 2, 2, 10000, 1, uint64(block.number + 5), uint64(block.number + 10), uint64(block.number + 11), false, _emptyDecryptionPolicy());
 
         manager.abortRound(roundId);
 
@@ -809,6 +907,7 @@ contract DKGManagerTest is Test, TestHelpers {
             2, 2, 2, 10000, 1,
             uint64(block.number + 3),   // registrationDeadline
             uint64(block.number + 100), // contributionDeadline
+            uint64(block.number + 101), // finalizeNotBeforeBlock
             false,
             _emptyDecryptionPolicy()
         );
@@ -836,6 +935,7 @@ contract DKGManagerTest is Test, TestHelpers {
             2, 2, 2, 10000, 1,
             base + 3,  // registrationDeadline
             base + 4,  // contributionDeadline — very tight
+            base + 5,  // finalizeNotBeforeBlock
             false,
             _emptyDecryptionPolicy()
         );
@@ -1055,6 +1155,7 @@ contract DKGManagerTest is Test, TestHelpers {
             2, 2, 2, 10000, 1,
             uint64(block.number + 5),
             uint64(block.number + 20),
+            uint64(block.number + 21),
             false,
             bad
         );
@@ -1091,6 +1192,7 @@ contract DKGManagerTest is Test, TestHelpers {
             2, 2, 2, 10000, 1,
             uint64(block.number + 5),
             uint64(block.number + 20),
+            uint64(block.number + 21),
             false,
             dp
         );
@@ -1115,6 +1217,7 @@ contract DKGManagerTest is Test, TestHelpers {
                 0, 1
             )
         );
+        _advanceToFinalize(roundId);
         manager.finalizeRound(
             roundId,
             FINALIZED_AGGREGATE_COMMITMENTS_HASH,

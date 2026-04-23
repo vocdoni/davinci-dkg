@@ -28,6 +28,7 @@ func TestContributionRejectsMalformedProof(t *testing.T) {
 		MinValidContributions:     1,
 		RegistrationDeadlineBlock: head + 25,
 		ContributionDeadlineBlock: head + 50,
+		FinalizeNotBeforeBlock:    head + 51,
 		DisclosureAllowed:         false,
 	}
 
@@ -59,6 +60,83 @@ func TestContributionRejectsMalformedProof(t *testing.T) {
 	}
 }
 
+// TestFinalizeRejectsBeforeFinalizeNotBeforeBlock verifies the on-chain
+// finalize gate. With contributions in place AND threshold met, finalizeRound
+// must still revert until block.number reaches policy.finalizeNotBeforeBlock.
+func TestFinalizeRejectsBeforeFinalizeNotBeforeBlock(t *testing.T) {
+	if !helpers.IsIntegrationEnabled() {
+		t.Skip("integration tests disabled")
+	}
+
+	c := qt.New(t)
+	ctx, cancel := context.WithTimeout(context.Background(), helpers.MaxTestTimeout(t))
+	defer cancel()
+
+	head, err := services.Contracts.Client().BlockNumber(ctx)
+	c.Assert(err, qt.IsNil)
+
+	// Wide gap so the gate is comfortably in the future when we attempt
+	// finalize the first time.
+	policy := types.RoundPolicy{
+		Threshold:                 1,
+		CommitteeSize:             1,
+		MinValidContributions:     1,
+		RegistrationDeadlineBlock: head + 25,
+		ContributionDeadlineBlock: head + 50,
+		FinalizeNotBeforeBlock:    head + 200,
+		DisclosureAllowed:         false,
+	}
+	roundID, err := helpers.CreateContributionRound(ctx, services, policy)
+	c.Assert(err, qt.IsNil)
+
+	// Submit a single accepted contribution so the threshold is met.
+	submission, err := helpers.BuildContributionSubmission(ctx, services, roundID, 1, 1, 1, []*big.Int{big.NewInt(11)}, []uint16{1})
+	c.Assert(err, qt.IsNil)
+	auth, err := services.TxManager.NewTransactOpts(ctx)
+	c.Assert(err, qt.IsNil)
+	tx, err := services.Manager.SubmitContribution(
+		auth, roundID, 1,
+		submission.CommitmentsHash, submission.EncryptedSharesHash,
+		submission.Commitment0X, submission.Commitment0Y,
+		submission.Transcript, submission.Proof, submission.Input,
+	)
+	c.Assert(err, qt.IsNil)
+	c.Assert(services.TxManager.WaitTxByHash(tx.Hash(), helpers.DefaultTxTimeout), qt.IsNil)
+
+	// Try to finalize NOW, before reaching finalizeNotBeforeBlock.
+	output, err := helpers.BuildFinalizeRoundOutput(ctx, roundID, 1, 1, []uint16{1}, [][]*big.Int{{big.NewInt(11)}})
+	c.Assert(err, qt.IsNil)
+	authEarly, err := services.TxManager.NewTransactOpts(ctx)
+	c.Assert(err, qt.IsNil)
+	earlyTx, err := services.Manager.FinalizeRound(
+		authEarly, roundID,
+		output.AggregateCommitmentsHash, output.CollectivePublicKeyHash, output.ShareCommitmentHash,
+		output.Transcript, output.Proof, output.Input,
+	)
+	if err == nil {
+		c.Assert(services.TxManager.WaitTxByHash(earlyTx.Hash(), helpers.DefaultTxTimeout), qt.IsNotNil,
+			qt.Commentf("finalize should have reverted because finalizeNotBeforeBlock not reached"))
+	} else {
+		c.Assert(err.Error(), qt.Contains, "execution reverted")
+	}
+
+	// Roll past the gate and finalize successfully.
+	c.Assert(helpers.WaitForFinalizeGate(ctx, services, roundID), qt.IsNil)
+	authLate, err := services.TxManager.NewTransactOpts(ctx)
+	c.Assert(err, qt.IsNil)
+	lateTx, err := services.Manager.FinalizeRound(
+		authLate, roundID,
+		output.AggregateCommitmentsHash, output.CollectivePublicKeyHash, output.ShareCommitmentHash,
+		output.Transcript, output.Proof, output.Input,
+	)
+	c.Assert(err, qt.IsNil)
+	c.Assert(services.TxManager.WaitTxByHash(lateTx.Hash(), helpers.DefaultTxTimeout), qt.IsNil)
+
+	round, err := services.Contracts.GetRound(ctx, roundID)
+	c.Assert(err, qt.IsNil)
+	c.Assert(round.Status, qt.Equals, uint8(3))
+}
+
 func TestFinalizeRejectsMissingContribution(t *testing.T) {
 	if !helpers.IsIntegrationEnabled() {
 		t.Skip("integration tests disabled")
@@ -77,6 +155,7 @@ func TestFinalizeRejectsMissingContribution(t *testing.T) {
 		MinValidContributions:     1,
 		RegistrationDeadlineBlock: head + 25,
 		ContributionDeadlineBlock: head + 50,
+		FinalizeNotBeforeBlock:    head + 51,
 		DisclosureAllowed:         false,
 	}
 
@@ -85,6 +164,8 @@ func TestFinalizeRejectsMissingContribution(t *testing.T) {
 
 	output, err := helpers.BuildFinalizeRoundOutput(ctx, roundID, 1, 1, []uint16{1}, [][]*big.Int{{big.NewInt(1)}})
 	c.Assert(err, qt.IsNil)
+
+	c.Assert(helpers.WaitForFinalizeGate(ctx, services, roundID), qt.IsNil)
 
 	auth, err := services.TxManager.NewTransactOpts(ctx)
 	c.Assert(err, qt.IsNil)
@@ -123,6 +204,7 @@ func TestPartialDecryptRejectsMalformedProof(t *testing.T) {
 		MinValidContributions:     1,
 		RegistrationDeadlineBlock: head + 25,
 		ContributionDeadlineBlock: head + 50,
+		FinalizeNotBeforeBlock:    head + 51,
 		DisclosureAllowed:         false,
 	}
 	coefficients := []*big.Int{big.NewInt(17)}
@@ -177,6 +259,7 @@ func TestRoundCanFinalizeWithMissingContributorWhenPolicyPermits(t *testing.T) {
 		SeedDelay:                 helpers.DefaultSeedDelay,
 		RegistrationDeadlineBlock: head + 25,
 		ContributionDeadlineBlock: head + 50,
+		FinalizeNotBeforeBlock:    head + 51,
 		DisclosureAllowed:         false,
 	}
 
@@ -196,8 +279,6 @@ func TestRoundCanFinalizeWithMissingContributorWhenPolicyPermits(t *testing.T) {
 	c.Assert(helpers.SubmitContributionAs(ctx, selfActor, roundID, 1, submission0.CommitmentsHash, submission0.EncryptedSharesHash, submission0.Commitment0X, submission0.Commitment0Y, submission0.Transcript, submission0.Proof, submission0.Input), qt.IsNil)
 	c.Assert(helpers.SubmitContributionAs(ctx, actor1, roundID, 2, submission1.CommitmentsHash, submission1.EncryptedSharesHash, submission1.Commitment0X, submission1.Commitment0Y, submission1.Transcript, submission1.Proof, submission1.Input), qt.IsNil)
 
-	auth, err := services.TxManager.NewTransactOpts(ctx)
-	c.Assert(err, qt.IsNil)
 	output, err := helpers.BuildFinalizeRoundOutput(
 		ctx,
 		roundID,
@@ -206,6 +287,11 @@ func TestRoundCanFinalizeWithMissingContributorWhenPolicyPermits(t *testing.T) {
 		[]uint16{1, 2},
 		[][]*big.Int{{big.NewInt(3), big.NewInt(1)}, {big.NewInt(5), big.NewInt(2)}},
 	)
+	c.Assert(err, qt.IsNil)
+
+	c.Assert(helpers.WaitForFinalizeGate(ctx, services, roundID), qt.IsNil)
+
+	auth, err := services.TxManager.NewTransactOpts(ctx)
 	c.Assert(err, qt.IsNil)
 	tx, err := services.Manager.FinalizeRound(
 		auth,
