@@ -181,7 +181,7 @@ func commitmentPointsFromCalldata(
 	if err != nil {
 		return nil, fmt.Errorf("filter ContributionSubmitted: %w", err)
 	}
-	defer it.Close()
+	defer func() { _ = it.Close() }()
 
 	if !it.Next() {
 		if err := it.Error(); err != nil {

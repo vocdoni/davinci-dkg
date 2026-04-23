@@ -209,7 +209,7 @@ func CombineSingleParticipantDecryption(
 	if err != nil {
 		return fmt.Errorf("filter CiphertextSubmitted: %w", err)
 	}
-	defer it.Close()
+	defer func() { _ = it.Close() }()
 	if !it.Next() {
 		if err := it.Error(); err != nil {
 			return fmt.Errorf("iterate CiphertextSubmitted: %w", err)
