@@ -327,6 +327,9 @@ export function Playground() {
     let lastContribs = -1;
     let lastEventCount = 0;
     let earlyKeyFetched = false;  // guard: only attempt early extraction once
+    let finalizedAnnounced = false; // guard: only print the finalized banner once
+                                    // (closure outlives setState commit, so without
+                                    //  this overlapping in-flight polls duplicate it)
 
     async function poll() {
       try {
@@ -392,9 +395,13 @@ export function Playground() {
           setEvents(evs);
         }
 
-        if (r.status === RoundStatus.Finalized || r.status === RoundStatus.Completed) {
+        if (
+          !finalizedAnnounced &&
+          (r.status === RoundStatus.Finalized || r.status === RoundStatus.Completed)
+        ) {
           const finEvents = await writer!.getRoundFinalizedEvents(roundId!);
           if (finEvents.length > 0) {
+            finalizedAnnounced = true; // suppress duplicate banners from overlapping ticks
             const ev = finEvents[finEvents.length - 1];
             setFinalizedInfo({
               collectivePublicKeyHash: ev.collectivePublicKeyHash,

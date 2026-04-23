@@ -302,13 +302,29 @@ func BuildPartialDecryptionSubmission(
 	secret *big.Int,
 	nonce *big.Int,
 ) (*PartialDecryptionSubmission, error) {
-	roundHash := RoundScalar(roundID)
 	basePoint := group.Generator()
 	basePoint.ScalarBaseMult(base)
+	return BuildPartialDecryptionSubmissionFromBase(ctx, roundID, participantIndex, group.Encode(basePoint), secret, nonce)
+}
+
+// BuildPartialDecryptionSubmissionFromBase is the variant used when the caller
+// already has the c1 ciphertext point (e.g. recovered from a CiphertextSubmitted
+// event log) instead of the scalar k that produced it. The flow.test SDK e2e
+// path goes through this entry point because the SDK encrypts with a random k
+// that the test fixture never sees.
+func BuildPartialDecryptionSubmissionFromBase(
+	ctx context.Context,
+	roundID [12]byte,
+	participantIndex uint16,
+	base types.CurvePoint,
+	secret *big.Int,
+	nonce *big.Int,
+) (*PartialDecryptionSubmission, error) {
+	roundHash := RoundScalar(roundID)
 	assignment := partialdecrypt.Assignment{
 		RoundHash:        roundHash,
 		ParticipantIndex: participantIndex,
-		Base:             group.Encode(basePoint),
+		Base:             base,
 		Secret:           secret,
 		Nonce:            nonce,
 	}
@@ -356,15 +372,16 @@ func BuildDecryptCombineOutput(
 	partialDecryptions []types.CurvePoint,
 	plaintext *big.Int,
 ) (*DecryptCombineOutput, error) {
+	c1Point := group.Generator()
+	c1Point.ScalarBaseMult(base)
+	messagePoint := group.Generator()
+	messagePoint.ScalarBaseMult(plaintext)
+
 	indexes := ccommon.Uint16sToBigInts(participantIndexes)
 	combinedPoint, err := ccommon.InterpolatePointsAtZeroNative(indexes, partialDecryptions)
 	if err != nil {
 		return nil, fmt.Errorf("interpolate combined partial decryptions: %w", err)
 	}
-	c1Point := group.Generator()
-	c1Point.ScalarBaseMult(base)
-	messagePoint := group.Generator()
-	messagePoint.ScalarBaseMult(plaintext)
 	combinedNative, err := group.Decode(combinedPoint)
 	if err != nil {
 		return nil, fmt.Errorf("decode combined point: %w", err)
@@ -373,11 +390,30 @@ func BuildDecryptCombineOutput(
 	c2Point.Set(messagePoint)
 	c2Point.Add(c2Point, combinedNative)
 
+	return BuildDecryptCombineOutputFromCiphertext(ctx, roundID, threshold,
+		group.Encode(c1Point), group.Encode(c2Point),
+		participantIndexes, partialDecryptions, plaintext)
+}
+
+// BuildDecryptCombineOutputFromCiphertext is the variant used when the caller
+// already has c1, c2 as curve points (e.g. recovered from a SDK-submitted
+// CiphertextSubmitted event log) and the plaintext was discovered out-of-band
+// via brute-force discrete log on m·G = c2 - sum(λᵢ·Δᵢ).
+func BuildDecryptCombineOutputFromCiphertext(
+	ctx context.Context,
+	roundID [12]byte,
+	threshold uint16,
+	ciphertextC1 types.CurvePoint,
+	ciphertextC2 types.CurvePoint,
+	participantIndexes []uint16,
+	partialDecryptions []types.CurvePoint,
+	plaintext *big.Int,
+) (*DecryptCombineOutput, error) {
 	assignment := decryptcombine.Assignment{
 		RoundHash:          RoundScalar(roundID),
 		Threshold:          threshold,
-		CiphertextC1:       group.Encode(c1Point),
-		CiphertextC2:       group.Encode(c2Point),
+		CiphertextC1:       ciphertextC1,
+		CiphertextC2:       ciphertextC2,
 		ParticipantIndexes: participantIndexes,
 		PartialDecryptions: partialDecryptions,
 		Plaintext:          plaintext,
@@ -414,8 +450,8 @@ func BuildDecryptCombineOutput(
 		Transcript:   transcriptBytes,
 		CombineHash:  common.BigToHash(publicInputs.CombineHash),
 		Plaintext:    new(big.Int).Set(plaintext),
-		CiphertextC1: group.Encode(c1Point),
-		CiphertextC2: group.Encode(c2Point),
+		CiphertextC1: ciphertextC1,
+		CiphertextC2: ciphertextC2,
 	}, nil
 }
 

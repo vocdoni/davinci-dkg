@@ -19,7 +19,6 @@ import (
 	"github.com/consensys/gnark/frontend"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
-	ethtypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/vocdoni/davinci-dkg/circuits/contribution"
 	"github.com/vocdoni/davinci-dkg/circuits/finalize"
 	"github.com/vocdoni/davinci-dkg/log"
@@ -53,6 +52,21 @@ func BuildAndSubmit(
 ) (*Result, error) {
 	callOpts := &bind.CallOpts{Context: ctx}
 
+	// Bound the event-log scan to blocks since this round was created. Using
+	// the round's SeedBlock as a lower bound keeps the FilterLogs cheap even
+	// on long-lived deployments. We back off by 1 block to be safe against
+	// any off-by-one in the seed-block emission relative to the contribution
+	// submission window (contributions can only land after registration
+	// closes, which is after seedBlock, so this is conservative).
+	round, err := c.GetRound(ctx, roundID)
+	if err != nil {
+		return nil, fmt.Errorf("get round for log scan range: %w", err)
+	}
+	startBlock := uint64(0)
+	if round.SeedBlock > 0 {
+		startBlock = uint64(round.SeedBlock) - 1
+	}
+
 	acceptedIdxs := make([]uint16, 0, n)
 	allPoints := make([][]nodetypes.CurvePoint, 0, n)
 
@@ -61,7 +75,7 @@ func BuildAndSubmit(
 		if err != nil || !rec.Accepted {
 			continue
 		}
-		pts, err := commitmentPointsFromCalldata(ctx, c, addr, t)
+		pts, err := commitmentPointsFromCalldata(ctx, c, m, roundID, addr, startBlock, t)
 		if err != nil {
 			return nil, fmt.Errorf("commitment points for %s: %w", addr, err)
 		}
@@ -129,46 +143,64 @@ func BuildAndSubmit(
 	return res, nil
 }
 
-// commitmentPointsFromCalldata scans recent blocks for the submitContribution
-// transaction from `contributor` and returns its t Feldman commitment points.
+// commitmentPointsFromCalldata locates the submitContribution tx from
+// `contributor` for the given round via the ContributionSubmitted event log
+// (indexed by roundId + contributor), then fetches that single transaction
+// and parses its t Feldman commitment points from the calldata transcript.
+//
+// This replaces an earlier implementation that scanned the last ~2000 blocks
+// serially via BlockByNumber — on a public RPC that produced multi-minute
+// stalls per finalize attempt and was the dominant source of finalize latency.
+// The event-log path is O(1) RPC calls regardless of how long ago the
+// contribution landed, so finalize fires within the stagger window.
 func commitmentPointsFromCalldata(
 	ctx context.Context,
 	c *web3.Contracts,
+	m *gtypes.DKGManager,
+	roundID [12]byte,
 	contributor common.Address,
+	startBlock uint64,
 	t uint16,
 ) ([]nodetypes.CurvePoint, error) {
 	client := c.Client()
-	chainID := new(big.Int).SetUint64(c.ChainID)
 	latest, err := client.BlockNumber(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read head: %w", err)
 	}
-	start := uint64(0)
-	if latest > 2000 {
-		start = latest - 2000
+
+	filterOpts := &bind.FilterOpts{
+		Context: ctx,
+		Start:   startBlock,
+		End:     &latest,
 	}
-	signer := ethtypes.NewCancunSigner(chainID)
-	for blk := start; blk <= latest; blk++ {
-		block, err := client.BlockByNumber(ctx, new(big.Int).SetUint64(blk))
-		if err != nil {
-			continue
+	it, err := m.FilterContributionSubmitted(
+		filterOpts,
+		[][12]byte{roundID},
+		[]common.Address{contributor},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("filter ContributionSubmitted: %w", err)
+	}
+	defer it.Close()
+
+	if !it.Next() {
+		if err := it.Error(); err != nil {
+			return nil, fmt.Errorf("iterate ContributionSubmitted: %w", err)
 		}
-		for _, tx := range block.Transactions() {
-			if tx.To() == nil || *tx.To() != c.Addresses.Manager {
-				continue
-			}
-			from, err := ethtypes.Sender(signer, tx)
-			if err != nil || from != contributor {
-				continue
-			}
-			pts, err := parseCommitmentPoints(tx.Data(), t)
-			if err != nil {
-				continue
-			}
-			return pts, nil
-		}
+		return nil, fmt.Errorf("no ContributionSubmitted event for %s in round %x (range %d..%d)",
+			contributor, roundID, startBlock, latest)
 	}
-	return nil, fmt.Errorf("submitContribution tx not found for %s", contributor)
+
+	txHash := it.Event.Raw.TxHash
+	tx, _, err := client.TransactionByHash(ctx, txHash)
+	if err != nil {
+		return nil, fmt.Errorf("fetch contribution tx %s: %w", txHash.Hex(), err)
+	}
+	pts, err := parseCommitmentPoints(tx.Data(), t)
+	if err != nil {
+		return nil, fmt.Errorf("parse commitment points from tx %s: %w", txHash.Hex(), err)
+	}
+	return pts, nil
 }
 
 // parseCommitmentPoints extracts the first t Feldman commitment points from

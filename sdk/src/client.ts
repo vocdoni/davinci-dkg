@@ -18,6 +18,7 @@ import {
   type RoundEntry,
 } from './types.js';
 import { buildRoundId } from './utils.js';
+import { fromRTEtoTE } from './crypto/babyjub-form.js';
 
 type ManagerContract = GetContractReturnType<typeof dkgManagerAbi, PublicClient>;
 type RegistryContract = GetContractReturnType<typeof dkgRegistryAbi, PublicClient>;
@@ -213,7 +214,11 @@ export class DKGClient {
     return r as unknown as ContributionRecord;
   }
 
-  /** Fetch a partial decryption record for a specific participant and ciphertext index. */
+  /**
+   * Fetch a partial decryption record for a specific participant and
+   * ciphertext index. The `delta` curve point is converted from on-chain
+   * RTE to TE for consistency with `getCollectivePublicKey`.
+   */
   async getPartialDecryption(
     roundId: `0x${string}`,
     participant: Address,
@@ -223,8 +228,9 @@ export class DKGClient {
       roundId as any,
       participant,
       ciphertextIndex,
-    ]);
-    return r as unknown as PartialDecryptionRecord;
+    ]) as unknown as PartialDecryptionRecord;
+    const [dx, dy] = fromRTEtoTE(r.delta.x, r.delta.y);
+    return { ...r, delta: { x: dx, y: dy } };
   }
 
   /** Fetch the combined decryption record for a ciphertext index. */
@@ -557,6 +563,13 @@ export class DKGClient {
    *
    * Returns { x: 0n, y: 1n } (the BabyJubJub identity) if no contributions
    * have been accepted yet.
+   *
+   * The point is converted from gnark's RTE form (used on-chain by the
+   * contract and the ZK circuits) to circomlib's TE form so the result
+   * composes directly with @zk-kit/baby-jubjub / circomlibjs operations
+   * (mulPointEscalar, addPoint, etc.) used by this SDK's ElGamal layer.
+   * See `crypto/babyjub-form.ts` for the rationale and the conversion
+   * formula (vendored from davinci-sdk for wire compatibility).
    */
   async getCollectivePublicKey(
     roundId: `0x${string}`,
@@ -567,7 +580,9 @@ export class DKGClient {
       functionName: 'getCollectivePublicKey',
       args: [roundId as any],
     }) as { x: bigint; y: bigint };
-    return { x: result.x, y: result.y };
+    // Identity (0, 1) is the same in both forms — no-op conversion is safe.
+    const [x, y] = fromRTEtoTE(result.x, result.y);
+    return { x, y };
   }
 
   /**

@@ -2,25 +2,40 @@
 pragma solidity 0.8.28;
 
 /// @title BabyJubJub
-/// @notice Twisted Edwards elliptic curve arithmetic over the BN254 scalar field.
-///         Adapted from https://github.com/yondonfu/sol-baby-jubjub (MIT)
-///         and updated to Solidity 0.8.x.
+/// @notice Twisted Edwards elliptic curve arithmetic over the BN254 scalar field
+///         in the REDUCED form (A = -1) used by gnark-crypto's
+///         `bn254/twistededwards` curve and by the davinci-dkg ZK circuits.
+///         Adapted from https://github.com/yondonfu/sol-baby-jubjub (MIT) —
+///         the original implementation used the iden3/circomlib chart
+///         (A = 168700, D = 168696). It was switched to the reduced chart
+///         because contributions emit `commitment0X/Y` in reduced form
+///         (`group.Encode(...)` -> gnark `PointAffine`), and the on-chain
+///         accumulator must use the same chart or the resulting point is
+///         meaningless in either form.
 ///
 /// Curve equation: a·x² + y² = 1 + d·x²·y²
-///   a = 168700 (= 0x292FC)
-///   d = 168696 (= 0x292F8)
+///   a = -1 (encoded as Q - 1)
+///   d = 12181644023421730124874158521699555681764249180949974110617291017600649128846
 ///   Q = 21888242871839275222246405745257275088548364400416034343698204186575808495617
 ///       (BN254 scalar field prime)
 ///
-/// Identity element: (0, 1)
+/// Identity element: (0, 1)  (unchanged across the two charts).
+///
+/// The addition formula
+///   x3 = (x1·y2 + y1·x2) / (1 + d·x1·x2·y1·y2)
+///   y3 = (y1·y2 - a·x1·x2) / (1 - d·x1·x2·y1·y2)
+/// is shape-identical for any (a, d) twisted-Edwards pair, so the function
+/// signature and body below need no change beyond the constants.
 library BabyJubJub {
-    /// @dev Curve parameter a = 168700
-    uint256 internal constant A = 168700;
-    /// @dev Curve parameter d = 168696
-    uint256 internal constant D = 168696;
     /// @dev BN254 scalar field prime Q
     uint256 internal constant Q =
         21888242871839275222246405745257275088548364400416034343698204186575808495617;
+    /// @dev Curve parameter a = -1 (mod Q)
+    uint256 internal constant A =
+        21888242871839275222246405745257275088548364400416034343698204186575808495616;
+    /// @dev Curve parameter d (reduced-form value matching gnark BabyJubJub)
+    uint256 internal constant D =
+        12181644023421730124874158521699555681764249180949974110617291017600649128846;
 
     /// @notice Add two points on the Baby JubJub curve.
     ///         Implements the unified twisted Edwards addition formula:

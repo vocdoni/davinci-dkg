@@ -13,6 +13,7 @@ import {
   OpenDecryptionPolicy,
 } from './types.js';
 import { DKGClient } from './client.js';
+import { fromTEtoRTE } from './crypto/babyjub-form.js';
 
 /**
  * Write client for the DKG Manager and Registry contracts.
@@ -194,6 +195,11 @@ export class DKGWriter extends DKGClient {
    * DecryptionPolicy (owner-only, time windows, max count).
    *
    * `ciphertextIndex` is caller-chosen and write-once per round.
+   *
+   * Inputs are expected in circomlib TE form (the form that this SDK's
+   * `encrypt` returns and that davinci-sdk also uses). They are converted
+   * to gnark RTE form just before sending so the contract's on-curve check
+   * (`_isOnBabyJubJub`, in RTE) accepts them. See `crypto/babyjub-form.ts`.
    */
   async submitCiphertext(
     roundId: `0x${string}`,
@@ -203,11 +209,13 @@ export class DKGWriter extends DKGClient {
     c2x: bigint,
     c2y: bigint,
   ): Promise<Hash> {
+    const [c1xR, c1yR] = fromTEtoRTE(c1x, c1y);
+    const [c2xR, c2yR] = fromTEtoRTE(c2x, c2y);
     const { request } = await this.publicClient.simulateContract({
       address: this.managerAddress,
       abi: dkgManagerAbi,
       functionName: 'submitCiphertext',
-      args: [roundId as any, ciphertextIndex, c1x, c1y, c2x, c2y],
+      args: [roundId as any, ciphertextIndex, c1xR, c1yR, c2xR, c2yR],
       account: this._writerAccount,
     });
     return this.walletClient.writeContract(request);

@@ -2,6 +2,7 @@ import { type Address } from 'viem';
 import { type DKGClient } from './client.js';
 import { RoundStatus, type RoundStatusValue, type PollOptions } from './types.js';
 import { sleep } from './utils.js';
+import { fromRTEtoTE } from './crypto/babyjub-form.js';
 
 const DEFAULT_INTERVAL_MS = 2_000;
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -177,9 +178,13 @@ export function watchDecryptionCombined(
 
 /**
  * Watch for CiphertextSubmitted events on a round. The callback receives the
- * ciphertext index, submitter, and the raw (C1, C2) BabyJubJub coordinates —
+ * ciphertext index, submitter, and the (C1, C2) BabyJubJub coordinates —
  * the contract stores only the keccak hash, so the event log is the only way
  * to recover the coordinates nodes need for threshold decryption.
+ *
+ * Coordinates are converted from on-chain RTE form to TE form for
+ * consistency with the rest of this SDK (see `crypto/babyjub-form.ts`).
+ *
  * Returns an unsubscribe function.
  */
 export function watchCiphertextSubmitted(
@@ -215,11 +220,13 @@ export function watchCiphertextSubmitted(
       for (const log of logs) {
         const { ciphertextIndex, submitter, c1x, c1y, c2x, c2y } = log.args as any;
         if (typeof ciphertextIndex === 'number' && submitter) {
+          const [c1xT, c1yT] = fromRTEtoTE(c1x as bigint, c1y as bigint);
+          const [c2xT, c2yT] = fromRTEtoTE(c2x as bigint, c2y as bigint);
           onCiphertext({
             ciphertextIndex,
             submitter: submitter as Address,
-            c1: { x: c1x as bigint, y: c1y as bigint },
-            c2: { x: c2x as bigint, y: c2y as bigint },
+            c1: { x: c1xT, y: c1yT },
+            c2: { x: c2xT, y: c2yT },
           });
         }
       }
