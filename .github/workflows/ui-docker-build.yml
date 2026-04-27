@@ -1,13 +1,16 @@
 name: UI Docker
 
-# Reusable workflow that builds the standalone UI image (ui/Dockerfile) and
-# optionally publishes it to Docker Hub + GHCR. Mirrors docker-build.yml
-# (the node image) so the two follow the same tag/release semantics — a
-# semver tag additionally aliases as `latest` so Watchtower deployments
+# Reusable workflow that builds the standalone UI image (ui/Dockerfile)
+# and optionally publishes it to GHCR. The node image (docker-build.yml)
+# also publishes to Docker Hub for historical reasons; the UI image is
+# fresh, has no installed-base assumptions, and ships GHCR-only to avoid
+# the per-image manual setup on hub.docker.com.
+#
+# A semver tag additionally aliases as `latest` so Watchtower deployments
 # pick it up automatically.
 #
 # This image is independent of the node image: a deployment can pull
-# vocdoni/davinci-dkg-ui:<tag> on its own and point it at any RPC.
+# ghcr.io/vocdoni/davinci-dkg-ui:<tag> on its own and point it at any RPC.
 
 on:
   workflow_call:
@@ -33,13 +36,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Log in to Docker Hub
-        if: ${{ inputs.push }}
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-
       - name: Log in to GHCR
         if: ${{ inputs.push }}
         uses: docker/login-action@v3
@@ -59,11 +55,9 @@ jobs:
           # Docker tags, so flatten them.
           primary=$(echo '${{ inputs.image-tag }}' | tr '/' '-')
 
-          tags="vocdoni/davinci-dkg-ui:${primary}"
-          tags="${tags}"$'\n'"ghcr.io/vocdoni/davinci-dkg-ui:${primary}"
+          tags="ghcr.io/vocdoni/davinci-dkg-ui:${primary}"
 
           if [[ "${primary}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-.*)?$ ]]; then
-            tags="${tags}"$'\n'"vocdoni/davinci-dkg-ui:latest"
             tags="${tags}"$'\n'"ghcr.io/vocdoni/davinci-dkg-ui:latest"
           fi
 
