@@ -564,6 +564,15 @@ export class DKGClient {
    * Returns { x: 0n, y: 1n } (the BabyJubJub identity) if no contributions
    * have been accepted yet.
    *
+   * IMPORTANT: do NOT encrypt and call `submitCiphertext` with the value
+   * returned during the Contribution phase. The contract's `submitCiphertext`
+   * requires `RoundStatus.Finalized` and will revert otherwise. Either:
+   *   - use `flow.ts:waitForCollectivePublicKeyHash` then read this getter, or
+   *   - check `getRound(roundId).status === RoundStatus.Finalized` first.
+   * Pre-finalize reads of this value are intended for monitoring/observation
+   * (e.g. displaying the in-progress accumulator), not for producing
+   * ciphertexts that will actually be sent on-chain.
+   *
    * The point is converted from gnark's RTE form (used on-chain by the
    * contract and the ZK circuits) to circomlib's TE form so the result
    * composes directly with @zk-kit/baby-jubjub / circomlibjs operations

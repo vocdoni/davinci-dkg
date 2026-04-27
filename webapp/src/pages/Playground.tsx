@@ -204,8 +204,8 @@ export function Playground() {
   // ── Step statuses
   const stepWallet: StepStatus = address ? 'done' : walletError ? 'error' : walletBusy ? 'active' : 'active';
   const stepCreate: StepStatus = !address ? 'pending' : roundId ? 'done' : createError ? 'error' : createBusy ? 'active' : 'active';
-  const stepWatch: StepStatus = !roundId ? 'pending' : (finalizedInfo || collectivePubKey) ? 'done' : round?.status === RoundStatus.Aborted ? 'error' : 'active';
-  const stepKey: StepStatus = !roundId ? 'pending' : collectivePubKey ? 'done' : collectivePubKeyBusy ? 'active' : (finalizedInfo || (round && Number(round.contributionCount) >= Number(round.policy.minValidContributions))) ? 'active' : 'pending';
+  const stepWatch: StepStatus = !roundId ? 'pending' : finalizedInfo ? 'done' : round?.status === RoundStatus.Aborted ? 'error' : 'active';
+  const stepKey: StepStatus = !roundId ? 'pending' : collectivePubKey ? 'done' : collectivePubKeyBusy ? 'active' : finalizedInfo ? 'active' : 'pending';
   const stepEncrypt: StepStatus = !collectivePubKey ? 'pending' : ciphertext ? 'done' : 'active';
   const stepSubmit: StepStatus = !ciphertext ? 'pending' : combinedRecord?.completed ? 'done' : submittedCiphertext ? 'active' : 'active';
   const stepVerify: StepStatus = !combinedRecord?.completed ? 'pending' : 'done';
@@ -326,7 +326,6 @@ export function Playground() {
     let lastClaimed = -1;
     let lastContribs = -1;
     let lastEventCount = 0;
-    let earlyKeyFetched = false;  // guard: only attempt early extraction once
     let finalizedAnnounced = false; // guard: only print the finalized banner once
                                     // (closure outlives setState commit, so without
                                     //  this overlapping in-flight polls duplicate it)
@@ -356,34 +355,12 @@ export function Playground() {
           if (lastContribs > 0) addLog(`Contributions submitted: ${lastContribs}/${r.policy.minValidContributions}`, 'info');
         }
 
-        // ── Early collective public key extraction ──────────────────────────
-        // Once we have at least minValidContributions, read the accumulated
-        // collective public key directly from the contract.  The contract
-        // accumulates commitment[0] points as contributions are submitted,
-        // so the key is available without waiting for finalizeRound.
-        if (
-          !earlyKeyFetched &&
-          !collectivePubKey &&
-          r.status === RoundStatus.Contribution &&
-          Number(r.contributionCount) >= Number(r.policy.minValidContributions)
-        ) {
-          earlyKeyFetched = true;
-          setCollectivePubKeyBusy(true);
-          try {
-            addLog('─── Enough contributions — reading collective public key from chain ───', 'crypto');
-            const pk = await writer!.getCollectivePublicKey(roundId!);
-            setCollectivePubKey(pk);
-            addLog('Collective public key read from on-chain accumulator:', 'crypto');
-            addLog(`  x: ${hex(pk.x)}`, 'crypto');
-            addLog(`  y: ${hex(pk.y)}`, 'crypto');
-            addLog('Steps 4–6 are now unlocked.  The key will be finalized on-chain via finalizeRound.', 'success');
-          } catch (err) {
-            earlyKeyFetched = false; // allow retry on next tick
-            addLog(`Key read failed (will retry): ${err instanceof Error ? err.message : String(err)}`, 'error');
-          } finally {
-            setCollectivePubKeyBusy(false);
-          }
-        }
+        // The collective public key is intentionally not read until the round
+        // reaches Finalized below. The on-chain accumulator carries a usable
+        // key value as soon as `contributionCount ≥ minValidContributions`,
+        // but the contract's `submitCiphertext` reverts unless status is
+        // Finalized — so surfacing the key (and unlocking the encrypt step)
+        // earlier would let users build ciphertexts that can't yet be sent.
 
         // Fetch events
         const evs = await writer!.getAllRoundEvents(roundId!);
@@ -414,20 +391,19 @@ export function Playground() {
             addLog(`aggregateCommitmentsHash: ${ev.aggregateCommitmentsHash}`, 'info');
             addLog(`shareCommitmentHash:      ${ev.shareCommitmentHash}`, 'info');
 
-            // If the key wasn't read yet, fetch it now from the on-chain accumulator.
-            if (!collectivePubKey) {
-              setCollectivePubKeyBusy(true);
-              try {
-                const pk = await writer!.getCollectivePublicKey(roundId!);
-                setCollectivePubKey(pk);
-                addLog('Collective public key read from on-chain accumulator (post-finalize):', 'crypto');
-                addLog(`  x: ${hex(pk.x)}`, 'crypto');
-                addLog(`  y: ${hex(pk.y)}`, 'crypto');
-              } catch (err) {
-                addLog(`Failed to extract collective pubkey: ${err instanceof Error ? err.message : String(err)}`, 'error');
-              } finally {
-                setCollectivePubKeyBusy(false);
-              }
+            // Read the collective public key from the on-chain accumulator now
+            // that finalize has locked it in. This unlocks Step 5 (encrypt).
+            setCollectivePubKeyBusy(true);
+            try {
+              const pk = await writer!.getCollectivePublicKey(roundId!);
+              setCollectivePubKey(pk);
+              addLog('Collective public key read from on-chain accumulator:', 'crypto');
+              addLog(`  x: ${hex(pk.x)}`, 'crypto');
+              addLog(`  y: ${hex(pk.y)}`, 'crypto');
+            } catch (err) {
+              addLog(`Failed to extract collective pubkey: ${err instanceof Error ? err.message : String(err)}`, 'error');
+            } finally {
+              setCollectivePubKeyBusy(false);
             }
             // Stop polling only after we've successfully processed the finalized event.
             clearInterval(pollRef.current!);
@@ -855,9 +831,12 @@ export function Playground() {
 
       {/* ── Step 4: Collective Public Key ────────────────────────────────── */}
       <StepCard n={4} title="DKG Collective Public Key" status={stepKey}>
-        {!roundId || (Number(round?.contributionCount ?? 0) < Number(round?.policy.minValidContributions ?? 1) && !finalizedInfo) ? (
+        {!roundId || !finalizedInfo ? (
           <Text fontSize="sm" color="gray.500">
-            Waiting for at least {round?.policy.minValidContributions ?? '?'} contribution(s)…
+            Waiting for the round to be finalized on-chain (<Code fontSize="2xs">finalizeRound</Code>)
+            before exposing the collective public key. The on-chain accumulator already carries the
+            running sum, but encryption is gated on finalize so that{' '}
+            <Code fontSize="2xs">submitCiphertext</Code> won't revert.
           </Text>
         ) : (
           <VStack align="stretch" spacing={4}>
