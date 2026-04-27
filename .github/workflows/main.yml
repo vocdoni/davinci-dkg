@@ -31,7 +31,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 10
 
@@ -237,7 +237,7 @@ jobs:
       # Anvil + deployer) so they do not interfere with the Go test stack.
       - name: Set up pnpm
         if: github.event.pull_request.draft != true
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 10
 
