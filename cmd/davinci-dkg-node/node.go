@@ -172,10 +172,6 @@ func (n *Node) LogStartupSnapshot(ctx context.Context, cfg *Config) {
 		"manager", cfg.ManagerAddr)
 	log.Infow("config: participation",
 		"pollInterval", cfg.PollInterval)
-	log.Infow("config: explorer webapp",
-		"enabled", cfg.Webapp.Enabled,
-		"listen", cfg.Webapp.Listen,
-		"publicRpc", cfg.Webapp.PublicRPC)
 
 	// ── on-chain state ───────────────────────────────────────────────────
 	callOpts := &bind.CallOpts{Context: ctx}
@@ -722,6 +718,28 @@ func (n *Node) doContribution(
 		return nil
 	}
 
+	// Pre-flight: skip when the round already has enough contributions to
+	// finalize. Unlike partial decryptions (where every participating node
+	// is expected to be rewarded), late contributions land on a round
+	// that's already finalize-eligible — they don't change the outcome,
+	// they don't earn anything, they just burn ~seconds of prover CPU and
+	// a chain transaction's gas.
+	//
+	// There's a benign race: another node could submit and push us past
+	// the gate between this read and our hypothetical submit. In that
+	// case our tx would land successfully but be unrewarded — the same
+	// outcome we're trying to avoid, just costing more. This guard keeps
+	// the common case cheap.
+	if round.ContributionCount >= round.Policy.MinValidContributions {
+		log.Infow("contribution: round already has enough contributions to finalize — skipping",
+			"round", roundHex(roundID),
+			"contributions", round.ContributionCount,
+			"required", round.Policy.MinValidContributions,
+		)
+		n.contributed[roundID] = true
+		return nil
+	}
+
 	threshold := round.Policy.Threshold
 	committeeSize := round.Policy.CommitteeSize
 
@@ -973,6 +991,15 @@ func (n *Node) doDecryption(
 		n.decrypted[roundID][ctIdx] = true
 		return nil
 	}
+
+	// NOTE: every selected committee member submits a partial decryption,
+	// even after `partialDecryptionCount >= threshold`. A planned reward
+	// mechanism will pay all participating nodes, so a "skip when enough"
+	// optimization here would silently exclude operators from future
+	// payouts. The contract accepts overshoot accepted partials cheaply
+	// (storage write + event), and the prover cost stays with the node
+	// that earned the reward. Keep all-in until the reward design lands
+	// and we know whether to revisit.
 
 	ct, err := n.fetchCiphertext(ctx, roundID, ctIdx, round.SeedBlock)
 	if err != nil {

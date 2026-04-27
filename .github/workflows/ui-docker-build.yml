@@ -1,0 +1,86 @@
+name: UI Docker
+
+# Reusable workflow that builds the standalone UI image (ui/Dockerfile) and
+# optionally publishes it to Docker Hub + GHCR. Mirrors docker-build.yml
+# (the node image) so the two follow the same tag/release semantics — a
+# semver tag additionally aliases as `latest` so Watchtower deployments
+# pick it up automatically.
+#
+# This image is independent of the node image: a deployment can pull
+# vocdoni/davinci-dkg-ui:<tag> on its own and point it at any RPC.
+
+on:
+  workflow_call:
+    inputs:
+      image-tag:
+        description: "Primary tag to push (e.g. main, v0.1.0, pr-123)."
+        required: true
+        type: string
+      push:
+        description: "Whether to push to the registries (true) or only build (false)."
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  docker:
+    name: ${{ inputs.push && 'Build and Publish' || 'Build' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to Docker Hub
+        if: ${{ inputs.push }}
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Log in to GHCR
+        if: ${{ inputs.push }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Compose tag list
+        id: tags
+        shell: bash
+        run: |
+          # Github refs that contain slashes (feature/foo) are not valid
+          # Docker tags, so flatten them.
+          primary=$(echo '${{ inputs.image-tag }}' | tr '/' '-')
+
+          tags="vocdoni/davinci-dkg-ui:${primary}"
+          tags="${tags}"$'\n'"ghcr.io/vocdoni/davinci-dkg-ui:${primary}"
+
+          if [[ "${primary}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-.*)?$ ]]; then
+            tags="${tags}"$'\n'"vocdoni/davinci-dkg-ui:latest"
+            tags="${tags}"$'\n'"ghcr.io/vocdoni/davinci-dkg-ui:latest"
+          fi
+
+          {
+            echo 'list<<EOF'
+            echo "${tags}"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: ${{ inputs.push && 'Build and Publish' || 'Build' }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ui/Dockerfile
+          push: ${{ inputs.push }}
+          cache-from: type=gha,scope=ui
+          cache-to: type=gha,mode=max,scope=ui
+          build-args: |
+            VITE_BUILD_VERSION=${{ inputs.image-tag }}
+          tags: ${{ steps.tags.outputs.list }}

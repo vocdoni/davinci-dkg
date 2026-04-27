@@ -21,13 +21,12 @@ concurrency:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # Build the embedded webapp bundle once. Every Go job downloads the
-  # artifact so that //go:embed all:dist in webapp/embed.go has files to
-  # find — without this, `go vet`, `go build` and `go test` all fail on a
-  # fresh checkout.
+  # Build, lint and test the standalone UI bundle. Independent of the Go
+  # jobs — the Go binary is UI-blind, so this exists to catch UI build
+  # failures on PRs and to feed the standalone-UI Docker image build.
   # ---------------------------------------------------------------------------
-  job_webapp:
-    name: Webapp bundle
+  job_ui:
+    name: UI bundle
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -42,37 +41,35 @@ jobs:
           cache: "pnpm"
           cache-dependency-path: |
             sdk/pnpm-lock.yaml
-            webapp/pnpm-lock.yaml
+            ui/pnpm-lock.yaml
 
       - name: Install and build SDK
         working-directory: sdk
         run: pnpm install --frozen-lockfile && pnpm build
 
-      - name: Install webapp dependencies
-        working-directory: webapp
+      - name: Install UI dependencies
+        working-directory: ui
         run: pnpm install --frozen-lockfile
 
-      - name: Type-check
-        working-directory: webapp
+      - name: Type-check & lint
+        working-directory: ui
         run: pnpm run lint
 
-      - name: Build webapp
-        working-directory: webapp
-        run: pnpm run build
+      - name: Run UI tests
+        working-directory: ui
+        run: pnpm run test
 
-      - name: Upload dist artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: webapp-dist
-          path: webapp/dist/
-          retention-days: 1
+      - name: Build UI
+        working-directory: ui
+        run: pnpm run build
+        env:
+          VITE_BUILD_VERSION: ${{ github.sha }}
 
   # ---------------------------------------------------------------------------
   # Static analysis and formatting checks
   # ---------------------------------------------------------------------------
   job_go_checks:
     name: Go Checks
-    needs: job_webapp
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -83,12 +80,6 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-
-      - name: Download webapp dist
-        uses: actions/download-artifact@v4
-        with:
-          name: webapp-dist
-          path: webapp/dist/
 
       - name: Run go mod tidy
         run: |
@@ -148,7 +139,6 @@ jobs:
   # ---------------------------------------------------------------------------
   job_go_unit_test:
     name: Go Unit Tests
-    needs: job_webapp
     runs-on: [self-hosted]
     env:
       LOG_LEVEL: debug
@@ -159,12 +149,6 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-
-      - name: Download webapp dist
-        uses: actions/download-artifact@v4
-        with:
-          name: webapp-dist
-          path: webapp/dist/
 
       - name: Build all binaries
         run: go build ./cmd/...
@@ -184,7 +168,6 @@ jobs:
   # ---------------------------------------------------------------------------
   job_go_integration_test:
     name: Go Integration Tests
-    needs: job_webapp
     runs-on: [self-hosted]
     # Serialize across the whole repo on the shared self-hosted runner.
     # Prevents two concurrent jobs (from different PRs / branches) from
@@ -210,12 +193,6 @@ jobs:
 
       - name: Install Foundry (for deployer container build)
         uses: foundry-rs/foundry-toolchain@v1
-
-      - name: Download webapp dist
-        uses: actions/download-artifact@v4
-        with:
-          name: webapp-dist
-          path: webapp/dist/
 
       # Groth16 trusted setup is randomized: every invocation of
       # `circuit-compile` produces a fresh proving key and verifying key
@@ -300,6 +277,25 @@ jobs:
       packages: write
     if: github.event.pull_request.draft != true
     uses: ./.github/workflows/docker-build.yml
+    secrets: inherit
+    with:
+      image-tag: ${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref_name }}
+      push: ${{ github.event_name == 'push' }}
+
+  # ---------------------------------------------------------------------------
+  # Standalone UI image build. Independent of the node image — gated only on
+  # the UI bundle building cleanly, since the runtime image bundles its own
+  # nginx and doesn't share Go test infrastructure.
+  # ---------------------------------------------------------------------------
+  call-ui-docker-build:
+    name: UI Docker
+    needs:
+      - job_ui
+    permissions:
+      contents: read
+      packages: write
+    if: github.event.pull_request.draft != true
+    uses: ./.github/workflows/ui-docker-build.yml
     secrets: inherit
     with:
       image-tag: ${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref_name }}

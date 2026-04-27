@@ -1,0 +1,6 @@
+{
+  "rpcUrl": "https://w3.ch4in.net/sepolia",
+  "managerAddress": "0xd3ef727b695b21e108497c36f9dcec52d741298a",
+  "chainId": 11155111,
+  "chainName": "sepolia"
+}

@@ -1,26 +1,24 @@
 # ---------------------------------------------------------------------------
-# Standalone davinci-dkg node stack.
+# davinci-dkg compose stack.
 #
 # Profiles:
-#   - node  Long-running DKG node + Watchtower auto-updater (default).
+#   - node  Long-running DKG node + Watchtower auto-updater. The node
+#           binary does not serve any HTTP — all interaction with the
+#           chain goes through --web3.rpc. Use the `ui` profile (or the
+#           published UI image directly) to host an explorer.
+#   - ui    Standalone UI container (nginx serving the static SPA on
+#           :8082). Independent of the node service: use it to host a
+#           public explorer that talks to whichever RPC you point it at,
+#           with or without operating a node.
 #   - test  Runs unit and integration tests inside a container (no GPU).
 #
-# The node serves a single HTTP surface: the embedded DKG explorer web UI on
-# port 8081 (override with DAVINCI_DKG_WEBAPP_LISTEN). It does NOT provide
-# any additional API endpoint — all interaction with the chain goes through
-# --web3.rpc. If you want HTTPS or a public domain, put this container
-# behind your own reverse proxy (Caddy, nginx, Traefik, Cloudflare…).
-#
-# For the multi-node local testnet (Anvil + deployer + N nodes + explorer),
-# see testnet/docker-compose.yml instead of this file.
+# For the multi-node local testnet (Anvil + deployer + N nodes + UI), see
+# testnet/docker-compose.yml instead of this file.
 # ---------------------------------------------------------------------------
 
 x-common-env: &common-env
   DAVINCI_DKG_DATADIR: /app/run
   DAVINCI_DKG_ARTIFACTS_DIR: /app/run/artifacts
-  # The explorer UI listens on 0.0.0.0:8081 by default. Override via .env if
-  # the node should bind to a different address/port.
-  DAVINCI_DKG_WEBAPP_LISTEN: "0.0.0.0:8081"
 
 x-test-env: &test-env
   <<: *common-env
@@ -45,8 +43,6 @@ services:
     restart: ${RESTART:-unless-stopped}
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
-    ports:
-      - "${DAVINCI_DKG_WEBAPP_PORT:-8081}:8081"
 
   # ──────────────────────────────────────────────────────────────────────────
   # Auto-updater — watches the image the `node` service is pinned to and
@@ -64,6 +60,61 @@ services:
     restart: ${RESTART:-unless-stopped}
     depends_on:
       - node
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Standalone UI — Vite SPA built once in CI, served by nginx.
+  #
+  #   docker compose --profile ui  up                      → UI only
+  #   docker compose --profile node --profile ui  up       → node + UI
+  #
+  # The UI is fully decoupled from the node — it talks to the chain
+  # directly via RPC. All chain config is read at container start from env
+  # vars; one image targets any deployment without a rebuild.
+  #
+  # Chain-selection knobs (set in .env, environment, or inline):
+  #   RPC_URL          — JSON-RPC endpoint the browser will hit. Short
+  #                      alias for DAVINCI_DKG_RPC_URL.
+  #   MANAGER_ADDRESS  — DKGManager contract. Short alias for
+  #                      DAVINCI_DKG_MANAGER_ADDRESS.
+  #   CHAIN_ID         — EIP-155 chain id. Short alias for
+  #                      DAVINCI_DKG_CHAIN_ID.
+  #   CHAIN_NAME       — Display name. Short alias for
+  #                      DAVINCI_DKG_CHAIN_NAME.
+  #   REGISTRY_ADDRESS — Optional. DKGRegistry override.
+  #   START_BLOCK      — Optional. Lower bound for getLogs scans.
+  #
+  # Either the short or the long form works; the long form takes precedence
+  # if both are set so a node-side .env (which uses the DAVINCI_DKG_ prefix)
+  # keeps controlling the UI image without surprise overrides from a stray
+  # RPC_URL on the shell.
+  #
+  # Example:
+  #   RPC_URL=http://host.docker.internal:8545 \
+  #   MANAGER_ADDRESS=0xabc... CHAIN_ID=31337 CHAIN_NAME=anvil \
+  #     docker compose --profile ui up
+  # ──────────────────────────────────────────────────────────────────────────
+
+  ui:
+    profiles: ["ui"]
+    build:
+      context: ./
+      dockerfile: ui/Dockerfile
+    image: "ghcr.io/vocdoni/davinci-dkg-ui:${DAVINCI_DKG_UI_TAG:-latest}"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DAVINCI_DKG_RPC_URL: "${DAVINCI_DKG_RPC_URL:-${RPC_URL:-https://eth-sepolia.public.blastapi.io}}"
+      DAVINCI_DKG_MANAGER_ADDRESS: "${DAVINCI_DKG_MANAGER_ADDRESS:-${MANAGER_ADDRESS:-0xd3ef727b695b21e108497c36f9dcec52d741298a}}"
+      DAVINCI_DKG_CHAIN_ID: "${DAVINCI_DKG_CHAIN_ID:-${CHAIN_ID:-11155111}}"
+      DAVINCI_DKG_CHAIN_NAME: "${DAVINCI_DKG_CHAIN_NAME:-${CHAIN_NAME:-sepolia}}"
+      DAVINCI_DKG_REGISTRY_ADDRESS: "${DAVINCI_DKG_REGISTRY_ADDRESS:-${REGISTRY_ADDRESS:-}}"
+      DAVINCI_DKG_START_BLOCK: "${DAVINCI_DKG_START_BLOCK:-${START_BLOCK:-}}"
+    ports:
+      - "${DAVINCI_DKG_UI_PORT:-8082}:80"
+    restart: ${RESTART:-unless-stopped}
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
 
   # ──────────────────────────────────────────────────────────────────────────
   # Test services

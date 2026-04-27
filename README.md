@@ -101,8 +101,7 @@ All three install options below share the same configuration surface: a
 `.env` file at the repo root (or next to the binary). The node reads its
 settings from environment variables — every CLI flag has an env-var
 equivalent, e.g. `--web3.rpc` → `DAVINCI_DKG_WEB3_RPC`,
-`--poll-interval` → `DAVINCI_DKG_POLL_INTERVAL`, `--webapp.listen` →
-`DAVINCI_DKG_WEBAPP_LISTEN`.
+`--poll-interval` → `DAVINCI_DKG_POLL_INTERVAL`.
 
 ```bash
 cp .env.example .env
@@ -123,19 +122,18 @@ DAVINCI_DKG_NETWORK=sepolia
 ```
 
 See `.env.example` for the full list and `davinci-dkg-node --help` for
-defaults. **The embedded explorer UI** is on by default and listens on
-`0.0.0.0:8081`. Set `DAVINCI_DKG_WEBAPP_ENABLED=false` to disable it or
-restrict the bind address with `DAVINCI_DKG_WEBAPP_LISTEN=127.0.0.1:8081`
-if you only want local access.
+defaults. The node binary itself does not serve any HTTP — it only talks
+to the chain via `--web3.rpc`. Use the standalone UI image
+(`ghcr.io/vocdoni/davinci-dkg-ui`, see [Web Explorer](#web-explorer)
+below) if you want a browser-facing explorer alongside the node.
 
 ### Option A — Docker Compose (recommended)
 
 The repo ships a ready-to-run `docker-compose.yml` at the root. It pulls
-a prebuilt multi-stage image (webapp bundle + fully static Go binary on
-`debian:bookworm-slim`) from `ghcr.io/vocdoni/davinci-dkg` and exposes the
-explorer on `${DAVINCI_DKG_WEBAPP_PORT:-8081}`. This is the recommended
-path for most operators: one command, no host-side toolchain, automatic
-restart on failure, and automatic image upgrades via Watchtower.
+a prebuilt fully-static Go binary on `debian:bookworm-slim` from
+`ghcr.io/vocdoni/davinci-dkg`. This is the recommended path for most
+operators: one command, no host-side toolchain, automatic restart on
+failure, and automatic image upgrades via Watchtower.
 
 ```bash
 git clone https://github.com/vocdoni/davinci-dkg.git
@@ -151,12 +149,18 @@ docker compose --profile node up -d
 docker compose --profile node logs -f node
 ```
 
-The compose file defines two profiles:
+The compose file defines three profiles:
 
 | Profile | Services                       | Use case                                     |
 |---------|--------------------------------|----------------------------------------------|
 | `node`  | `node`, `watchtower`           | Long-running DKG node with auto-updates      |
+| `ui`    | `ui`                           | Standalone explorer SPA (nginx, port 8082)   |
 | `test`  | `unit-test`, `integration-test`| Run the Go test suites inside a container    |
+
+The `node` and `ui` services are independent — combine them with
+`docker compose --profile node --profile ui up` to run both side-by-side
+on a single host. See [Web Explorer](#web-explorer) below for UI
+configuration.
 
 Pin `DAVINCI_DKG_TAG=v0.1.0` in `.env` (or remove the `watchtower`
 service) if you want to control upgrades manually.
@@ -188,21 +192,20 @@ cd "davinci-dkg-${VERSION}-${TARGET}"
 ./davinci-dkg-node --help
 ```
 
-The binaries are self-contained: they embed the DKG explorer webapp
-(`//go:embed`) and the `version.Version` string, so you do not need Node,
-pnpm, or any build toolchain to run a node.
+The binaries are self-contained Go executables — no Node, no pnpm, no
+extra build toolchain at runtime. The explorer UI is a separate Docker
+image (`ghcr.io/vocdoni/davinci-dkg-ui`); the node binary itself is
+UI-blind.
 
 ### Option C — Build from source
 
-You will need **Go 1.25+**, **pnpm** (for the embedded webapp), and
-optionally **Foundry** if you also want to rebuild contracts.
+You will need **Go 1.25+** (and optionally **Foundry** if you want to
+rebuild contracts).
 
 ```bash
 git clone https://github.com/vocdoni/davinci-dkg.git
 cd davinci-dkg
 
-# Build the webapp once so the embedded explorer is up-to-date, then build
-# all Go binaries. The `make build` target does both steps.
 make build
 
 # The binaries are produced at the repo root:
@@ -210,15 +213,8 @@ make build
 ./dkg-runner --help
 ```
 
-Or if you only want the node and don't care about the embedded UI:
-
-```bash
-go build -o davinci-dkg-node ./cmd/davinci-dkg-node
-```
-
-Note: the `webapp/dist/` directory must exist before the Go build because
-of the `//go:embed all:dist` directive — `make build` guarantees that. If
-you invoke `go build` directly, first run `make webapp-build`.
+To also build the UI bundle locally (for `make ui-dev`, the standalone
+container, etc.) you'll additionally need **pnpm** — see `make ui-build`.
 
 ### Start the node
 
@@ -230,7 +226,7 @@ First-run behaviour (identical for all three install options):
    rotation or previous row was `INACTIVE`, which auto-reactivates), or
    skips the call entirely (already `ACTIVE` with the right key).
 2. Immediately after, the node prints a verbose startup banner: local
-   config (identity, RPC, contracts, poll interval, webapp settings),
+   config (identity, RPC, contracts, poll interval),
    on-chain state (chain head, round prefix + nonce, `nodeCount`,
    `activeCount`, `INACTIVITY_WINDOW`), and its own registry row
    (`status`, `lastActiveBlock`, `blocksSinceActive`, and the remaining
@@ -303,8 +299,8 @@ so you can trace progress against the explorer.
   and on-chain records when the node restarts — a restart mid-round is
   safe.
 - **Multiple operators on the same host**: each node needs its own
-  private key and port for the webapp. Keep one process per operator to
-  avoid confused state.
+  private key and data directory. Keep one process per operator to avoid
+  confused state.
 - **Key loss = slot loss**: losing your operator key (or its funded
   balance) means you can no longer participate until you register a new
   address. The chain still advances without you, the DKG is `t`-of-`n`.
@@ -938,11 +934,11 @@ The Makefile wraps compose with sensible defaults and starts every non-runner
 service (including the web explorer) in one shot:
 
 ```bash
-make testnet-up                                # 3 nodes + anvil + deployer + dkg-webapp
+make testnet-up                                # 3 nodes + anvil + deployer + standalone UI
 make testnet-up DKG_NODE_COUNT=8 DKG_THRESHOLD=5
 
 # Expose the browser-side RPC URL if you will access from another host:
-WEBAPP_PUBLIC_RPC=http://<host-ip>:8545 make testnet-up
+UI_PUBLIC_RPC=http://<host-ip>:8545 make testnet-up
 ```
 
 Once the command returns, open `http://<host-ip>:8081/` in a browser.
@@ -993,101 +989,133 @@ The runner will:
 | `DKG_RUNNER_DISCLOSURE_ALLOWED` | `false` | Forwarded from `DKG_DISCLOSURE_ALLOWED` to the runner flag |
 | `ANVIL_PORT` | `8545` | Host port for the Anvil RPC (bound on `0.0.0.0`) |
 | `DEPLOYER_PORT` | `8888` | Host port for the deployer HTTP server |
-| `WEBAPP_PORT` | `8081` | Host port the DKG explorer listens on (bound on `0.0.0.0`) |
-| `WEBAPP_PUBLIC_RPC` | `http://localhost:8545` | RPC URL advertised to browsers in `/config.json`. Override with the LAN/public IP of the host when accessing the explorer from a remote machine. Can also be changed live in the explorer's Settings page. |
+| `UI_PORT` | `8081` | Host port the DKG explorer listens on (bound on `0.0.0.0`) |
+| `UI_PUBLIC_RPC` | `http://localhost:8545` | RPC URL advertised to browsers in `/config.json`. Override with the LAN/public IP of the host when accessing the explorer from a remote machine. Can also be changed live in the explorer's Settings page. |
 
 ---
 
 ## Web Explorer
 
-`webapp/` contains a single-page React application that acts as both a
+`ui/` contains a single-page React application that acts as both a
 block-explorer and an interactive playground for a live `DKGManager` /
-`DKGRegistry` pair. It is a Vite + React + TypeScript + Chakra UI + React
-Query stack talking to the chain directly via `viem`, and it is **embedded
-into the `davinci-dkg-node` binary via `//go:embed`**, so any running node
-can serve the UI with no external assets.
+`DKGRegistry` pair. Vite + React + TypeScript + Chakra UI v3 + React
+Query + RainbowKit stack, talking to the chain directly via `viem`. Ships
+as its own Docker image (`ghcr.io/vocdoni/davinci-dkg-ui`) — completely
+decoupled from the `davinci-dkg-node` Go binary, which itself does not
+serve any HTTP.
 
-In the testnet the explorer is available at `http://<host>:8081/` as soon as
-`make testnet-up` returns — the `dkg-webapp` compose service starts
-`davinci-dkg-node` in idle mode (no private key, no participation) with
-`--webapp.enabled=true --webapp.listen=0.0.0.0:8081` and passes the contract
-addresses pulled from `/addresses/addresses.env`.
+In the testnet the explorer is available at `http://<host>:8081/` as soon
+as `make testnet-up` returns — the testnet's `dkg-ui` compose service
+runs the standalone UI image and points it at the in-cluster Anvil RPC.
 
 ### What it shows
 
-- **Overview**: total rounds, registered nodes, latest block, chain ID, and
-  the 5 most recent rounds.
-- **Rounds**: tabular view of the ring-buffered on-chain history (up to 64
-  rounds), status, organizer, committee/threshold, claim / contribution
-  counters. Click a row to open the round detail view.
-- **Round detail**: policy, seed block + seed, lottery threshold, all four
-  phase progress bars (claims, contributions, partial decryptions, revealed
-  shares), the full list of selected participants, and every decoded event
-  touching the round (`RoundCreated`, `SeedResolved`, `SlotClaimed`,
-  `ContributionSubmitted`, `RoundFinalized`, `CiphertextSubmitted`,
-  `PartialDecryptionSubmitted`, `DecryptionCombined`, `RevealedShareSubmitted`,
-  `SecretReconstructed`, `RoundEvicted`, `RoundAborted`).
-- **Registry**: every registered operator and their BabyJubJub public key
-  coordinates.
-- **Playground**: an interactive end-to-end demo of the full DKG + threshold
-  decryption flow in seven steps:
-  1. Connect a browser wallet (e.g. MetaMask).
-  2. Create a new DKG round with configurable policy.
-  3. Watch the round progress live through registration, contribution, and
-     finalization phases.
-  4. Read the collective public key `(x, y)` from `getCollectivePublicKey(roundId)` —
-     a simple view-call; the key is accumulated on-chain by each accepted
-     `submitContribution` and is available from the first contribution onward.
+The UI ships two surfaces: a plain-English default view and a **debug
+mode** (terminal icon in the header) that auto-expands every "Show
+technical details" disclosure. Power users can flip the toggle to see raw
+event args, BabyJubJub coordinates, transcript hashes and full hex
+addresses inline; everyone else gets short hashes, durations, and status
+badges.
+
+- **Overview**: total rounds, active / total nodes, latest block, chain
+  ID, and the 5 most recent rounds.
+- **Rounds**: filter chips (registration / contribution / finalized /
+  completed / aborted) over the ring-buffered on-chain history (up to 64
+  rounds). Click a row to open the round detail view.
+- **Round detail**: status badge, plain-English summary ("Awaiting
+  contributions — 1/2 accepted so far"), a four-step phase timeline, a KV
+  grid of policy facts (deadlines as durations + block #'s), counters,
+  and Participants / Activity tabs. Each on-chain event is summarised in
+  English; raw `args` are hidden behind a per-event disclosure.
+- **Registry**: stats + node table; key coordinates live behind a
+  disclosure so the table stays scannable.
+- **Playground**: an interactive end-to-end demo of the full DKG +
+  threshold decryption flow in seven steps:
+  1. Connect a wallet (RainbowKit — MetaMask, WalletConnect, etc.).
+  2. Create a new DKG round with configurable round + decryption policy.
+  3. Watch the round progress live through registration, contribution,
+     and finalization phases (with an Abort button while non-terminal).
+  4. Read the collective public key `(x, y)` from
+     `getCollectivePublicKey(roundId)` once the round is **Finalized**.
+     The encrypt step is gated on Finalized so `submitCiphertext` cannot
+     be called against a not-yet-final round.
   5. Enter a plaintext integer and ElGamal-encrypt it with the collective
      public key (BabyJubJub, in-browser).
-  6. Submit the ciphertext on-chain via `DKGManager.submitCiphertext(roundId, ctIdx, c1x, c1y, c2x, c2y)` —
+  6. Submit the ciphertext on-chain via
+     `DKGManager.submitCiphertext(roundId, ctIdx, c1x, c1y, c2x, c2y)` —
      the contract stores `keccak256(c1x,c1y,c2x,c2y)` and emits a
      `CiphertextSubmitted` event; nodes watch the event and produce their
      partial decryptions, then poll until the combined decryption lands.
-  7. Verify that the recovered plaintext (readable via `getPlaintext(roundId, ctIdx)`)
-     matches the original input.
+  7. Verify that the recovered plaintext (readable via
+     `getPlaintext(roundId, ctIdx)`) matches the original input — the UI
+     pops a green Alert on match.
 - **Settings**: live-editable **RPC endpoint** override (stored in the
-  browser's `localStorage`, per-user) plus the chain / contract info from
-  `/config.json`.
+  browser's `localStorage`, per-user), debug-mode toggle, plus the chain
+  / contract info from `/config.json` and the build version.
+
+Errors anywhere in the UI offer a "Copy error report" button that bundles
+the route, chain, wallet, build SHA and stack trace into a markdown blob
+ready to paste into a GitHub issue.
 
 ### How it reaches the chain
 
-On startup the browser fetches `/config.json` from whichever node is serving
-it; the response carries the RPC URL, manager + registry addresses, chain ID
-and chain name. All contract reads after that go **directly** from the
-browser to the RPC via `viem`, so the Go node does no proxying and does not
-need any contract bindings for the UI to work. Polling cadence is 4 s.
+On startup the browser fetches `/config.json` from the UI container; the
+response carries the RPC URL, manager + registry addresses, chain ID and
+chain name. All contract reads after that go directly from the browser to
+the RPC via `viem`. The container's entrypoint templates that
+`/config.json` from environment variables at startup, so a single image
+targets any deployment without a rebuild.
 
-Because the RPC URL is a runtime field (not baked into the bundle), the same
-embedded SPA works against local, testnet, or public deployments without any
-rebuild — override `WEBAPP_PUBLIC_RPC` for the compose service or flip
-the endpoint in the Settings page.
-
-Ciphertext submission is fully on-chain — the node runs no custom REST
-endpoints for this. The Playground (and any other consumer) calls
+Ciphertext submission is fully on-chain — the SPA calls
 `DKGManager.submitCiphertext` directly from the browser wallet; nodes
 subscribe to `CiphertextSubmitted` events to pick up work.
 
-### Running it outside the testnet
+### Running it
 
-Any `davinci-dkg-node` instance serves the webapp by default on `:8081`:
+The container's entrypoint templates `/config.json` from environment
+variables at start time, so a single image targets any deployment:
 
 ```bash
-davinci-dkg-node \
-  --web3.rpc=http://127.0.0.1:8545 \
-  --manager=0x... \
-  --privkey=0x... \
-  --webapp.listen=0.0.0.0:8081 \
-  --webapp.public-rpc=http://<your-host>:8545     # URL the browser will use
+docker run -p 8082:80 \
+  -e DAVINCI_DKG_RPC_URL=https://eth-sepolia.public.blastapi.io \
+  -e DAVINCI_DKG_MANAGER_ADDRESS=0xd3ef727b695b21e108497c36f9dcec52d741298a \
+  -e DAVINCI_DKG_CHAIN_ID=11155111 \
+  -e DAVINCI_DKG_CHAIN_NAME=sepolia \
+  ghcr.io/vocdoni/davinci-dkg-ui:latest
 ```
 
-Flags:
+Or via the root `docker-compose.yml`:
 
-| Flag | Env | Default | Description |
-|---|---|---|---|
-| `--webapp.enabled` | `DAVINCI_DKG_WEBAPP_ENABLED` | `true` | Turn the embedded UI on/off |
-| `--webapp.listen` | `DAVINCI_DKG_WEBAPP_LISTEN` | `0.0.0.0:8081` | Address/port the explorer HTTP server binds to |
-| `--webapp.public-rpc` | `DAVINCI_DKG_WEBAPP_PUBLIC_RPC` | first `--web3.rpc` | Browser-reachable RPC URL advertised in `/config.json` |
+```bash
+docker compose --profile ui up                       # standalone UI only
+docker compose --profile node --profile ui up        # node + standalone UI side-by-side
+
+# Point the standalone UI at any RPC / contract — short or long var name works.
+RPC_URL=http://host.docker.internal:8545 \
+MANAGER_ADDRESS=0xabc... CHAIN_ID=31337 CHAIN_NAME=anvil \
+  docker compose --profile ui up
+```
+
+Recognised compose env knobs (each accepts both a short and long form;
+`DAVINCI_DKG_*` wins if both are set):
+
+| Short | Long | Default |
+|---|---|---|
+| `RPC_URL` | `DAVINCI_DKG_RPC_URL` | Sepolia public RPC |
+| `MANAGER_ADDRESS` | `DAVINCI_DKG_MANAGER_ADDRESS` | Sepolia DKGManager |
+| `CHAIN_ID` | `DAVINCI_DKG_CHAIN_ID` | 11155111 |
+| `CHAIN_NAME` | `DAVINCI_DKG_CHAIN_NAME` | sepolia |
+| `REGISTRY_ADDRESS` | `DAVINCI_DKG_REGISTRY_ADDRESS` | (auto-derived) |
+| `START_BLOCK` | `DAVINCI_DKG_START_BLOCK` | (none) |
+
+The same knobs work for `make ui-dev` and `make ui-build` — they
+re-render `ui/public/config.json` from the env when `RPC_URL` is set:
+
+```bash
+make ui-dev RPC_URL=http://127.0.0.1:8545 MANAGER_ADDRESS=0x... CHAIN_ID=31337 CHAIN_NAME=anvil
+```
+
+See `ui/README.md` for the full standalone UI build / run reference.
 
 ---
 

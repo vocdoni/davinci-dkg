@@ -20,13 +20,6 @@ type Config struct {
 	Network      string        `mapstructure:"network"`
 	ManagerAddr  string        `mapstructure:"manager"`
 	PollInterval time.Duration `mapstructure:"poll-interval"`
-	Webapp       WebappConfig  `mapstructure:"webapp"`
-}
-
-type WebappConfig struct {
-	Enabled   bool   `mapstructure:"enabled"`
-	Listen    string `mapstructure:"listen"`
-	PublicRPC string `mapstructure:"public-rpc"`
 }
 
 type Web3Config struct {
@@ -57,10 +50,6 @@ func defaultConfig() *Config {
 		},
 		Datadir:      filepath.Join(home, ".davinci-dkg"),
 		PollInterval: 5 * time.Second,
-		Webapp: WebappConfig{
-			Enabled: true,
-			Listen:  "0.0.0.0:8081",
-		},
 	}
 }
 
@@ -82,10 +71,6 @@ func loadConfigFromArgs(args []string) (*Config, error) {
 	fs.String("privkey", cfg.PrivKey, "hex private key for signing transactions")
 	fs.String("manager", cfg.ManagerAddr, "DKGManager contract address (optional when --network is set)")
 	fs.Duration("poll-interval", cfg.PollInterval, "chain polling interval")
-	fs.Bool("webapp.enabled", cfg.Webapp.Enabled, "serve the embedded DKG explorer webapp")
-	fs.String("webapp.listen", cfg.Webapp.Listen, "address the explorer webapp listens on")
-	fs.String("webapp.public-rpc", cfg.Webapp.PublicRPC, "RPC URL exposed to the browser (defaults to first web3.rpc)")
-
 	if err := fs.Parse(args); err != nil {
 		return nil, fmt.Errorf("parse flags: %w", err)
 	}
@@ -154,19 +139,6 @@ func (c *Config) resolvedManagerAddr() string {
 		}
 	}
 	return ""
-}
-
-// resolvedStartBlock returns the contract deployment block for the current
-// network preset, or 0 when no preset is active. The webapp uses this value
-// as the lower bound for getLogs queries so it never scans from genesis.
-func (c *Config) resolvedStartBlock() uint64 {
-	if c.Network != "" {
-		dep, err := config.NetworkByName(c.Network)
-		if err == nil {
-			return dep.StartBlock
-		}
-	}
-	return 0
 }
 
 // resolvedNetworkName returns the canonical network name for display/logging.

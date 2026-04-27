@@ -2,7 +2,7 @@
         circuits-compile circuits-update-hashes circuits circuits-release \
         solidity-build solidity-bind solidity-deploy \
         testnet-up testnet-run testnet-down testnet-logs \
-        webapp-install webapp-build webapp-dev webapp-clean \
+        ui-install ui-build ui-dev ui-clean ui-test ui-config \
         build test test-integration
 
 # Default node count and threshold for testnet
@@ -20,10 +20,16 @@ S3_SECRET_KEY ?=
 S3_SPACE      ?= circuits
 S3_BUCKET     ?= dev
 
-# Deployment parameters (override on command line or via env)
-RPC_URL     ?=
-CHAIN_ID    ?=
-PRIVATE_KEY ?=
+# Deployment + UI config parameters (override on command line or via env).
+# RPC_URL and CHAIN_ID are read by both the solidity-deploy target and by
+# `make ui-dev` / `make ui-build` (which template ui/public/config.json so
+# the dev server / built bundle targets the chain you specify). When unset,
+# the UI keeps the defaults baked into ui/public/config.json (Sepolia).
+RPC_URL         ?=
+CHAIN_ID        ?=
+CHAIN_NAME      ?=
+MANAGER_ADDRESS ?=
+PRIVATE_KEY     ?=
 
 # Temporary file used to pass compile output between targets
 CIRCUIT_ARTIFACTS_JSON ?= /tmp/circuit-artifacts.json
@@ -48,11 +54,11 @@ help: ## Show this help message
 	@echo ""
 	@echo "Testnet Commands:"
 	@echo "  testnet-up      Start the local DKG testnet: Anvil + deployer +"
-	@echo "                  N dkg-node replicas + the dkg-webapp explorer."
+	@echo "                  N dkg-node replicas + the standalone UI service."
 	@echo "                  DKG_NODE_COUNT     (default 3, max 32 containers)"
 	@echo "                  DKG_THRESHOLD      (default 2)"
-	@echo "                  WEBAPP_PORT        (default 8081, host binding)"
-	@echo "                  WEBAPP_PUBLIC_RPC  RPC URL advertised to browsers"
+	@echo "                  UI_PORT            (default 8081, host binding)"
+	@echo "                  UI_PUBLIC_RPC      RPC URL advertised to browsers"
 	@echo "                                     — set to http://<host-ip>:8545"
 	@echo "                                     when accessing from another host."
 	@echo "                  Note: committee size is capped by the circuit"
@@ -65,11 +71,22 @@ help: ## Show this help message
 	@echo "  testnet-logs    Tail logs of the dkg-node containers"
 	@echo "  testnet-down    Stop the testnet and wipe Docker volumes"
 	@echo ""
-	@echo "Webapp Commands:"
-	@echo "  webapp-install   Install webapp dependencies (pnpm install)"
-	@echo "  webapp-build     Build the DKG explorer webapp (embedded into dkg-node)"
-	@echo "  webapp-dev       Run the webapp in dev mode (Vite, hot reload on :5173)"
-	@echo "  webapp-clean     Remove webapp/dist and webapp/node_modules"
+	@echo "UI Commands:"
+	@echo "  ui-install       Install UI dependencies (pnpm install)"
+	@echo "  ui-build         Build the DKG explorer UI to ui/dist"
+	@echo "  ui-dev           Run the UI in dev mode (Vite, hot reload on :5174)"
+	@echo "  ui-test          Run UI unit tests (vitest)"
+	@echo "  ui-clean         Remove ui/dist and ui/node_modules"
+	@echo "  ui-config        Re-render ui/public/config.json from RPC_URL et al."
+	@echo "                   Optional vars (override which chain the UI targets):"
+	@echo "                     RPC_URL          (default: Sepolia public RPC)"
+	@echo "                     MANAGER_ADDRESS  (default: Sepolia DKGManager)"
+	@echo "                     CHAIN_ID         (default: 11155111)"
+	@echo "                     CHAIN_NAME       (default: sepolia)"
+	@echo "                     REGISTRY_ADDRESS (optional)"
+	@echo "                     START_BLOCK      (optional)"
+	@echo "                   ui-build / ui-dev call ui-config automatically when"
+	@echo "                   RPC_URL is set on the command line."
 	@echo ""
 	@echo "Development Commands:"
 	@echo "  build            Build all Go binaries (node, runner, circuit compiler)"
@@ -163,28 +180,57 @@ testnet-down: ## Stop the testnet and wipe state
 	@echo "Tearing down testnet..."
 	@cd testnet && docker compose down -v
 
-# ── Webapp ────────────────────────────────────────────────────────────────
+# ── UI ────────────────────────────────────────────────────────────────────
+#
+# The UI is fully decoupled from the Go binary — it ships as its own
+# Docker image (ui/Dockerfile → ghcr.io/vocdoni/davinci-dkg-ui) and talks
+# to the chain directly via RPC. None of the targets here are a build
+# prerequisite for the Go binaries.
 
-webapp-install: ## Install webapp dependencies with pnpm
-	@echo "Installing webapp dependencies ..."
-	@cd webapp && pnpm install
+ui-install: ## Install UI dependencies with pnpm
+	@echo "Installing UI dependencies ..."
+	@cd ui && pnpm install
 
-webapp-build: ## Build the embedded DKG explorer webapp
-	@echo "Building webapp ..."
-	@cd webapp && [ -d node_modules ] || pnpm install
-	@cd webapp && pnpm run build
-	@echo "Webapp built → webapp/dist (embedded into dkg-node on next 'make build')"
+# Render ui/public/config.json from RPC_URL / MANAGER_ADDRESS / CHAIN_ID /
+# CHAIN_NAME / REGISTRY_ADDRESS / START_BLOCK env vars. Idempotent and safe
+# to call repeatedly. Run as a prerequisite by ui-build / ui-dev whenever
+# the user passes a non-empty RPC_URL on the command line; otherwise we
+# leave the committed default config alone.
+ui-config: ## Re-render ui/public/config.json from RPC_URL et al.
+	@RPC_URL='$(RPC_URL)' \
+	 MANAGER_ADDRESS='$(MANAGER_ADDRESS)' \
+	 CHAIN_ID='$(CHAIN_ID)' \
+	 CHAIN_NAME='$(CHAIN_NAME)' \
+	 REGISTRY_ADDRESS='$(REGISTRY_ADDRESS)' \
+	 START_BLOCK='$(START_BLOCK)' \
+	 bash scripts/render-ui-config.sh ui/public/config.json
 
-webapp-dev: ## Run the webapp in Vite dev mode with hot reload
-	@cd webapp && [ -d node_modules ] || pnpm install
-	@cd webapp && pnpm run dev
+ui-build: ## Build the DKG explorer UI to ui/dist
+	@echo "Building UI ..."
+	@cd sdk && [ -d node_modules ] || pnpm install --frozen-lockfile
+	@cd sdk && [ -d dist ] || pnpm run build
+	@cd ui && [ -d node_modules ] || pnpm install
+	@if [ -n "$(RPC_URL)" ]; then $(MAKE) --no-print-directory ui-config; fi
+	@cd ui && pnpm run build
+	@echo "UI built → ui/dist (consumed by ui/Dockerfile)"
 
-webapp-clean: ## Remove webapp build output and node_modules
-	@rm -rf webapp/dist webapp/node_modules
+ui-dev: ## Run the UI in Vite dev mode with hot reload
+	@cd sdk && [ -d node_modules ] || pnpm install --frozen-lockfile
+	@cd sdk && [ -d dist ] || pnpm run build
+	@cd ui && [ -d node_modules ] || pnpm install
+	@if [ -n "$(RPC_URL)" ]; then $(MAKE) --no-print-directory ui-config; fi
+	@cd ui && pnpm run dev
+
+ui-test: ## Run UI unit tests (vitest)
+	@cd ui && [ -d node_modules ] || pnpm install
+	@cd ui && pnpm run test
+
+ui-clean: ## Remove UI build output and node_modules
+	@rm -rf ui/dist ui/node_modules
 
 # ── Development ───────────────────────────────────────────────────────────
 
-build: webapp-build ## Build all binaries (rebuilds webapp first so it is embedded)
+build: ## Build all Go binaries
 	@echo "Building binaries..."
 	go build ./cmd/...
 

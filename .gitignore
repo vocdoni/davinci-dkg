@@ -14,12 +14,6 @@
 /artifacts/
 /tmp/
 
-# ---- Webapp ---------------------------------------------------------------
-webapp/node_modules/
-webapp/dist/
-webapp/.vite/
-webapp/*.log
-
 # ---- Foundry --------------------------------------------------------------
 solidity/out/
 solidity/cache/

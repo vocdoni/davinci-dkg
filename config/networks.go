@@ -17,9 +17,10 @@ type NetworkDeployment struct {
 	ChainID uint64
 	// Manager is the deployed DKGManager contract address.
 	Manager common.Address
-	// StartBlock is the block at which the DKGManager was deployed. Used by the
-	// webapp and SDK to bound event log queries so they don't scan from genesis
-	// (most free-tier RPC providers cap getLogs ranges at 10 000 blocks).
+	// StartBlock is the block at which the DKGManager was deployed. Used by
+	// the UI and SDK to bound event log queries so they don't scan from
+	// genesis (most free-tier RPC providers cap getLogs ranges at 10 000
+	// blocks).
 	StartBlock uint64
 }
 
@@ -28,8 +29,8 @@ type NetworkDeployment struct {
 var KnownNetworks = map[string]NetworkDeployment{
 	"sepolia": {
 		ChainID:    11155111,
-		Manager:    common.HexToAddress("0xd3ef727b695b21e108497c36f9dcec52d741298a"),
-		StartBlock: 10_718_978, // DKGManager deployment block on Sepolia
+		Manager:    common.HexToAddress("0xa3ba1f1c6430b57f80338acd390664979cf1674e"),
+		StartBlock: 10_745_115, // DKGManager deployment block on Sepolia
 	},
 }
 

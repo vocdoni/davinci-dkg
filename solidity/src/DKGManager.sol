@@ -188,9 +188,15 @@ contract DKGManager is IDKGManager {
     ///         organizer but does not select committee members — every
     ///         registered node that passes the lottery can self-claim a slot.
     /// @param  threshold                  Shamir reconstruction threshold `t`.
-    /// @param  committeeSize              Target committee size `n`.
+    /// @param  committeeSize              Target committee size `n`. Must
+    ///                                    be in [1, MAX_N]; values above
+    ///                                    MAX_N revert with `InvalidPolicy`.
     /// @param  minValidContributions      Minimum accepted contributions
     ///                                    required to allow `finalizeRound`.
+    ///                                    Must be ≥ `threshold` (otherwise
+    ///                                    the round could finalize with
+    ///                                    fewer share holders than needed
+    ///                                    to decrypt — `InvalidPolicy`).
     /// @param  lotteryAlphaBps            Oversubscription factor α encoded as
     ///                                    basis points (10000 = α=1.0). The
     ///                                    expected eligible set size is
@@ -228,12 +234,25 @@ contract DKGManager is IDKGManager {
     ) external returns (bytes12) {
         if (
             threshold == 0 || committeeSize == 0 || threshold > committeeSize
+                || committeeSize > MAX_N
                 || minValidContributions == 0 || minValidContributions > committeeSize
+                || minValidContributions < threshold
                 || lotteryAlphaBps < 10000 || seedDelay == 0 || seedDelay > 256
                 || registrationDeadlineBlock <= uint64(block.number) + uint64(seedDelay)
                 || contributionDeadlineBlock <= registrationDeadlineBlock
                 || finalizeNotBeforeBlock <= contributionDeadlineBlock
         ) revert InvalidPolicy();
+        // Two invariants worth calling out:
+        //   - minValidContributions < threshold would let the round finalize
+        //     with fewer share holders than the Shamir threshold — the
+        //     resulting key would be unrecoverable.
+        //   - committeeSize > MAX_N would pass createRound but silently
+        //     break later: every per-round proof (contribution, finalize,
+        //     combine, reveal) assumes fixed-width transcripts of size
+        //     `MAX_N`. The contract's committee storage and event payloads
+        //     would also overflow their hashed-prefix layout. Cap upfront
+        //     so the failure is the obvious revert here, not a confusing
+        //     ProofInvalid() three transactions deep.
 
         // DecryptionPolicy sanity: if both directions of the same clock are set,
         // the window must be non-empty. maxDecryptions is capped at MAX_CIPHERTEXT_INDEX.

@@ -1,9 +1,9 @@
 name: Release
 
 # Triggered when a semver tag (e.g. v0.1.0, v1.2.3, v1.2.3-rc1) is pushed.
-# Builds fully-static Linux binaries, embeds the version string and the
-# bundled webapp, then publishes the artifacts + checksums to a GitHub
-# Release tied to the tag.
+# Builds fully-static Linux binaries with the version string baked in,
+# publishes the node + UI Docker images, and attaches the binary tarballs
+# + checksums to a GitHub Release tied to the tag.
 
 on:
   push:
@@ -22,55 +22,11 @@ permissions:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # 1. Build the embedded webapp once. The static assets are picked up by the
-  #    Go binaries via //go:embed in webapp/embed.go, so every platform build
-  #    in the next job consumes the same dist/.
-  # ---------------------------------------------------------------------------
-  webapp:
-    name: Build webapp bundle
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: "pnpm"
-          cache-dependency-path: webapp/pnpm-lock.yaml
-
-      - name: Install SDK dependencies
-        working-directory: sdk
-        run: pnpm install --frozen-lockfile
-
-      - name: Build SDK
-        working-directory: sdk
-        run: pnpm run build
-
-      - name: Install webapp dependencies
-        working-directory: webapp
-        run: pnpm install --frozen-lockfile
-
-      - name: Build webapp
-        working-directory: webapp
-        run: pnpm run build
-
-      - name: Upload dist artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: webapp-dist
-          path: webapp/dist/
-          retention-days: 1
-
-  # ---------------------------------------------------------------------------
-  # 2. Cross-compile static binaries for every target in the matrix.
+  # 1. Cross-compile static binaries for every target in the matrix. The
+  #    Go binary is UI-blind, so this stage has no Node/pnpm dependency.
   # ---------------------------------------------------------------------------
   build:
     name: Build ${{ matrix.target }}
-    needs: webapp
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -92,12 +48,6 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-
-      - name: Download webapp dist
-        uses: actions/download-artifact@v4
-        with:
-          name: webapp-dist
-          path: webapp/dist/
 
       - name: Resolve version
         id: version
@@ -161,8 +111,8 @@ jobs:
           retention-days: 7
 
   # ---------------------------------------------------------------------------
-  # 3. Publish the Docker image for the tag (and refresh the `latest` alias
-  #    so Watchtower-based deployments pick up the new release).
+  # 2. Publish the node Docker image for the tag (and refresh the `latest`
+  #    alias so Watchtower-based deployments pick up the new release).
   # ---------------------------------------------------------------------------
   docker:
     name: Docker
@@ -177,11 +127,27 @@ jobs:
       push: true
 
   # ---------------------------------------------------------------------------
+  # 3. Publish the standalone UI image for the same tag. Independent of the
+  #    node image — the UI ships separately so deployments can pin them at
+  #    different versions when needed.
+  # ---------------------------------------------------------------------------
+  ui-docker:
+    name: UI Docker
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/ui-docker-build.yml
+    secrets: inherit
+    with:
+      image-tag: ${{ github.event.inputs.tag || github.ref_name }}
+      push: true
+
+  # ---------------------------------------------------------------------------
   # 4. Collect every matrix tarball + checksum and publish the GitHub Release.
   # ---------------------------------------------------------------------------
   publish:
     name: Publish GitHub release
-    needs: [build, docker]
+    needs: [build, docker, ui-docker]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
