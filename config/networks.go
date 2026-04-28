@@ -30,7 +30,7 @@ var KnownNetworks = map[string]NetworkDeployment{
 	"sepolia": {
 		ChainID:    11155111,
 		Manager:    common.HexToAddress("0x01ee71fdce1705c8823f9f8b2f312100165fdd70"),
-		StartBlock: 10_745_115, // DKGManager deployment block on Sepolia
+		StartBlock: 10_749_311, // DKGManager deployment block on Sepolia
 	},
 }
 
