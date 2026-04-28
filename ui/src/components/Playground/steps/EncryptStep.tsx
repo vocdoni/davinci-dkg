@@ -8,6 +8,13 @@ import { HowItWorks } from '../HowItWorks'
 import { HashCell } from '~components/ui/HashCell'
 import { bigIntToHex } from '~lib/format'
 
+// Mirrors the Go committee's MaxDLogPlaintext (cmd/davinci-dkg-node/dlog.go).
+// The committee can only recover plaintexts strictly below this — submitting
+// anything larger guarantees the round will fail at the combine step. We
+// reject it client-side so the user gets immediate, actionable feedback
+// instead of waiting for the chain to finalize a doomed round.
+const MAX_PLAINTEXT = 1n << 50n // 1,125,899,906,842,624
+
 interface Props {
   status: StepStatus
   collectivePubKey: { x: bigint; y: bigint } | null
@@ -20,11 +27,16 @@ export function EncryptStep({ status, collectivePubKey, onEncrypted, log }: Prop
   const [ct, setCt] = useState<ElGamalCiphertext | null>(null)
   const [busy, setBusy] = useState(false)
 
+  // Validate on every render so the button reflects current input without
+  // a useEffect roundtrip. We accept only non-negative integers under the
+  // committee's recoverable cap.
+  const validation = validatePlaintext(plaintext)
+
   const onEncrypt = async () => {
-    if (!collectivePubKey) return
+    if (!collectivePubKey || validation.error) return
     setBusy(true)
     try {
-      const m = BigInt(plaintext || '0')
+      const m = validation.value!
       const eg = await buildElGamal()
       const pubKey: BabyJubPoint = [collectivePubKey.x, collectivePubKey.y]
       const result = eg.encrypt(m, pubKey)
@@ -51,23 +63,35 @@ export function EncryptStep({ status, collectivePubKey, onEncrypted, log }: Prop
         </Text>
       ) : (
         <Stack gap={4}>
-          <HStack gap={3} align='end'>
-            <Field.Root maxW='200px'>
+          <HStack gap={3} align='end' wrap='wrap'>
+            <Field.Root maxW='260px' invalid={!!validation.error}>
               <Field.Label fontSize='xs'>Number to encrypt</Field.Label>
               <Input
                 size='sm'
                 fontFamily='mono'
+                inputMode='numeric'
                 value={plaintext}
                 onChange={(e) => {
                   setPlaintext(e.target.value)
                   setCt(null)
                 }}
               />
-              <Field.HelperText fontSize='2xs'>
-                Keep it small (under ~1 000 000) so the demo can decode it quickly.
-              </Field.HelperText>
+              {validation.error ? (
+                <Field.ErrorText fontSize='2xs'>{validation.error}</Field.ErrorText>
+              ) : (
+                <Field.HelperText fontSize='2xs'>
+                  Any non-negative integer up to 2<sup>50</sup> ≈ 1.13 × 10<sup>15</sup>. The
+                  committee's discrete-log recovery is capped there.
+                </Field.HelperText>
+              )}
             </Field.Root>
-            <Button colorPalette='purple' size='sm' onClick={onEncrypt} loading={busy}>
+            <Button
+              colorPalette='purple'
+              size='sm'
+              onClick={onEncrypt}
+              loading={busy}
+              disabled={!!validation.error || busy}
+            >
               Encrypt →
             </Button>
           </HStack>
@@ -115,4 +139,30 @@ export function EncryptStep({ status, collectivePubKey, onEncrypted, log }: Prop
       )}
     </StepCard>
   )
+}
+
+interface PlaintextValidation {
+  value?: bigint
+  error?: string
+}
+
+// Accept a non-negative decimal integer strictly below MAX_PLAINTEXT.
+// We deliberately don't fall back to "0" on empty input (the old code did)
+// — silently encrypting zero hides the issue from the user.
+function validatePlaintext(input: string): PlaintextValidation {
+  const trimmed = input.trim()
+  if (trimmed === '') return { error: 'Enter a number to encrypt.' }
+  if (!/^\d+$/.test(trimmed)) return { error: 'Plaintext must be a non-negative integer.' }
+  let value: bigint
+  try {
+    value = BigInt(trimmed)
+  } catch {
+    return { error: 'Plaintext must be a valid integer.' }
+  }
+  if (value >= MAX_PLAINTEXT) {
+    return {
+      error: `Plaintext must be below 2^50 (≈ 1.13 × 10^15). The committee's discrete-log recovery cannot decode larger values.`,
+    }
+  }
+  return { value }
 }

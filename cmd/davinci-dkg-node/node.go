@@ -30,7 +30,6 @@ import (
 	nodetypes "github.com/vocdoni/davinci-dkg/types"
 	"github.com/vocdoni/davinci-dkg/web3"
 	"github.com/vocdoni/davinci-dkg/web3/txmanager"
-	"github.com/vocdoni/davinci-node/crypto/ecc"
 )
 
 // bjjKeyDomain must match tests/helpers/nodekeys.go so registry keys are consistent.
@@ -39,7 +38,7 @@ const bjjKeyDomain = "davinci-dkg/bjj-key/v1"
 // Ciphertext is a decoded CiphertextSubmitted event payload.
 // C1 is the ephemeral ciphertext half (k·G); C2 is the encrypted half (m·G + k·PubKey).
 // Both are needed: C1 for the per-node partial decryption proof and C2 for the
-// combine step that recovers m·G before the final brute-force DLOG.
+// combine step that recovers m·G before the final BSGS DLOG (see dlog.go).
 type Ciphertext struct {
 	CiphertextIndex uint16
 	C1X, C1Y        *big.Int
@@ -1472,14 +1471,17 @@ func (n *Node) doCombineDecryption(
 	mG := group.NewPoint()
 	mG.Add(c2, negCombined)
 
-	// Brute-force discrete log to recover the plaintext scalar.
-	plaintext, err := bruteForceLog(mG)
+	// Recover the plaintext scalar via baby-step/giant-step DLOG. Costly
+	// the first time (~30-60 s for table build) and at most m giant-step
+	// iterations per call thereafter — see dlog.go.
+	plaintext, err := dlogBSGS(mG)
 	if err != nil {
-		// DLOG failed — plaintext is ≥ 2²⁰. Retrying will always produce the
-		// same failure, so mark the round terminal to avoid burning CPU every tick.
+		// DLOG failed — plaintext is ≥ MaxDLogPlaintext (2^50). Retrying
+		// will always produce the same failure, so mark the round terminal
+		// to avoid burning CPU every tick.
 		n.combined[roundID] = true
 		n.terminal[roundID] = true
-		return fmt.Errorf("combine: dlog failed (plaintext must be < 2²⁰ ≈ 1M): %w", err)
+		return fmt.Errorf("combine: dlog failed (plaintext must be < 2^50 ≈ 10^15): %w", err)
 	}
 
 	// Build the ZK witness.
@@ -1558,21 +1560,6 @@ func (n *Node) doCombineDecryption(
 	n.combined[roundID] = true
 	log.Infow("decryption combined", "round", roundHex(roundID), "plaintext", plaintext.String())
 	return nil
-}
-
-// bruteForceLog recovers scalar m from m*G via brute-force DLOG.
-// Only feasible for small plaintexts (m < 2^20 ≈ 1 million).
-func bruteForceLog(target ecc.Point) (*big.Int, error) {
-	gen := group.Generator()
-	candidate := group.NewPoint()
-	candidate.SetZero()
-	for i := int64(0); i < 1<<20; i++ {
-		if candidate.Equal(target) {
-			return big.NewInt(i), nil
-		}
-		candidate.Add(candidate, gen)
-	}
-	return nil, fmt.Errorf("message out of brute-force range (>= 2^20)")
 }
 
 // ---- small helpers ----

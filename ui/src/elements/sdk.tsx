@@ -123,11 +123,18 @@ stop()`}
 const eg = await buildElGamal()
 const pk = await dkg.getCollectivePublicKey(roundId)
 
-// 'message' is a small integer in the BabyJubJub scalar field (here, < 2^20
-// so the brute-force decoder can recover it cheaply on-chain).
+// 'message' must be a non-negative integer strictly below 2^50 (≈ 1.13e15).
+// That's the upper bound the committee's BSGS dlog can recover; submitting
+// anything larger leaves the round unrecoverable.
 const ciphertext = eg.encrypt(42n, [pk.x, pk.y])
 // ciphertext = { c1: [x, y], c2: [x, y] } — both points on BabyJubJub`}
         </CodeBlock>
+        <Text fontSize='sm' color='ink.2'>
+          The matching client-side <Code>decrypt(ct, privKey)</Code> helper (used in tests
+          and direct-key recovery, not in the threshold flow) caps at 2<sup>32</sup> ≈ 4.3
+          billion — the SDK's table fits in ~16 MB so it stays browser-friendly. The
+          on-chain threshold path always uses the committee's higher 2<sup>50</sup> cap.
+        </Text>
       </Section>
 
       <Section heading='Submitting a ciphertext'>

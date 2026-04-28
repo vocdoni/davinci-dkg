@@ -557,6 +557,31 @@ M · G = C_2 − Δ
 
 The message `m` can be recovered by brute force or BSGS if the plaintext space is small.
 
+#### Plaintext range
+
+Recovering `m` from `m · G` is a discrete-log problem with no general efficient
+solution on BabyJubJub. The protocol relies on `m` being bounded so the
+committee can search exhaustively. The implementation pins two caps:
+
+| Surface | Algorithm | Cap | First-call cost | Per-call cost (worst case) |
+|---|---|---|---|---|
+| Go committee node — `cmd/davinci-dkg-node/dlog.go` | Baby-step / giant-step (BSGS) | **2⁵⁰** ≈ 1.13 × 10¹⁵ | ~30–60 s table build, ~1–2 GB heap | ~30–60 s |
+| TypeScript SDK — `sdk/src/crypto/elgamal.ts` `decrypt()` | BSGS (in-process) | **2³²** ≈ 4.3 × 10⁹ | ~1–2 s table build, ~16 MB heap | <1 s |
+
+The two caps differ on purpose. The committee runs on operator hardware with
+gigabytes of RAM headroom; SDK consumers may run in a browser, where a 2⁵⁰
+table (~1 GB) is not practical. The SDK's lower cap only affects users
+calling `decrypt()` directly with a private key — for example in tests or
+single-key demos. The on-chain threshold-decryption flow always uses the
+committee's 2⁵⁰ limit.
+
+Submitting a ciphertext whose plaintext is at or above 2⁵⁰ leaves the round
+unrecoverable: the committee will fail at the combine step, and retrying will
+always produce the same failure. The playground UI rejects such inputs
+client-side. To support larger plaintexts (up to ~2⁵⁶) the operator-side
+algorithm would need to switch from BSGS to Pollard's kangaroo, which trades
+compute time for constant memory.
+
 ### Secret Key Disclosure
 
 When the round policy allows it, the secret key can be reconstructed openly.

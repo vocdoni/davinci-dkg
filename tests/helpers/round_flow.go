@@ -244,8 +244,10 @@ func CombineSingleParticipantDecryption(
 
 	// Recover the plaintext by brute-force discrete log over a small window.
 	// Fixture rounds always submit ciphertexts of small integers so this
-	// terminates immediately; the helper bounds the search to 2^20 to match
-	// the SDK's `decrypt` and avoid hangs on bad inputs.
+	// terminates immediately; the helper bounds the search to 2^20 and is
+	// deliberately separate from the production node's BSGS (cmd/davinci-dkg-node/dlog.go,
+	// cap 2^50). Keeping a tiny cap here means tests don't pay the ~30 s
+	// table-build cost the production cap implies.
 	plaintext, err := bruteForceELGamalPlaintext(c2, partial.Delta)
 	if err != nil {
 		return fmt.Errorf("recover plaintext: %w", err)
@@ -281,6 +283,10 @@ func CombineSingleParticipantDecryption(
 // plaintext that the SDK encrypted (the SDK chose a random k, so this is the
 // only way the fixture can learn what was sent without round-tripping through
 // the original encryption).
+//
+// Production decryption uses cmd/davinci-dkg-node/dlog.go (BSGS, cap 2^50);
+// this helper deliberately keeps the cheaper linear scan because every
+// fixture submits values well under 2^20.
 //
 // Note on the loop: gnark's PointAffine zero value is the affine origin (0, 0),
 // which is NOT a point on twisted Edwards (the identity is (0, 1)). We can't

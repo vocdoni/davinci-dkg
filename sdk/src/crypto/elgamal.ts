@@ -75,25 +75,74 @@ export async function buildElGamal(): Promise<ElGamal> {
   }
 
   /**
-   * ElGamal decrypt via brute-force discrete log.
+   * ElGamal decrypt via baby-step / giant-step (BSGS) discrete log.
    *
-   * s      = privKey * c1
-   * mPoint = c2 - s
+   *   s      = privKey * c1
+   *   mPoint = c2 - s
+   *   m      = dlog(mPoint)
    *
-   * Only suitable for small messages (< 2^20).
+   * The production threshold-decryption path runs in the Go node and supports
+   * plaintexts up to 2^50; this client-side single-key recovery is only
+   * intended for tests, demos, and direct (non-threshold) use, so the cap is
+   * the more browser-friendly **2^32** (~4.3 billion). Lookup table is built
+   * lazily on first call (~16 MB heap, ~1–2 s in the browser) and cached.
+   *
+   * For the on-chain protocol the matching limit is `MAX_DLOG_PLAINTEXT` in
+   * `cmd/davinci-dkg-node/dlog.go` (2^50). The two values are deliberately
+   * different — the threshold combine runs on a server with more headroom.
    */
   function decrypt(ciphertext: ElGamalCiphertext, privKey: bigint): bigint {
     const s = mulPointEscalar(ciphertext.c1, privKey) as BabyJubPoint;
     // Negate s: in twisted Edwards, -(x, y) = (-x, y)
     const negS: BabyJubPoint = [Fr.neg(s[0]), s[1]];
     const mPoint = addPoint(ciphertext.c2, negS) as BabyJubPoint;
+    return dlogBSGS(mPoint);
+  }
 
-    let candidate: BabyJubPoint = [0n, 1n]; // identity point
-    for (let i = 0n; i < 1_048_576n; i++) {
-      if (candidate[0] === mPoint[0] && candidate[1] === mPoint[1]) return i;
-      candidate = addPoint(candidate, Base8) as BabyJubPoint;
+  /**
+   * Largest plaintext (exclusive) the client-side `decrypt` can recover.
+   * Mirrors the SDK's documented contract; values at or above this throw.
+   */
+  const MAX_CLIENT_DLOG_PLAINTEXT = 1n << 32n;
+  const BSGS_M = 1n << 16n; // ⌈√MAX_CLIENT_DLOG_PLAINTEXT⌉ = 2^16 = 65,536.
+
+  // Lazy BSGS table. Keys are point.x serialised as decimal strings — BJJ's
+  // x-coordinate uniquely identifies a point on the prime-order subgroup we
+  // operate on, so we don't need to mix in y. Decimal stringify is fine
+  // here: BigInt → string is fast and the alternative (toString(16) padded)
+  // adds nothing because we never expose the keys.
+  let bsgsTable: Map<string, number> | undefined;
+  let bsgsNegM: BabyJubPoint | undefined;
+
+  function initBsgsTable(): void {
+    if (bsgsTable !== undefined) return;
+    const t = new Map<string, number>();
+    let cur: BabyJubPoint = [0n, 1n]; // identity
+    for (let i = 0; BigInt(i) < BSGS_M; i++) {
+      t.set(cur[0].toString(), i);
+      cur = addPoint(cur, Base8) as BabyJubPoint;
     }
-    throw new Error('decrypt: message out of brute-force range (> 2^20)');
+    bsgsTable = t;
+    // Giant step: M = m·G, then negate so the search loop adds rather
+    // than subtracts on every iteration.
+    const M = mulPointEscalar(Base8, BSGS_M) as BabyJubPoint;
+    bsgsNegM = [Fr.neg(M[0]), M[1]];
+  }
+
+  function dlogBSGS(target: BabyJubPoint): bigint {
+    initBsgsTable();
+    const table = bsgsTable!;
+    const negM = bsgsNegM!;
+    let cur = target;
+    for (let j = 0n; j < BSGS_M; j++) {
+      const hit = table.get(cur[0].toString());
+      if (hit !== undefined) return j * BSGS_M + BigInt(hit);
+      cur = addPoint(cur, negM) as BabyJubPoint;
+    }
+    throw new Error(
+      `decrypt: plaintext out of range (>= 2^32 ≈ ${MAX_CLIENT_DLOG_PLAINTEXT.toString()}). ` +
+        'Threshold decryption on the Go committee handles up to 2^50.',
+    );
   }
 
   function mulPoint(point: BabyJubPoint, scalar: bigint): BabyJubPoint {

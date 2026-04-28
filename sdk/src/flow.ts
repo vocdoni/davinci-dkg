@@ -75,9 +75,10 @@ export async function encrypt(
 /**
  * Decrypt an ElGamal ciphertext given the private key.
  *
- * Only usable for small plaintexts (< 2^20) because recovery is brute-force DLOG.
- * In the real DKG protocol the decryption is performed threshold-style on-chain
- * by the committee; this helper is for testing and verification only.
+ * Recovery uses baby-step / giant-step DLOG, capped at **2^32** plaintexts.
+ * That cap is the SDK-side limit, intended for tests and direct (non-threshold)
+ * use; the real DKG protocol does threshold decryption inside the Go committee
+ * and supports plaintexts up to 2^50. See `cmd/davinci-dkg-node/dlog.go`.
  */
 export async function decrypt(
   ciphertext: ElGamalCiphertext,

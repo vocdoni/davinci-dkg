@@ -190,6 +190,16 @@ docker compose --profile node --profile ui up -d
             The contract keeps a ring buffer of the most recent 64 rounds for the explorer's
             "Rounds" page. Older rounds remain valid on-chain but are not enumerated.
           </List.Item>
+          <List.Item>
+            <Text as='span' fontWeight='semibold' color='ink.0'>
+              Plaintext range.
+            </Text>{' '}
+            Combined ciphertexts must encode a non-negative integer strictly below{' '}
+            <Code>2^50</Code> (≈ 1.13 × 10<sup>15</sup>). Recovery uses baby-step / giant-step
+            DLOG with a precomputed table — about ~30–60 s and ~1–2 GB heap on first decrypt,
+            then the table is reused for every subsequent round. A node never decrypting pays
+            nothing. Submitting larger plaintexts leaves the round permanently unrecoverable.
+          </List.Item>
         </List.Root>
       </Section>
 
