@@ -60,36 +60,62 @@ pnpm test         # vitest
 
 ## Docker
 
-```sh
-# Build & run standalone (against the default Sepolia config)
-docker build -f ui/Dockerfile -t davinci-dkg-ui ..
-docker run -p 8082:80 davinci-dkg-ui
+`ui/Dockerfile` is a build-only target — the final image carries just
+the static `dist/` at `/usr/share/nginx/html`, no nginx runtime. Chain
+config is **baked in at build time** via `--build-arg`s.
 
-# Override the chain target at run time:
-docker run -p 8082:80 \
-  -e DAVINCI_DKG_RPC_URL=http://host.docker.internal:8545 \
-  -e DAVINCI_DKG_MANAGER_ADDRESS=0x... \
-  -e DAVINCI_DKG_CHAIN_ID=31337 \
-  -e DAVINCI_DKG_CHAIN_NAME=anvil \
-  davinci-dkg-ui
+```sh
+# Build a Sepolia-targeted bundle (defaults).
+docker build -f ui/Dockerfile -t davinci-dkg-ui:sepolia ..
+
+# Build a different deployment by overriding the args.
+docker build -f ui/Dockerfile \
+  --build-arg RPC_URL=http://host.docker.internal:8545 \
+  --build-arg MANAGER_ADDRESS=0x... \
+  --build-arg CHAIN_ID=31337 \
+  --build-arg CHAIN_NAME=anvil \
+  -t davinci-dkg-ui:anvil ..
 ```
 
-The container's entrypoint renders `/usr/share/nginx/html/config.json`
-from environment variables before starting nginx, so a single image
-targets any deployment.
-
-## docker-compose
+The image is meant to be consumed by a static-site host (DigitalOcean
+App Platform spec at `.do/davinci-dkg-ui.yaml`) or extracted and served
+manually:
 
 ```sh
-# UI alone (against external RPC, served on :8082)
-docker compose --profile ui up
+docker create --name extract davinci-dkg-ui:sepolia
+docker cp extract:/usr/share/nginx/html ./dist
+docker rm extract
+# Then serve ./dist with anything (nginx, Caddy, S3, Cloudflare R2, …).
+```
 
-# Node + UI together (independent services)
-docker compose --profile node --profile ui up
+## docker-compose (self-hosted serve)
+
+The compose `ui` service skips the custom image entirely — it bind-mounts
+the locally-built `ui/dist` into stock `nginx:alpine`. Build the dist
+once with the chain args you want, then bring up the service:
+
+```sh
+make ui-build \
+  RPC_URL=http://127.0.0.1:8545 \
+  MANAGER_ADDRESS=0x... CHAIN_ID=31337 CHAIN_NAME=anvil
+
+docker compose --profile ui up                       # UI alone, on :8082
+docker compose --profile node --profile ui up        # node + UI together
 ```
 
 The UI listens on `${DAVINCI_DKG_UI_PORT:-8082}`. The node service does
 not expose any HTTP — see the root `docker-compose.yml` for details.
+
+## DigitalOcean App Platform
+
+```sh
+doctl apps create --spec ui/.do/davinci-dkg-ui.yaml
+```
+
+Edit the `BUILD_TIME` env values in the spec to retarget a different
+chain. App Platform builds the Dockerfile per push, reads the static
+files out of `output_dir: /usr/share/nginx/html`, and serves them from
+its edge.
 
 ## Layout
 

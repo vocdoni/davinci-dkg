@@ -1059,12 +1059,11 @@ ready to paste into a GitHub issue.
 
 ### How it reaches the chain
 
-On startup the browser fetches `/config.json` from the UI container; the
-response carries the RPC URL, manager + registry addresses, chain ID and
-chain name. All contract reads after that go directly from the browser to
-the RPC via `viem`. The container's entrypoint templates that
-`/config.json` from environment variables at startup, so a single image
-targets any deployment without a rebuild.
+On startup the browser fetches `/config.json` from the UI bundle; that
+file is templated at **build time** from `RPC_URL` / `MANAGER_ADDRESS`
+/ `CHAIN_ID` / `CHAIN_NAME` (and optional `REGISTRY_ADDRESS` /
+`START_BLOCK`) and shipped inside `dist/`. All contract reads after that
+go directly from the browser to the RPC via `viem`.
 
 Ciphertext submission is fully on-chain — the SPA calls
 `DKGManager.submitCiphertext` directly from the browser wallet; nodes
@@ -1072,41 +1071,68 @@ subscribe to `CiphertextSubmitted` events to pick up work.
 
 ### Running it
 
-The container's entrypoint templates `/config.json` from environment
-variables at start time, so a single image targets any deployment:
+The Vite bundle is the unit of deployment — there is no runtime config
+templating any more. Build once for each deployment with the chain
+config baked in, then host the static files anywhere.
+
+#### DigitalOcean App Platform (recommended for public deployments)
+
+The repo ships an App Platform spec at
+[`ui/.do/davinci-dkg-ui.yaml`](./ui/.do/davinci-dkg-ui.yaml). Deploy via:
 
 ```bash
-docker run -p 8082:80 \
-  -e DAVINCI_DKG_RPC_URL=https://eth-sepolia.public.blastapi.io \
-  -e DAVINCI_DKG_MANAGER_ADDRESS=0xd3ef727b695b21e108497c36f9dcec52d741298a \
-  -e DAVINCI_DKG_CHAIN_ID=11155111 \
-  -e DAVINCI_DKG_CHAIN_NAME=sepolia \
-  ghcr.io/vocdoni/davinci-dkg-ui:latest
+doctl apps create --spec ui/.do/davinci-dkg-ui.yaml
 ```
 
-Or via the root `docker-compose.yml`:
+App Platform clones the repo, builds `ui/Dockerfile` from the repo root
+on every push to `main`, passes the spec's `BUILD_TIME` envs as
+`--build-arg`s, and serves the resulting `dist/` from its edge — no
+nginx in the loop. Edit the env values in the spec to retarget the
+deployment at a different chain.
+
+#### Compose (self-hosted on your own box)
 
 ```bash
-docker compose --profile ui up                       # standalone UI only
-docker compose --profile node --profile ui up        # node + standalone UI side-by-side
+# 1. Build the dist with the chain config you want.
+make ui-build \
+  RPC_URL=https://eth-sepolia.public.blastapi.io \
+  MANAGER_ADDRESS=0xd3ef727b695b21e108497c36f9dcec52d741298a \
+  CHAIN_ID=11155111 CHAIN_NAME=sepolia
 
-# Point the standalone UI at any RPC / contract — short or long var name works.
-RPC_URL=http://host.docker.internal:8545 \
-MANAGER_ADDRESS=0xabc... CHAIN_ID=31337 CHAIN_NAME=anvil \
-  docker compose --profile ui up
+# 2. Serve it via stock nginx:alpine, bind-mounted from ui/dist.
+docker compose --profile ui up                       # UI alone, on :8082
+docker compose --profile node --profile ui up        # node + UI together
 ```
 
-Recognised compose env knobs (each accepts both a short and long form;
-`DAVINCI_DKG_*` wins if both are set):
+#### Plain Docker
 
-| Short | Long | Default |
+```bash
+docker build -f ui/Dockerfile \
+  --build-arg RPC_URL=https://eth-sepolia.public.blastapi.io \
+  --build-arg MANAGER_ADDRESS=0xd3ef727b695b21e108497c36f9dcec52d741298a \
+  --build-arg CHAIN_ID=11155111 \
+  --build-arg CHAIN_NAME=sepolia \
+  -t my-davinci-dkg-ui .
+
+# The image is build-only — extract the dist and serve it yourself:
+docker create --name extract my-davinci-dkg-ui
+docker cp extract:/usr/share/nginx/html ./dist
+docker rm extract
+# Now serve ./dist with anything (Caddy, nginx, S3, Cloudflare R2, …).
+```
+
+#### Build-time knobs
+
+| Var | Default | Notes |
 |---|---|---|
-| `RPC_URL` | `DAVINCI_DKG_RPC_URL` | Sepolia public RPC |
-| `MANAGER_ADDRESS` | `DAVINCI_DKG_MANAGER_ADDRESS` | Sepolia DKGManager |
-| `CHAIN_ID` | `DAVINCI_DKG_CHAIN_ID` | 11155111 |
-| `CHAIN_NAME` | `DAVINCI_DKG_CHAIN_NAME` | sepolia |
-| `REGISTRY_ADDRESS` | `DAVINCI_DKG_REGISTRY_ADDRESS` | (auto-derived) |
-| `START_BLOCK` | `DAVINCI_DKG_START_BLOCK` | (none) |
+| `RPC_URL` | Sepolia public RPC | JSON-RPC endpoint the browser will hit. |
+| `MANAGER_ADDRESS` | Sepolia DKGManager | Required for any non-Sepolia deployment. |
+| `CHAIN_ID` | `11155111` | EIP-155 chain id. |
+| `CHAIN_NAME` | `sepolia` | Display name in the header. |
+| `REGISTRY_ADDRESS` | (auto-derived) | DKGRegistry override. |
+| `START_BLOCK` | (none) | Lower bound for getLogs scans. |
+| `VITE_BUILD_VERSION` | `dev` | Shown in the Settings page. |
+| `VITE_WALLETCONNECT_PROJECT_ID` | (none) | Without this, only injected wallets appear in the picker. |
 
 The same knobs work for `make ui-dev` and `make ui-build` — they
 re-render `ui/public/config.json` from the env when `RPC_URL` is set:
@@ -1115,7 +1141,8 @@ re-render `ui/public/config.json` from the env when `RPC_URL` is set:
 make ui-dev RPC_URL=http://127.0.0.1:8545 MANAGER_ADDRESS=0x... CHAIN_ID=31337 CHAIN_NAME=anvil
 ```
 
-See `ui/README.md` for the full standalone UI build / run reference.
+See [`ui/README.md`](./ui/README.md) for the full local development
+reference.
 
 ---
 

@@ -14,9 +14,11 @@ export function useDkgWriter(): DKGWriter | null {
 
   return useMemo(() => {
     if (!walletClient) return null
+    // See use-dkg-client.ts for why these `as never` casts are necessary
+    // — duplicate viem packages from the link:../sdk dependency.
     return new DKGWriter({
-      publicClient,
-      walletClient,
+      publicClient: publicClient as never,
+      walletClient: walletClient as never,
       managerAddress: config.managerAddress,
       ...(config.registryAddress ? { registryAddress: config.registryAddress } : {}),
     })

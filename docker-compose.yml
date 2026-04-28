@@ -62,59 +62,33 @@ services:
       - node
 
   # ──────────────────────────────────────────────────────────────────────────
-  # Standalone UI — Vite SPA built once in CI, served by nginx.
+  # Standalone UI — Vite static bundle, served by stock nginx:alpine with
+  # the locally-built ./ui/dist bind-mounted in. Chain config is BAKED IN
+  # at build time, not at container start: rebuild ./ui/dist with the
+  # right RPC_URL/MANAGER_ADDRESS/etc. before running this service.
   #
-  #   docker compose --profile ui  up                      → UI only
-  #   docker compose --profile node --profile ui  up       → node + UI
+  #   make ui-build RPC_URL=… MANAGER_ADDRESS=… CHAIN_ID=… CHAIN_NAME=…
+  #   docker compose --profile ui up                      → UI only
+  #   docker compose --profile node --profile ui up       → node + UI
   #
   # The UI is fully decoupled from the node — it talks to the chain
-  # directly via RPC. All chain config is read at container start from env
-  # vars; one image targets any deployment without a rebuild.
+  # directly via RPC.
   #
-  # Chain-selection knobs (set in .env, environment, or inline):
-  #   RPC_URL          — JSON-RPC endpoint the browser will hit. Short
-  #                      alias for DAVINCI_DKG_RPC_URL.
-  #   MANAGER_ADDRESS  — DKGManager contract. Short alias for
-  #                      DAVINCI_DKG_MANAGER_ADDRESS.
-  #   CHAIN_ID         — EIP-155 chain id. Short alias for
-  #                      DAVINCI_DKG_CHAIN_ID.
-  #   CHAIN_NAME       — Display name. Short alias for
-  #                      DAVINCI_DKG_CHAIN_NAME.
-  #   REGISTRY_ADDRESS — Optional. DKGRegistry override.
-  #   START_BLOCK      — Optional. Lower bound for getLogs scans.
-  #
-  # Either the short or the long form works; the long form takes precedence
-  # if both are set so a node-side .env (which uses the DAVINCI_DKG_ prefix)
-  # keeps controlling the UI image without surprise overrides from a stray
-  # RPC_URL on the shell.
-  #
-  # Example:
-  #   RPC_URL=http://host.docker.internal:8545 \
-  #   MANAGER_ADDRESS=0xabc... CHAIN_ID=31337 CHAIN_NAME=anvil \
-  #     docker compose --profile ui up
+  # Why bind-mount instead of an own image: the new ui/Dockerfile is a
+  # build-only target (no runtime), designed for static-site hosts like
+  # DigitalOcean App Platform that build from source per deployment. For
+  # local serving we just point a stock nginx at the dist; one less
+  # custom image to maintain.
   # ──────────────────────────────────────────────────────────────────────────
 
   ui:
     profiles: ["ui"]
-    build:
-      context: ./
-      dockerfile: ui/Dockerfile
-    image: "ghcr.io/vocdoni/davinci-dkg-ui:${DAVINCI_DKG_UI_TAG:-latest}"
-    env_file:
-      - path: .env
-        required: false
-    environment:
-      DAVINCI_DKG_RPC_URL: "${DAVINCI_DKG_RPC_URL:-${RPC_URL:-https://eth-sepolia.public.blastapi.io}}"
-      DAVINCI_DKG_MANAGER_ADDRESS: "${DAVINCI_DKG_MANAGER_ADDRESS:-${MANAGER_ADDRESS:-0xd3ef727b695b21e108497c36f9dcec52d741298a}}"
-      DAVINCI_DKG_CHAIN_ID: "${DAVINCI_DKG_CHAIN_ID:-${CHAIN_ID:-11155111}}"
-      DAVINCI_DKG_CHAIN_NAME: "${DAVINCI_DKG_CHAIN_NAME:-${CHAIN_NAME:-sepolia}}"
-      DAVINCI_DKG_REGISTRY_ADDRESS: "${DAVINCI_DKG_REGISTRY_ADDRESS:-${REGISTRY_ADDRESS:-}}"
-      DAVINCI_DKG_START_BLOCK: "${DAVINCI_DKG_START_BLOCK:-${START_BLOCK:-}}"
+    image: nginx:alpine
+    volumes:
+      - ./ui/dist:/usr/share/nginx/html:ro
     ports:
       - "${DAVINCI_DKG_UI_PORT:-8082}:80"
     restart: ${RESTART:-unless-stopped}
-    labels:
-      - "com.centurylinklabs.watchtower.enable=true"
 
   # ──────────────────────────────────────────────────────────────────────────
   # Test services

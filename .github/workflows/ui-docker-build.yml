@@ -1,16 +1,18 @@
 name: UI Docker
 
-# Reusable workflow that builds the standalone UI image (ui/Dockerfile)
-# and optionally publishes it to GHCR. The node image (docker-build.yml)
-# also publishes to Docker Hub for historical reasons; the UI image is
-# fresh, has no installed-base assumptions, and ships GHCR-only to avoid
-# the per-image manual setup on hub.docker.com.
+# Reusable workflow that builds the static UI image (ui/Dockerfile) and
+# optionally publishes it to GHCR. The image is build-only (no runtime,
+# no nginx) — its purpose is to carry the Vite-built dist for:
+#   - DigitalOcean App Platform (and similar static-site hosts) that
+#     build from source with their own BUILD_TIME envs;
+#   - operators who want to extract the dist via `docker create + cp`
+#     and serve it from their own CDN / nginx / Caddy.
 #
-# A semver tag additionally aliases as `latest` so Watchtower deployments
-# pick it up automatically.
+# The published image bakes the *default* chain config (Sepolia public
+# RPC + Sepolia DKGManager). For other deployments, build locally with
+# `--build-arg RPC_URL=… MANAGER_ADDRESS=… CHAIN_ID=… CHAIN_NAME=…`.
 #
-# This image is independent of the node image: a deployment can pull
-# ghcr.io/vocdoni/davinci-dkg-ui:<tag> on its own and point it at any RPC.
+# A semver tag additionally aliases as `latest`.
 
 on:
   workflow_call:

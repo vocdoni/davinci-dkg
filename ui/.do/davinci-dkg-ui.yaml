@@ -1,0 +1,85 @@
+# DigitalOcean App Platform spec for the davinci-dkg explorer UI.
+#
+# Deploy with:
+#   doctl apps create --spec ui/.do/davinci-dkg-ui.yaml
+# or paste the YAML into the App Platform UI under "Edit App Spec".
+#
+# How DO uses this:
+#   1. Clones github.com/vocdoni/davinci-dkg on each push to `main`.
+#   2. Builds ui/Dockerfile from the repo root, passing every env entry
+#      below whose `scope` is BUILD_TIME as a `--build-arg`.
+#   3. Reads the static files out of `output_dir` in the resulting image
+#      and serves them from DO's edge — no nginx runtime is involved.
+#
+# Override RPC_URL / MANAGER_ADDRESS / CHAIN_ID / CHAIN_NAME below to
+# point the deployment at a different chain. The values here target the
+# public Sepolia deployment.
+
+name: davinci-dkg-ui
+region: ams3
+
+alerts:
+  - rule: DEPLOYMENT_FAILED
+  - rule: DOMAIN_FAILED
+
+# Optional: add a custom domain.
+# domains:
+#   - domain: explorer.davinci.vote
+#     type: PRIMARY
+
+features:
+  - buildpack-stack=ubuntu-22
+
+ingress:
+  rules:
+    - component:
+        name: davinci-dkg-ui
+      match:
+        path:
+          prefix: /
+
+static_sites:
+  - name: davinci-dkg-ui
+    dockerfile_path: ui/Dockerfile
+    # source_dir defaults to the repo root, which is what we want — the
+    # Dockerfile COPYs from both sdk/ and ui/, so the build context must
+    # be the repo root.
+    output_dir: /usr/share/nginx/html
+    github:
+      branch: main
+      deploy_on_push: true
+      repo: vocdoni/davinci-dkg
+    envs:
+      # ── Chain config (consumed by scripts/render-ui-config.sh, which
+      #    writes ui/public/config.json before `pnpm build`) ──────────────
+      - key: RPC_URL
+        scope: BUILD_TIME
+        value: https://eth-sepolia.public.blastapi.io
+      - key: MANAGER_ADDRESS
+        scope: BUILD_TIME
+        value: "0xd3ef727b695b21e108497c36f9dcec52d741298a"
+      - key: CHAIN_ID
+        scope: BUILD_TIME
+        value: "11155111"
+      - key: CHAIN_NAME
+        scope: BUILD_TIME
+        value: sepolia
+      # Optional — leave unset to let the SDK auto-derive from DKGManager.
+      # - key: REGISTRY_ADDRESS
+      #   scope: BUILD_TIME
+      #   value: "0x..."
+      # Optional — sets the lower bound for getLogs scans.
+      # - key: START_BLOCK
+      #   scope: BUILD_TIME
+      #   value: "10718978"
+
+      # ── Vite build envs ─────────────────────────────────────────────────
+      - key: VITE_BUILD_VERSION
+        scope: BUILD_TIME
+        value: do-app-platform
+      # WalletConnect projectId. Required for the WalletConnect option in
+      # the wallet picker; without it, only injected wallets (MetaMask,
+      # Brave wallet, etc.) show up. Get one from cloud.walletconnect.com.
+      # - key: VITE_WALLETCONNECT_PROJECT_ID
+      #   scope: BUILD_TIME
+      #   value: "your-project-id"

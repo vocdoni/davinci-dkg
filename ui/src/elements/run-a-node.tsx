@@ -124,39 +124,34 @@ DAVINCI_DKG_NETWORK=sepolia
         </List.Root>
       </Section>
 
-      <Section heading='4. (Optional) Run an explorer alongside it'>
+      <Section heading='4. (Optional) Host an explorer alongside it'>
         <Text fontSize='sm' color='gray.300'>
-          The node binary itself does not serve any HTTP — it only talks to the chain. To browse
-          rounds, the registry, and the playground from a wallet, run the standalone explorer
-          container alongside the node by enabling the <Code>ui</Code> compose profile:
+          The node binary does not serve any HTTP — it only talks to the chain. To browse rounds,
+          the registry, and the playground from a wallet, host the explorer separately. The
+          explorer is a Vite static bundle whose chain config is baked in at build time.
         </Text>
-        <CodeBlock language='bash'>{`docker compose --profile node --profile ui up -d
-# explorer reachable at http://<your-host>:8082/`}</CodeBlock>
         <Text fontSize='sm' color='gray.300'>
-          The standalone UI image is independent of the node — it talks to the chain directly via
-          RPC. Point it at any deployment by setting <Code>RPC_URL</Code>,{' '}
-          <Code>MANAGER_ADDRESS</Code>, <Code>CHAIN_ID</Code>, and <Code>CHAIN_NAME</Code> in your{' '}
-          <Code>.env</Code>:
+          The compose <Code>ui</Code> profile bind-mounts the locally-built bundle into stock{' '}
+          <Code>nginx:alpine</Code>:
         </Text>
-        <CodeBlock caption='.env (UI overrides)' language='bash'>
-          {`# All optional — defaults target the published Sepolia deployment.
-RPC_URL=https://eth-sepolia.public.blastapi.io
-MANAGER_ADDRESS=0xd3ef727b695b21e108497c36f9dcec52d741298a
-CHAIN_ID=11155111
-CHAIN_NAME=sepolia
-# Optionally pin the host port (defaults to 8082).
-# DAVINCI_DKG_UI_PORT=8082`}
+        <CodeBlock language='bash'>
+          {`# 1. Build the bundle with the chain config you want.
+make ui-build \\
+  RPC_URL=https://eth-sepolia.public.blastapi.io \\
+  MANAGER_ADDRESS=0xd3ef727b695b21e108497c36f9dcec52d741298a \\
+  CHAIN_ID=11155111 CHAIN_NAME=sepolia
+
+# 2. Run nginx alongside the node.
+docker compose --profile node --profile ui up -d
+# explorer reachable at http://<your-host>:8082/`}
         </CodeBlock>
         <Text fontSize='sm' color='gray.300'>
-          You can also run the UI on its own host (no node required), since the SPA only needs a
-          chain endpoint:
+          For a public deployment, point DigitalOcean App Platform at the spec checked into the
+          repo (<Code>ui/.do/davinci-dkg-ui.yaml</Code>) and edit the <Code>BUILD_TIME</Code> env
+          values to retarget the chain. App Platform builds the Dockerfile per push and serves
+          the static files from its edge — no nginx in the loop.
         </Text>
-        <CodeBlock language='bash'>{`docker run -p 8082:80 \\
-  -e DAVINCI_DKG_RPC_URL=https://eth-sepolia.public.blastapi.io \\
-  -e DAVINCI_DKG_MANAGER_ADDRESS=0xd3ef727b695b21e108497c36f9dcec52d741298a \\
-  -e DAVINCI_DKG_CHAIN_ID=11155111 \\
-  -e DAVINCI_DKG_CHAIN_NAME=sepolia \\
-  ghcr.io/vocdoni/davinci-dkg-ui:latest`}</CodeBlock>
+        <CodeBlock language='bash'>{`doctl apps create --spec ui/.do/davinci-dkg-ui.yaml`}</CodeBlock>
       </Section>
 
       <Section heading='5. Maintenance'>

@@ -150,35 +150,21 @@ services:
       - shared:/shared
       - ../testnet:/testnet:ro   # entrypoint scripts
 
-  # ── DKG explorer UI ───────────────────────────────────────────────────────
-  # Serves the standalone UI image on :8081, pointing browsers at the
-  # host-exposed Anvil RPC. Built independently from the node binary —
-  # see ../ui/Dockerfile.
+  # The testnet does NOT bundle a UI service any more. The new ui/
+  # Dockerfile bakes chain config at build time, but the deployer's
+  # addresses are only known at runtime — reconciling those needs a
+  # runtime templating layer that's specific to this scenario.
   #
-  # The DKGManager address is fetched from the deployer's addresses
-  # volume by a small shell entrypoint that templates the env at startup
-  # (the standalone image then materialises /config.json from those env
-  # vars in its own /docker-entrypoint.d hook).
-  dkg-ui:
-    build:
-      context: ..
-      dockerfile: ui/Dockerfile
-    image: davinci-dkg-ui:testnet
-    entrypoint: ["/bin/sh", "/testnet/entrypoint-ui.sh"]
-    depends_on:
-      deployer:
-        condition: service_healthy
-    environment:
-      # Override when accessing from another host:
-      #   UI_PUBLIC_RPC=http://<host-ip>:8545 make testnet-up
-      UI_PUBLIC_RPC: "${UI_PUBLIC_RPC:-http://localhost:8545}"
-      UI_CHAIN_NAME: "anvil-testnet"
-      UI_CHAIN_ID: "1337"
-    volumes:
-      - addresses:/addresses:ro
-      - ../testnet:/testnet:ro
-    ports:
-      - "0.0.0.0:${UI_PORT:-8081}:80"
+  # To browse the local chain instead, in another terminal run:
+  #
+  #   make ui-dev \
+  #     RPC_URL=http://127.0.0.1:8545 \
+  #     MANAGER_ADDRESS=$(grep MANAGER testnet/addresses.env | cut -d= -f2) \
+  #     CHAIN_ID=1337 CHAIN_NAME=anvil-testnet
+  #
+  # (After `make testnet-up` has produced testnet/addresses.env via the
+  # deployer.) Vite's dev server on :5174 serves the UI against your
+  # locally-running Anvil.
 
   # ── Runner (scenario orchestrator) ────────────────────────────────────────
   dkg-runner:

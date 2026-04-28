@@ -7,7 +7,14 @@ import { useConfig } from '~providers/ConfigProvider'
 // config. Re-created when the config object identity changes (i.e. only on
 // boot for now; an RPC-override mechanism in Settings will swap the config
 // in place to retrigger).
-
+//
+// The `publicClient as never` cast on the DKGClient call is load-bearing:
+// `link:../sdk` makes sdk a sibling pnpm package with its OWN viem in
+// sdk/node_modules, so the SDK's `PublicClient` type lives in a different
+// .pnpm hash from the UI's. Both shapes are structurally identical at
+// runtime (same viem major), but tsc reports them as distinct types. The
+// cast tells tsc to trust us; it can be removed once we move sdk + ui
+// into a shared pnpm workspace and viem is hoisted to a single instance.
 export function useDkgClient() {
   const config = useConfig()
   return useMemo(() => {
@@ -19,7 +26,7 @@ export function useDkgClient() {
     })
     const publicClient = createPublicClient({ chain, transport: http(config.rpcUrl) }) as PublicClient
     const dkg = new DKGClient({
-      publicClient,
+      publicClient: publicClient as never,
       managerAddress: config.managerAddress,
       ...(config.registryAddress ? { registryAddress: config.registryAddress } : {}),
     })
