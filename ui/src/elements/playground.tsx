@@ -1,8 +1,8 @@
 import { useCallback, useState } from 'react'
-import { Box, Grid, GridItem, Heading, Stack, Text } from '@chakra-ui/react'
+import { Box, Grid, GridItem, HStack, Stack, Text } from '@chakra-ui/react'
 import { useAccount } from 'wagmi'
 import type { Hex } from 'viem'
-import type { ElGamalCiphertext } from '@vocdoni/davinci-dkg-sdk'
+import { RoundStatus, type ElGamalCiphertext } from '@vocdoni/davinci-dkg-sdk'
 import { ConnectStep } from '~components/Playground/steps/ConnectStep'
 import { CreateRoundStep } from '~components/Playground/steps/CreateRoundStep'
 import { WatchProgressStep } from '~components/Playground/steps/WatchProgressStep'
@@ -14,7 +14,16 @@ import { ActivityLog, type LogEntry, type LogLevel } from '~components/Playgroun
 import type { StepStatus } from '~components/Playground/StepCard'
 import { DetailDisclosure } from '~components/Debug/DetailDisclosure'
 import { useDebugMode } from '~hooks/use-debug-mode'
+import { PageHeader } from '~components/Layout/PageHeader'
+import { useRound } from '~queries/rounds'
+import { useBlockNumber } from '~queries/chain'
+import { roundFailure } from '~lib/round-utils'
 
+// Playground page. Editorial masthead, then a two-column layout: the
+// numbered step cards on the left, a sticky activity-log panel on the
+// right. The right rail collapses behind a disclosure when debug mode is
+// off so casual readers don't see a wall of mono terminal output by
+// default.
 export function Playground() {
   const { isConnected } = useAccount()
   const { enabled: debug } = useDebugMode()
@@ -30,34 +39,49 @@ export function Playground() {
     setLog((prev) => [...prev, { ts: Date.now(), msg, level }])
   }, [])
 
-  // Step status derivation. The pattern mirrors the legacy webapp: a step
-  // is `done` when its primary output exists, `active` when the previous
-  // step finished and it's now "open", `pending` otherwise.
+  // Surface a round-failure state up here so every downstream step can
+  // freeze. Same React Query key as the WatchProgressStep, so this is a
+  // free read from the cache.
+  const round = useRound((roundId ?? undefined) as `0x${string}` | undefined)
+  const { data: block } = useBlockNumber()
+  const failure = round.data ? roundFailure(round.data.round, block ?? null) : null
+  const aborted = round.data?.round.status === RoundStatus.Aborted
+  const blocked = Boolean(failure || aborted)
+
   const stepWallet: StepStatus = isConnected ? 'done' : 'active'
   const stepCreate: StepStatus = !isConnected ? 'pending' : roundId ? 'done' : 'active'
-  const stepWatch: StepStatus = !roundId ? 'pending' : collectivePubKey ? 'done' : 'active'
-  const stepKey: StepStatus = !roundId ? 'pending' : collectivePubKey ? 'done' : 'active'
-  const stepEncrypt: StepStatus = !collectivePubKey ? 'pending' : ciphertext ? 'done' : 'active'
-  const stepSubmit: StepStatus = !ciphertext ? 'pending' : submittedIndex ? 'done' : 'active'
-  const stepVerify: StepStatus = !submittedIndex ? 'pending' : 'active'
+  const stepWatch: StepStatus = !roundId
+    ? 'pending'
+    : blocked
+      ? 'error'
+      : collectivePubKey
+        ? 'done'
+        : 'active'
+  const stepKey: StepStatus = !roundId
+    ? 'pending'
+    : blocked
+      ? 'pending'
+      : collectivePubKey
+        ? 'done'
+        : 'active'
+  const stepEncrypt: StepStatus = !collectivePubKey || blocked ? 'pending' : ciphertext ? 'done' : 'active'
+  const stepSubmit: StepStatus = !ciphertext || blocked ? 'pending' : submittedIndex ? 'done' : 'active'
+  const stepVerify: StepStatus = !submittedIndex || blocked ? 'pending' : 'active'
 
   const onSubmitted = useCallback((idx: number, _hash: Hex) => {
     setSubmittedIndex(idx)
   }, [])
 
   return (
-    <Stack gap={6}>
-      <Box>
-        <Heading size='lg'>Playground</Heading>
-        <Text color='gray.400' fontSize='sm' mt={1}>
-          A guided walkthrough of the full DKG flow: create a round, wait for nodes to contribute,
-          read the collective public key, encrypt a value, submit the ciphertext, and watch the
-          committee threshold-decrypt it on-chain.
-        </Text>
-      </Box>
-      <Grid templateColumns={{ base: '1fr', lg: '2fr 1fr' }} gap={6} alignItems='start'>
+    <Stack gap={{ base: 8, md: 12 }}>
+      <PageHeader
+        title='Playground'
+        subtitle='A guided walkthrough of the full DKG flow: create a round, wait for nodes to contribute, read the collective public key, encrypt a value, submit the ciphertext, and watch the committee threshold-decrypt it on-chain.'
+      />
+
+      <Grid templateColumns={{ base: '1fr', lg: '2fr 1fr' }} gap={{ base: 6, lg: 8 }} alignItems='start'>
         <GridItem>
-          <Stack gap={4}>
+          <Stack gap={5}>
             <ConnectStep status={stepWallet} />
             <CreateRoundStep status={stepCreate} roundId={roundId} setRoundId={setRoundId} log={addLog} />
             <WatchProgressStep status={stepWatch} roundId={roundId} log={addLog} />
@@ -89,10 +113,25 @@ export function Playground() {
           </Stack>
         </GridItem>
         <GridItem position={{ base: 'static', lg: 'sticky' }} top={{ lg: 24 }}>
-          <Box borderWidth='1px' borderColor='gray.800' borderRadius='md' bg='gray.900' p={4}>
-            <Heading size='xs' mb={3} color='gray.300'>
-              Activity log
-            </Heading>
+          <Box
+            borderWidth='1px'
+            borderColor='border.subtle'
+            borderRadius='lg'
+            bg='surface'
+            p={4}
+            boxShadow='inset'
+          >
+            <HStack
+              mb={3}
+              fontFamily='mono'
+              fontSize='2xs'
+              color='ink.3'
+              letterSpacing='0.08em'
+              gap={2}
+            >
+              <Box w='6px' h='6px' borderRadius='full' bg='live.fg' />
+              <Text textTransform='uppercase'>Activity log</Text>
+            </HStack>
             {debug ? (
               <ActivityLog entries={log} />
             ) : (

@@ -1,4 +1,4 @@
-import { Box, HStack, Stack, Text } from '@chakra-ui/react'
+import { Box, Grid, GridItem, HStack, Stack, Text } from '@chakra-ui/react'
 import type { RoundEvent } from '@vocdoni/davinci-dkg-sdk'
 import { HashCell } from '~components/ui/HashCell'
 import { DetailDisclosure } from '~components/Debug/DetailDisclosure'
@@ -35,43 +35,72 @@ function eventSummary(ev: RoundEvent): string {
   }
 }
 
+// Editorial event log. Each event is a journal-entry-style row:
+//
+//   #BLK ───── plain-English summary
+//              evname · txhash
+//              [+ raw args]
+//
+// The block number column anchors each row, mono and tabular, so a long
+// log reads as a chronicle of state changes. The hairline rules between
+// rows form a typeset list, no per-row card.
 export function EventLog({ events }: { events: RoundEvent[] }) {
   if (events.length === 0) {
     return (
-      <Box p={6} textAlign='center' color='gray.500' fontSize='sm'>
-        No events for this round yet.
+      <Box
+        borderWidth='1px'
+        borderColor='border.subtle'
+        borderRadius='lg'
+        bg='surface'
+        p={{ base: 8, md: 12 }}
+        textAlign='center'
+      >
+        <Text color='ink.3' fontSize='sm'>
+          No events for this round yet.
+        </Text>
       </Box>
     )
   }
   // Newest first feels more natural in an "activity" view.
   const sorted = [...events].sort((a, b) => Number(b.blockNumber - a.blockNumber))
   return (
-    <Stack gap={2}>
+    <Stack gap={0}>
       {sorted.map((ev, i) => (
-        <Box
+        <Grid
           key={`${ev.transactionHash}-${i}`}
-          borderWidth='1px'
-          borderColor='gray.800'
-          borderRadius='md'
-          bg='gray.900'
-          p={3}
+          templateColumns={{ base: '1fr', md: '120px 1fr' }}
+          gap={{ base: 2, md: 6 }}
+          py={4}
+          borderTopWidth={i === 0 ? '1px' : 0}
+          borderBottomWidth='1px'
+          borderColor='rule'
         >
-          <HStack justify='space-between' align='start' wrap='wrap' gap={2}>
-            <Stack gap={0.5}>
-              <Text fontSize='sm'>{eventSummary(ev)}</Text>
-              <Text fontSize='2xs' color='gray.500' fontFamily='mono'>
-                {ev.eventName}
-              </Text>
-            </Stack>
-            <HStack gap={3} fontSize='2xs' color='gray.500'>
-              <Text>block #{ev.blockNumber.toString()}</Text>
+          <GridItem>
+            <Text
+              className='dkg-tabular'
+              fontFamily='mono'
+              fontSize='xs'
+              color='ink.4'
+              letterSpacing='0.04em'
+              whiteSpace='nowrap'
+            >
+              #{ev.blockNumber.toString()}
+            </Text>
+          </GridItem>
+          <GridItem>
+            <Text fontSize='sm' color='ink.1' lineHeight='1.5' mb={1.5}>
+              {eventSummary(ev)}
+            </Text>
+            <HStack gap={3} fontFamily='mono' fontSize='2xs' color='ink.4'>
+              <Text color='accent.dim'>{ev.eventName}</Text>
+              <Box w='1px' h='10px' bg='border' />
               <HashCell value={ev.transactionHash} head={6} tail={4} />
             </HStack>
-          </HStack>
-          <DetailDisclosure title='Show event args'>
-            <RawJson value={ev.args} />
-          </DetailDisclosure>
-        </Box>
+            <DetailDisclosure title='Show event args'>
+              <RawJson value={ev.args} />
+            </DetailDisclosure>
+          </GridItem>
+        </Grid>
       ))}
     </Stack>
   )

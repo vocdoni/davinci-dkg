@@ -1,9 +1,10 @@
-import { Box, Heading, SimpleGrid, Stack, Text } from '@chakra-ui/react'
+import { Heading, SimpleGrid, Stack } from '@chakra-ui/react'
 import { useRegistryNodes, useRegistryStats } from '~queries/registry'
 import { useBlockNumber } from '~queries/chain'
 import { StatCard } from '~components/ui/StatCard'
 import { NodeTable } from '~components/Registry/NodeTable'
 import { QueryDataLayout } from '~components/Layout/QueryDataLayout'
+import { PageHeader } from '~components/Layout/PageHeader'
 import { blocksToDuration } from '~lib/format'
 
 export function Registry() {
@@ -12,34 +13,36 @@ export function Registry() {
   const { data: block } = useBlockNumber()
 
   return (
-    <Stack gap={8}>
-      <Box>
-        <Heading size='lg'>Node registry</Heading>
-        <Text color='gray.400' fontSize='sm' mt={1}>
-          Operators registered on the DKG registry contract. The lottery only ever picks committee
-          members from active nodes; inactive ones are pruned automatically by the on-chain
-          inactivity window.
-        </Text>
-      </Box>
+    <Stack gap={{ base: 10, md: 12 }}>
+      <PageHeader
+        title='Node registry'
+        subtitle='Operators registered on the DKG registry contract. The lottery only picks committee members from active nodes; inactive ones are pruned automatically by the on-chain inactivity window.'
+      />
 
       <QueryDataLayout isLoading={stats.isLoading} isError={stats.isError} error={stats.error}>
         {stats.data && (
-          <SimpleGrid columns={{ base: 2, md: 4 }} gap={4}>
-            <StatCard label='Active' value={stats.data.active.toString()} />
+          <SimpleGrid columns={{ base: 2, md: 4 }} gap={{ base: 3, md: 4 }}>
+            <StatCard label='Active' value={stats.data.active.toString()} tone='live' />
             <StatCard label='Total registered' value={stats.data.total.toString()} />
             <StatCard
               label='Inactivity window'
               value={blocksToDuration(Number(stats.data.inactivity))}
               hint={`${stats.data.inactivity.toString()} blocks`}
             />
-            <StatCard label='Latest block' value={block ? `#${block.toString()}` : '—'} />
+            <StatCard label='Latest block' value={block ? `#${block.toString()}` : '—'} tone='live' />
           </SimpleGrid>
         )}
       </QueryDataLayout>
 
-      <Box>
-        <Heading size='sm' mb={3}>
-          Nodes
+      <Stack gap={5}>
+        <Heading
+          as='h2'
+          fontSize={{ base: 'lg', md: 'xl' }}
+          fontWeight={500}
+          color='ink.0'
+          letterSpacing='-0.01em'
+        >
+          Roster
         </Heading>
         <QueryDataLayout
           isLoading={nodes.isLoading}
@@ -50,7 +53,7 @@ export function Registry() {
         >
           {nodes.data && <NodeTable nodes={nodes.data} currentBlock={block ?? null} />}
         </QueryDataLayout>
-      </Box>
+      </Stack>
     </Stack>
   )
 }

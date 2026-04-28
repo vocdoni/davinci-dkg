@@ -1,34 +1,25 @@
-import { Badge, Box, Heading, HStack, Link, List, Stack, Text } from '@chakra-ui/react'
+import { Box, Heading, HStack, Link, List, Stack, Text } from '@chakra-ui/react'
 import { LuExternalLink } from 'react-icons/lu'
 import type { ReactNode } from 'react'
 import { CodeBlock } from '~components/ui/CodeBlock'
+import { PageHeader } from '~components/Layout/PageHeader'
 
-// Operator-facing "how to run a node" page. Currently Sepolia-only because
-// that's the only deployment in config/networks.go.
-//
-// Style: documentation, not marketing. Sections are numbered, not iconed
-// in colored bubbles; the page reads top-to-bottom like a README.
 export function RunNode() {
   return (
-    <Stack gap={10} maxW='3xl'>
-      <Box pb={4} borderBottomWidth='1px' borderColor='gray.800'>
-        <HStack gap={3} mb={2} align='baseline' wrap='wrap'>
-          <Heading size='lg' color='gray.100'>
-            Running a node
-          </Heading>
-          <Badge colorPalette='gray' variant='outline' fontSize='2xs'>
-            sepolia only
-          </Badge>
-        </HStack>
-        <Text color='gray.400' fontSize='sm' lineHeight='1.6'>
-          Procedure for joining the davinci-dkg committee on Sepolia. The node binary ships as a
-          single Docker image; no Go, Node, or build toolchain is required on the host. The
-          explorer UI is a separate, optional container — see step 4 below.
-        </Text>
-      </Box>
+    <Stack gap={{ base: 10, md: 14 }}>
+      <PageHeader
+        title='Running a node'
+        subtitle='Procedure for joining the davinci-dkg committee on Sepolia. The node binary ships as a single Docker image; no Go, Node, or build toolchain is required on the host. The explorer UI is a separate, optional container — see step 4.'
+        action={
+          <HStack gap={2} fontFamily='mono' fontSize='2xs' color='ink.3' letterSpacing='0.08em' textTransform='uppercase'>
+            <Box w='6px' h='6px' borderRadius='full' bg='accent.fg' />
+            <Text color='ink.2'>Sepolia</Text>
+          </HStack>
+        }
+      />
 
       <Section heading='Prerequisites'>
-        <List.Root gap={2} fontSize='sm' color='gray.300' pl={5}>
+        <List.Root gap={2} fontSize='sm' color='ink.2' pl={5}>
           <List.Item>
             <Code>docker</Code> ≥ 24 and <Code>docker compose</Code> v2.
           </List.Item>
@@ -59,7 +50,7 @@ export function RunNode() {
       </Section>
 
       <Section heading='1. Clone the repository'>
-        <Text fontSize='sm' color='gray.300'>
+        <Text fontSize='sm' color='ink.2'>
           The compose file and the example env live at the repository root. Nothing is built locally
           — everything is pulled from the published images.
         </Text>
@@ -70,13 +61,13 @@ cd davinci-dkg`}
       </Section>
 
       <Section heading='2. Configure the node'>
-        <Text fontSize='sm' color='gray.300'>
+        <Text fontSize='sm' color='ink.2'>
           Copy the example env file and fill in your private key. The Sepolia network preset
           resolves all contract addresses for you.
         </Text>
         <CodeBlock language='bash'>{`cp .env.example .env
 $EDITOR .env`}</CodeBlock>
-        <Text fontSize='sm' color='gray.300'>
+        <Text fontSize='sm' color='ink.2'>
           Minimum required entries:
         </Text>
         <CodeBlock caption='.env' language='bash'>
@@ -100,19 +91,19 @@ DAVINCI_DKG_NETWORK=sepolia
       </Section>
 
       <Section heading='3. Start the node'>
-        <Text fontSize='sm' color='gray.300'>
+        <Text fontSize='sm' color='ink.2'>
           One command brings up the node and Watchtower (which auto-updates the image when new
           versions are published). The container restarts on failure by default.
         </Text>
         <CodeBlock language='bash'>{`docker compose --profile node up -d`}</CodeBlock>
-        <Text fontSize='sm' color='gray.300'>
+        <Text fontSize='sm' color='ink.2'>
           Tail the logs to confirm it is running:
         </Text>
         <CodeBlock language='bash'>{`docker compose --profile node logs -f node`}</CodeBlock>
-        <Text fontSize='sm' color='gray.300'>
+        <Text fontSize='sm' color='ink.2'>
           On first boot the node:
         </Text>
-        <List.Root gap={1.5} fontSize='sm' color='gray.300' pl={5}>
+        <List.Root gap={1.5} fontSize='sm' color='ink.2' pl={5}>
           <List.Item>Derives a BabyJubJub encryption key from your Ethereum private key.</List.Item>
           <List.Item>
             Registers in <Code>DKGRegistry</Code> (one transaction) — or skips if it is already
@@ -125,12 +116,12 @@ DAVINCI_DKG_NETWORK=sepolia
       </Section>
 
       <Section heading='4. (Optional) Host an explorer alongside it'>
-        <Text fontSize='sm' color='gray.300'>
+        <Text fontSize='sm' color='ink.2'>
           The node binary does not serve any HTTP — it only talks to the chain. To browse rounds,
           the registry, and the playground from a wallet, host the explorer separately. The
           explorer is a Vite static bundle whose chain config is baked in at build time.
         </Text>
-        <Text fontSize='sm' color='gray.300'>
+        <Text fontSize='sm' color='ink.2'>
           The compose <Code>ui</Code> profile bind-mounts the locally-built bundle into stock{' '}
           <Code>nginx:alpine</Code>:
         </Text>
@@ -145,7 +136,7 @@ make ui-build \\
 docker compose --profile node --profile ui up -d
 # explorer reachable at http://<your-host>:8082/`}
         </CodeBlock>
-        <Text fontSize='sm' color='gray.300'>
+        <Text fontSize='sm' color='ink.2'>
           For a public deployment, point DigitalOcean App Platform at the spec checked into the
           repo (<Code>ui/.do/davinci-dkg-ui.yaml</Code>) and edit the <Code>BUILD_TIME</Code> env
           values to retarget the chain. App Platform builds the Dockerfile per push and serves
@@ -155,9 +146,9 @@ docker compose --profile node --profile ui up -d
       </Section>
 
       <Section heading='5. Maintenance'>
-        <List.Root gap={2.5} fontSize='sm' color='gray.300' pl={5}>
+        <List.Root gap={2.5} fontSize='sm' color='ink.2' pl={5}>
           <List.Item>
-            <Text as='span' fontWeight='semibold' color='gray.100'>
+            <Text as='span' fontWeight='semibold' color='ink.0'>
               Upgrades.
             </Text>{' '}
             Watchtower follows the <Code>latest</Code> tag and recreates the container when a new
@@ -165,7 +156,7 @@ docker compose --profile node --profile ui up -d
             the watchtower service from <Code>docker-compose.yml</Code>) for manual control.
           </List.Item>
           <List.Item>
-            <Text as='span' fontWeight='semibold' color='gray.100'>
+            <Text as='span' fontWeight='semibold' color='ink.0'>
               State.
             </Text>{' '}
             The node mounts a Docker volume named <Code>run</Code> for its data directory. All
@@ -173,7 +164,7 @@ docker compose --profile node --profile ui up -d
             is safe.
           </List.Item>
           <List.Item>
-            <Text as='span' fontWeight='semibold' color='gray.100'>
+            <Text as='span' fontWeight='semibold' color='ink.0'>
               Stop.
             </Text>{' '}
             <Code>docker compose --profile node down</Code>. Add <Code>-v</Code> to also wipe the
@@ -183,9 +174,9 @@ docker compose --profile node --profile ui up -d
       </Section>
 
       <Section heading='Limits'>
-        <List.Root gap={2.5} fontSize='sm' color='gray.300' pl={5}>
+        <List.Root gap={2.5} fontSize='sm' color='ink.2' pl={5}>
           <List.Item>
-            <Text as='span' fontWeight='semibold' color='gray.100'>
+            <Text as='span' fontWeight='semibold' color='ink.0'>
               Committee size.
             </Text>{' '}
             Capped at <Code>32</Code> per round (the circuits' compile-time <Code>MaxN</Code>). The
@@ -193,7 +184,7 @@ docker compose --profile node --profile ui up -d
             trusted setup, redeployed verifier contracts, and a redeployed manager.
           </List.Item>
           <List.Item>
-            <Text as='span' fontWeight='semibold' color='gray.100'>
+            <Text as='span' fontWeight='semibold' color='ink.0'>
               Recent rounds buffer.
             </Text>{' '}
             The contract keeps a ring buffer of the most recent 64 rounds for the explorer's
@@ -203,7 +194,7 @@ docker compose --profile node --profile ui up -d
       </Section>
 
       <Section heading='Other networks'>
-        <Text fontSize='sm' color='gray.300'>
+        <Text fontSize='sm' color='ink.2'>
           Sepolia is the only network with a published deployment so far. As more land,{' '}
           <Code>config/networks.go</Code> will gain entries and{' '}
           <Code>DAVINCI_DKG_NETWORK=sepolia</Code> can be swapped for the new name without other
@@ -242,10 +233,17 @@ docker compose --profile node --profile ui up -d
 function Section({ heading, children }: { heading: string; children: ReactNode }) {
   return (
     <Box as='section'>
-      <Heading size='md' color='gray.100' mb={3}>
+      <Heading
+        as='h2'
+        fontSize={{ base: 'lg', md: 'xl' }}
+        fontWeight={500}
+        color='ink.0'
+        letterSpacing='-0.01em'
+        mb={4}
+      >
         {heading}
       </Heading>
-      <Stack gap={3}>{children}</Stack>
+      <Stack gap={4}>{children}</Stack>
     </Box>
   )
 }
@@ -254,13 +252,15 @@ function Code({ children }: { children: ReactNode }) {
   return (
     <Box
       as='code'
-      bg='gray.800'
-      px={1.5}
-      py={0.5}
+      bg='surface.sunken'
+      borderWidth='1px'
+      borderColor='border.subtle'
+      px='0.4em'
+      py='0.1em'
       borderRadius='sm'
       fontFamily='mono'
-      fontSize='xs'
-      color='gray.100'
+      fontSize='0.86em'
+      color='accent.bright'
     >
       {children}
     </Box>
@@ -273,8 +273,11 @@ function ExternalLink({ href, children }: { href: string; children: ReactNode })
       href={href}
       target='_blank'
       rel='noopener noreferrer'
-      color='cyan.300'
-      _hover={{ color: 'cyan.200', textDecoration: 'underline' }}
+      color='accent.fg'
+      borderBottomWidth='1px'
+      borderColor='accent.border'
+      _hover={{ color: 'accent.bright', borderColor: 'accent.fg' }}
+      transition='color 0.15s, border-color 0.15s'
     >
       <HStack gap={1.5} display='inline-flex' align='center'>
         <Box as='span'>{children}</Box>

@@ -59,14 +59,14 @@ export function SubmitCiphertextStep({ status, roundId, ciphertext, onSubmitted,
     >
       <Stack gap={4}>
         {!ciphertext ? (
-          <Text fontSize='sm' color='gray.500'>
+          <Text fontSize='sm' color='ink.4'>
             Encrypt something in the previous step first.
           </Text>
         ) : tx ? (
           <Stack gap={2} fontSize='sm'>
-            <Text color='green.300'>Ciphertext published. Waiting for committee decryption…</Text>
+            <Text color='live.fg'>Ciphertext published. Waiting for committee decryption…</Text>
             <Box>
-              <Text fontSize='xs' color='gray.500'>
+              <Text fontSize='xs' color='ink.4'>
                 tx
               </Text>
               <HashCell value={tx} head={8} tail={6} />

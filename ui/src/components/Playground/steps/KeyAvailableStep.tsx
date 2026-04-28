@@ -57,12 +57,12 @@ export function KeyAvailableStep({ status, roundId, onKeyReady, log }: Props) {
       description='Once enough committee members have contributed, the round finalizes and a single public key — built from all their pieces — becomes available.'
     >
       {!roundId || !round.data ? (
-        <Text fontSize='sm' color='gray.500'>
+        <Text fontSize='sm' color='ink.4'>
           Create a round and wait for it to be finalized.
         </Text>
       ) : !isFinalized ? (
         <Stack gap={3}>
-          <Text fontSize='sm' color='gray.300'>
+          <Text fontSize='sm' color='ink.2'>
             Hang tight — the committee is still building the key. The encrypt step will unlock as
             soon as the round finalizes.
           </Text>
@@ -88,22 +88,22 @@ export function KeyAvailableStep({ status, roundId, onKeyReady, log }: Props) {
         </Stack>
       ) : loading ? (
         <Stack gap={2} align='start'>
-          <Spinner size='sm' color='cyan.300' />
-          <Text fontSize='xs' color='gray.500'>
+          <Spinner size='sm' color='accent.fg' />
+          <Text fontSize='xs' color='ink.4'>
             Reading the public key…
           </Text>
         </Stack>
       ) : key ? (
         <Stack gap={3}>
           <Box>
-            <Text fontSize='sm' color='gray.300'>
+            <Text fontSize='sm' color='ink.2'>
               The shared encryption key is live. You can now encrypt a value for the committee to
               decrypt — head to the next step.
             </Text>
           </Box>
           <DetailDisclosure title='Show key coordinates'>
             <Stack gap={1}>
-              <Text fontSize='2xs' color='gray.500'>
+              <Text fontSize='2xs' color='ink.4'>
                 BabyJubJub (twisted Edwards / BN254 scalar field). x and y are 254-bit field elements.
               </Text>
               <Text>x:</Text>

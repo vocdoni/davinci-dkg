@@ -1,0 +1,31 @@
+/*
+ * Global keyframes + font-smoothing utilities that Chakra v3's globalCss
+ * type-checker is too strict to accept. Loaded once from main.tsx so they
+ * apply everywhere.
+ */
+
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+/*
+ * Soft halo that grows + fades around an indicator dot. Used by the
+ * StatusBadge and the PhaseTimeline. Slow on purpose (1.8s) so it doesn't
+ * read as anxious.
+ */
+@keyframes dkgPhasePulse {
+  0%   { transform: scale(0.85); opacity: 0.65; }
+  70%  { transform: scale(2.1);  opacity: 0;    }
+  100% { transform: scale(2.1);  opacity: 0;    }
+}
+
+/*
+ * Subtle staggered fade-in. Apply via `animation: dkgRise 0.5s ease both`
+ * on a section to have it slide up gently on mount.
+ */
+@keyframes dkgRise {
+  0%   { opacity: 0; transform: translateY(6px); }
+  100% { opacity: 1; transform: translateY(0);   }
+}

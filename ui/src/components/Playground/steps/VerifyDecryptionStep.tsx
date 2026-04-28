@@ -49,27 +49,27 @@ export function VerifyDecryptionStep({ status, roundId, ciphertextIndex, expecte
     >
       <Stack gap={4}>
         {!ciphertextIndex ? (
-          <Text fontSize='sm' color='gray.500'>
+          <Text fontSize='sm' color='ink.4'>
             Publish a ciphertext to start the decryption flow.
           </Text>
         ) : (
           <Stack gap={3}>
             {round.data && (
-              <Text fontSize='xs' color='gray.400'>
+              <Text fontSize='xs' color='ink.3'>
                 Pieces collected: {round.data.round.partialDecryptionCount.toString()} of{' '}
                 {round.data.round.policy.threshold} needed
               </Text>
             )}
             {decryption.isLoading && (
               <Stack gap={2} align='start'>
-                <Spinner size='sm' color='cyan.300' />
-                <Text fontSize='xs' color='gray.500'>
+                <Spinner size='sm' color='accent.fg' />
+                <Text fontSize='xs' color='ink.4'>
                   Checking the contract…
                 </Text>
               </Stack>
             )}
             {decryption.data && !decryption.data.completed && (
-              <Text fontSize='xs' color='gray.500'>
+              <Text fontSize='xs' color='ink.4'>
                 Waiting for the committee to finish combining their pieces…
               </Text>
             )}

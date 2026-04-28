@@ -1,41 +1,38 @@
-import { Badge, Box, Heading, HStack, Link, List, Stack, Text } from '@chakra-ui/react'
+import { Box, Heading, HStack, Link, List, Stack, Text } from '@chakra-ui/react'
 import { LuExternalLink } from 'react-icons/lu'
 import type { ReactNode } from 'react'
 import { CodeBlock } from '~components/ui/CodeBlock'
+import { PageHeader } from '~components/Layout/PageHeader'
 
-// Developer-facing "use the SDK" page. Mirrors the structure of run-a-node:
-// a numbered/lettered sequence of sections with minimal code snippets.
-//
-// Style: documentation. Each snippet is the minimum to be useful — no
-// boilerplate, no decorative chrome.
 export function Sdk() {
   return (
-    <Stack gap={10} maxW='3xl'>
-      <Box pb={4} borderBottomWidth='1px' borderColor='gray.800'>
-        <HStack gap={3} mb={2} align='baseline' wrap='wrap'>
-          <Heading size='lg' color='gray.100'>
-            SDK reference
-          </Heading>
-          <Badge colorPalette='gray' variant='outline' fontSize='2xs'>
-            typescript
-          </Badge>
-        </HStack>
-        <Text color='gray.400' fontSize='sm' lineHeight='1.6'>
-          <Code>@vocdoni/davinci-dkg-sdk</Code> is a TypeScript wrapper around the on-chain
-          contracts and the BabyJubJub cryptography. It runs entirely against any EVM JSON-RPC
-          endpoint; no extra services in between.
-        </Text>
-      </Box>
+    <Stack gap={{ base: 10, md: 14 }}>
+      <PageHeader
+        title='SDK reference'
+        subtitle={
+          <>
+            <Code>@vocdoni/davinci-dkg-sdk</Code> is a TypeScript wrapper around the on-chain
+            contracts and the BabyJubJub cryptography. It runs entirely against any EVM JSON-RPC
+            endpoint; no extra services in between.
+          </>
+        }
+        action={
+          <HStack gap={2} fontFamily='mono' fontSize='2xs' color='ink.3' letterSpacing='0.08em' textTransform='uppercase'>
+            <Box w='6px' h='6px' borderRadius='full' bg='accent.fg' />
+            <Text color='ink.2'>TypeScript</Text>
+          </HStack>
+        }
+      />
 
       <Section heading='Install'>
-        <Text fontSize='sm' color='gray.300'>
+        <Text fontSize='sm' color='ink.2'>
           ESM-only TypeScript package. Depends on <Code>viem</Code> and{' '}
           <Code>@zk-kit/baby-jubjub</Code>.
         </Text>
         <CodeBlock language='bash'>{`pnpm add @vocdoni/davinci-dkg-sdk viem
 # or: npm install @vocdoni/davinci-dkg-sdk viem
 # or: yarn add @vocdoni/davinci-dkg-sdk viem`}</CodeBlock>
-        <Text fontSize='sm' color='gray.300'>
+        <Text fontSize='sm' color='ink.2'>
           Until the package is published to npm, the monorepo can be consumed directly via a
           relative file dependency (this is what the explorer in this page does):
         </Text>
@@ -43,7 +40,7 @@ export function Sdk() {
       </Section>
 
       <Section heading='Read-only client'>
-        <Text fontSize='sm' color='gray.300'>
+        <Text fontSize='sm' color='ink.2'>
           All read calls go through <Code>DKGClient</Code>. It needs a viem{' '}
           <Code>PublicClient</Code> and the address of the deployed <Code>DKGManager</Code>{' '}
           contract; the registry address is auto-discovered if omitted.
@@ -66,7 +63,7 @@ export const dkg = new DKGClient({
       </Section>
 
       <Section heading='Reading a round'>
-        <Text fontSize='sm' color='gray.300'>
+        <Text fontSize='sm' color='ink.2'>
           Round identifiers are 12-byte values formed from a 4-byte chain prefix and an 8-byte
           nonce. Build one with <Code>buildRoundId</Code> or pass a known one as a hex string.
         </Text>
@@ -94,7 +91,7 @@ if (round.status === RoundStatus.Finalized) {
       </Section>
 
       <Section heading='Watching new rounds'>
-        <Text fontSize='sm' color='gray.300'>
+        <Text fontSize='sm' color='ink.2'>
           The monitor helpers wrap react-query–friendly polling and viem event logs. Use them in a
           long-running process or a backend job.
         </Text>
@@ -116,7 +113,7 @@ stop()`}
       </Section>
 
       <Section heading='Encrypting for the committee'>
-        <Text fontSize='sm' color='gray.300'>
+        <Text fontSize='sm' color='ink.2'>
           Once a round is finalized, anyone can encrypt for it. ElGamal on BabyJubJub is provided
           by <Code>buildElGamal</Code> and operates entirely client-side.
         </Text>
@@ -134,7 +131,7 @@ const ciphertext = eg.encrypt(42n, [pk.x, pk.y])
       </Section>
 
       <Section heading='Submitting a ciphertext'>
-        <Text fontSize='sm' color='gray.300'>
+        <Text fontSize='sm' color='ink.2'>
           Chain-writing operations require a viem <Code>WalletClient</Code>. Wrap it with{' '}
           <Code>DKGWriter</Code>, which extends <Code>DKGClient</Code> with{' '}
           <Code>createRound</Code>, <Code>submitCiphertext</Code>, and <Code>abortRound</Code>.
@@ -168,7 +165,7 @@ await writer.waitForTransaction(txHash)`}
       </Section>
 
       <Section heading='Awaiting committee decryption'>
-        <Text fontSize='sm' color='gray.300'>
+        <Text fontSize='sm' color='ink.2'>
           After submission, the committee picks up the new ciphertext, posts partial decryptions,
           and combines them into the final plaintext on-chain. The flow helper polls the contract
           until <Code>completed === true</Code> and returns the recovered value.
@@ -215,10 +212,17 @@ if (record.completed) {
 function Section({ heading, children }: { heading: string; children: ReactNode }) {
   return (
     <Box as='section'>
-      <Heading size='md' color='gray.100' mb={3}>
+      <Heading
+        as='h2'
+        fontSize={{ base: 'lg', md: 'xl' }}
+        fontWeight={500}
+        color='ink.0'
+        letterSpacing='-0.01em'
+        mb={4}
+      >
         {heading}
       </Heading>
-      <Stack gap={3}>{children}</Stack>
+      <Stack gap={4}>{children}</Stack>
     </Box>
   )
 }
@@ -227,13 +231,15 @@ function Code({ children }: { children: ReactNode }) {
   return (
     <Box
       as='code'
-      bg='gray.800'
-      px={1.5}
-      py={0.5}
+      bg='surface.sunken'
+      borderWidth='1px'
+      borderColor='border.subtle'
+      px='0.4em'
+      py='0.1em'
       borderRadius='sm'
       fontFamily='mono'
-      fontSize='xs'
-      color='gray.100'
+      fontSize='0.86em'
+      color='accent.bright'
     >
       {children}
     </Box>
@@ -246,8 +252,11 @@ function ExternalLink({ href, children }: { href: string; children: ReactNode })
       href={href}
       target='_blank'
       rel='noopener noreferrer'
-      color='cyan.300'
-      _hover={{ color: 'cyan.200', textDecoration: 'underline' }}
+      color='accent.fg'
+      borderBottomWidth='1px'
+      borderColor='accent.border'
+      _hover={{ color: 'accent.bright', borderColor: 'accent.fg' }}
+      transition='color 0.15s, border-color 0.15s'
     >
       <HStack gap={1.5} display='inline-flex' align='center'>
         <Box as='span'>{children}</Box>

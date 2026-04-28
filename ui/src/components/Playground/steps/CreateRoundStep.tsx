@@ -105,14 +105,14 @@ export function CreateRoundStep({ status, roundId, setRoundId, log }: Props) {
         {!roundId ? (
           <Stack gap={5}>
             <Box>
-              <Heading size='xs' mb={3} color='gray.300'>
+              <Heading size='xs' mb={3} color='ink.2'>
                 Round configuration
               </Heading>
               <PolicyForm value={form} onChange={setForm} disabled={busy || !writer} />
             </Box>
             <DetailDisclosure title='Restrict who can publish ciphertexts (optional)'>
               <Stack gap={3} p={1}>
-                <Text fontSize='xs' color='gray.400'>
+                <Text fontSize='xs' color='ink.3'>
                   By default, anyone can publish a ciphertext for this round to be decrypted. Set
                   these limits if you only want yourself (or a specific time window, or a maximum
                   count) to be allowed. Leave everything blank for an open round.
@@ -147,7 +147,7 @@ export function CreateRoundStep({ status, roundId, setRoundId, log }: Props) {
                 Create round →
               </Button>
               {!writer && (
-                <Text fontSize='xs' color='gray.500' mt={2}>
+                <Text fontSize='xs' color='ink.4' mt={2}>
                   Connect a wallet first.
                 </Text>
               )}
@@ -160,9 +160,9 @@ export function CreateRoundStep({ status, roundId, setRoundId, log }: Props) {
           </Stack>
         ) : (
           <Stack gap={2} fontSize='sm'>
-            <Text color='green.300'>Round created successfully.</Text>
+            <Text color='live.fg'>Round created successfully.</Text>
             <Box>
-              <Text fontSize='xs' color='gray.500'>
+              <Text fontSize='xs' color='ink.4'>
                 Round ID
               </Text>
               <HashCell value={roundId} head={8} tail={6} />

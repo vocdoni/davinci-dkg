@@ -45,15 +45,15 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     return (
       <Center minH='100vh' p={8}>
         <VStack gap={4} maxW='md'>
-          <Text fontSize='lg' fontWeight='semibold' color='red.300'>
+          <Text fontSize='lg' fontWeight='semibold' color='danger.fg'>
             UI failed to load its runtime config
           </Text>
-          <Text fontSize='sm' color='gray.400' textAlign='center'>
+          <Text fontSize='sm' color='ink.3' textAlign='center'>
             The container could not read <code>/config.json</code>. Verify the entrypoint env vars
             (<code>DAVINCI_DKG_RPC_URL</code>, <code>DAVINCI_DKG_MANAGER_ADDRESS</code>,
             <code>DAVINCI_DKG_CHAIN_ID</code>, <code>DAVINCI_DKG_CHAIN_NAME</code>) are set.
           </Text>
-          <Text fontSize='xs' color='gray.500' fontFamily='mono'>
+          <Text fontSize='xs' color='ink.4' fontFamily='mono'>
             {error}
           </Text>
         </VStack>

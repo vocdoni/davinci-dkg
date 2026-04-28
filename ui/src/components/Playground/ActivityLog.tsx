@@ -10,13 +10,15 @@ export interface LogEntry {
   msg: string
 }
 
+// Each level maps to one of the editorial-palette tokens. Keep the spread
+// narrow so the log reads as one piece of typography, not a kaleidoscope.
 const colorByLevel: Record<LogLevel, string> = {
-  info: 'gray.300',
-  success: 'green.300',
-  error: 'red.400',
-  tx: 'yellow.300',
-  chain: 'cyan.300',
-  crypto: 'purple.300',
+  info: 'ink.2',
+  success: 'live.fg',
+  error: 'danger.fg',
+  tx: 'amber.300',
+  chain: 'accent.bright',
+  crypto: 'live.bright',
 }
 
 function entryToText(e: LogEntry): string {
@@ -25,9 +27,10 @@ function entryToText(e: LogEntry): string {
 }
 
 // Terminal-style chronological log of everything the playground does
-// on-chain or in-crypto. Shown by default for debug-mode users; collapsible
-// for everyone else. Auto-scrolls to the newest entry. The Copy button
-// dumps the whole log as plain text — handy for pasting into a bug report.
+// on-chain or in-crypto. Editorial dark plate (deeper than surrounding
+// surfaces), JetBrains Mono, fixed-width timestamps. Auto-scrolls to the
+// newest entry. The Copy button dumps the whole log as plain text — handy
+// for pasting into a bug report.
 export function ActivityLog({ entries }: { entries: LogEntry[] }) {
   const ref = useRef<HTMLDivElement>(null)
   const [copied, setCopied] = useState(false)
@@ -51,7 +54,7 @@ export function ActivityLog({ entries }: { entries: LogEntry[] }) {
   return (
     <Box>
       <HStack justify='space-between' mb={2}>
-        <Text fontSize='2xs' color='gray.500'>
+        <Text fontFamily='mono' fontSize='2xs' color='ink.4' letterSpacing='0.04em'>
           {entries.length} {entries.length === 1 ? 'entry' : 'entries'}
         </Text>
         <Button
@@ -59,8 +62,9 @@ export function ActivityLog({ entries }: { entries: LogEntry[] }) {
           variant='ghost'
           onClick={onCopy}
           disabled={entries.length === 0}
-          color='gray.400'
-          _hover={{ color: 'cyan.300', bg: 'transparent' }}
+          color={copied ? 'live.fg' : 'ink.3'}
+          fontFamily='sans'
+          _hover={{ color: copied ? 'live.fg' : 'accent.fg', bg: 'transparent' }}
         >
           <HStack gap={1}>
             {copied ? <LuCheck /> : <LuClipboardCopy />}
@@ -70,23 +74,27 @@ export function ActivityLog({ entries }: { entries: LogEntry[] }) {
       </HStack>
       <Box
         ref={ref}
-        bg='black'
+        bg='canvas.deep'
         p={3}
         borderRadius='md'
+        borderWidth='1px'
+        borderColor='border.subtle'
         fontFamily='mono'
-        fontSize='xs'
+        fontSize='2xs'
+        lineHeight='1.6'
         maxH='320px'
         overflowY='auto'
-        borderWidth='1px'
-        borderColor='gray.800'
+        boxShadow='inset 0 0 0 1px rgba(0,0,0,0.3)'
       >
         {entries.length === 0 && (
-          <Text color='gray.600'>Activity will appear here as you walk through the steps…</Text>
+          <Text color='ink.4' fontSize='xs'>
+            Activity will appear here as you walk through the steps…
+          </Text>
         )}
         {entries.map((e, i) => (
-          <Box key={i} color={colorByLevel[e.level]} mb='1px'>
-            <Text as='span' color='gray.600' userSelect='none'>
-              [{new Date(e.ts).toLocaleTimeString('en', { hour12: false })}]{' '}
+          <Box key={i} color={colorByLevel[e.level]} className='dkg-tabular'>
+            <Text as='span' color='ink.4' userSelect='none' mr={2}>
+              {new Date(e.ts).toLocaleTimeString('en', { hour12: false })}
             </Text>
             {e.msg}
           </Box>

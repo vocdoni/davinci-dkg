@@ -19,9 +19,9 @@ export const defaultPolicyForm: PolicyFormState = {
   minValidContributions: '2',
   lotteryAlphaBps: '15000',
   seedDelay: '2',
-  regDeadlineOffset: '10',
-  contribDeadlineOffset: '20',
-  finalizeDelayBlocks: '1',
+  regDeadlineOffset: '30',
+  contribDeadlineOffset: '70',
+  finalizeDelayBlocks: '2',
   disclosureAllowed: false,
 }
 
@@ -65,10 +65,15 @@ export function validatePolicyForm(v: PolicyFormState): string | null {
 // Round-duration presets cover the "I just want to see it work" cases so
 // the simple view doesn't expose three separate block-offset knobs. The
 // Custom option falls through to the advanced section.
+//
+// Block offsets are measured from the round-creation block at ~12 s/block.
+// Seed delay (default 2) eats into the registration window, so picking a
+// reg offset close to seedDelay leaves nodes only a couple of blocks to
+// claim slots — keep the floor comfortable.
 const durationPresets: { id: string; label: string; reg: number; contrib: number; finalize: number }[] = [
-  { id: 'quick', label: 'Quick (~2 min)', reg: 5, contrib: 10, finalize: 1 },
-  { id: 'default', label: 'Default (~4 min)', reg: 10, contrib: 20, finalize: 1 },
-  { id: 'long', label: 'Long (~10 min)', reg: 25, contrib: 50, finalize: 2 },
+  { id: 'quick', label: 'Quick (~6 min)', reg: 15, contrib: 35, finalize: 1 },
+  { id: 'default', label: 'Default (~14 min)', reg: 30, contrib: 70, finalize: 2 },
+  { id: 'long', label: 'Long (~30 min)', reg: 60, contrib: 150, finalize: 3 },
 ]
 
 function detectPreset(v: PolicyFormState): string {
@@ -163,7 +168,7 @@ export function PolicyForm({ value, onChange, disabled }: Props) {
       )}
 
       <Box>
-        <Text fontSize='xs' color='gray.400' mb={2}>
+        <Text fontSize='xs' color='ink.3' mb={2}>
           Round duration
         </Text>
         <HStack gap={2} wrap='wrap'>
@@ -181,8 +186,12 @@ export function PolicyForm({ value, onChange, disabled }: Props) {
             {presetId === 'custom' ? 'Custom (set below)' : 'Custom'}
           </PresetChip>
         </HStack>
-        <Text fontSize='2xs' color='gray.500' mt={1.5}>
-          Controls registration / contribution / finalize-delay block offsets. Adjust individually
+        <Text fontSize='2xs' color='ink.4' mt={2} lineHeight='1.55' maxW='62ch'>
+          Each round runs in two timed phases (one block ≈ 12 s):{' '}
+          <Box as='span' color='ink.2'>registration</Box>, where committee members claim their
+          slot, then <Box as='span' color='ink.2'>contribution</Box>, where each posts its share
+          of the key. Longer windows give nodes more time to participate — useful when the
+          network is small or you want to keep a comfortable margin. Tune individual phases
           under Advanced.
         </Text>
       </Box>
@@ -190,7 +199,7 @@ export function PolicyForm({ value, onChange, disabled }: Props) {
       {/* ── Advanced ────────────────────────────────────────────────────── */}
       <DetailDisclosure title='Advanced configuration'>
         <Stack gap={4} p={1}>
-          <Text fontSize='xs' color='gray.400'>
+          <Text fontSize='xs' color='ink.3'>
             Fine-grained protocol parameters. Defaults are sensible — touch these only if you have a
             reason.
           </Text>
@@ -278,7 +287,15 @@ function SmallNumberField({
 }) {
   return (
     <Field.Root disabled={disabled}>
-      <Field.Label fontSize='xs'>{label}</Field.Label>
+      <Field.Label
+        fontFamily='mono'
+        fontSize='2xs'
+        color='ink.3'
+        letterSpacing='0.06em'
+        textTransform='uppercase'
+      >
+        {label}
+      </Field.Label>
       <NumberInput.Root
         size='sm'
         value={value}
@@ -286,10 +303,26 @@ function SmallNumberField({
         max={max}
         onValueChange={(d) => onChange(d.value)}
         disabled={disabled}
+        mt={1}
       >
-        <NumberInput.Input fontFamily='mono' />
+        <NumberInput.Input
+          fontFamily='mono'
+          bg='surface.sunken'
+          borderColor='border.subtle'
+          color='ink.0'
+          _hover={{ borderColor: 'border' }}
+          _focus={{ borderColor: 'accent.fg', boxShadow: 'none' }}
+        />
       </NumberInput.Root>
-      <Field.HelperText fontSize='2xs'>{help}</Field.HelperText>
+      <Field.HelperText
+       
+       
+        fontSize='2xs'
+        color='ink.3'
+        mt={1.5}
+      >
+        {help}
+      </Field.HelperText>
     </Field.Root>
   )
 }
@@ -301,10 +334,11 @@ const StyledChip = chakra('button', {
   base: {
     px: 3,
     py: 1.5,
-    borderRadius: 'md',
+    borderRadius: 'full',
     borderWidth: '1px',
+    fontFamily: 'sans',
     fontSize: 'xs',
-    transition: 'border-color 0.15s',
+    transition: 'background 0.12s, border-color 0.12s, color 0.12s',
   },
 })
 
@@ -322,14 +356,14 @@ function PresetChip({
   return (
     <StyledChip
       type='button'
-      borderColor={isActive ? 'cyan.500' : 'gray.700'}
-      bg={isActive ? 'cyan.900' : 'transparent'}
-      color={isActive ? 'cyan.200' : 'gray.300'}
+      borderColor={isActive ? 'accent.border' : 'border.subtle'}
+      bg={isActive ? 'accent.bg.strong' : 'transparent'}
+      color={isActive ? 'accent.bright' : 'ink.2'}
       cursor={disabled ? 'not-allowed' : 'pointer'}
       opacity={disabled ? 0.5 : 1}
       onClick={disabled ? undefined : onClick}
       disabled={disabled}
-      _hover={!disabled ? { borderColor: 'cyan.400' } : undefined}
+      _hover={!disabled ? { borderColor: isActive ? 'accent.border' : 'border', color: 'ink.0' } : undefined}
     >
       {children}
     </StyledChip>

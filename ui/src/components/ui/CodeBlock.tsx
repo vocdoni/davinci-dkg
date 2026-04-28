@@ -6,7 +6,8 @@ import { Highlight, themes, type Language } from 'prism-react-renderer'
 interface Props {
   /** Code body. Multiline strings render as a <pre>; the copy button copies it verbatim. */
   children: string
-  /** Optional caption shown above the block (e.g. file name, language label). */
+  /** Optional caption shown above the block (e.g. file name). Rendered as
+   *  a window-chrome strip above the code itself. */
   caption?: string
   /**
    * Prism language token for syntax highlighting (e.g. 'tsx', 'ts',
@@ -19,13 +20,14 @@ interface Props {
 }
 
 // Pre-formatted, copyable code block with optional Prism syntax
-// highlighting. The copy button echoes the HashCell pattern (clipboard
-// icon → checkmark for ~1.5s) so users across the app form one mental
-// model for "this is copyable".
-//
-// We use the `vsDark` theme because (a) it's the closest visual match to
-// the rest of the dark UI, and (b) it ships in prism-react-renderer with
-// no extra CSS file to wire up.
+// highlighting. Editorial chrome:
+//   ── caption strip   small mono filename + language tag, sat above the
+//                      code on a darker plate; reads like a manuscript
+//                      window header.
+//   ── copy button     subtle, only colour-shifts on hover; success
+//                      confirmation by a phosphor checkmark, not a toast.
+//   ── code            JetBrains Mono on a deep ink panel, with a soft
+//                      gold rule on the left edge marking it as code.
 export function CodeBlock({ children, caption, language = 'plain', maxH }: Props) {
   const [copied, setCopied] = useState(false)
   const onCopy = async () => {
@@ -38,33 +40,80 @@ export function CodeBlock({ children, caption, language = 'plain', maxH }: Props
     }
   }
 
+  const langTag = language && language !== 'plain' ? language : null
+
   return (
-    <Box position='relative'>
-      {caption && (
-        <Text fontSize='2xs' color='gray.500' mb={1.5} fontFamily='mono'>
-          {caption}
-        </Text>
+    <Box
+      position='relative'
+      borderWidth='1px'
+      borderColor='border.subtle'
+      borderRadius='md'
+      bg='surface.mono'
+      overflow='hidden'
+      _hover={{ borderColor: 'border' }}
+      transition='border-color 0.15s'
+    >
+      {/* Caption strip — file name on the left, language tag on the right.
+          Always renders if caption OR language is set, so even un-named
+          snippets get the small "tsx" / "bash" tag. */}
+      {(caption || langTag) && (
+        <HStack
+          justify='space-between'
+          px={3}
+          py={2}
+          borderBottomWidth='1px'
+          borderColor='border.subtle'
+          bg='canvas.deep'
+        >
+          {caption ? (
+            <Text fontFamily='mono' fontSize='2xs' color='ink.2' letterSpacing='0.04em'>
+              {caption}
+            </Text>
+          ) : (
+            <Box />
+          )}
+          {langTag && (
+            <Text
+              fontFamily='mono'
+              fontSize='2xs'
+              color='ink.4'
+              letterSpacing='0.06em'
+              textTransform='uppercase'
+            >
+              {langTag}
+            </Text>
+          )}
+        </HStack>
       )}
-      <Box
-        bg='#1e1e1e'
-        borderWidth='1px'
-        borderColor='gray.800'
-        borderRadius='md'
-        overflow='hidden'
-      >
+
+      <Box position='relative'>
+        {/* Soft gold rule on the left edge — marks the block as code/data
+            in the editorial layout. */}
+        <Box
+          position='absolute'
+          left={0}
+          top={0}
+          bottom={0}
+          w='2px'
+          bg='accent.fg'
+          opacity={0.32}
+        />
+
         {language === 'plain' ? (
           <Box
             as='pre'
             m={0}
-            p={3}
-            pr={10}
+            py={3.5}
+            pl={4}
+            pr={11}
             whiteSpace='pre'
             overflowX='auto'
             maxH={maxH}
             overflowY={maxH ? 'auto' : undefined}
             fontFamily='mono'
             fontSize='xs'
-            color='gray.200'
+            color='ink.1'
+            lineHeight='1.6'
             style={{ tabSize: 2 }}
           >
             {children}
@@ -77,14 +126,16 @@ export function CodeBlock({ children, caption, language = 'plain', maxH }: Props
                 className={className}
                 style={{ ...style, background: 'transparent', tabSize: 2, margin: 0 }}
                 m={0}
-                p={3}
-                pr={10}
+                py={3.5}
+                pl={4}
+                pr={11}
                 whiteSpace='pre'
                 overflowX='auto'
                 maxH={maxH}
                 overflowY={maxH ? 'auto' : undefined}
                 fontFamily='mono'
                 fontSize='xs'
+                lineHeight='1.6'
               >
                 {tokens.map((line, i) => (
                   <div key={i} {...getLineProps({ line })}>
@@ -97,26 +148,33 @@ export function CodeBlock({ children, caption, language = 'plain', maxH }: Props
             )}
           </Highlight>
         )}
-      </Box>
-      <HStack position='absolute' top={caption ? 8 : 2} right={2}>
+
+        {/* Copy button — quietly absent until hover (and accessible via
+            keyboard). Coloured shift on success. */}
         <Tooltip.Root>
           <Tooltip.Trigger asChild>
             <IconButton
-              aria-label='Copy snippet'
+              aria-label={copied ? 'Copied' : 'Copy snippet'}
               size='xs'
               variant='ghost'
               onClick={onCopy}
-              color='gray.400'
-              _hover={{ color: 'cyan.300', bg: 'transparent' }}
+              position='absolute'
+              top={2}
+              right={2}
+              color={copied ? 'live.fg' : 'ink.3'}
+              bg='transparent'
+              _hover={{ color: copied ? 'live.fg' : 'accent.fg', bg: 'rgba(255,255,255,0.04)' }}
             >
               {copied ? <LuCheck /> : <LuClipboardCopy />}
             </IconButton>
           </Tooltip.Trigger>
           <Tooltip.Positioner>
-            <Tooltip.Content>{copied ? 'Copied' : 'Copy'}</Tooltip.Content>
+            <Tooltip.Content fontFamily='sans' fontSize='xs'>
+              {copied ? 'Copied' : 'Copy snippet'}
+            </Tooltip.Content>
           </Tooltip.Positioner>
         </Tooltip.Root>
-      </HStack>
+      </Box>
     </Box>
   )
 }

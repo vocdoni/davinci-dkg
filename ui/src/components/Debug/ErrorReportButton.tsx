@@ -37,13 +37,21 @@ export function ErrorReportButton({ error, extra }: Props) {
       setCopied(true)
       setTimeout(() => setCopied(false), 1500)
     } catch {
-      // fall back to logging — clipboard can be denied in some contexts
       console.warn('Clipboard write failed; printing report to console:\n', report)
     }
   }
 
   return (
-    <Button size='xs' variant='outline' colorPalette='red' onClick={onCopy}>
+    <Button
+      size='xs'
+      variant='outline'
+      onClick={onCopy}
+      borderColor={copied ? 'rgba(134, 239, 172, 0.40)' : 'danger.border'}
+      color={copied ? 'live.fg' : 'danger.fg'}
+      bg={copied ? 'live.bg' : 'transparent'}
+      fontFamily='sans'
+      _hover={{ bg: copied ? 'live.bg' : 'danger.bg' }}
+    >
       <HStack gap={1.5}>
         {copied ? <LuCheck /> : <LuClipboardCopy />}
         <Text fontSize='xs'>{copied ? 'Copied' : 'Copy error report'}</Text>

@@ -91,3 +91,36 @@ export function roundPhaseColor(phase: RoundPhase): string {
 
 /** Steps in the canonical phase timeline, in order. Drives PhaseTimeline rendering. */
 export const phaseSequence: RoundPhase[] = ['registration', 'contribution', 'finalized', 'completed']
+
+/**
+ * A round has effectively failed when its current phase deadline has passed
+ * without enough nodes participating to make the next phase viable. The
+ * contract doesn't auto-flip the round to Aborted in this case — it just
+ * sits stuck — so the UI has to recognise it and surface the failure.
+ *
+ * Returns null when the round is healthy or already aborted/completed.
+ */
+export function roundFailure(
+  round: Round,
+  currentBlock: bigint | null
+): { kind: 'registration' | 'contribution'; have: number; need: number; total: number } | null {
+  if (currentBlock == null) return null
+  if (round.status === RoundStatus.Registration) {
+    if (currentBlock > round.policy.registrationDeadlineBlock) {
+      const have = round.claimedCount
+      const need = round.policy.minValidContributions
+      if (have < need) {
+        return { kind: 'registration', have, need, total: round.policy.committeeSize }
+      }
+    }
+  } else if (round.status === RoundStatus.Contribution) {
+    if (currentBlock > round.policy.contributionDeadlineBlock) {
+      const have = round.contributionCount
+      const need = round.policy.minValidContributions
+      if (have < need) {
+        return { kind: 'contribution', have, need, total: round.policy.committeeSize }
+      }
+    }
+  }
+  return null
+}

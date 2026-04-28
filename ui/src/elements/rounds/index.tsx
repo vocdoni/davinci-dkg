@@ -1,10 +1,9 @@
 import { useMemo, useState } from 'react'
-import { Box, Heading, HStack, Stack, Text } from '@chakra-ui/react'
-import type { ButtonProps } from '@chakra-ui/react'
-import { Button } from '@chakra-ui/react'
+import { Box, chakra, HStack, Stack } from '@chakra-ui/react'
 import { useRecentRounds } from '~queries/rounds'
 import { RoundList } from '~components/Round/RoundList'
 import { QueryDataLayout } from '~components/Layout/QueryDataLayout'
+import { PageHeader } from '~components/Layout/PageHeader'
 import { roundPhase } from '~lib/round-utils'
 import type { RoundPhase } from '~lib/round-utils'
 
@@ -20,13 +19,22 @@ const filterLabels: Record<Filter, string> = {
   unknown: 'Unknown',
 }
 
-const filterOrder: Filter[] = ['all', 'registration', 'contribution', 'finalized', 'completed', 'aborted']
+const filterOrder: Filter[] = [
+  'all',
+  'registration',
+  'contribution',
+  'finalized',
+  'completed',
+  'aborted',
+]
 
+// Rounds list page. Editorial: eyebrow rule, large display heading, mono
+// caption, then a row of filter chips before the table. Filter chips are
+// pill-shaped with a hairline border and a tiny indicator dot when active —
+// matches the StatusBadge vocabulary.
 export function RoundsList() {
   // The contract caps the recent-rounds ring buffer at 64; querying more
-  // than that just yields the same window. Phase 2 keeps the simple
-  // single-page view; pagination lands in Phase 4 once we have a real
-  // dataset to test against.
+  // than that just yields the same window.
   const recent = useRecentRounds(64)
   const [filter, setFilter] = useState<Filter>('all')
 
@@ -36,24 +44,33 @@ export function RoundsList() {
     return recent.data.filter((r) => roundPhase(r.round) === filter)
   }, [recent.data, filter])
 
-  return (
-    <Stack gap={6}>
-      <Box>
-        <Heading size='lg'>Rounds</Heading>
-        <Text color='gray.400' fontSize='sm' mt={1}>
-          The most recent {recent.data?.length ?? '…'} rounds from the contract's ring buffer.
-        </Text>
-      </Box>
+  const counts = useMemo(() => {
+    const map: Partial<Record<Filter, number>> = { all: recent.data?.length ?? 0 }
+    if (recent.data) {
+      for (const r of recent.data) {
+        const p = roundPhase(r.round)
+        map[p] = (map[p] ?? 0) + 1
+      }
+    }
+    return map
+  }, [recent.data])
 
-      <HStack gap={2} wrap='wrap'>
+  return (
+    <Stack gap={{ base: 8, md: 10 }}>
+      <PageHeader
+        title='Rounds'
+        subtitle={`The most recent ${recent.data?.length ?? '…'} rounds from the contract's ring buffer. Older rounds remain valid on-chain but are not enumerated here.`}
+      />
+
+      <HStack gap={1.5} wrap='wrap'>
         {filterOrder.map((f) => (
           <FilterChip
             key={f}
             isActive={filter === f}
             onClick={() => setFilter(f)}
-          >
-            {filterLabels[f]}
-          </FilterChip>
+            label={filterLabels[f]}
+            count={counts[f] ?? 0}
+          />
         ))}
       </HStack>
 
@@ -74,13 +91,55 @@ export function RoundsList() {
   )
 }
 
-function FilterChip({ isActive, ...props }: ButtonProps & { isActive: boolean }) {
+const ChipBtn = chakra('button', {
+  base: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 2,
+    px: 3,
+    py: 1.5,
+    borderRadius: 'full',
+    borderWidth: '1px',
+    fontFamily: 'sans',
+    fontSize: 'xs',
+    cursor: 'pointer',
+    transition: 'background 0.12s, border-color 0.12s, color 0.12s',
+  },
+})
+
+function FilterChip({
+  isActive,
+  onClick,
+  label,
+  count,
+}: {
+  isActive: boolean
+  onClick: () => void
+  label: string
+  count: number
+}) {
   return (
-    <Button
-      size='xs'
-      variant={isActive ? 'solid' : 'outline'}
-      colorPalette={isActive ? 'cyan' : 'gray'}
-      {...props}
-    />
+    <ChipBtn
+      type='button'
+      onClick={onClick}
+      borderColor={isActive ? 'accent.border' : 'border.subtle'}
+      bg={isActive ? 'accent.bg.strong' : 'transparent'}
+      color={isActive ? 'accent.bright' : 'ink.2'}
+      _hover={{
+        borderColor: isActive ? 'accent.border' : 'border',
+        color: isActive ? 'accent.bright' : 'ink.0',
+      }}
+    >
+      <Box>{label}</Box>
+      <Box
+        as='span'
+        className='dkg-tabular'
+        fontFamily='mono'
+        fontSize='2xs'
+        color={isActive ? 'accent.fg' : 'ink.4'}
+      >
+        {count}
+      </Box>
+    </ChipBtn>
   )
 }

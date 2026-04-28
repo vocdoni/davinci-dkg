@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { HStack, Text } from '@chakra-ui/react'
-import { LuClock } from 'react-icons/lu'
+import { Box, HStack, Text } from '@chakra-ui/react'
 import { useEstimatedBlock } from '~hooks/use-estimated-block'
 
 interface Props {
@@ -12,11 +11,10 @@ interface Props {
   blockTimeSeconds?: number
 }
 
-// Live "X blocks (~M:SS) left until <label>" indicator. Combines the slow
-// 4s block-poll with a 1Hz tick to render a smoothly-counting timer.
-//
-// Once the target is reached, the component renders a green "now" pill so
-// the user knows the gate just opened — useful right at phase boundaries.
+// Live "X blocks (~MM:SS) until <label>" indicator. Editorial register:
+// large mono digits for the time remaining, then a hairline divider, then
+// the label in italic body serif. Reads like an inline footnote rather than
+// a generic "X minutes left" countdown.
 export function Countdown({ target, label, blockTimeSeconds = 12 }: Props) {
   const estimated = useEstimatedBlock(blockTimeSeconds)
   // Re-render every second so the "MM:SS" string ticks even when the
@@ -33,10 +31,7 @@ export function Countdown({ target, label, blockTimeSeconds = 12 }: Props) {
 
   if (estimated == null) {
     return (
-      <HStack gap={2} fontSize='xs' color='gray.500'>
-        <LuClock />
-        <Text>… {label}</Text>
-      </HStack>
+      <Row tone='dim' time='—' label={label} blocks={null} />
     )
   }
 
@@ -44,24 +39,51 @@ export function Countdown({ target, label, blockTimeSeconds = 12 }: Props) {
   const blocksLeft = Number(targetBig - estimated)
 
   if (blocksLeft <= 0) {
-    return (
-      <HStack gap={2} fontSize='xs' color='green.300'>
-        <LuClock />
-        <Text fontWeight='semibold'>{label} now</Text>
-      </HStack>
-    )
+    return <Row tone='live' time='ready' label={label} blocks={null} />
   }
 
   const secondsLeft = blocksLeft * blockTimeSeconds
   const mm = Math.floor(secondsLeft / 60)
   const ss = secondsLeft % 60
-  const human = mm > 0 ? `${mm}m ${ss.toString().padStart(2, '0')}s` : `${ss}s`
+  const time = mm > 0 ? `${mm.toString().padStart(2, '0')}:${ss.toString().padStart(2, '0')}` : `0:${ss.toString().padStart(2, '0')}`
 
+  return <Row tone='accent' time={time} label={label} blocks={blocksLeft} />
+}
+
+function Row({
+  tone,
+  time,
+  label,
+  blocks,
+}: {
+  tone: 'accent' | 'live' | 'dim'
+  time: string
+  label: string
+  blocks: number | null
+}) {
+  const timeColor = tone === 'live' ? 'live.fg' : tone === 'dim' ? 'ink.4' : 'accent.fg'
   return (
-    <HStack gap={2} fontSize='xs' color='cyan.300'>
-      <LuClock />
-      <Text fontFamily='mono'>
-        {human} ({blocksLeft} {blocksLeft === 1 ? 'block' : 'blocks'}) {label}
+    <HStack gap={3} align='baseline' flexWrap='wrap'>
+      <Text
+        className='dkg-tabular'
+        fontFamily='mono'
+        fontSize='md'
+        fontWeight={600}
+        color={timeColor}
+        letterSpacing='0.02em'
+      >
+        {time}
+      </Text>
+      {blocks != null && (
+        <>
+          <Box w='1px' h='12px' bg='border.strong' alignSelf='center' />
+          <Text className='dkg-tabular' fontFamily='mono' fontSize='2xs' color='ink.3'>
+            {blocks} {blocks === 1 ? 'blk' : 'blks'}
+          </Text>
+        </>
+      )}
+      <Text fontSize='sm' color='ink.3'>
+        {tone === 'live' ? `${label} now` : label}
       </Text>
     </HStack>
   )

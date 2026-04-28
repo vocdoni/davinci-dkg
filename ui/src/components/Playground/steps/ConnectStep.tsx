@@ -19,11 +19,11 @@ export function ConnectStep({ status }: { status: StepStatus }) {
         {!isConnected ? (
           <ConnectButton />
         ) : (
-          <Box bg='gray.950' borderWidth='1px' borderColor='gray.800' borderRadius='md' p={3}>
+          <Box bg='canvas.deep' borderWidth='1px' borderColor='border.subtle' borderRadius='md' p={3}>
             <HStack gap={4} fontSize='sm' wrap='wrap'>
-              <Text color='gray.400'>Connected:</Text>
+              <Text color='ink.3'>Connected:</Text>
               <HashCell value={address} head={6} tail={6} />
-              <Text color='gray.500' fontSize='xs'>
+              <Text color='ink.4' fontSize='xs'>
                 on {chain?.name ?? 'unknown chain'}
               </Text>
             </HStack>

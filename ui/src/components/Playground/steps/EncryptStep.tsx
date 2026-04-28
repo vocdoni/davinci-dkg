@@ -46,7 +46,7 @@ export function EncryptStep({ status, collectivePubKey, onEncrypted, log }: Prop
       description='Pick any small number and encrypt it with the shared key. The committee will need to cooperate to decrypt it later.'
     >
       {!collectivePubKey ? (
-        <Text fontSize='sm' color='gray.500'>
+        <Text fontSize='sm' color='ink.4'>
           Waiting for the shared encryption key.
         </Text>
       ) : (
@@ -73,20 +73,20 @@ export function EncryptStep({ status, collectivePubKey, onEncrypted, log }: Prop
           </HStack>
           {ct && (
             <Box>
-              <Text fontSize='sm' color='green.300'>
+              <Text fontSize='sm' color='live.fg'>
                 Ciphertext ready. Submit it on-chain in the next step.
               </Text>
               <DetailDisclosure title='Show ciphertext components'>
                 <Stack gap={2}>
                   <Box>
-                    <Text fontSize='2xs' color='gray.500'>
+                    <Text fontSize='2xs' color='ink.4'>
                       c1 = k·G (random ephemeral, discloses nothing about the message)
                     </Text>
                     <HashCell value={bigIntToHex(ct.c1[0])} head={6} tail={6} />
                     <HashCell value={bigIntToHex(ct.c1[1])} head={6} tail={6} />
                   </Box>
                   <Box>
-                    <Text fontSize='2xs' color='gray.500'>
+                    <Text fontSize='2xs' color='ink.4'>
                       c2 = m·G + k·Q (the message, blinded by the shared key)
                     </Text>
                     <HashCell value={bigIntToHex(ct.c2[0])} head={6} tail={6} />

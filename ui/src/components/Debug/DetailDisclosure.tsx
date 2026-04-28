@@ -1,7 +1,19 @@
 import { useState, type ReactNode } from 'react'
-import { Box, Button, Collapsible } from '@chakra-ui/react'
-import { LuChevronDown, LuChevronUp } from 'react-icons/lu'
+import { Box, chakra, Collapsible, HStack, Text } from '@chakra-ui/react'
+import { LuPlus, LuMinus } from 'react-icons/lu'
 import { useDebugMode } from '~hooks/use-debug-mode'
+
+// chakra.button gives us style props on a real <button>, sidestepping the
+// polymorphic-as-prop type juggling that <Box as='button'> demands.
+const TriggerBtn = chakra('button', {
+  base: {
+    bg: 'transparent',
+    border: 'none',
+    p: 0,
+    cursor: 'pointer',
+    textAlign: 'left',
+  },
+})
 
 interface Props {
   /** Plain-English label for the disclosure trigger. */
@@ -10,49 +22,71 @@ interface Props {
   children: ReactNode
 }
 
-// Wraps technical content (raw hashes, JSON dumps, BigInt coords) so the
-// default UX hides it. Auto-expands when global debug mode is on.
+// Editorial appendix block. Reads like a footnote in a paper:
+//   ── trigger    small mono "+ Show technical details" / "− Hide …",
+//                 colour-shifts to gold on hover.
+//   ── body       hairline-bordered card with an inset shadow, content
+//                 in mono.
 //
-// Use anywhere the underlying value would otherwise leak protocol jargon
-// into the primary view — e.g. event arg dumps, transcript hashes, raw
-// curve coordinates. Cf. UI_PLAN.md §4.
+// Auto-opens when the global "debug mode" toggle is on; manual open/close
+// is preserved when debug mode flips off so a researcher can keep one
+// panel open while everything else collapses.
 export function DetailDisclosure({ title = 'Show technical details', children }: Props) {
   const { enabled: debug } = useDebugMode()
   const [open, setOpen] = useState(debug)
-
-  // When debug mode flips on globally, force this disclosure open. When it
-  // flips off we leave the local state alone — a researcher may want to
-  // keep one panel open even after toggling debug off.
   const isOpen = debug || open
+  const label = isOpen ? title.replace(/^Show\b/i, 'Hide') : title
 
   return (
-    <Box mt={2}>
-      <Button
-        variant='ghost'
-        size='xs'
+    <Box mt={3}>
+      <TriggerBtn
+        type='button'
         onClick={() => setOpen((v) => !v)}
-        color='gray.400'
-        _hover={{ color: 'cyan.300', bg: 'transparent' }}
-        px={0}
+        aria-expanded={isOpen}
+        _hover={{ '& .dkg-disclosure-label': { color: 'accent.fg' } }}
       >
-        {isOpen ? <LuChevronUp /> : <LuChevronDown />}
-        <Box as='span' ml={1}>
-          {title}
-        </Box>
-      </Button>
+        <HStack gap={2}>
+          <Box
+            w='14px'
+            h='14px'
+            borderRadius='full'
+            borderWidth='1px'
+            borderColor='border.strong'
+            display='flex'
+            alignItems='center'
+            justifyContent='center'
+            color='ink.3'
+            fontSize='8px'
+          >
+            {isOpen ? <LuMinus /> : <LuPlus />}
+          </Box>
+          <Text
+            className='dkg-disclosure-label'
+            fontFamily='mono'
+            fontSize='2xs'
+            color='ink.3'
+            letterSpacing='0.06em'
+            textTransform='uppercase'
+            transition='color 0.15s'
+          >
+            {label}
+          </Text>
+        </HStack>
+      </TriggerBtn>
       <Collapsible.Root open={isOpen}>
         <Collapsible.Content>
           <Box
-            mt={2}
-            p={3}
+            mt={3}
+            p={4}
             borderWidth='1px'
-            borderColor='gray.800'
+            borderColor='border.subtle'
             borderRadius='md'
-            bg='gray.900'
+            bg='surface.sunken'
             fontSize='xs'
             fontFamily='mono'
-            color='gray.300'
+            color='ink.2'
             overflowX='auto'
+            boxShadow='inset'
           >
             {children}
           </Box>
