@@ -50,8 +50,8 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
           </Text>
           <Text fontSize='sm' color='ink.3' textAlign='center'>
             The container could not read <code>/config.json</code>. Verify the entrypoint env vars
-            (<code>DAVINCI_DKG_RPC_URL</code>, <code>DAVINCI_DKG_MANAGER_ADDRESS</code>,
-            <code>DAVINCI_DKG_CHAIN_ID</code>, <code>DAVINCI_DKG_CHAIN_NAME</code>) are set.
+            (<code>RPC_URL</code>, <code>MANAGER_ADDRESS</code>,
+            <code>CHAIN_ID</code>, <code>CHAIN_NAME</code>, <code>EXPLORER_URL</code>) are set.
           </Text>
           <Text fontSize='xs' color='ink.4' fontFamily='mono'>
             {error}

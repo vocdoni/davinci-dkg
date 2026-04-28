@@ -57,7 +57,7 @@ const publicClient = createPublicClient({
 
 export const dkg = new DKGClient({
   publicClient,
-  managerAddress: '0xd3ef727b695b21e108497c36f9dcec52d741298a',
+  managerAddress: '0x01ee71fdce1705c8823f9f8b2f312100165fdd70',
 })`}
         </CodeBlock>
       </Section>
@@ -152,7 +152,7 @@ const walletClient = createWalletClient({
 const writer = new DKGWriter({
   publicClient,
   walletClient,
-  managerAddress: '0xd3ef727b695b21e108497c36f9dcec52d741298a',
+  managerAddress: '0x01ee71fdce1705c8823f9f8b2f312100165fdd70',
 })
 
 const txHash = await writer.submitCiphertext(

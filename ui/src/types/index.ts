@@ -5,4 +5,6 @@ export interface RuntimeConfig {
   chainId: number
   chainName: string
   startBlock?: number
+  /** Block-explorer base URL (no trailing slash), e.g. `https://sepolia.etherscan.io`. */
+  explorerUrl?: string
 }

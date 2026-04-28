@@ -1096,7 +1096,7 @@ deployment at a different chain.
 # 1. Build the dist with the chain config you want.
 make ui-build \
   RPC_URL=https://eth-sepolia.public.blastapi.io \
-  MANAGER_ADDRESS=0xd3ef727b695b21e108497c36f9dcec52d741298a \
+  MANAGER_ADDRESS=0x01ee71fdce1705c8823f9f8b2f312100165fdd70 \
   CHAIN_ID=11155111 CHAIN_NAME=sepolia
 
 # 2. Serve it via stock nginx:alpine, bind-mounted from ui/dist.
@@ -1109,7 +1109,7 @@ docker compose --profile node --profile ui up        # node + UI together
 ```bash
 docker build -f ui/Dockerfile \
   --build-arg RPC_URL=https://eth-sepolia.public.blastapi.io \
-  --build-arg MANAGER_ADDRESS=0xd3ef727b695b21e108497c36f9dcec52d741298a \
+  --build-arg MANAGER_ADDRESS=0x01ee71fdce1705c8823f9f8b2f312100165fdd70 \
   --build-arg CHAIN_ID=11155111 \
   --build-arg CHAIN_NAME=sepolia \
   -t my-davinci-dkg-ui .

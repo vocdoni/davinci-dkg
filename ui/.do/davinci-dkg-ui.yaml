@@ -57,13 +57,16 @@ static_sites:
         value: https://eth-sepolia.public.blastapi.io
       - key: MANAGER_ADDRESS
         scope: BUILD_TIME
-        value: "0xd3ef727b695b21e108497c36f9dcec52d741298a"
+        value: "0x01ee71fdce1705c8823f9f8b2f312100165fdd70"
       - key: CHAIN_ID
         scope: BUILD_TIME
         value: "11155111"
       - key: CHAIN_NAME
         scope: BUILD_TIME
         value: sepolia
+      - key: EXPLORER_URL
+        scope: BUILD_TIME
+        value: https://sepolia.etherscan.io
       # Optional — leave unset to let the SDK auto-derive from DKGManager.
       # - key: REGISTRY_ADDRESS
       #   scope: BUILD_TIME

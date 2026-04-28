@@ -2,6 +2,7 @@ import { Box, Container, Flex, HStack, Spacer, Text } from '@chakra-ui/react'
 import { NavLink } from 'react-router-dom'
 import { Routes } from '~router/routes'
 import { ConnectButton } from './ConnectButton'
+import { ContractBadge } from './ContractBadge'
 import { DebugModeToggle } from './DebugModeToggle'
 import { NetworkBadge } from './NetworkBadge'
 
@@ -95,9 +96,10 @@ export function Header() {
           <Spacer />
 
           <HStack gap={2}>
-            <Box display={{ base: 'none', lg: 'block' }}>
+            <HStack gap={2} display={{ base: 'none', lg: 'flex' }}>
               <NetworkBadge />
-            </Box>
+              <ContractBadge />
+            </HStack>
             <DebugModeToggle />
             <ConnectButton />
           </HStack>
