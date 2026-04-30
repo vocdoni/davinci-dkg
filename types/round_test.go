@@ -6,24 +6,23 @@ import (
 	qt "github.com/frankban/quicktest"
 )
 
-func TestRoundPhaseString(t *testing.T) {
+func TestEpochPhaseString(t *testing.T) {
 	c := qt.New(t)
 
-	c.Assert(RoundPhaseUnknown.String(), qt.Equals, "unknown")
-	c.Assert(RoundPhaseRegistration.String(), qt.Equals, "registration")
-	c.Assert(RoundPhaseContribution.String(), qt.Equals, "contribution")
-	c.Assert(RoundPhaseFinalized.String(), qt.Equals, "finalized")
-	c.Assert(RoundPhaseDecryption.String(), qt.Equals, "decryption")
-	c.Assert(RoundPhaseDisclosure.String(), qt.Equals, "disclosure")
-	c.Assert(RoundPhaseAborted.String(), qt.Equals, "aborted")
-	c.Assert(RoundPhaseCompleted.String(), qt.Equals, "completed")
+	c.Assert(EpochPhaseUnknown.String(), qt.Equals, "unknown")
+	c.Assert(EpochPhaseRegistration.String(), qt.Equals, "registration")
+	c.Assert(EpochPhaseContribution.String(), qt.Equals, "contribution")
+	c.Assert(EpochPhaseFinalized.String(), qt.Equals, "finalized")
+	c.Assert(EpochPhaseDecryption.String(), qt.Equals, "decryption")
+	c.Assert(EpochPhaseAborted.String(), qt.Equals, "aborted")
+	c.Assert(EpochPhaseCompleted.String(), qt.Equals, "completed")
 }
 
-func TestRoundPolicyValidate(t *testing.T) {
+func TestEpochPolicyValidate(t *testing.T) {
 	c := qt.New(t)
 
 	c.Run("accepts coherent policy", func(c *qt.C) {
-		policy := RoundPolicy{
+		policy := EpochPolicy{
 			Threshold:                 3,
 			CommitteeSize:             5,
 			MinValidContributions:     3,
@@ -32,7 +31,6 @@ func TestRoundPolicyValidate(t *testing.T) {
 			RegistrationDeadlineBlock: 10,
 			ContributionDeadlineBlock: 20,
 			FinalizeNotBeforeBlock:    21,
-			DisclosureAllowed:         true,
 		}
 
 		err := policy.Validate()
@@ -41,14 +39,13 @@ func TestRoundPolicyValidate(t *testing.T) {
 	})
 
 	c.Run("rejects threshold larger than committee", func(c *qt.C) {
-		policy := RoundPolicy{
+		policy := EpochPolicy{
 			Threshold:                 6,
 			CommitteeSize:             5,
 			MinValidContributions:     3,
 			RegistrationDeadlineBlock: 10,
 			ContributionDeadlineBlock: 20,
 			FinalizeNotBeforeBlock:    21,
-			DisclosureAllowed:         true,
 		}
 
 		err := policy.Validate()
@@ -58,7 +55,7 @@ func TestRoundPolicyValidate(t *testing.T) {
 	})
 
 	c.Run("rejects non monotonic block windows", func(c *qt.C) {
-		policy := RoundPolicy{
+		policy := EpochPolicy{
 			Threshold:                 3,
 			CommitteeSize:             5,
 			MinValidContributions:     3,
@@ -67,7 +64,6 @@ func TestRoundPolicyValidate(t *testing.T) {
 			RegistrationDeadlineBlock: 20,
 			ContributionDeadlineBlock: 10,
 			FinalizeNotBeforeBlock:    11,
-			DisclosureAllowed:         true,
 		}
 
 		err := policy.Validate()

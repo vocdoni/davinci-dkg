@@ -1,0 +1,34 @@
+{
+  "description": "Cross-impl protocol constants. AppMode + Role values must match every layer; domain digests are bound into Schnorr / DLEQ transcripts.",
+  "appMode": {
+    "OrganizerCoDec": 1,
+    "PublicDerivation": 0
+  },
+  "role": {
+    "Committee": 1,
+    "Organizer": 2
+  },
+  "domains": {
+    "DLEQV1": {
+      "preimage": "davinci-dkg:dleq:v1",
+      "keccak256": "0x48fabea26e7a072780483852e403ea60b2f51a07c735c3e4b852ac6bb99b5a91",
+      "bn254Reduced": "11121309703302302577610350488220974678661108657249302000630793719242079034000"
+    },
+    "OperatorRegisterV1": {
+      "preimage": "davinci-dkg:operator-register:v1",
+      "keccak256": "0x4599aabb337c91d65fe440ef7e20c6dcc72c2459fd0901c45add50b08b3bb34d",
+      "bn254Reduced": "9592849625128351398993529750783244093701705564731114011872992927164028138316"
+    },
+    "OrganizerRegisterV1": {
+      "preimage": "davinci-dkg:organizer-register:v1",
+      "keccak256": "0x41ea6f3fa95eccd1f3b1ce8e05efa11027280aa0c6b4167fd6695db659c30b28",
+      "bn254Reduced": "7926302309389091520546746204097546258672301163986336345522390588055846325031"
+    },
+    "PartialDecryptCircuit": {
+      "preimage": "davinci-dkg/partial-decrypt/v1",
+      "keccak256": "",
+      "bn254Reduced": "692802219728068707113763234345020870183256372282275487814116979707442737"
+    }
+  },
+  "bn254Q": "21888242871839275222246405745257275088548364400416034343698204186575808495617"
+}

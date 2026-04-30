@@ -7,7 +7,7 @@ import (
 )
 
 type PendingContribution struct {
-	RoundID          string
+	EpochID          string
 	Operator         common.Address
 	ContributorIndex uint16
 }
@@ -24,25 +24,25 @@ func NewContributor(operator common.Address, st *storage.Storage) *Contributor {
 	}
 }
 
-func (c *Contributor) PendingContribution(roundID string) (*PendingContribution, error) {
-	round, err := c.storage.Round(roundID)
+func (c *Contributor) PendingContribution(epochID string) (*PendingContribution, error) {
+	epoch, err := c.storage.Epoch(epochID)
 	if err != nil {
 		return nil, err
 	}
-	if round.Phase != types.RoundPhaseContribution {
+	if epoch.Phase != types.EpochPhaseContribution {
 		return nil, nil
 	}
 
-	index := participantIndex(round.SelectedParticipants, c.operator)
+	index := participantIndex(epoch.SelectedParticipants, c.operator)
 	if index == 0 {
 		return nil, nil
 	}
-	if hasContribution(c.storage, roundID, c.operator) {
+	if hasContribution(c.storage, epochID, c.operator) {
 		return nil, nil
 	}
 
 	return &PendingContribution{
-		RoundID:          roundID,
+		EpochID:          epochID,
 		Operator:         c.operator,
 		ContributorIndex: index,
 	}, nil

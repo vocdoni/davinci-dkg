@@ -6,10 +6,22 @@ import (
 	ccommon "github.com/vocdoni/davinci-dkg/circuits/common"
 )
 
-// DecryptCombineCircuit reconstructs the combined decryption value from a
-// threshold set of partial decryptions.
+// DecryptCombineCircuit reconstructs the per-application plaintext from a
+// threshold set of partial decryptions, with per-application correction
+// term `T` selected by the `Mode` flag (paper §5.5 lines 1051–1077,
+// PLAN §5.4):
+//
+//	mode = 0 (public derivation): T = S · C_1 (computed in-circuit)
+//	mode = 1 (organizer co-decryption): T = Δ_org (consumed as point)
+//
+//	M = C_2 - Σ λ_k · δ_{x_k} - T
 type DecryptCombineCircuit struct {
-	RoundHash            frontend.Variable `gnark:",public"`
+	RoundHash            frontend.Variable `gnark:",public"` // semantically: eid
+	Aid                  frontend.Variable `gnark:",public"` // application identifier
+	CtIdx                frontend.Variable `gnark:",public"` // per-app ciphertext index
+	Mode                 frontend.Variable `gnark:",public"` // 0 = public derivation, 1 = co-decryption
+	S                    frontend.Variable `gnark:",public"` // derivation tag scalar; ignored if Mode=1
+	DeltaOrg             twistededwards.Point `gnark:",public"` // organizer Δ_org; ignored if Mode=0
 	Threshold            frontend.Variable `gnark:",public"`
 	ShareCount           frontend.Variable `gnark:",public"`
 	CombineHash          frontend.Variable `gnark:",public"`
@@ -25,6 +37,9 @@ type DecryptCombineCircuit struct {
 	// LagrangeCoefficients are pre-computed natively in the BJJ scalar field (r_bjj)
 	// and passed as private witnesses. Computing them in-circuit via api.Div would use
 	// BN254.Fr arithmetic, giving wrong results for negative coefficients (e.g. -1 ≠ r_bjj-1).
+	// Per paper line 1092, soundness rests on the DLP-hardness argument: a forged
+	// non-canonical λ-vector would force the prover to solve a discrete log to
+	// produce a valid plaintext that the contract accepts.
 	LagrangeCoefficients [MaxShares]frontend.Variable
 }
 
@@ -34,7 +49,7 @@ func (c *DecryptCombineCircuit) Define(api frontend.API) error {
 		return err
 	}
 	mask := ccommon.PrefixMask(api, c.ShareCount, MaxShares)
-	for _, point := range []twistededwards.Point{c.CiphertextC1, c.CiphertextC2} {
+	for _, point := range []twistededwards.Point{c.CiphertextC1, c.CiphertextC2, c.DeltaOrg} {
 		if err := ccommon.AssertPointOnCurve(api, point); err != nil {
 			return err
 		}
@@ -45,8 +60,17 @@ func (c *DecryptCombineCircuit) Define(api frontend.API) error {
 		}
 	}
 
+	// Mode flag must be 0 or 1: enforce mode·(mode-1) == 0.
+	api.AssertIsEqual(api.Mul(c.Mode, api.Sub(c.Mode, 1)), 0)
+
 	hashInputs := []frontend.Variable{
-		c.RoundHash,
+		c.RoundHash, // eid
+		c.Aid,
+		c.CtIdx,
+		c.Mode,
+		c.S,
+		c.DeltaOrg.X,
+		c.DeltaOrg.Y,
 		c.Threshold,
 		c.ShareCount,
 		c.CiphertextC1.X,
@@ -82,7 +106,18 @@ func (c *DecryptCombineCircuit) Define(api frontend.API) error {
 		combined = curve.Add(combined, scaled)
 	}
 	messagePoint := ccommon.FixedBaseMul(api, c.Plaintext)
-	expectedC2 := curve.Add(messagePoint, combined)
+	// Per-application correction term (paper §5.5 lines 1071–1077, PLAN §5.4):
+	//   mode = 0 (public derivation):  T = S · C_1 (computed in-circuit)
+	//   mode = 1 (organizer co-decryption): T = Δ_org (consumed as point)
+	// The S·C_1 in-circuit computation is the soundness fix described in
+	// paper line 1088. Both candidates are computed unconditionally and
+	// the mode flag selects which one binds the verifier; the cost is one
+	// extra scalar multiplication on the unused branch.
+	scC1 := curve.ScalarMul(c.CiphertextC1, c.S)
+	correctionX := api.Select(c.Mode, c.DeltaOrg.X, scC1.X)
+	correctionY := api.Select(c.Mode, c.DeltaOrg.Y, scC1.Y)
+	correction := twistededwards.Point{X: correctionX, Y: correctionY}
+	expectedC2 := curve.Add(curve.Add(messagePoint, combined), correction)
 	ccommon.AssertPointEqual(api, expectedC2, c.CiphertextC2)
 	transcript := make([]frontend.Variable, 0, 28)
 	transcript = append(transcript, c.CiphertextC1.X, c.CiphertextC1.Y, c.CiphertextC2.X, c.CiphertextC2.Y)

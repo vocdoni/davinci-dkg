@@ -15,7 +15,7 @@ const (
 	rpcMaxFailures      = 3
 )
 
-// RPCPool holds multiple ethclient instances and provides round-robin failover.
+// RPCPool holds multiple ethclient instances and provides epoch-robin failover.
 type RPCPool struct {
 	mu      sync.Mutex
 	entries []*rpcEntry

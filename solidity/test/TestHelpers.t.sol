@@ -20,26 +20,28 @@ abstract contract TestHelpers is TestInputs {
         });
     }
 
-    /// @dev Canonical on-curve ciphertext used by the ZK-mock tests. c1 = identity
-    /// (0, 1); c2 = the gnark bn254/twistededwards generator. Both satisfy the
-    /// reduced form −x² + y² = 1 + D·x²·y² (mod Q) and are canonical (< Q), so
-    /// submitCiphertext accepts them. Matches the form used by the DKG circuits.
-    uint256 internal constant TEST_CT_C1X = 0;
-    uint256 internal constant TEST_CT_C1Y = 1;
-    uint256 internal constant TEST_CT_C2X = 9671717474070082183213120605117400219616337014328744928644933853176787189663;
-    uint256 internal constant TEST_CT_C2Y = 16950150798460657717958625567821834550301663161624707787222815936182638968203;
+    /// @dev Canonical on-curve ciphertext used by the ZK-mock tests. Both c1
+    /// and c2 must be in the prime-order subgroup of BabyJubJub (gnark RTE
+    /// form) — the DKGManager's `_requireValidEncryptionPoint` enforces this
+    /// at submitCiphertext time (DEEPSEEK §2.2 hardening). Identity (0, 1)
+    /// is no longer acceptable.
+    ///   c1 = 1·G  (the gnark RTE generator)
+    ///   c2 = 4096·G (the SCHNORR_THIS vector's pubkey, secret = 0x1000)
+    uint256 internal constant TEST_CT_C1X = 9671717474070082183213120605117400219616337014328744928644933853176787189663;
+    uint256 internal constant TEST_CT_C1Y = 16950150798460657717958625567821834550301663161624707787222815936182638968203;
+    uint256 internal constant TEST_CT_C2X = 17765672829315743641357949553430354448961270408100494783209553303687184365803;
+    uint256 internal constant TEST_CT_C2Y = 13591243454297365848719372676992908085762757043204242277513940025707896351954;
 
     bytes32 internal constant CONTRIBUTION_TRANSCRIPT_DOMAIN = keccak256("davinci-dkg:contribution:v1");
     bytes32 internal constant DECRYPT_COMBINE_TRANSCRIPT_DOMAIN = keccak256("davinci-dkg:decrypt-combine:v1");
     bytes32 internal constant FINALIZE_TRANSCRIPT_DOMAIN = keccak256("davinci-dkg:finalize:v1");
-    bytes32 internal constant REVEAL_SHARE_TRANSCRIPT_DOMAIN = keccak256("davinci-dkg:reveal-share:v1");
 
     function contributionProof() internal pure returns (bytes memory) {
         return abi.encode([uint256(1), 2, 3, 4, 5, 6, 7, 8]);
     }
 
     function contributionInput(
-        bytes12 roundId,
+        bytes12 epochId,
         uint16 threshold,
         uint16 committeeSize,
         uint16 contributorIndex,
@@ -49,13 +51,13 @@ abstract contract TestHelpers is TestInputs {
         uint256 commitment0Y
     ) internal pure returns (bytes memory) {
         uint256 challenge = BRLC.deriveChallenge(
-            roundId,
+            epochId,
             CONTRIBUTION_TRANSCRIPT_DOMAIN,
             keccak256(abi.encodePacked(commitmentsHash, encryptedSharesHash))
         );
         return abi.encode(
             [
-                uint256(uint96(roundId)),
+                uint256(uint96(epochId)),
                 uint256(threshold),
                 uint256(committeeSize),
                 uint256(contributorIndex),
@@ -74,6 +76,28 @@ abstract contract TestHelpers is TestInputs {
     //   finalize:     2N²+5N = 2208 words.
     //   combine:      4 + 3N = 100 words.
     //   reconstruct:  2N = 64 words.
+    /// @dev The first two committee slots use real on-curve BabyJubJub keys
+    ///      (THIS and BEEF Schnorr vectors from cmd/operator-schnorr-vectors).
+    ///      Slots 3+ stay at zero and are padded with the identity (0,1) below.
+    ///      This matches what the DKGManager test fixtures register at setUp,
+    ///      so the committee snapshot hash and the contribution transcript
+    ///      stay byte-identical.
+    function _slotPubKey(uint256 i) internal pure returns (uint256 x, uint256 y) {
+        if (i == 0) {
+            return (
+                17765672829315743641357949553430354448961270408100494783209553303687184365803,
+                13591243454297365848719372676992908085762757043204242277513940025707896351954
+            );
+        }
+        if (i == 1) {
+            return (
+                10228722604559478181013548940833210623190136968531440936190496170400150013980,
+                13886497050333420293068628977630539070604271411621054562122682889313139677221
+            );
+        }
+        revert("test fixture: only 2 committee members supported");
+    }
+
     function contributionTranscript(uint16 committeeSize) internal pure returns (bytes memory) {
         uint256[64] memory commitments;       // 2N
         uint256[32] memory recipientIndexes;  // N
@@ -88,8 +112,9 @@ abstract contract TestHelpers is TestInputs {
         for (uint256 i = 0; i < committeeSize; i++) {
             commitments[i * 2 + 1] = 0;
             recipientIndexes[i] = i + 1;
-            recipientPubKeys[i * 2] = 100 + i + 1;
-            recipientPubKeys[i * 2 + 1] = 200 + i + 1;
+            (uint256 px, uint256 py) = _slotPubKey(i);
+            recipientPubKeys[i * 2] = px;
+            recipientPubKeys[i * 2 + 1] = py;
             ephemerals[i * 2] = 300 + i + 1;
             ephemerals[i * 2 + 1] = 400 + i + 1;
             maskedShares[i] = 500 + i + 1;
@@ -111,8 +136,9 @@ abstract contract TestHelpers is TestInputs {
         }
         cursor = 96; // recipientPubKeys start (2N+N)
         for (uint256 i = 0; i < committeeSize; i++) {
-            values[cursor++] = 100 + i + 1;
-            values[cursor++] = 200 + i + 1;
+            (uint256 px, uint256 py) = _slotPubKey(i);
+            values[cursor++] = px;
+            values[cursor++] = py;
         }
         cursor = 160; // ephemerals start (2N+N+2N)
         for (uint256 i = 0; i < committeeSize; i++) {
@@ -130,18 +156,36 @@ abstract contract TestHelpers is TestInputs {
         return abi.encode([uint256(11), 12, 13, 14, 15, 16, 17, 18]);
     }
 
-    function partialDecryptionInput(bytes12 roundId, uint16 participantIndex, bytes32)
+    /// P5 partialdecrypt layout (16 public inputs):
+    ///   [0] eid, [1] aid, [2] ctIdx, [3] role, [4] participantIndex,
+    ///   [5..6] C1.x/y, [7..8] D_i.x/y, [9..10] delta.x/y,
+    ///   [11..12] A1.x/y, [13..14] A2.x/y, [15] response.
+    /// Tests pass aid=0 (legacy path) and role=COMMITTEE=1.
+    /// 3-arg overload defaults ciphertextIndex to 1 for the most common case.
+    function partialDecryptionInput(bytes12 epochId, uint16 participantIndex, bytes32 unused)
         internal
         pure
         returns (bytes memory)
     {
-        uint256[13] memory inputs;
-        inputs[0] = uint256(uint96(roundId));
-        inputs[1] = participantIndex;
-        inputs[4] = 1000 + participantIndex;
-        inputs[5] = 2000 + participantIndex;
-        inputs[6] = 7000 + participantIndex;
-        inputs[7] = 8000 + participantIndex;
+        return partialDecryptionInputCt(epochId, participantIndex, 1, unused);
+    }
+
+    function partialDecryptionInputCt(
+        bytes12 epochId,
+        uint16 participantIndex,
+        uint16 ciphertextIndex,
+        bytes32
+    ) internal pure returns (bytes memory) {
+        uint256[16] memory inputs;
+        inputs[0] = uint256(uint96(epochId));
+        inputs[1] = 0;                          // aid (legacy)
+        inputs[2] = ciphertextIndex;
+        inputs[3] = 1;                          // role = COMMITTEE
+        inputs[4] = participantIndex;
+        inputs[7] = 1000 + participantIndex;    // D_i.x
+        inputs[8] = 2000 + participantIndex;    // D_i.y
+        inputs[9] = 7000 + participantIndex;    // delta.x
+        inputs[10] = 8000 + participantIndex;   // delta.y
         return abi.encode(inputs);
     }
 
@@ -154,7 +198,7 @@ abstract contract TestHelpers is TestInputs {
     }
 
     function finalizeInput(
-        bytes12 roundId,
+        bytes12 epochId,
         uint16 threshold,
         uint16 committeeSize,
         uint16 acceptedCount,
@@ -163,11 +207,11 @@ abstract contract TestHelpers is TestInputs {
         bytes32 shareCommitmentHash
     ) internal pure returns (bytes memory) {
         uint256 challenge = BRLC.deriveChallenge(
-            roundId, FINALIZE_TRANSCRIPT_DOMAIN, keccak256(abi.encodePacked(aggregateCommitmentsHash, collectivePublicKeyHash, shareCommitmentHash))
+            epochId, FINALIZE_TRANSCRIPT_DOMAIN, keccak256(abi.encodePacked(aggregateCommitmentsHash, collectivePublicKeyHash, shareCommitmentHash))
         );
         return abi.encode(
             [
-                uint256(uint96(roundId)),
+                uint256(uint96(epochId)),
                 uint256(threshold),
                 uint256(committeeSize),
                 uint256(acceptedCount),
@@ -224,29 +268,61 @@ abstract contract TestHelpers is TestInputs {
         return abi.encode([uint256(31), 32, 33, 34, 35, 36, 37, 38]);
     }
 
+    /// @dev 13-element layout matching the P5/P6 combine circuit and verifier:
+    ///      eid, aid, ctIdx, mode, S, deltaOrgX, deltaOrgY, threshold,
+    ///      shareCount, combineHash, plaintextHash, challenge, transcriptCommitment.
+    ///      For the legacy per-epoch tests we pass aid=0, ctIdx=0, mode=0, S=0,
+    ///      deltaOrg=identity (matching the contract's legacy combine path).
     function decryptCombineInput(
-        bytes12 roundId,
+        bytes12 epochId,
+        uint16 threshold,
+        uint16 shareCount,
+        bytes32 combineHash,
+        uint256 plaintext
+    ) internal pure returns (bytes memory) {
+        // Test fixture default: legacy combine path with aid=0, ctIdx=1 (the
+        // only ciphertext used in DKGManagerTest). Matches the contract's
+        // expectations for `combineDecryption(epoch, bytes32(0), 1, ...)`.
+        return decryptCombineInputFull(
+            epochId, bytes32(0), 1, 0, 0,
+            0, 1,
+            threshold, shareCount, combineHash, plaintext
+        );
+    }
+
+    function decryptCombineInputFull(
+        bytes12 epochId,
+        bytes32 aid,
+        uint16 ctIdx,
+        uint8 mode,
+        uint256 derivationS,
+        uint256 deltaOrgX,
+        uint256 deltaOrgY,
         uint16 threshold,
         uint16 shareCount,
         bytes32 combineHash,
         uint256 plaintext
     ) internal pure returns (bytes memory) {
         uint256 challenge = BRLC.deriveChallenge(
-            roundId,
+            epochId,
             DECRYPT_COMBINE_TRANSCRIPT_DOMAIN,
             keccak256(abi.encodePacked(combineHash, bytes32(plaintext)))
         );
-        return abi.encode(
-            [
-                uint256(uint96(roundId)),
-                uint256(threshold),
-                uint256(shareCount),
-                uint256(combineHash),
-                plaintext,
-                challenge,
-                decryptCombineTranscriptCommitment(challenge, shareCount)
-            ]
-        );
+        uint256[13] memory v;
+        v[0] = uint256(uint96(epochId));
+        v[1] = uint256(aid);
+        v[2] = uint256(ctIdx);
+        v[3] = uint256(mode);
+        v[4] = derivationS;
+        v[5] = deltaOrgX;
+        v[6] = deltaOrgY;
+        v[7] = uint256(threshold);
+        v[8] = uint256(shareCount);
+        v[9] = uint256(combineHash);
+        v[10] = plaintext;
+        v[11] = challenge;
+        v[12] = decryptCombineTranscriptCommitment(challenge, shareCount);
+        return abi.encode(v);
     }
 
     function decryptCombineTranscript(uint16 shareCount) internal pure returns (bytes memory) {
@@ -291,65 +367,6 @@ abstract contract TestHelpers is TestInputs {
         return BRLC.commit(challenge, values);
     }
 
-    function revealShareProof() internal pure returns (bytes memory) {
-        return abi.encode([uint256(41), 42, 43, 44, 45, 46, 47, 48]);
-    }
-
-    function revealSubmitInput(bytes12 roundId, uint16 participantIndex, uint256 shareValue)
-        internal
-        pure
-        returns (bytes memory)
-    {
-        return abi.encode([uint256(uint96(roundId)), uint256(participantIndex), shareValue, 1000 + participantIndex, 2000 + participantIndex]);
-    }
-
-    function revealShareInput(
-        bytes12 roundId,
-        uint16 threshold,
-        uint16 shareCount,
-        bytes32 disclosureHash,
-        bytes32 reconstructedSecretHash
-    )
-        internal
-        pure
-        returns (bytes memory)
-    {
-        uint256 challenge = BRLC.deriveChallenge(
-            roundId,
-            REVEAL_SHARE_TRANSCRIPT_DOMAIN,
-            keccak256(abi.encodePacked(disclosureHash, reconstructedSecretHash))
-        );
-        return abi.encode(
-            [
-                uint256(uint96(roundId)),
-                uint256(threshold),
-                uint256(shareCount),
-                uint256(disclosureHash),
-                uint256(reconstructedSecretHash),
-                challenge,
-                revealShareTranscriptCommitment(challenge, shareCount)
-            ]
-        );
-    }
-
-    function revealShareTranscript(uint16 shareCount) internal pure returns (bytes memory) {
-        uint256[32] memory participantIndexes; // N
-        uint256[32] memory shares;             // N
-        for (uint256 i = 0; i < shareCount; i++) {
-            participantIndexes[i] = i + 1;
-            shares[i] = uint256(REVEALED_SHARE_HASH) + i;
-        }
-        return abi.encode(participantIndexes, shares);
-    }
-
-    function revealShareTranscriptCommitment(uint256 challenge, uint16 shareCount) internal pure returns (uint256) {
-        uint256[] memory values = new uint256[](64); // 2N
-        for (uint256 i = 0; i < shareCount; i++) {
-            values[i] = i + 1;
-            values[32 + i] = uint256(REVEALED_SHARE_HASH) + i; // shares start at N
-        }
-        return BRLC.commit(challenge, values);
-    }
 }
 
 contract MockContributionVerifier is IZKVerifier, TestInputs {
@@ -395,25 +412,5 @@ contract MockDecryptCombineVerifier is IZKVerifier, TestInputs {
 
     function provingKeyHash() external pure override returns (bytes32) {
         return DECRYPT_COMBINE_PROVING_KEY_HASH;
-    }
-}
-
-contract MockRevealSubmitVerifier is IZKVerifier, TestInputs {
-    function verifyProof(bytes calldata proof, bytes calldata) external pure override {
-        if (proof.length == 0) revert();
-    }
-
-    function provingKeyHash() external pure override returns (bytes32) {
-        return REVEAL_SUBMIT_PROVING_KEY_HASH;
-    }
-}
-
-contract MockRevealShareVerifier is IZKVerifier, TestInputs {
-    function verifyProof(bytes calldata proof, bytes calldata) external pure override {
-        if (proof.length == 0) revert();
-    }
-
-    function provingKeyHash() external pure override returns (bytes32) {
-        return REVEAL_SHARE_PROVING_KEY_HASH;
     }
 }

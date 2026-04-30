@@ -4,6 +4,7 @@
 /dkg-runner
 /circuit-compile
 /dkgcli
+/protocol-vectors
 *.exe
 *.test
 *.out

@@ -100,7 +100,7 @@ func stressRoundHashes(n int) []*big.Int {
 		new(big.Int).SetBytes([]byte{0xde, 0xad, 0xbe, 0xef, 0xca, 0xfe, 0xba, 0xbe, 0x00, 0x00, 0x00, 0x03}),
 		new(big.Int).SetBytes([]byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}),
 	}
-	// Add random 12-byte values mimicking Solidity round IDs.
+	// Add random 12-byte values mimicking Solidity epoch IDs.
 	rnd := mathrand.New(mathrand.NewSource(42))
 	for i := 0; i < n; i++ {
 		buf := make([]byte, 12)

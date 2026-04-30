@@ -16,10 +16,10 @@ func TestContributionPlannerPendingContribution(t *testing.T) {
 	operator := common.HexToAddress("0x1000000000000000000000000000000000000001")
 	other := common.HexToAddress("0x2000000000000000000000000000000000000002")
 	st := storage.New()
-	c.Assert(st.SaveRound(types.Round{
-		ID:        "round-1",
+	c.Assert(st.SaveEpoch(types.Epoch{
+		ID:        "epoch-1",
 		Organizer: operator,
-		Policy: types.RoundPolicy{
+		Policy: types.EpochPolicy{
 			Threshold:                 2,
 			CommitteeSize:             2,
 			MinValidContributions:     2,
@@ -27,16 +27,16 @@ func TestContributionPlannerPendingContribution(t *testing.T) {
 			ContributionDeadlineBlock: 20,
 			FinalizeNotBeforeBlock:    21,
 		},
-		Phase:                types.RoundPhaseContribution,
+		Phase:                types.EpochPhaseContribution,
 		SelectedParticipants: []common.Address{operator, other},
 	}), qt.IsNil)
 
 	planner := NewContributor(operator, st)
-	task, err := planner.PendingContribution("round-1")
+	task, err := planner.PendingContribution("epoch-1")
 
 	c.Assert(err, qt.IsNil)
 	c.Assert(task, qt.Not(qt.IsNil))
-	c.Assert(task.RoundID, qt.Equals, "round-1")
+	c.Assert(task.EpochID, qt.Equals, "epoch-1")
 	c.Assert(task.ContributorIndex, qt.Equals, uint16(1))
 }
 
@@ -46,7 +46,7 @@ func TestContributionPlannerSkipsWhenAlreadyContributed(t *testing.T) {
 	operator := common.HexToAddress("0x1000000000000000000000000000000000000001")
 	st := seededContributionRound(c, operator)
 	c.Assert(st.SaveContribution(types.Contribution{
-		RoundID:          "round-1",
+		EpochID:          "epoch-1",
 		Contributor:      operator,
 		ContributorIndex: 1,
 		Commitments:      []types.CurvePoint{{X: one(), Y: one()}},
@@ -59,7 +59,7 @@ func TestContributionPlannerSkipsWhenAlreadyContributed(t *testing.T) {
 		Proof: []byte{1},
 	}), qt.IsNil)
 
-	task, err := NewContributor(operator, st).PendingContribution("round-1")
+	task, err := NewContributor(operator, st).PendingContribution("epoch-1")
 	c.Assert(err, qt.IsNil)
 	c.Assert(task, qt.IsNil)
 }
@@ -69,13 +69,13 @@ func TestFinalizerPendingFinalize(t *testing.T) {
 
 	operator := common.HexToAddress("0x1000000000000000000000000000000000000001")
 	st := seededContributionRound(c, operator)
-	saveContributionFor(c, st, "round-1", operator, 1)
-	saveContributionFor(c, st, "round-1", common.HexToAddress("0x2000000000000000000000000000000000000002"), 2)
+	saveContributionFor(c, st, "epoch-1", operator, 1)
+	saveContributionFor(c, st, "epoch-1", common.HexToAddress("0x2000000000000000000000000000000000000002"), 2)
 
-	task, err := NewFinalizer(st).PendingFinalize("round-1")
+	task, err := NewFinalizer(st).PendingFinalize("epoch-1")
 	c.Assert(err, qt.IsNil)
 	c.Assert(task, qt.Not(qt.IsNil))
-	c.Assert(task.RoundID, qt.Equals, "round-1")
+	c.Assert(task.EpochID, qt.Equals, "epoch-1")
 	c.Assert(task.ContributionCount, qt.Equals, 2)
 }
 
@@ -85,10 +85,10 @@ func TestDecryptorPendingPartialDecryption(t *testing.T) {
 	operator := common.HexToAddress("0x1000000000000000000000000000000000000001")
 	other := common.HexToAddress("0x2000000000000000000000000000000000000002")
 	st := storage.New()
-	c.Assert(st.SaveRound(types.Round{
-		ID:        "round-1",
+	c.Assert(st.SaveEpoch(types.Epoch{
+		ID:        "epoch-1",
 		Organizer: operator,
-		Policy: types.RoundPolicy{
+		Policy: types.EpochPolicy{
 			Threshold:                 2,
 			CommitteeSize:             2,
 			MinValidContributions:     2,
@@ -96,108 +96,26 @@ func TestDecryptorPendingPartialDecryption(t *testing.T) {
 			ContributionDeadlineBlock: 20,
 			FinalizeNotBeforeBlock:    21,
 		},
-		Phase:                types.RoundPhaseFinalized,
+		Phase:                types.EpochPhaseFinalized,
 		SelectedParticipants: []common.Address{operator, other},
 	}), qt.IsNil)
 
-	task, err := NewDecryptor(operator, st).PendingPartialDecryption("round-1", 1)
+	task, err := NewDecryptor(operator, st).PendingPartialDecryption("epoch-1", 1)
 	c.Assert(err, qt.IsNil)
 	c.Assert(task, qt.Not(qt.IsNil))
 	c.Assert(task.ParticipantIndex, qt.Equals, uint16(1))
 	c.Assert(task.CiphertextIndex, qt.Equals, uint16(1))
 }
 
-func TestDiscloserPendingRevealedShare(t *testing.T) {
-	c := qt.New(t)
-
-	operator := common.HexToAddress("0x1000000000000000000000000000000000000001")
-	other := common.HexToAddress("0x2000000000000000000000000000000000000002")
-	st := storage.New()
-	c.Assert(st.SaveRound(types.Round{
-		ID:        "round-1",
-		Organizer: operator,
-		Policy: types.RoundPolicy{
-			Threshold:                 2,
-			CommitteeSize:             2,
-			MinValidContributions:     2,
-			RegistrationDeadlineBlock: 10,
-			ContributionDeadlineBlock: 20,
-			FinalizeNotBeforeBlock:    21,
-			DisclosureAllowed:         true,
-		},
-		Phase:                types.RoundPhaseFinalized,
-		SelectedParticipants: []common.Address{operator, other},
-	}), qt.IsNil)
-
-	task, err := NewDiscloser(operator, st).PendingRevealedShare("round-1")
-	c.Assert(err, qt.IsNil)
-	c.Assert(task, qt.Not(qt.IsNil))
-	c.Assert(task.ParticipantIndex, qt.Equals, uint16(1))
-}
-
-func TestDiscloserSkipsWhenDisclosureDisabled(t *testing.T) {
-	c := qt.New(t)
-
-	operator := common.HexToAddress("0x1000000000000000000000000000000000000001")
-	st := storage.New()
-	c.Assert(st.SaveRound(types.Round{
-		ID:        "round-1",
-		Organizer: operator,
-		Policy: types.RoundPolicy{
-			Threshold:                 2,
-			CommitteeSize:             2,
-			MinValidContributions:     2,
-			RegistrationDeadlineBlock: 10,
-			ContributionDeadlineBlock: 20,
-			FinalizeNotBeforeBlock:    21,
-		},
-		Phase:                types.RoundPhaseFinalized,
-		SelectedParticipants: []common.Address{operator},
-	}), qt.IsNil)
-
-	task, err := NewDiscloser(operator, st).PendingRevealedShare("round-1")
-	c.Assert(err, qt.IsNil)
-	c.Assert(task, qt.IsNil)
-}
-
 func TestCapabilitiesForPhaseTerminalStates(t *testing.T) {
 	c := qt.New(t)
 
-	for _, phase := range []types.RoundPhase{types.RoundPhaseAborted, types.RoundPhaseCompleted, types.RoundPhaseUnknown} {
-		caps := CapabilitiesForPhase(phase, 5, 3, true)
+	for _, phase := range []types.EpochPhase{types.EpochPhaseAborted, types.EpochPhaseCompleted, types.EpochPhaseUnknown} {
+		caps := CapabilitiesForPhase(phase, 5, 3)
 		c.Assert(caps.Contribution, qt.IsFalse, qt.Commentf("phase=%s should not allow contribution", phase))
 		c.Assert(caps.Finalize, qt.IsFalse, qt.Commentf("phase=%s should not allow finalize", phase))
 		c.Assert(caps.Decrypt, qt.IsFalse, qt.Commentf("phase=%s should not allow decrypt", phase))
-		c.Assert(caps.Disclose, qt.IsFalse, qt.Commentf("phase=%s should not allow disclose", phase))
 	}
-}
-
-func TestDiscloserSkipsWhenRoundIsCompleted(t *testing.T) {
-	c := qt.New(t)
-
-	operator := common.HexToAddress("0x1000000000000000000000000000000000000001")
-	st := storage.New()
-	c.Assert(st.SaveRound(types.Round{
-		ID:        "round-1",
-		Organizer: operator,
-		Policy: types.RoundPolicy{
-			Threshold:                 2,
-			CommitteeSize:             2,
-			MinValidContributions:     2,
-			RegistrationDeadlineBlock: 10,
-			ContributionDeadlineBlock: 20,
-			FinalizeNotBeforeBlock:    21,
-			DisclosureAllowed:         true,
-		},
-		// RoundPhaseCompleted is the terminal state after reconstructSecret;
-		// the discloser must not attempt further actions.
-		Phase:                types.RoundPhaseCompleted,
-		SelectedParticipants: []common.Address{operator},
-	}), qt.IsNil)
-
-	task, err := NewDiscloser(operator, st).PendingRevealedShare("round-1")
-	c.Assert(err, qt.IsNil)
-	c.Assert(task, qt.IsNil)
 }
 
 func TestDecryptorSkipsWhenRoundIsAborted(t *testing.T) {
@@ -205,10 +123,10 @@ func TestDecryptorSkipsWhenRoundIsAborted(t *testing.T) {
 
 	operator := common.HexToAddress("0x1000000000000000000000000000000000000001")
 	st := storage.New()
-	c.Assert(st.SaveRound(types.Round{
-		ID:        "round-1",
+	c.Assert(st.SaveEpoch(types.Epoch{
+		ID:        "epoch-1",
 		Organizer: operator,
-		Policy: types.RoundPolicy{
+		Policy: types.EpochPolicy{
 			Threshold:                 2,
 			CommitteeSize:             2,
 			MinValidContributions:     2,
@@ -216,21 +134,21 @@ func TestDecryptorSkipsWhenRoundIsAborted(t *testing.T) {
 			ContributionDeadlineBlock: 20,
 			FinalizeNotBeforeBlock:    21,
 		},
-		Phase:                types.RoundPhaseAborted,
+		Phase:                types.EpochPhaseAborted,
 		SelectedParticipants: []common.Address{operator},
 	}), qt.IsNil)
 
-	task, err := NewDecryptor(operator, st).PendingPartialDecryption("round-1", 1)
+	task, err := NewDecryptor(operator, st).PendingPartialDecryption("epoch-1", 1)
 	c.Assert(err, qt.IsNil)
 	c.Assert(task, qt.IsNil)
 }
 
 func seededContributionRound(c *qt.C, operator common.Address) *storage.Storage {
 	st := storage.New()
-	c.Assert(st.SaveRound(types.Round{
-		ID:        "round-1",
+	c.Assert(st.SaveEpoch(types.Epoch{
+		ID:        "epoch-1",
 		Organizer: operator,
-		Policy: types.RoundPolicy{
+		Policy: types.EpochPolicy{
 			Threshold:                 2,
 			CommitteeSize:             2,
 			MinValidContributions:     2,
@@ -238,7 +156,7 @@ func seededContributionRound(c *qt.C, operator common.Address) *storage.Storage 
 			ContributionDeadlineBlock: 20,
 			FinalizeNotBeforeBlock:    21,
 		},
-		Phase: types.RoundPhaseContribution,
+		Phase: types.EpochPhaseContribution,
 		SelectedParticipants: []common.Address{
 			operator,
 			common.HexToAddress("0x2000000000000000000000000000000000000002"),
@@ -247,9 +165,9 @@ func seededContributionRound(c *qt.C, operator common.Address) *storage.Storage 
 	return st
 }
 
-func saveContributionFor(c *qt.C, st *storage.Storage, roundID string, operator common.Address, index uint16) {
+func saveContributionFor(c *qt.C, st *storage.Storage, epochID string, operator common.Address, index uint16) {
 	c.Assert(st.SaveContribution(types.Contribution{
-		RoundID:          roundID,
+		EpochID:          epochID,
 		Contributor:      operator,
 		ContributorIndex: index,
 		Commitments:      []types.CurvePoint{{X: one(), Y: one()}},

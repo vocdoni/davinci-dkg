@@ -22,28 +22,27 @@ func TestThresholdDecryptionHappyPath(t *testing.T) {
 	head, err := services.Contracts.Client().BlockNumber(ctx)
 	c.Assert(err, qt.IsNil)
 
-	policy := types.RoundPolicy{
+	policy := types.EpochPolicy{
 		Threshold:                 1,
 		CommitteeSize:             1,
 		MinValidContributions:     1,
 		RegistrationDeadlineBlock: head + 25,
 		ContributionDeadlineBlock: head + 50,
 		FinalizeNotBeforeBlock:    head + 51,
-		DisclosureAllowed:         false,
 	}
 	coefficients := []*big.Int{big.NewInt(11)}
 
 	result, err := helpers.CreateFinalizedSingleParticipantRound(ctx, services, policy, coefficients)
 	c.Assert(err, qt.IsNil)
 
-	partial, err := helpers.BuildPartialDecryptionSubmission(ctx, result.RoundID, 1, big.NewInt(9), coefficients[0], big.NewInt(5))
+	partial, err := helpers.BuildPartialDecryptionSubmission(ctx, result.EpochID, 1, big.NewInt(9), coefficients[0], big.NewInt(5))
 	c.Assert(err, qt.IsNil)
 
 	auth, err := services.TxManager.NewTransactOpts(ctx)
 	c.Assert(err, qt.IsNil)
 	tx, err := services.Manager.SubmitPartialDecryption(
 		auth,
-		result.RoundID,
+		result.EpochID,
 		1,
 		1,
 		partial.DeltaHash,
@@ -53,12 +52,12 @@ func TestThresholdDecryptionHappyPath(t *testing.T) {
 	c.Assert(err, qt.IsNil)
 	c.Assert(services.TxManager.WaitTxByHash(tx.Hash(), helpers.DefaultTxTimeout), qt.IsNil)
 
-	combine, err := helpers.BuildDecryptCombineOutput(ctx, result.RoundID, 1, big.NewInt(9), []uint16{1}, []types.CurvePoint{partial.Delta}, big.NewInt(3))
+	combine, err := helpers.BuildDecryptCombineOutput(ctx, result.EpochID, 1, big.NewInt(9), []uint16{1}, []types.CurvePoint{partial.Delta}, big.NewInt(3))
 	c.Assert(err, qt.IsNil)
 
 	c.Assert(helpers.SubmitCiphertextAs(ctx,
 		&helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager},
-		result.RoundID, 1,
+		result.EpochID, 1,
 		combine.CiphertextC1.X, combine.CiphertextC1.Y,
 		combine.CiphertextC2.X, combine.CiphertextC2.Y,
 	), qt.IsNil)
@@ -67,7 +66,8 @@ func TestThresholdDecryptionHappyPath(t *testing.T) {
 	c.Assert(err, qt.IsNil)
 	tx, err = services.Manager.CombineDecryption(
 		auth,
-		result.RoundID,
+		result.EpochID,
+		[32]byte{}, // legacy per-epoch path: zero aid
 		1,
 		combine.CombineHash,
 		combine.Plaintext,
@@ -78,7 +78,7 @@ func TestThresholdDecryptionHappyPath(t *testing.T) {
 	c.Assert(err, qt.IsNil)
 	c.Assert(services.TxManager.WaitTxByHash(tx.Hash(), helpers.DefaultTxTimeout), qt.IsNil)
 
-	record, err := helpers.WaitCombinedDecryption(ctx, services, result.RoundID, 1)
+	record, err := helpers.WaitCombinedDecryption(ctx, services, result.EpochID, 1)
 	c.Assert(err, qt.IsNil)
 	c.Assert(record.Completed, qt.IsTrue)
 	// The recovered plaintext is persisted on-chain in the CombinedDecryptionRecord;
@@ -97,14 +97,13 @@ func TestThresholdDecryptionSupportsMultipleCiphertextsPerRound(t *testing.T) {
 	head, err := services.Contracts.Client().BlockNumber(ctx)
 	c.Assert(err, qt.IsNil)
 
-	policy := types.RoundPolicy{
+	policy := types.EpochPolicy{
 		Threshold:                 1,
 		CommitteeSize:             1,
 		MinValidContributions:     1,
 		RegistrationDeadlineBlock: head + 25,
 		ContributionDeadlineBlock: head + 50,
 		FinalizeNotBeforeBlock:    head + 51,
-		DisclosureAllowed:         false,
 	}
 	coefficients := []*big.Int{big.NewInt(11)}
 
@@ -119,7 +118,7 @@ func TestThresholdDecryptionSupportsMultipleCiphertextsPerRound(t *testing.T) {
 
 		partial, err := helpers.BuildPartialDecryptionSubmission(
 			ctx,
-			result.RoundID,
+			result.EpochID,
 			1,
 			baseValues[i],
 			coefficients[0],
@@ -131,7 +130,7 @@ func TestThresholdDecryptionSupportsMultipleCiphertextsPerRound(t *testing.T) {
 		c.Assert(err, qt.IsNil)
 		tx, err := services.Manager.SubmitPartialDecryption(
 			auth,
-			result.RoundID,
+			result.EpochID,
 			1,
 			ciphertextIndex,
 			partial.DeltaHash,
@@ -143,7 +142,7 @@ func TestThresholdDecryptionSupportsMultipleCiphertextsPerRound(t *testing.T) {
 
 		combine, err := helpers.BuildDecryptCombineOutput(
 			ctx,
-			result.RoundID,
+			result.EpochID,
 			1,
 			baseValues[i],
 			[]uint16{1},
@@ -154,7 +153,7 @@ func TestThresholdDecryptionSupportsMultipleCiphertextsPerRound(t *testing.T) {
 
 		c.Assert(helpers.SubmitCiphertextAs(ctx,
 			&helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager},
-			result.RoundID, ciphertextIndex,
+			result.EpochID, ciphertextIndex,
 			combine.CiphertextC1.X, combine.CiphertextC1.Y,
 			combine.CiphertextC2.X, combine.CiphertextC2.Y,
 		), qt.IsNil)
@@ -163,7 +162,8 @@ func TestThresholdDecryptionSupportsMultipleCiphertextsPerRound(t *testing.T) {
 		c.Assert(err, qt.IsNil)
 		tx, err = services.Manager.CombineDecryption(
 			auth,
-			result.RoundID,
+			result.EpochID,
+			[32]byte{}, // legacy per-epoch path: zero aid
 			ciphertextIndex,
 			combine.CombineHash,
 			combine.Plaintext,
@@ -174,7 +174,7 @@ func TestThresholdDecryptionSupportsMultipleCiphertextsPerRound(t *testing.T) {
 		c.Assert(err, qt.IsNil)
 		c.Assert(services.TxManager.WaitTxByHash(tx.Hash(), helpers.DefaultTxTimeout), qt.IsNil)
 
-		record, err := helpers.WaitCombinedDecryption(ctx, services, result.RoundID, ciphertextIndex)
+		record, err := helpers.WaitCombinedDecryption(ctx, services, result.EpochID, ciphertextIndex)
 		c.Assert(err, qt.IsNil)
 		c.Assert(record.Completed, qt.IsTrue)
 		// The recovered plaintext is persisted on-chain in the CombinedDecryptionRecord;

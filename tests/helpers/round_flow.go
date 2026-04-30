@@ -18,8 +18,8 @@ const (
 )
 
 type FinalizedRoundResult struct {
-	RoundID                  [12]byte
-	Round                    web3.RoundView
+	EpochID                  [12]byte
+	Epoch                    web3.EpochView
 	RoundHash                *big.Int
 	Participant              common.Address
 	AggregateCommitmentsHash common.Hash
@@ -28,7 +28,7 @@ type FinalizedRoundResult struct {
 }
 
 // DefaultLotteryAlphaBps is the over-subscription factor applied to integration
-// test round policies when the caller leaves LotteryAlphaBps at zero. Matches
+// test epoch policies when the caller leaves LotteryAlphaBps at zero. Matches
 // the runtime default used by cmd/dkg-runner.
 const DefaultLotteryAlphaBps uint16 = 15000
 
@@ -36,7 +36,7 @@ const DefaultLotteryAlphaBps uint16 = 15000
 // when the caller does not specify one. Matches cmd/dkg-runner.
 const DefaultSeedDelay uint16 = 1
 
-func CreateContributionRound(ctx context.Context, services *TestServices, policy types.RoundPolicy) ([12]byte, error) {
+func CreateContributionRound(ctx context.Context, services *TestServices, policy types.EpochPolicy) ([12]byte, error) {
 	var zero [12]byte
 
 	if policy.LotteryAlphaBps == 0 {
@@ -49,7 +49,7 @@ func CreateContributionRound(ctx context.Context, services *TestServices, policy
 		return zero, err
 	}
 
-	roundID, err := CreateRound(ctx, services, policy)
+	epochID, err := CreateEpoch(ctx, services, policy)
 	if err != nil {
 		return zero, err
 	}
@@ -65,28 +65,28 @@ func CreateContributionRound(ctx context.Context, services *TestServices, policy
 			return zero, err
 		}
 	}
-	if err := ClaimSlot(ctx, services, roundID); err != nil {
+	if err := ClaimSlot(ctx, services, epochID); err != nil {
 		return zero, err
 	}
-	if _, err := WaitRoundStatus(ctx, services, roundID, roundStatusContribution); err != nil {
+	if _, err := WaitEpochPhase(ctx, services, epochID, roundStatusContribution); err != nil {
 		return zero, err
 	}
 
-	return roundID, nil
+	return epochID, nil
 }
 
 func CreateFinalizedSingleParticipantRound(
 	ctx context.Context,
 	services *TestServices,
-	policy types.RoundPolicy,
+	policy types.EpochPolicy,
 	coefficients []*big.Int,
 ) (*FinalizedRoundResult, error) {
-	roundID, err := CreateContributionRound(ctx, services, policy)
+	epochID, err := CreateContributionRound(ctx, services, policy)
 	if err != nil {
 		return nil, err
 	}
 
-	submission, err := BuildContributionSubmission(ctx, services, roundID, 1, 1, 1, coefficients, []uint16{1})
+	submission, err := BuildContributionSubmission(ctx, services, epochID, 1, 1, 1, coefficients, []uint16{1})
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +97,7 @@ func CreateFinalizedSingleParticipantRound(
 	}
 	tx, err := services.Manager.SubmitContribution(
 		auth,
-		roundID,
+		epochID,
 		1,
 		submission.CommitmentsHash,
 		submission.EncryptedSharesHash,
@@ -114,13 +114,13 @@ func CreateFinalizedSingleParticipantRound(
 		return nil, err
 	}
 
-	finalizeOutput, err := BuildFinalizeRoundOutput(ctx, roundID, 1, 1, []uint16{1}, [][]*big.Int{coefficients})
+	finalizeOutput, err := BuildFinalizeEpochOutput(ctx, epochID, 1, 1, []uint16{1}, [][]*big.Int{coefficients})
 	if err != nil {
 		return nil, err
 	}
 
 	// Wait until block.number >= finalizeNotBeforeBlock so the on-chain gate is open.
-	if err := WaitForFinalizeGate(ctx, services, roundID); err != nil {
+	if err := WaitForFinalizeGate(ctx, services, epochID); err != nil {
 		return nil, err
 	}
 
@@ -128,9 +128,9 @@ func CreateFinalizedSingleParticipantRound(
 	if err != nil {
 		return nil, err
 	}
-	tx, err = services.Manager.FinalizeRound(
+	tx, err = services.Manager.FinalizeEpoch(
 		auth,
-		roundID,
+		epochID,
 		finalizeOutput.AggregateCommitmentsHash,
 		finalizeOutput.CollectivePublicKeyHash,
 		finalizeOutput.ShareCommitmentHash,
@@ -139,20 +139,20 @@ func CreateFinalizedSingleParticipantRound(
 		finalizeOutput.Input,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("finalize round: %w", err)
+		return nil, fmt.Errorf("finalize epoch: %w", err)
 	}
 	if err := services.TxManager.WaitTxByHash(tx.Hash(), DefaultTxTimeout); err != nil {
 		return nil, err
 	}
 
-	round, err := WaitRoundStatus(ctx, services, roundID, roundStatusFinalized)
+	epoch, err := WaitEpochPhase(ctx, services, epochID, roundStatusFinalized)
 	if err != nil {
 		return nil, err
 	}
 
 	return &FinalizedRoundResult{
-		RoundID:                  roundID,
-		Round:                    round,
+		EpochID:                  epochID,
+		Epoch:                    epoch,
 		RoundHash:                finalizeOutput.RoundHash,
 		Participant:              services.TxManager.Address(),
 		AggregateCommitmentsHash: finalizeOutput.AggregateCommitmentsHash,
@@ -162,8 +162,8 @@ func CreateFinalizedSingleParticipantRound(
 }
 
 // CombineSingleParticipantDecryption drives partial decryption + combine for a
-// ciphertext that is already on-chain at (roundID, ciphertextIndex), assuming
-// the round was created by CreateFinalizedSingleParticipantRound (committee=1,
+// ciphertext that is already on-chain at (epochID, ciphertextIndex), assuming
+// the epoch was created by CreateFinalizedSingleParticipantRound (committee=1,
 // threshold=1, single participant index 1 owned by services.TxManager).
 //
 // `share` is the polynomial share value held by participant 1 — for a single
@@ -176,98 +176,22 @@ func CreateFinalizedSingleParticipantRound(
 func CombineSingleParticipantDecryption(
 	ctx context.Context,
 	services *TestServices,
-	roundID [12]byte,
+	epochID [12]byte,
 	ciphertextIndex uint16,
 	share *big.Int,
 ) error {
-	ciphertextHash, err := services.Manager.GetCiphertextHash(services.CallOpts(ctx), roundID, ciphertextIndex)
+	payload, err := PrepareSingleParticipantCombinePayload(ctx, services, epochID, ciphertextIndex, share)
 	if err != nil {
-		return fmt.Errorf("get ciphertext hash: %w", err)
+		return err
 	}
-	var zero common.Hash
-	if ciphertextHash == zero {
-		return fmt.Errorf("ciphertext at (%x, %d) not yet submitted", roundID, ciphertextIndex)
-	}
-
-	// Recover the actual ciphertext coordinates from the CiphertextSubmitted
-	// event log (the contract only stores the keccak hash). We scan from the
-	// round's seedBlock to limit the filter range.
-	round, err := services.Contracts.GetRound(ctx, roundID)
-	if err != nil {
-		return fmt.Errorf("get round: %w", err)
-	}
-	startBlock := uint64(0)
-	if round.SeedBlock > 0 {
-		startBlock = uint64(round.SeedBlock) - 1
-	}
-	latest, err := services.Contracts.Client().BlockNumber(ctx)
-	if err != nil {
-		return fmt.Errorf("read head: %w", err)
-	}
-	filterOpts := &bind.FilterOpts{Context: ctx, Start: startBlock, End: &latest}
-	it, err := services.Manager.FilterCiphertextSubmitted(filterOpts, [][12]byte{roundID}, []uint16{ciphertextIndex}, nil)
-	if err != nil {
-		return fmt.Errorf("filter CiphertextSubmitted: %w", err)
-	}
-	defer func() { _ = it.Close() }()
-	if !it.Next() {
-		if err := it.Error(); err != nil {
-			return fmt.Errorf("iterate CiphertextSubmitted: %w", err)
-		}
-		return fmt.Errorf("no CiphertextSubmitted event for (%x, %d)", roundID, ciphertextIndex)
-	}
-	c1 := types.CurvePoint{X: new(big.Int).Set(it.Event.C1x), Y: new(big.Int).Set(it.Event.C1y)}
-	c2 := types.CurvePoint{X: new(big.Int).Set(it.Event.C2x), Y: new(big.Int).Set(it.Event.C2y)}
-
-	// Build the partial decryption (delta = share * c1) using the gnark proof.
-	// For a single-participant committee the partial decryption IS the combined
-	// decryption (Lagrange interpolation at zero with a single share is the
-	// share itself), but we still go through both txs so this exercises the
-	// full on-chain decryption path the SDK consumers depend on.
-	const partialNonce = 1
-	partial, err := BuildPartialDecryptionSubmissionFromBase(ctx, roundID, 1, c1, share, big.NewInt(partialNonce))
-	if err != nil {
-		return fmt.Errorf("build partial decryption: %w", err)
-	}
-
 	auth, err := services.TxManager.NewTransactOpts(ctx)
 	if err != nil {
 		return err
 	}
-	tx, err := services.Manager.SubmitPartialDecryption(auth, roundID, 1, ciphertextIndex, partial.DeltaHash, partial.Proof, partial.Input)
-	if err != nil {
-		return fmt.Errorf("submit partial decryption: %w", err)
-	}
-	if err := services.TxManager.WaitTxByHash(tx.Hash(), DefaultTxTimeout); err != nil {
-		return err
-	}
-
-	// Recover the plaintext by brute-force discrete log over a small window.
-	// Fixture rounds always submit ciphertexts of small integers so this
-	// terminates immediately; the helper bounds the search to 2^20 and is
-	// deliberately separate from the production node's BSGS (cmd/davinci-dkg-node/dlog.go,
-	// cap 2^50). Keeping a tiny cap here means tests don't pay the ~30 s
-	// table-build cost the production cap implies.
-	plaintext, err := bruteForceELGamalPlaintext(c2, partial.Delta)
-	if err != nil {
-		return fmt.Errorf("recover plaintext: %w", err)
-	}
-
-	combineOutput, err := BuildDecryptCombineOutputFromCiphertext(
-		ctx, roundID, 1, c1, c2, []uint16{1}, []types.CurvePoint{partial.Delta}, plaintext,
-	)
-	if err != nil {
-		return fmt.Errorf("build combine output: %w", err)
-	}
-
-	auth, err = services.TxManager.NewTransactOpts(ctx)
-	if err != nil {
-		return err
-	}
-	tx, err = services.Manager.CombineDecryption(
-		auth, roundID, ciphertextIndex,
-		combineOutput.CombineHash, combineOutput.Plaintext,
-		combineOutput.Transcript, combineOutput.Proof, combineOutput.Input,
+	tx, err := services.Manager.CombineDecryption(
+		auth, epochID, [32]byte{}, ciphertextIndex,
+		payload.CombineHash, payload.Plaintext,
+		payload.Transcript, payload.Proof, payload.Input,
 	)
 	if err != nil {
 		return fmt.Errorf("combine decryption: %w", err)
@@ -278,10 +202,129 @@ func CombineSingleParticipantDecryption(
 	return nil
 }
 
+// CombinePayload bundles the bytes a caller needs to invoke
+// `combineDecryption` on-chain: the keccak hash binding the participant set
+// + deltas, the recovered plaintext, and the verifier transcript / proof /
+// public-input blobs. Returned by `PrepareSingleParticipantCombinePayload`
+// so callers (including the SDK) can drive the on-chain combine themselves.
+type CombinePayload struct {
+	CombineHash [32]byte
+	Plaintext   *big.Int
+	Transcript  []byte
+	Proof       []byte
+	Input       []byte
+}
+
+// PrepareSingleParticipantCombinePayload submits the participant-1 partial
+// decryption on-chain (the gnark proof has to be built in Go) and returns
+// the bytes a caller needs to drive `combineDecryption` themselves. Used
+// by the SDK ciphertext-e2e and combine-e2e tests so the SDK writer is
+// what actually issues the on-chain combine — the same code path
+// production node operators take.
+func PrepareSingleParticipantCombinePayload(
+	ctx context.Context,
+	services *TestServices,
+	epochID [12]byte,
+	ciphertextIndex uint16,
+	share *big.Int,
+) (*CombinePayload, error) {
+	ciphertextHash, err := services.Manager.GetCiphertextHash(services.CallOpts(ctx), epochID, ciphertextIndex)
+	if err != nil {
+		return nil, fmt.Errorf("get ciphertext hash: %w", err)
+	}
+	var zero common.Hash
+	if ciphertextHash == zero {
+		return nil, fmt.Errorf("ciphertext at (%x, %d) not yet submitted", epochID, ciphertextIndex)
+	}
+
+	// Recover the actual ciphertext coordinates from the CiphertextSubmitted
+	// event log (the contract only stores the keccak hash). We scan from the
+	// epoch's seedBlock to limit the filter range.
+	epoch, err := services.Contracts.GetEpoch(ctx, epochID)
+	if err != nil {
+		return nil, fmt.Errorf("get epoch: %w", err)
+	}
+	startBlock := uint64(0)
+	if epoch.SeedBlock > 0 {
+		startBlock = uint64(epoch.SeedBlock) - 1
+	}
+	latest, err := services.Contracts.Client().BlockNumber(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("read head: %w", err)
+	}
+	filterOpts := &bind.FilterOpts{Context: ctx, Start: startBlock, End: &latest}
+	it, err := services.Manager.FilterCiphertextSubmitted(filterOpts, [][12]byte{epochID}, []uint16{ciphertextIndex}, nil)
+	if err != nil {
+		return nil, fmt.Errorf("filter CiphertextSubmitted: %w", err)
+	}
+	defer func() { _ = it.Close() }()
+	if !it.Next() {
+		if err := it.Error(); err != nil {
+			return nil, fmt.Errorf("iterate CiphertextSubmitted: %w", err)
+		}
+		return nil, fmt.Errorf("no CiphertextSubmitted event for (%x, %d)", epochID, ciphertextIndex)
+	}
+	c1 := types.CurvePoint{X: new(big.Int).Set(it.Event.C1x), Y: new(big.Int).Set(it.Event.C1y)}
+	c2 := types.CurvePoint{X: new(big.Int).Set(it.Event.C2x), Y: new(big.Int).Set(it.Event.C2y)}
+
+	// Build the partial decryption (delta = share * c1) using the gnark proof.
+	// For a single-participant committee the partial decryption IS the combined
+	// decryption (Lagrange interpolation at zero with a single share is the
+	// share itself), but we still go through both txs so this exercises the
+	// full on-chain decryption path the SDK consumers depend on.
+	const partialNonce = 1
+	partial, err := BuildPartialDecryptionSubmissionFromBase(ctx, epochID, [32]byte{}, ciphertextIndex, 1, c1, share, big.NewInt(partialNonce))
+	if err != nil {
+		return nil, fmt.Errorf("build partial decryption: %w", err)
+	}
+
+	// SubmitPartialDecryption is idempotent at the contract level only when
+	// no record exists yet; re-running this helper after a successful
+	// partial submission would revert. Callers driving combine via the SDK
+	// run prepare-combine exactly once per ciphertext.
+	auth, err := services.TxManager.NewTransactOpts(ctx)
+	if err != nil {
+		return nil, err
+	}
+	tx, err := services.Manager.SubmitPartialDecryption(auth, epochID, [32]byte{}, 1, ciphertextIndex, partial.DeltaHash, partial.Proof, partial.Input)
+	if err != nil {
+		return nil, fmt.Errorf("submit partial decryption: %w", err)
+	}
+	if err := services.TxManager.WaitTxByHash(tx.Hash(), DefaultTxTimeout); err != nil {
+		return nil, err
+	}
+
+	// Recover the plaintext by brute-force discrete log over a small window.
+	// Fixture epochs always submit ciphertexts of small integers so this
+	// terminates immediately; the helper bounds the search to 2^20 and is
+	// deliberately separate from the production node's BSGS (cmd/davinci-dkg-node/dlog.go,
+	// cap 2^50). Keeping a tiny cap here means tests don't pay the ~30 s
+	// table-build cost the production cap implies.
+	plaintext, err := bruteForceELGamalPlaintext(c2, partial.Delta)
+	if err != nil {
+		return nil, fmt.Errorf("recover plaintext: %w", err)
+	}
+
+	combineOutput, err := BuildDecryptCombineOutputFromCiphertext(
+		ctx, epochID, 1, c1, c2, []uint16{1}, []types.CurvePoint{partial.Delta}, plaintext,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("build combine output: %w", err)
+	}
+
+	return &CombinePayload{
+		CombineHash: combineOutput.CombineHash,
+		Plaintext:   combineOutput.Plaintext,
+		Transcript:  combineOutput.Transcript,
+		Proof:       combineOutput.Proof,
+		Input:       combineOutput.Input,
+	}, nil
+}
+
 // bruteForceELGamalPlaintext recovers m from c2 - delta = m·G by trying every
 // m in [0, 2^20). Used by CombineSingleParticipantDecryption to discover the
 // plaintext that the SDK encrypted (the SDK chose a random k, so this is the
-// only way the fixture can learn what was sent without round-tripping through
+// only way the fixture can learn what was sent without epoch-tripping through
 // the original encryption).
 //
 // Production decryption uses cmd/davinci-dkg-node/dlog.go (BSGS, cap 2^50);

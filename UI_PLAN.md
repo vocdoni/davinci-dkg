@@ -15,7 +15,7 @@ mirroring the structure and coding conventions of
 ## 1. Goals & non-goals
 
 ### Goals
-- Feature parity with `webapp/` (Home, Rounds, RoundDetail, Registry, Settings, Playground).
+- Feature parity with `webapp/` (Home, Rounds, EpochDetail, Registry, Settings, Playground).
 - A noticeably less technical default UX. Plain English labels, sensible
   defaults in forms, no raw `0x…` walls of text in the primary view.
 - A first-class **debug mode** toggle. When on, every page exposes the same
@@ -125,7 +125,7 @@ ui/
 │   │   │   ├── PhaseTimeline.tsx
 │   │   │   ├── PhaseProgress.tsx
 │   │   │   ├── RoundCard.tsx
-│   │   │   ├── RoundList.tsx
+│   │   │   ├── EpochList.tsx
 │   │   │   ├── PolicyForm.tsx
 │   │   │   ├── DecryptionPolicyForm.tsx
 │   │   │   ├── EventLog.tsx
@@ -139,7 +139,7 @@ ui/
 │   │   │   ├── StepCard.tsx
 │   │   │   ├── steps/
 │   │   │   │   ├── ConnectStep.tsx
-│   │   │   │   ├── CreateRoundStep.tsx
+│   │   │   │   ├── CreateEpochStep.tsx
 │   │   │   │   ├── WatchProgressStep.tsx
 │   │   │   │   ├── KeyAvailableStep.tsx
 │   │   │   │   ├── EncryptStep.tsx
@@ -273,7 +273,7 @@ the primary UI. The rewrite makes a hard cut:
 - **Participants**: list of selected committee members with copy.
 - **Activity**: condensed event log — one line per event with plain English
   ("Alice submitted contribution 1 of 3"); raw event args behind disclosure.
-- **Debug-mode-only**: full RoundFinalized event hashes, transcript hashes,
+- **Debug-mode-only**: full EpochFinalized event hashes, transcript hashes,
   collective pubkey coordinates, decryption policy raw fields.
 
 ### `registry.tsx` — `/registry`

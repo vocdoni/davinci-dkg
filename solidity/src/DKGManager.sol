@@ -7,22 +7,23 @@ import {IZKVerifier} from "./interfaces/IZKVerifier.sol";
 import {BabyJubJub} from "./libraries/BabyJubJub.sol";
 import {DKGIdLib} from "./libraries/DKGIdLib.sol";
 import {BRLC} from "./libraries/BRLC.sol";
-import {Lagrange} from "./libraries/Lagrange.sol";
 import {DKGTypes} from "./libraries/DKGTypes.sol";
+import {DKGProtocol} from "./libraries/DKGProtocol.sol";
 import {PhaseLib} from "./libraries/PhaseLib.sol";
+import {PoseidonT5} from "poseidon-solidity/PoseidonT5.sol";
 
 /// @title  DKGManager
-/// @notice On-chain orchestrator for every phase of a davinci-dkg round.
+/// @notice On-chain orchestrator for every phase of a davinci-dkg epoch.
 /// @dev    Lifecycle: Registration (trustless lottery) → Contribution →
 ///         Finalized → Completed (or Aborted). Every state-mutating entry
 ///         point that makes a cryptographic claim is gated by a Groth16
-///         verifier — no dispute phase, no complaint flow. Historic round
-///         storage is bounded by a ring buffer of ROUND_HISTORY_SIZE (64)
-///         entries; evicted rounds remain reconstructible from event logs.
+///         verifier — no dispute phase, no complaint flow. Historic epoch
+///         storage is bounded by a ring buffer of EPOCH_HISTORY_SIZE (64)
+///         entries; evicted epochs remain reconstructible from event logs.
 ///         The share-commitment list is stored as `keccak256(x, y)` per
 ///         participant (1 SSTORE instead of 2) and the transcripts used by
-///         finalize/combine/reconstruct are read straight out of calldata
-///         via assembly to avoid per-element bounds checks.
+///         finalize/combine are read straight out of calldata via assembly
+///         to avoid per-element bounds checks.
 contract DKGManager is IDKGManager {
     // ──────────────────────────────────────────────────────────────────────
     // Single source of truth for the per-circuit array bound.
@@ -44,17 +45,15 @@ contract DKGManager is IDKGManager {
     //   submitContribution: commitmentPoints (2N) ‖ recipientIndexes (N) ‖
     //                       recipientPubKeys (2N) ‖ ephemerals (2N) ‖
     //                       maskedShares (N)                              = 8N
-    //   finalizeRound:      participantIndexes (N) ‖
+    //   finalizeEpoch:      participantIndexes (N) ‖
     //                       contributionCommitments (2N²) ‖
     //                       aggregateCommitments (2N) ‖
     //                       shareCommitments (2N)                         = 2N² + 5N
     //   combineDecryption:  ciphertext (4) ‖ participantIndexes (N) ‖
     //                       partialDecryptions (2N)                       = 4 + 3N
-    //   reconstructSecret:  participantIndexes (N) ‖ revealedShares (N)   = 2N
     uint256 internal constant CONTRIB_TRANSCRIPT_WORDS     = 8 * MAX_N;
     uint256 internal constant FINALIZE_TRANSCRIPT_WORDS    = 2 * MAX_N * MAX_N + 5 * MAX_N;
     uint256 internal constant COMBINE_TRANSCRIPT_WORDS     = 4 + 3 * MAX_N;
-    uint256 internal constant RECONSTRUCT_TRANSCRIPT_WORDS = 2 * MAX_N;
     // contribution-time per-section byte offsets:
     uint256 internal constant CONTRIB_PUBKEYS_BYTES_OFFSET = (2 * MAX_N + MAX_N) * 32;          // start of recipientPubKeys
     uint256 internal constant CONTRIB_PUBKEYS_BYTES_END    = (2 * MAX_N + MAX_N + 2 * MAX_N) * 32; // end of recipientPubKeys
@@ -66,13 +65,12 @@ contract DKGManager is IDKGManager {
     uint256 internal constant FINALIZE_SHARE_WORDS_OFFSET   = MAX_N + 2 * MAX_N * MAX_N + 2 * MAX_N; // shareCommitments start, in words
     // combine-time per-section byte offsets:
     uint256 internal constant COMBINE_PARTIALS_BYTES_OFFSET = (4 + MAX_N) * 32;                 // partialDecryptions start, in bytes
-    uint256 internal constant RECONSTRUCT_VALUES_BYTES_OFFSET = MAX_N * 32;                     // revealedShares start, in bytes
 
-    /// @dev Number of recent round IDs retained on-chain. After this many `createRound`
-    /// calls, the oldest live round's storage is evicted (its data is wiped) and only
+    /// @dev Number of recent epoch IDs retained on-chain. After this many `createEpoch`
+    /// calls, the oldest live epoch's storage is evicted (its data is wiped) and only
     /// the event log retains it. Tunable; 64 is large enough to cover several days of
-    /// rounds at typical cadences.
-    uint256 internal constant ROUND_HISTORY_SIZE = 64;
+    /// epochs at typical cadences.
+    uint256 internal constant EPOCH_HISTORY_SIZE = 64;
 
     /// @dev Upper bound on ciphertext indices accepted by `submitPartialDecryption`
     /// and `combineDecryption`. Prevents unbounded storage spam by a committee member
@@ -81,77 +79,73 @@ contract DKGManager is IDKGManager {
 
     uint32 public immutable CHAIN_ID;
     address public immutable REGISTRY;
-    uint32 public immutable ROUND_PREFIX;
+    uint32 public immutable EPOCH_PREFIX;
     address public immutable CONTRIBUTION_VERIFIER;
     address public immutable PARTIAL_DECRYPT_VERIFIER;
     address public immutable FINALIZE_VERIFIER;
     address public immutable DECRYPT_COMBINE_VERIFIER;
-    address public immutable REVEAL_SUBMIT_VERIFIER;
-    address public immutable REVEAL_SHARE_VERIFIER;
-    uint64 public roundNonce;
+    uint64 public epochNonce;
 
-    /// @dev Fixed-size ring buffer of recent round IDs. New rounds push here at
-    /// createRound; once the buffer is full, the displaced entry tells us which round
-    /// to evict. `recentRoundsCount` counts total pushes; current write index is
-    /// `recentRoundsCount % ROUND_HISTORY_SIZE`.
-    bytes12[ROUND_HISTORY_SIZE] internal recentRounds;
-    uint64 internal recentRoundsCount;
+    /// @dev Fixed-size ring buffer of recent epoch IDs. New epochs push here at
+    /// createEpoch; once the buffer is full, the displaced entry tells us which epoch
+    /// to evict. `recentEpochsCount` counts total pushes; current write index is
+    /// `recentEpochsCount % EPOCH_HISTORY_SIZE`.
+    bytes12[EPOCH_HISTORY_SIZE] internal recentEpochs;
+    uint64 internal recentEpochsCount;
 
-    mapping(bytes12 roundId => Round round) internal rounds;
-    mapping(bytes12 roundId => mapping(address operator => bool selected)) internal selectedOperators;
-    mapping(bytes12 roundId => address[] participants) internal roundParticipants;
-    mapping(bytes12 roundId => mapping(address contributor => DKGTypes.ContributionRecord contribution)) internal
-        roundContributions;
-    mapping(bytes12 roundId => mapping(uint16 ciphertextIndex => mapping(address participant => DKGTypes.PartialDecryptionRecord partialDecryption))) internal roundPartialDecryptions;
-    mapping(bytes12 roundId => mapping(uint16 ciphertextIndex => uint16 count)) internal roundPartialDecryptionCounts;
-    mapping(bytes12 roundId => mapping(uint16 ciphertextIndex => DKGTypes.CombinedDecryptionRecord combined)) internal
-        roundCombinedDecryptions;
-    mapping(bytes12 roundId => mapping(address participant => DKGTypes.RevealedShareRecord share)) internal
-        roundRevealedShares;
+    mapping(bytes12 epochId => Epoch epoch) internal epochs;
+    mapping(bytes12 epochId => mapping(address operator => bool selected)) internal selectedOperators;
+    mapping(bytes12 epochId => address[] participants) internal epochParticipants;
+    mapping(bytes12 epochId => mapping(address contributor => DKGTypes.ContributionRecord contribution)) internal
+        epochContributions;
+    mapping(bytes12 epochId => mapping(uint16 ciphertextIndex => mapping(address participant => DKGTypes.PartialDecryptionRecord partialDecryption))) internal epochPartialDecryptions;
+    mapping(bytes12 epochId => mapping(uint16 ciphertextIndex => uint16 count)) internal epochPartialDecryptionCounts;
+    mapping(bytes12 epochId => mapping(uint16 ciphertextIndex => DKGTypes.CombinedDecryptionRecord combined)) internal
+        epochCombinedDecryptions;
     /// @dev Stores keccak256(abi.encode(scX, scY)) for each share commitment, packing
     /// the original (x,y) pair into a single 32-byte slot. Saves one cold SSTORE per
     /// committee member at finalize time. The pre-image (x,y) is exposed in the
-    /// RoundFinalized event for off-chain consumers.
-    mapping(bytes12 roundId => mapping(uint16 participantIndex => bytes32 shareCommitmentHash)) internal roundShareCommitmentHashes;
+    /// EpochFinalized event for off-chain consumers.
+    mapping(bytes12 epochId => mapping(uint16 participantIndex => bytes32 shareCommitmentHash)) internal epochShareCommitmentHashes;
 
     /// @dev Stores keccak256 over the canonical (recipientIndexes ‖ recipientPubKeys)
-    /// section of any valid submitContribution transcript for this round. Set once at
+    /// section of any valid submitContribution transcript for this epoch. Set once at
     /// selectParticipants. Lets submitContribution verify the entire 96-word committee
     /// section in one keccak instead of 32 storage reads + 32 external registry calls.
-    mapping(bytes12 roundId => bytes32 prefixHash) internal roundContribPrefixHash;
+    mapping(bytes12 epochId => bytes32 prefixHash) internal epochContribPrefixHash;
 
     /// @dev Accumulates the collective public key on-chain as contributions are submitted.
     ///      Each accepted contribution adds its commitment[0] point (a_{i,0}·G) to the
-    ///      running sum. The identity element (0,1) is the initial value. Once the round
+    ///      running sum. The identity element (0,1) is the initial value. Once the epoch
     ///      is finalized the value equals sum_i(a_{i,0}·G) = the collective public key.
-    mapping(bytes12 roundId => DKGTypes.Point) internal _collectiveKey;
+    mapping(bytes12 epochId => DKGTypes.Point) internal _collectiveKey;
 
     /// @dev keccak256(abi.encode(c1x, c1y, c2x, c2y)) for each ciphertext submitted to a
-    ///      round. Written once per (roundId, ciphertextIndex) by submitCiphertext and
+    ///      epoch. Written once per (epochId, ciphertextIndex) by submitCiphertext and
     ///      verified by combineDecryption to bind the combine proof to the authoritative
     ///      on-chain ciphertext (preventing a combiner from swapping in a different ct).
     ///      The raw coordinates are available via the CiphertextSubmitted event log.
-    mapping(bytes12 roundId => mapping(uint16 ciphertextIndex => bytes32 ciphertextHash)) internal _ciphertexts;
+    mapping(bytes12 epochId => mapping(uint16 ciphertextIndex => bytes32 ciphertextHash)) internal _ciphertexts;
 
-    // BabyJubJub curve parameters in REDUCED twisted-Edwards form over BN254.Fr.
-    //   A·x² + y² = 1 + D·x²·y²  (mod Q)   with A = -1
-    // This matches the form used by gnark's bn254/twistededwards curve and by the
-    // davinci-dkg ZK circuits (and thus by the ciphertexts nodes emit via
-    // `group.Encode`). Do NOT confuse with the iden3/circomlib-style form used
-    // internally by `libraries/BabyJubJub.sol` (A=168700, D=168696) — those are
-    // a different isomorphic affine chart.
-    uint256 private constant BabyJubJub_Q =
-        21888242871839275222246405745257275088548364400416034343698204186575808495617;
-    // A = -1 mod Q
-    uint256 private constant BabyJubJub_A_NEG =
-        21888242871839275222246405745257275088548364400416034343698204186575808495616;
-    uint256 private constant BabyJubJub_D =
-        12181644023421730124874158521699555681764249180949974110617291017600649128846;
+    // BabyJubJub curve constants moved to libraries/BabyJubJub.sol — point
+    // validation flows through `_requireValidEncryptionPoint` which calls
+    // `BabyJubJub.{isCanonical,isOnCurve,isIdentity,isInPrimeSubgroup}`.
 
     bytes32 internal constant CONTRIBUTION_TRANSCRIPT_DOMAIN = keccak256("davinci-dkg:contribution:v1");
     bytes32 internal constant DECRYPT_COMBINE_TRANSCRIPT_DOMAIN = keccak256("davinci-dkg:decrypt-combine:v1");
     bytes32 internal constant FINALIZE_TRANSCRIPT_DOMAIN = keccak256("davinci-dkg:finalize:v1");
-    bytes32 internal constant REVEAL_SHARE_TRANSCRIPT_DOMAIN = keccak256("davinci-dkg:reveal-share:v1");
+
+    /// @dev Per-application registrations, keyed by `(eid, aid)`. See PLAN §4.3
+    ///      and DKGTypes.Application for the record shape. Both
+    ///      registerApplication and registerApplicationCoDec write here; the
+    ///      mode flag distinguishes the two paths at decryption time.
+    mapping(bytes12 epochId => mapping(bytes32 aid => DKGTypes.Application app)) internal applications;
+
+    /// @dev Per-(eid, aid, ciphertextIndex) organizer share submissions for
+    ///      mode-1 applications. Written by submitOrganizerShare and read by
+    ///      combineDecryption when the application's mode is OrganizerCoDec.
+    mapping(bytes12 epochId => mapping(bytes32 aid => mapping(uint16 ciphertextIndex => DKGTypes.OrganizerShareRecord)))
+        internal organizerShares;
 
     constructor(
         uint32 _chainId,
@@ -159,32 +153,27 @@ contract DKGManager is IDKGManager {
         address _contributionVerifier,
         address _partialDecryptVerifier,
         address _finalizeVerifier,
-        address _decryptCombineVerifier,
-        address _revealSubmitVerifier,
-        address _revealShareVerifier
+        address _decryptCombineVerifier
     ) {
         if (uint32(block.chainid) != _chainId) revert InvalidChainId();
         if (_registry == address(0)) revert InvalidAddress();
         if (
             _contributionVerifier == address(0) || _partialDecryptVerifier == address(0) || _finalizeVerifier == address(0)
-                || _decryptCombineVerifier == address(0) || _revealSubmitVerifier == address(0)
-                || _revealShareVerifier == address(0)
+                || _decryptCombineVerifier == address(0)
         ) revert InvalidVerifier();
         CHAIN_ID = _chainId;
         REGISTRY = _registry;
-        ROUND_PREFIX = DKGIdLib.getPrefix(_chainId, address(this));
+        EPOCH_PREFIX = DKGIdLib.getPrefix(_chainId, address(this));
         CONTRIBUTION_VERIFIER = _contributionVerifier;
         PARTIAL_DECRYPT_VERIFIER = _partialDecryptVerifier;
         FINALIZE_VERIFIER = _finalizeVerifier;
         DECRYPT_COMBINE_VERIFIER = _decryptCombineVerifier;
-        REVEAL_SUBMIT_VERIFIER = _revealSubmitVerifier;
-        REVEAL_SHARE_VERIFIER = _revealShareVerifier;
     }
 
-    /// @notice Create a new DKG round.
-    /// @dev    Snapshots `REGISTRY.nodeCount()` to derive the per-round
+    /// @notice Create a new DKG epoch.
+    /// @dev    Snapshots `REGISTRY.nodeCount()` to derive the per-epoch
     ///         lottery threshold and pins the seed block at
-    ///         `block.number + seedDelay`. The caller becomes the round
+    ///         `block.number + seedDelay`. The caller becomes the epoch
     ///         organizer but does not select committee members — every
     ///         registered node that passes the lottery can self-claim a slot.
     /// @param  threshold                  Shamir reconstruction threshold `t`.
@@ -192,35 +181,33 @@ contract DKGManager is IDKGManager {
     ///                                    be in [1, MAX_N]; values above
     ///                                    MAX_N revert with `InvalidPolicy`.
     /// @param  minValidContributions      Minimum accepted contributions
-    ///                                    required to allow `finalizeRound`.
+    ///                                    required to allow `finalizeEpoch`.
     ///                                    Must be ≥ `threshold` (otherwise
-    ///                                    the round could finalize with
+    ///                                    the epoch could finalize with
     ///                                    fewer share holders than needed
     ///                                    to decrypt — `InvalidPolicy`).
     /// @param  lotteryAlphaBps            Oversubscription factor α encoded as
     ///                                    basis points (10000 = α=1.0). The
     ///                                    expected eligible set size is
     ///                                    `α · committeeSize`.
-    /// @param  seedDelay                  Number of blocks after `createRound`
+    /// @param  seedDelay                  Number of blocks after `createEpoch`
     ///                                    that must elapse before the seed
     ///                                    block is valid. Must be ≥ 1.
     /// @param  registrationDeadlineBlock  Block height after which the
     ///                                    registration window is considered
     ///                                    stalled and `extendRegistration`
     ///                                    may reroll the seed.
-    /// @param  contributionDeadlineBlock  Block height after which the round
+    /// @param  contributionDeadlineBlock  Block height after which the epoch
     ///                                    may be aborted for inactivity.
-    /// @param  finalizeNotBeforeBlock     Earliest block at which finalizeRound
+    /// @param  finalizeNotBeforeBlock     Earliest block at which finalizeEpoch
     ///                                    can succeed. Must be strictly greater
     ///                                    than contributionDeadlineBlock so all
     ///                                    selected participants have a window
     ///                                    to submit contributions before the
     ///                                    finalize set is closed.
-    /// @param  disclosureAllowed          When true, enables the reveal-share
-    ///                                    reconstruction phase on this round.
-    /// @return                            The 12-byte round identifier
+    /// @return                            The 12-byte epoch identifier
     ///                                    `uint32 prefix || uint64 nonce`.
-    function createRound(
+    function createEpoch(
         uint16 threshold,
         uint16 committeeSize,
         uint16 minValidContributions,
@@ -229,7 +216,6 @@ contract DKGManager is IDKGManager {
         uint64 registrationDeadlineBlock,
         uint64 contributionDeadlineBlock,
         uint64 finalizeNotBeforeBlock,
-        bool disclosureAllowed,
         DKGTypes.DecryptionPolicy calldata decryptionPolicy
     ) external returns (bytes12) {
         if (
@@ -243,11 +229,11 @@ contract DKGManager is IDKGManager {
                 || finalizeNotBeforeBlock <= contributionDeadlineBlock
         ) revert InvalidPolicy();
         // Two invariants worth calling out:
-        //   - minValidContributions < threshold would let the round finalize
+        //   - minValidContributions < threshold would let the epoch finalize
         //     with fewer share holders than the Shamir threshold — the
         //     resulting key would be unrecoverable.
-        //   - committeeSize > MAX_N would pass createRound but silently
-        //     break later: every per-round proof (contribution, finalize,
+        //   - committeeSize > MAX_N would pass createEpoch but silently
+        //     break later: every per-epoch proof (contribution, finalize,
         //     combine, reveal) assumes fixed-width transcripts of size
         //     `MAX_N`. The contract's committee storage and event payloads
         //     would also overflow their hashed-prefix layout. Cap upfront
@@ -292,23 +278,23 @@ contract DKGManager is IDKGManager {
             lotteryThreshold = fraction / registered;
         }
 
-        roundNonce++;
-        bytes12 roundId = DKGIdLib.computeRoundId(ROUND_PREFIX, roundNonce);
+        epochNonce++;
+        bytes12 epochId = DKGIdLib.computeEpochId(EPOCH_PREFIX, epochNonce);
 
-        // Evict the oldest live round if the history buffer is full.
-        uint256 writeSlot = uint256(recentRoundsCount) % ROUND_HISTORY_SIZE;
-        if (recentRoundsCount >= ROUND_HISTORY_SIZE) {
-            bytes12 evictedKey = recentRounds[writeSlot];
+        // Evict the oldest live epoch if the history buffer is full.
+        uint256 writeSlot = uint256(recentEpochsCount) % EPOCH_HISTORY_SIZE;
+        if (recentEpochsCount >= EPOCH_HISTORY_SIZE) {
+            bytes12 evictedKey = recentEpochs[writeSlot];
             if (evictedKey != bytes12(0)) {
                 _evictRound(evictedKey);
             }
         }
-        recentRounds[writeSlot] = roundId;
-        unchecked { recentRoundsCount += 1; }
+        recentEpochs[writeSlot] = epochId;
+        unchecked { recentEpochsCount += 1; }
 
-        rounds[roundId] = Round({
+        epochs[epochId] = Epoch({
             organizer: msg.sender,
-            policy: DKGTypes.RoundPolicy({
+            policy: DKGTypes.EpochPolicy({
                 threshold: threshold,
                 committeeSize: committeeSize,
                 minValidContributions: minValidContributions,
@@ -316,27 +302,25 @@ contract DKGManager is IDKGManager {
                 seedDelay: seedDelay,
                 registrationDeadlineBlock: registrationDeadlineBlock,
                 contributionDeadlineBlock: contributionDeadlineBlock,
-                finalizeNotBeforeBlock: finalizeNotBeforeBlock,
-                disclosureAllowed: disclosureAllowed
+                finalizeNotBeforeBlock: finalizeNotBeforeBlock
             }),
             decryptionPolicy: decryptionPolicy,
-            status: DKGTypes.RoundStatus.Registration,
-            nonce: roundNonce,
+            status: DKGTypes.EpochPhase.Registration,
+            nonce: epochNonce,
             seedBlock: uint64(block.number) + uint64(seedDelay),
             seed: bytes32(0),
             lotteryThreshold: lotteryThreshold,
             claimedCount: 0,
             contributionCount: 0,
             partialDecryptionCount: 0,
-            revealedShareCount: 0,
             ciphertextCount: 0
         });
 
-        emit RoundCreated(roundId, msg.sender, uint64(block.number) + uint64(seedDelay), lotteryThreshold);
-        return roundId;
+        emit EpochCreated(epochId, msg.sender, uint64(block.number) + uint64(seedDelay), lotteryThreshold);
+        return epochId;
     }
 
-    /// @notice Eligible registered nodes call this to claim a slot in the round's
+    /// @notice Eligible registered nodes call this to claim a slot in the epoch's
     /// committee. The first `committeeSize` callers that pass the lottery and arrive
     /// before `registrationDeadlineBlock` form the committee.
     /// @notice Claim a committee slot in the trustless lottery.
@@ -345,57 +329,57 @@ contract DKGManager is IDKGManager {
     ///         `seed = blockhash(seedBlock)`; the contract emits
     ///         `SeedResolved` on that call. Further calls are served
     ///         first-come-first-served until `committeeSize` slots are filled,
-    ///         at which point the committee snapshot is taken and the round
+    ///         at which point the committee snapshot is taken and the epoch
     ///         advances to Contribution.
-    /// @param  roundId The round identifier returned by `createRound`.
-    function claimSlot(bytes12 roundId) external {
-        Round storage round = rounds[roundId];
-        if (round.organizer == address(0)) revert InvalidRound();
-        if (!PhaseLib.inRegistration(round.status, round.policy.registrationDeadlineBlock)) revert InvalidPhase();
-        if (round.claimedCount >= round.policy.committeeSize) revert SlotsFull();
-        if (selectedOperators[roundId][msg.sender]) revert AlreadyClaimed();
+    /// @param  epochId The epoch identifier returned by `createEpoch`.
+    function claimSlot(bytes12 epochId) external {
+        Epoch storage epoch = epochs[epochId];
+        if (epoch.organizer == address(0)) revert InvalidEpoch();
+        if (!PhaseLib.inRegistration(epoch.status, epoch.policy.registrationDeadlineBlock)) revert InvalidPhase();
+        if (epoch.claimedCount >= epoch.policy.committeeSize) revert SlotsFull();
+        if (selectedOperators[epochId][msg.sender]) revert AlreadyClaimed();
 
         // Lazy seed resolution: capture blockhash(seedBlock) on the first claimer
         // that arrives at or after seedBlock.
-        bytes32 seed = round.seed;
+        bytes32 seed = epoch.seed;
         if (seed == bytes32(0)) {
-            uint256 sb = uint256(round.seedBlock);
+            uint256 sb = uint256(epoch.seedBlock);
             if (block.number <= sb) revert SeedNotReady();
             // blockhash(b) returns 0 for any b ≥ block.number or b + 256 < block.number
             bytes32 fresh = blockhash(sb);
             if (fresh == bytes32(0)) revert SeedExpired();
-            round.seed = fresh;
+            epoch.seed = fresh;
             seed = fresh;
-            emit SeedResolved(roundId, fresh);
+            emit SeedResolved(epochId, fresh);
         }
 
         // Caller must be an active registered node.
         IDKGRegistry.NodeKey memory node = IDKGRegistry(REGISTRY).getNode(msg.sender);
         if (node.status != IDKGRegistry.NodeStatus.ACTIVE) revert NotRegistered();
 
-        // Lottery check: hash(seed ‖ caller) must fall under the round threshold.
-        if (uint256(keccak256(abi.encodePacked(seed, msg.sender))) >= round.lotteryThreshold) {
+        // Lottery check: hash(seed ‖ caller) must fall under the epoch threshold.
+        if (uint256(keccak256(abi.encodePacked(seed, msg.sender))) >= epoch.lotteryThreshold) {
             revert NotEligible();
         }
 
         // First-come-first-served slot allocation.
-        uint16 slot = round.claimedCount;
-        roundParticipants[roundId].push(msg.sender);
-        selectedOperators[roundId][msg.sender] = true;
-        round.claimedCount = slot + 1;
-        emit SlotClaimed(roundId, msg.sender, slot);
+        uint16 slot = epoch.claimedCount;
+        epochParticipants[epochId].push(msg.sender);
+        selectedOperators[epochId][msg.sender] = true;
+        epoch.claimedCount = slot + 1;
+        emit SlotClaimed(epochId, msg.sender, slot);
 
         // When the last slot is filled, snapshot the committee key hash and transition
         // to Contribution. The snapshot is needed so submitContribution can verify the
         // entire (recipientIndexes ‖ recipientPubKeys) calldata block in one keccak.
-        if (slot + 1 == round.policy.committeeSize) {
-            _snapshotCommittee(roundId, round.policy.committeeSize);
-            round.status = DKGTypes.RoundStatus.Contribution;
-            emit RegistrationClosed(roundId);
+        if (slot + 1 == epoch.policy.committeeSize) {
+            _snapshotCommittee(epochId, epoch.policy.committeeSize);
+            epoch.status = DKGTypes.EpochPhase.Contribution;
+            emit RegistrationClosed(epochId);
         }
     }
 
-    /// @notice Re-roll the lottery seed if the round failed to fill within the
+    /// @notice Re-roll the lottery seed if the epoch failed to fill within the
     /// registration window. Anyone may call once the original deadline has passed; the
     /// new seed is derived from the current block.
     /// @notice Reroll the lottery seed for a stalled registration window.
@@ -403,40 +387,40 @@ contract DKGManager is IDKGManager {
     ///         committee has not filled. Captures a fresh `blockhash` as the
     ///         new seed, resets the claimed count, and pushes the deadline
     ///         forward by one `seedDelay` window.
-    /// @param  roundId The round identifier.
-    function extendRegistration(bytes12 roundId) external {
-        Round storage round = rounds[roundId];
-        if (round.organizer == address(0)) revert InvalidRound();
-        if (round.status != DKGTypes.RoundStatus.Registration) revert InvalidPhase();
-        if (round.claimedCount == round.policy.committeeSize) revert InvalidPhase();
-        if (block.number <= uint256(round.policy.registrationDeadlineBlock)) revert InvalidPhase();
+    /// @param  epochId The epoch identifier.
+    function extendRegistration(bytes12 epochId) external {
+        Epoch storage epoch = epochs[epochId];
+        if (epoch.organizer == address(0)) revert InvalidEpoch();
+        if (epoch.status != DKGTypes.EpochPhase.Registration) revert InvalidPhase();
+        if (epoch.claimedCount == epoch.policy.committeeSize) revert InvalidPhase();
+        if (block.number <= uint256(epoch.policy.registrationDeadlineBlock)) revert InvalidPhase();
 
         // Capture the original window length BEFORE we mutate seedBlock.
-        uint64 oldDeadline = round.policy.registrationDeadlineBlock;
-        uint64 oldSeedBlock = round.seedBlock;
-        uint64 window = oldDeadline - (oldSeedBlock - uint64(round.policy.seedDelay));
+        uint64 oldDeadline = epoch.policy.registrationDeadlineBlock;
+        uint64 oldSeedBlock = epoch.seedBlock;
+        uint64 window = oldDeadline - (oldSeedBlock - uint64(epoch.policy.seedDelay));
 
-        uint64 newSeedBlock = uint64(block.number) + uint64(round.policy.seedDelay);
+        uint64 newSeedBlock = uint64(block.number) + uint64(epoch.policy.seedDelay);
         uint64 newRegistrationDeadline = uint64(block.number) + window;
 
         // Guard: the extended registration window must close before the contribution
-        // deadline; otherwise the round would become permanently stuck with no way to
+        // deadline; otherwise the epoch would become permanently stuck with no way to
         // advance to the Contribution phase.
-        if (newRegistrationDeadline >= round.policy.contributionDeadlineBlock) revert InvalidPolicy();
+        if (newRegistrationDeadline >= epoch.policy.contributionDeadlineBlock) revert InvalidPolicy();
 
-        round.seed = bytes32(0);
-        round.seedBlock = newSeedBlock;
-        round.policy.registrationDeadlineBlock = newRegistrationDeadline;
-        emit RegistrationExtended(roundId, newSeedBlock, newRegistrationDeadline);
+        epoch.seed = bytes32(0);
+        epoch.seedBlock = newSeedBlock;
+        epoch.policy.registrationDeadlineBlock = newRegistrationDeadline;
+        emit RegistrationExtended(epochId, newSeedBlock, newRegistrationDeadline);
     }
 
     /// @dev Internal helper: build the canonical (recipientIndexes ‖ pubKeys) layout
     /// for the committee that's just been filled and store its keccak256. Drives the
     /// O(1) committee verification in submitContribution.
-    function _snapshotCommittee(bytes12 roundId, uint16 committeeSize) internal {
+    function _snapshotCommittee(bytes12 epochId, uint16 committeeSize) internal {
         uint256[MAX_N] memory canonicalIdxs;
         uint256[2 * MAX_N] memory canonicalKeys;
-        address[] storage participants = roundParticipants[roundId];
+        address[] storage participants = epochParticipants[epochId];
         for (uint256 i = 0; i < committeeSize; i++) {
             canonicalIdxs[i] = i + 1;
             IDKGRegistry.NodeKey memory node = IDKGRegistry(REGISTRY).getNode(participants[i]);
@@ -446,51 +430,50 @@ contract DKGManager is IDKGManager {
         for (uint256 i = committeeSize; i < MAX_N; i++) {
             canonicalKeys[i * 2 + 1] = 1; // identity-pad unused slots
         }
-        roundContribPrefixHash[roundId] = keccak256(abi.encodePacked(canonicalIdxs, canonicalKeys));
+        epochContribPrefixHash[epochId] = keccak256(abi.encodePacked(canonicalIdxs, canonicalKeys));
     }
 
-    /// @dev Wipes all storage tied to an old round when it falls out of the recent
-    /// rounds ring buffer. Refunds gas via SSTORE-zero on the storage slots being
+    /// @dev Wipes all storage tied to an old epoch when it falls out of the recent
+    /// epochs ring buffer. Refunds gas via SSTORE-zero on the storage slots being
     /// cleared. Off-chain consumers must rely on the historical event log.
     ///
-    /// Cleans up all five previously-leaking mappings in addition to the core
-    /// round data: contributions, partial decryptions (per-ciphertext counts and
-    /// per-participant records), combined decryptions, and revealed shares.
+    /// Cleans up all four previously-leaking mappings in addition to the core
+    /// epoch data: contributions, partial decryptions (per-ciphertext counts
+    /// and per-participant records), and combined decryptions.
     function _evictRound(bytes12 oldRoundId) internal {
-        Round storage r = rounds[oldRoundId];
+        Epoch storage r = epochs[oldRoundId];
         if (r.organizer == address(0)) return;
-        address[] storage parts = roundParticipants[oldRoundId];
+        address[] storage parts = epochParticipants[oldRoundId];
         uint256 n = parts.length;
         for (uint256 i = 0; i < n; i++) {
             address participant = parts[i];
             delete selectedOperators[oldRoundId][participant];
-            delete roundShareCommitmentHashes[oldRoundId][uint16(i + 1)];
-            delete roundContributions[oldRoundId][participant];
-            delete roundRevealedShares[oldRoundId][participant];
+            delete epochShareCommitmentHashes[oldRoundId][uint16(i + 1)];
+            delete epochContributions[oldRoundId][participant];
             // Clear per-ciphertext partial decryption records and counts.
             for (uint16 ci = 1; ci <= MAX_CIPHERTEXT_INDEX; ci++) {
-                if (roundPartialDecryptions[oldRoundId][ci][participant].accepted) {
-                    delete roundPartialDecryptions[oldRoundId][ci][participant];
+                if (epochPartialDecryptions[oldRoundId][ci][participant].accepted) {
+                    delete epochPartialDecryptions[oldRoundId][ci][participant];
                 }
             }
         }
         // Clear per-ciphertext combined decryption records, counts, and ciphertext hashes.
         for (uint16 ci = 1; ci <= MAX_CIPHERTEXT_INDEX; ci++) {
-            if (roundPartialDecryptionCounts[oldRoundId][ci] > 0) {
-                delete roundPartialDecryptionCounts[oldRoundId][ci];
+            if (epochPartialDecryptionCounts[oldRoundId][ci] > 0) {
+                delete epochPartialDecryptionCounts[oldRoundId][ci];
             }
-            if (roundCombinedDecryptions[oldRoundId][ci].completed) {
-                delete roundCombinedDecryptions[oldRoundId][ci];
+            if (epochCombinedDecryptions[oldRoundId][ci].completed) {
+                delete epochCombinedDecryptions[oldRoundId][ci];
             }
             if (_ciphertexts[oldRoundId][ci] != bytes32(0)) {
                 delete _ciphertexts[oldRoundId][ci];
             }
         }
-        delete roundParticipants[oldRoundId];
-        delete roundContribPrefixHash[oldRoundId];
+        delete epochParticipants[oldRoundId];
+        delete epochContribPrefixHash[oldRoundId];
         delete _collectiveKey[oldRoundId];
-        delete rounds[oldRoundId];
-        emit RoundEvicted(oldRoundId);
+        delete epochs[oldRoundId];
+        emit EpochEvicted(oldRoundId);
     }
 
     /// @notice Submit a contributor's polynomial commitments, encrypted
@@ -500,7 +483,7 @@ contract DKGManager is IDKGManager {
     ///         filled; the transcript is read straight from calldata via the
     ///         BRLC helper. The transaction reverts if the proof fails.
     function submitContribution(
-        bytes12 roundId,
+        bytes12 epochId,
         uint16 contributorIndex,
         bytes32 commitmentsHash,
         bytes32 encryptedSharesHash,
@@ -510,25 +493,25 @@ contract DKGManager is IDKGManager {
         bytes calldata proof,
         bytes calldata input
     ) external {
-        Round storage round = rounds[roundId];
-        if (round.organizer == address(0)) revert InvalidRound();
-        if (!PhaseLib.inContribution(round.status, round.policy.contributionDeadlineBlock)) revert InvalidPhase();
-        if (!selectedOperators[roundId][msg.sender]) revert NotSelectedParticipant();
-        if (contributorIndex == 0 || contributorIndex > round.policy.committeeSize) revert InvalidContribution();
-        if (roundParticipants[roundId][contributorIndex - 1] != msg.sender) revert InvalidProofInput();
+        Epoch storage epoch = epochs[epochId];
+        if (epoch.organizer == address(0)) revert InvalidEpoch();
+        if (!PhaseLib.inContribution(epoch.status, epoch.policy.contributionDeadlineBlock)) revert InvalidPhase();
+        if (!selectedOperators[epochId][msg.sender]) revert NotSelectedParticipant();
+        if (contributorIndex == 0 || contributorIndex > epoch.policy.committeeSize) revert InvalidContribution();
+        if (epochParticipants[epochId][contributorIndex - 1] != msg.sender) revert InvalidProofInput();
 
-        DKGTypes.ContributionRecord storage record = roundContributions[roundId][msg.sender];
+        DKGTypes.ContributionRecord storage record = epochContributions[epochId][msg.sender];
         if (record.accepted) revert AlreadyContributed();
 
         IZKVerifier(CONTRIBUTION_VERIFIER).verifyProof(proof, input);
         uint256[10] memory publicInputs = abi.decode(input, (uint256[10]));
         if (
-            publicInputs[0] != _roundScalar(roundId) || publicInputs[1] != round.policy.threshold
-                || publicInputs[2] != round.policy.committeeSize || publicInputs[3] != contributorIndex
+            publicInputs[0] != _epochScalar(epochId) || publicInputs[1] != epoch.policy.threshold
+                || publicInputs[2] != epoch.policy.committeeSize || publicInputs[3] != contributorIndex
                 || bytes32(publicInputs[4]) != commitmentsHash || bytes32(publicInputs[5]) != encryptedSharesHash
         ) revert InvalidProofInput();
         uint256 challenge = BRLC.deriveChallenge(
-            roundId,
+            epochId,
             CONTRIBUTION_TRANSCRIPT_DOMAIN,
             keccak256(abi.encodePacked(commitmentsHash, encryptedSharesHash))
         );
@@ -551,7 +534,7 @@ contract DKGManager is IDKGManager {
         // of the transcript hold the canonical recipientIndexes ‖ recipientPubKeys section.
         // Compare against the hash snapshotted when the lottery filled. This replaces the
         // previous per-recipient loop with N storage reads + N external registry calls.
-        if (keccak256(transcript[CONTRIB_DIGEST_BYTES_LEN:CONTRIB_PUBKEYS_BYTES_END]) != roundContribPrefixHash[roundId]) {
+        if (keccak256(transcript[CONTRIB_DIGEST_BYTES_LEN:CONTRIB_PUBKEYS_BYTES_END]) != epochContribPrefixHash[epochId]) {
             revert InvalidProofInput();
         }
 
@@ -564,17 +547,17 @@ contract DKGManager is IDKGManager {
         //   - contributorIndex + accepted: identity & dup-prevention gates
         // commitmentsHash, encryptedSharesHash, and the redundant `contributor` are
         // only emitted in the event below; off-chain consumers read them from logs.
-        DKGTypes.ContributionRecord storage rec = roundContributions[roundId][msg.sender];
+        DKGTypes.ContributionRecord storage rec = epochContributions[epochId][msg.sender];
         rec.contributorIndex = contributorIndex;
         rec.commitmentVectorDigest = commitmentDigest;
         rec.accepted = true;
-        round.contributionCount++;
+        epoch.contributionCount++;
 
         // Accumulate the collective public key: add commitment[0] = a_{i,0}·G
         // to the running sum. The ZK proof guarantees commitment0X/Y is the
         // correct zeroth Feldman commitment point of this contributor's polynomial.
         // Identity is (0, 1); the initial mapping value (0, 0) is treated as (0, 1).
-        DKGTypes.Point storage cpk = _collectiveKey[roundId];
+        DKGTypes.Point storage cpk = _collectiveKey[epochId];
         uint256 accX = cpk.x;
         uint256 accY = cpk.y == 0 ? 1 : cpk.y; // treat uninitialized (0,0) as identity (0,1)
         (uint256 newX, uint256 newY) = BabyJubJub.pointAdd(accX, accY, commitment0X, commitment0Y);
@@ -586,16 +569,16 @@ contract DKGManager is IDKGManager {
         // signal that the operator is alive and well-configured.
         IDKGRegistry(REGISTRY).markActive(msg.sender);
 
-        emit ContributionSubmitted(roundId, msg.sender, contributorIndex, commitmentsHash, encryptedSharesHash);
+        emit ContributionSubmitted(epochId, msg.sender, contributorIndex, commitmentsHash, encryptedSharesHash);
     }
 
-    /// @notice Returns the accumulated collective public key for a round.
+    /// @notice Returns the accumulated collective public key for a epoch.
     ///         This is the running sum of all accepted contributors' commitment[0]
-    ///         points (a_{i,0}·G). Once the round is finalized it equals the
+    ///         points (a_{i,0}·G). Once the epoch is finalized it equals the
     ///         full collective public key. The y-coordinate of an uninitialized
     ///         (no contributions yet) key is returned as 1 (the identity element).
-    function getCollectivePublicKey(bytes12 roundId) external view returns (DKGTypes.Point memory) {
-        DKGTypes.Point storage cpk = _collectiveKey[roundId];
+    function getCollectivePublicKey(bytes12 epochId) external view returns (DKGTypes.Point memory) {
+        DKGTypes.Point storage cpk = _collectiveKey[epochId];
         if (cpk.y == 0) {
             return DKGTypes.Point({x: 0, y: 1});
         }
@@ -603,13 +586,13 @@ contract DKGManager is IDKGManager {
     }
 
     /// @notice Aggregate accepted contributions, publish the collective
-    ///         public key, and transition the round to Finalized.
+    ///         public key, and transition the epoch to Finalized.
     /// @dev    Callable by anyone once `contributionCount ≥
     ///         policy.minValidContributions`. Stores share commitments as
     ///         `keccak256(x, y)` per participant to keep storage to a single
-    ///         slot per entry; the pre-image is emitted in `RoundFinalized`.
-    function finalizeRound(
-        bytes12 roundId,
+    ///         slot per entry; the pre-image is emitted in `EpochFinalized`.
+    function finalizeEpoch(
+        bytes12 epochId,
         bytes32 aggregateCommitmentsHash,
         bytes32 collectivePublicKeyHash,
         bytes32 shareCommitmentHash,
@@ -617,14 +600,14 @@ contract DKGManager is IDKGManager {
         bytes calldata proof,
         bytes calldata input
     ) external {
-        Round storage round = rounds[roundId];
-        if (round.organizer == address(0)) revert InvalidRound();
-        if (round.status == DKGTypes.RoundStatus.Finalized) revert AlreadyFinalized();
-        if (round.status != DKGTypes.RoundStatus.Contribution) revert InvalidPhase();
+        Epoch storage epoch = epochs[epochId];
+        if (epoch.organizer == address(0)) revert InvalidEpoch();
+        if (epoch.status == DKGTypes.EpochPhase.Finalized) revert AlreadyFinalized();
+        if (epoch.status != DKGTypes.EpochPhase.Contribution) revert InvalidPhase();
         // finalizeNotBeforeBlock gate — semantically a "phase not yet open"
         // condition, so we reuse InvalidPhase to keep the contract small.
-        if (block.number < uint256(round.policy.finalizeNotBeforeBlock)) revert InvalidPhase();
-        if (round.contributionCount < round.policy.minValidContributions) revert InsufficientContributions();
+        if (block.number < uint256(epoch.policy.finalizeNotBeforeBlock)) revert InvalidPhase();
+        if (epoch.contributionCount < epoch.policy.minValidContributions) revert InsufficientContributions();
         if (
             aggregateCommitmentsHash == bytes32(0) || collectivePublicKeyHash == bytes32(0)
                 || shareCommitmentHash == bytes32(0)
@@ -633,15 +616,15 @@ contract DKGManager is IDKGManager {
         IZKVerifier(FINALIZE_VERIFIER).verifyProof(proof, input);
         uint256[9] memory publicInputs = abi.decode(input, (uint256[9]));
         if (
-            publicInputs[0] != _roundScalar(roundId) || publicInputs[1] != round.policy.threshold
-                || publicInputs[2] != round.policy.committeeSize || publicInputs[3] != round.contributionCount
+            publicInputs[0] != _epochScalar(epochId) || publicInputs[1] != epoch.policy.threshold
+                || publicInputs[2] != epoch.policy.committeeSize || publicInputs[3] != epoch.contributionCount
                 || bytes32(publicInputs[4]) != aggregateCommitmentsHash
                 || bytes32(publicInputs[5]) != collectivePublicKeyHash
                 || bytes32(publicInputs[6]) != shareCommitmentHash
         ) revert InvalidProofInput();
 
         uint256 challenge = BRLC.deriveChallenge(
-            roundId,
+            epochId,
             FINALIZE_TRANSCRIPT_DOMAIN,
             keccak256(abi.encodePacked(aggregateCommitmentsHash, collectivePublicKeyHash, shareCommitmentHash))
         );
@@ -656,15 +639,15 @@ contract DKGManager is IDKGManager {
         uint256 dOff;
         assembly { dOff := transcript.offset }
 
-        _verifyFinalizeTranscript(roundId, round, challenge, publicInputs[8], transcript);
+        _verifyFinalizeTranscript(epochId, epoch, challenge, publicInputs[8], transcript);
 
-        round.status = DKGTypes.RoundStatus.Finalized;
+        epoch.status = DKGTypes.EpochPhase.Finalized;
         // The three commitment hashes are not persisted to storage; they are emitted
-        // in RoundFinalized below and reconstructed off-chain from the event log.
+        // in EpochFinalized below and reconstructed off-chain from the event log.
 
         // Persist share commitments directly from calldata, in the same loop as the
         // already-validated participantIndexes pass.
-        uint256 ccount = round.contributionCount;
+        uint256 ccount = epoch.contributionCount;
         uint256 piBase = dOff;                                       // participantIndexes
         uint256 scBase = dOff + FINALIZE_SHARE_WORDS_OFFSET * 32;    // shareCommitments
         for (uint256 i = 0; i < ccount; i++) {
@@ -676,83 +659,17 @@ contract DKGManager is IDKGManager {
                 scX := calldataload(add(scBase, mul(i, 0x40)))
                 scY := calldataload(add(scBase, add(mul(i, 0x40), 0x20)))
             }
-            roundShareCommitmentHashes[roundId][uint16(pIdx)] = keccak256(abi.encode(scX, scY));
+            epochShareCommitmentHashes[epochId][uint16(pIdx)] = keccak256(abi.encode(scX, scY));
         }
 
-        emit RoundFinalized(roundId, aggregateCommitmentsHash, collectivePublicKeyHash, shareCommitmentHash);
-    }
-
-    /// @dev SECURITY (C-2). Recompute sk = Σ λ_i d_i mod r from the transcript
-    /// and compare it to the claimed ReconstructedSecretHash public input. The
-    /// transcript layout is `participantIndexes (N words) ‖ revealedShares (N words)`;
-    /// only the first `shareCount` of each are meaningful (validated by
-    /// `_verifyReconstructTranscript`).
-    function _verifyLagrangeReconstruction(
-        uint256 shareCount,
-        bytes32 expectedSecret,
-        bytes calldata transcript
-    ) internal view {
-        uint256[] memory xs = new uint256[](shareCount);
-        uint256[] memory shares = new uint256[](shareCount);
-        uint256 dOff;
-        assembly { dOff := transcript.offset }
-        uint256 piBase = dOff;
-        uint256 svBase = dOff + RECONSTRUCT_VALUES_BYTES_OFFSET;
-        for (uint256 i = 0; i < shareCount; i++) {
-            uint256 xi;
-            uint256 si;
-            assembly ("memory-safe") {
-                xi := calldataload(add(piBase, mul(i, 0x20)))
-                si := calldataload(add(svBase, mul(i, 0x20)))
-            }
-            xs[i] = xi;
-            shares[i] = si;
-        }
-        Lagrange.verifyReconstruction(xs, shares, shareCount, uint256(expectedSecret));
-    }
-
-    /// @dev Verifies the reconstructSecret transcript directly from calldata.
-    function _verifyReconstructTranscript(
-        bytes12 roundId,
-        uint16 committeeSize,
-        uint256 shareCount,
-        bytes calldata transcript
-    ) internal view {
-        uint256 dOff;
-        assembly { dOff := transcript.offset }
-        uint256 piBase = dOff;                                          // participantIndexes
-        uint256 svBase = dOff + RECONSTRUCT_VALUES_BYTES_OFFSET;        // revealedShares
-
-        for (uint256 i = 0; i < shareCount; i++) {
-            uint256 pIdxRaw;
-            uint256 sVal;
-            assembly ("memory-safe") {
-                pIdxRaw := calldataload(add(piBase, mul(i, 0x20)))
-                sVal := calldataload(add(svBase, mul(i, 0x20)))
-            }
-            uint16 participantIndex = uint16(pIdxRaw);
-            if (participantIndex == 0 || participantIndex > committeeSize) revert InvalidProofInput();
-            address participant = roundParticipants[roundId][participantIndex - 1];
-            DKGTypes.RevealedShareRecord storage record = roundRevealedShares[roundId][participant];
-            if (!record.accepted || record.participantIndex != participantIndex) revert InvalidProofInput();
-            if (record.shareValue != sVal) revert InvalidProofInput();
-        }
-        for (uint256 i = shareCount; i < MAX_N; i++) {
-            uint256 pIdxRaw;
-            uint256 sVal;
-            assembly ("memory-safe") {
-                pIdxRaw := calldataload(add(piBase, mul(i, 0x20)))
-                sVal := calldataload(add(svBase, mul(i, 0x20)))
-            }
-            if (pIdxRaw != 0 || sVal != 0) revert InvalidProofInput();
-        }
+        emit EpochFinalized(epochId, aggregateCommitmentsHash, collectivePublicKeyHash, shareCommitmentHash);
     }
 
     /// @dev Verifies the combineDecryption transcript directly from calldata.
     function _verifyCombineTranscript(
-        bytes12 roundId,
+        bytes12 epochId,
         uint16 ciphertextIndex,
-        Round storage round,
+        Epoch storage epoch,
         uint256 shareCount,
         bytes calldata transcript
     ) internal view {
@@ -761,7 +678,7 @@ contract DKGManager is IDKGManager {
         uint256 piBase = dOff + 4 * 32;                               // participantIndexes start
         uint256 pdBase = dOff + COMBINE_PARTIALS_BYTES_OFFSET;        // partialDecryptions start
 
-        uint256 cs = round.policy.committeeSize;
+        uint256 cs = epoch.policy.committeeSize;
         for (uint256 i = 0; i < shareCount; i++) {
             uint256 pIdxRaw;
             uint256 pdX;
@@ -773,9 +690,9 @@ contract DKGManager is IDKGManager {
             }
             uint16 participantIndex = uint16(pIdxRaw);
             if (participantIndex == 0 || participantIndex > cs) revert InvalidProofInput();
-            address participant = roundParticipants[roundId][participantIndex - 1];
+            address participant = epochParticipants[epochId][participantIndex - 1];
             DKGTypes.PartialDecryptionRecord storage partialRecord =
-                roundPartialDecryptions[roundId][ciphertextIndex][participant];
+                epochPartialDecryptions[epochId][ciphertextIndex][participant];
             if (!partialRecord.accepted || partialRecord.participantIndex != participantIndex) revert InvalidProofInput();
             if (partialRecord.ciphertextIndex != ciphertextIndex) revert InvalidProofInput();
             if (pdX != partialRecord.delta.x || pdY != partialRecord.delta.y) revert InvalidProofInput();
@@ -797,8 +714,8 @@ contract DKGManager is IDKGManager {
     /// @dev Verifies per-contributor commitment digests and the BRLC commitment over the
     /// finalize transcript directly out of calldata (no abi.decode, no memory copies).
     function _verifyFinalizeTranscript(
-        bytes12 roundId,
-        Round storage round,
+        bytes12 epochId,
+        Epoch storage epoch,
         uint256 challenge,
         uint256 expectedBrlc,
         bytes calldata transcript
@@ -811,8 +728,8 @@ contract DKGManager is IDKGManager {
         bytes calldata contribCommBytes =
             transcript[FINALIZE_CONTRIB_BYTES_OFFSET:FINALIZE_CONTRIB_BYTES_OFFSET + FINALIZE_CONTRIB_BYTES_LEN];
 
-        uint256 ccount = round.contributionCount;
-        uint256 cSize = round.policy.committeeSize;
+        uint256 ccount = epoch.contributionCount;
+        uint256 cSize = epoch.policy.committeeSize;
         for (uint256 i = 0; i < ccount; i++) {
             uint256 pIdxRaw;
             assembly ("memory-safe") {
@@ -820,8 +737,8 @@ contract DKGManager is IDKGManager {
             }
             uint16 participantIndex = uint16(pIdxRaw);
             if (participantIndex == 0 || participantIndex > cSize) revert InvalidProofInput();
-            address participant = roundParticipants[roundId][participantIndex - 1];
-            DKGTypes.ContributionRecord storage contribution = roundContributions[roundId][participant];
+            address participant = epochParticipants[epochId][participantIndex - 1];
+            DKGTypes.ContributionRecord storage contribution = epochContributions[epochId][participant];
             if (!contribution.accepted || contribution.contributorIndex != participantIndex) revert InvalidProofInput();
 
             // Each contributor's commitments occupy 2N words.
@@ -836,116 +753,127 @@ contract DKGManager is IDKGManager {
     }
 
     /// @notice Submit a committee member's partial decryption `δ_i = d_i · C_1`.
-    /// @dev    Keyed by `(roundId, participant, ciphertextIndex)` to support
-    ///         multiple ciphertexts per round. The Groth16 proof is a
+    /// @dev    Keyed by `(epochId, participant, ciphertextIndex)` to support
+    ///         multiple ciphertexts per epoch. The Groth16 proof is a
     ///         Chaum–Pedersen DLEQ establishing that `δ_i` and the committed
     ///         share `D_i` share a discrete log with respect to `C_1` and `G`.
+    /// @dev `aid` binds the proof transcript to a specific application
+    ///      (P9). Pass `bytes32(0)` for the legacy per-epoch path that
+    ///      pre-dates the application surface; the circuit witness builder
+    ///      defaults Aid/CtIdx/Role to zero/zero/COMMITTEE in that mode.
     function submitPartialDecryption(
-        bytes12 roundId,
+        bytes12 epochId,
+        bytes32 aid,
         uint16 participantIndex,
         uint16 ciphertextIndex,
         bytes32 deltaHash,
         bytes calldata proof,
         bytes calldata input
     ) external {
-        Round storage round = rounds[roundId];
-        if (round.organizer == address(0)) revert InvalidRound();
-        if (round.status != DKGTypes.RoundStatus.Finalized) revert InvalidPhase();
-        if (!selectedOperators[roundId][msg.sender]) revert NotSelectedParticipant();
+        Epoch storage epoch = epochs[epochId];
+        if (epoch.organizer == address(0)) revert InvalidEpoch();
+        if (epoch.status != DKGTypes.EpochPhase.Finalized) revert InvalidPhase();
+        if (!selectedOperators[epochId][msg.sender]) revert NotSelectedParticipant();
         if (
-            participantIndex == 0 || participantIndex > round.policy.committeeSize || ciphertextIndex == 0
+            participantIndex == 0 || participantIndex > epoch.policy.committeeSize || ciphertextIndex == 0
                 || ciphertextIndex > MAX_CIPHERTEXT_INDEX || deltaHash == bytes32(0)
         ) revert InvalidPartialDecryption();
-        if (roundParticipants[roundId][participantIndex - 1] != msg.sender) revert InvalidProofInput();
+        if (epochParticipants[epochId][participantIndex - 1] != msg.sender) revert InvalidProofInput();
 
-        DKGTypes.PartialDecryptionRecord storage record = roundPartialDecryptions[roundId][ciphertextIndex][msg.sender];
+        DKGTypes.PartialDecryptionRecord storage record = epochPartialDecryptions[epochId][ciphertextIndex][msg.sender];
         if (record.accepted) revert AlreadyPartiallyDecrypted();
 
         IZKVerifier(PARTIAL_DECRYPT_VERIFIER).verifyProof(proof, input);
-        uint256[13] memory publicInputs = abi.decode(input, (uint256[13]));
-        bytes32 storedScHash = roundShareCommitmentHashes[roundId][participantIndex];
+        // P5 layout: [eid, aid, ctIdx, role, i, C1.x, C1.y, D_i.x, D_i.y,
+        // delta.x, delta.y, A1.x, A1.y, A2.x, A2.y, response].
+        // Committee partial decryptions always use role = COMMITTEE = 1
+        // (organizer shares go through submitOrganizerShare instead).
+        uint256[16] memory publicInputs = abi.decode(input, (uint256[16]));
+        bytes32 storedScHash = epochShareCommitmentHashes[epochId][participantIndex];
         if (
-            publicInputs[0] != _roundScalar(roundId) || publicInputs[1] != participantIndex
+            publicInputs[0] != _epochScalar(epochId)
+                || publicInputs[1] != uint256(aid)
+                || publicInputs[2] != ciphertextIndex
+                || publicInputs[3] != uint256(DKGProtocol.ROLE_COMMITTEE)
+                || publicInputs[4] != participantIndex
                 || storedScHash == bytes32(0)
-                || keccak256(abi.encode(publicInputs[4], publicInputs[5])) != storedScHash
+                || keccak256(abi.encode(publicInputs[7], publicInputs[8])) != storedScHash
         ) revert InvalidProofInput();
-        if (deltaHash != keccak256(abi.encodePacked(publicInputs[6], publicInputs[7]))) revert InvalidProofInput();
+        if (deltaHash != keccak256(abi.encodePacked(publicInputs[9], publicInputs[10]))) revert InvalidProofInput();
 
         // Persist only what combineDecryption actually reads:
         //   - participantIndex + accepted: identity gate
         //   - delta.x/.y: BRLC verification
-        // Drop the redundant `participant`, `ciphertextIndex`, and `deltaHash` slots.
         DKGTypes.PartialDecryptionRecord storage prec =
-            roundPartialDecryptions[roundId][ciphertextIndex][msg.sender];
+            epochPartialDecryptions[epochId][ciphertextIndex][msg.sender];
         prec.participantIndex = participantIndex;
         prec.ciphertextIndex = ciphertextIndex; // packed in slot 0 anyway
         prec.accepted = true;
-        prec.delta.x = publicInputs[6];
-        prec.delta.y = publicInputs[7];
-        round.partialDecryptionCount++;
-        roundPartialDecryptionCounts[roundId][ciphertextIndex]++;
+        prec.delta.x = publicInputs[9];
+        prec.delta.y = publicInputs[10];
+        epoch.partialDecryptionCount++;
+        epochPartialDecryptionCounts[epochId][ciphertextIndex]++;
 
-        emit PartialDecryptionSubmitted(roundId, msg.sender, participantIndex, ciphertextIndex, deltaHash);
+        emit PartialDecryptionSubmitted(epochId, msg.sender, participantIndex, ciphertextIndex, deltaHash);
     }
 
     /// @notice Submit a ciphertext to be threshold-decrypted by the committee.
-    /// @dev    Enforces the round's DecryptionPolicy: owner-only, block/timestamp
-    ///         windows, and a cap on accepted ciphertexts per round. Write-once
+    /// @dev    Enforces the epoch's DecryptionPolicy: owner-only, block/timestamp
+    ///         windows, and a cap on accepted ciphertexts per epoch. Write-once
     ///         per `ciphertextIndex`. Stores `keccak256(c1x, c1y, c2x, c2y)` so
     ///         `combineDecryption` can bind its proof's ciphertext public inputs
     ///         to the authoritative on-chain value. The raw coordinates are only
     ///         exposed via the `CiphertextSubmitted` event (nodes watch it).
     function submitCiphertext(
-        bytes12 roundId,
+        bytes12 epochId,
         uint16 ciphertextIndex,
         uint256 c1x,
         uint256 c1y,
         uint256 c2x,
         uint256 c2y
     ) external {
-        Round storage round = rounds[roundId];
-        if (round.organizer == address(0)) revert InvalidRound();
-        if (round.status != DKGTypes.RoundStatus.Finalized) revert InvalidPhase();
+        Epoch storage epoch = epochs[epochId];
+        if (epoch.organizer == address(0)) revert InvalidEpoch();
+        if (epoch.status != DKGTypes.EpochPhase.Finalized) revert InvalidPhase();
         if (ciphertextIndex == 0 || ciphertextIndex > MAX_CIPHERTEXT_INDEX) revert InvalidCiphertext();
 
-        // Well-formedness: coords must be canonical (< Q) and both points must lie on
-        // BabyJubJub. Without this, a griefing submitter could pre-claim every index
-        // with garbage that the ZK combine circuit can never accept, permanently
-        // bricking the round's decryption in open-policy mode. Costs ≈ 4 mulmods per
-        // point (~2k gas total) — negligible vs. the rest of the call.
-        if (!_isOnBabyJubJub(c1x, c1y) || !_isOnBabyJubJub(c2x, c2y)) revert InvalidCiphertext();
+        // Well-formedness: coords must be canonical (< Q), on-curve, non-identity,
+        // and in the prime-order subgroup. The first three are cheap (4 mulmods per
+        // point); the subgroup check is one full BJJ scalar mul (~60k gas per point)
+        // but is required to honor the paper's group-validation policy at every
+        // entry point (paper §4.1, addressing DEEPSEEK §2.2). Without subgroup
+        // membership a griefing submitter could pre-claim every index with a small-
+        // order point the combine circuit can never accept.
+        _requireValidEncryptionPoint(c1x, c1y);
+        _requireValidEncryptionPoint(c2x, c2y);
 
-        DKGTypes.DecryptionPolicy memory p = round.decryptionPolicy;
-        if (p.ownerOnly && msg.sender != round.organizer) revert NotOwner();
+        DKGTypes.DecryptionPolicy memory p = epoch.decryptionPolicy;
+        if (p.ownerOnly && msg.sender != epoch.organizer) revert NotOwner();
         if (p.notBeforeBlock     != 0 && uint64(block.number)    < p.notBeforeBlock)     revert DecryptionNotYetAllowed();
         if (p.notBeforeTimestamp != 0 && uint64(block.timestamp) < p.notBeforeTimestamp) revert DecryptionNotYetAllowed();
         if (p.notAfterBlock      != 0 && uint64(block.number)    > p.notAfterBlock)      revert DecryptionExpired();
         if (p.notAfterTimestamp  != 0 && uint64(block.timestamp) > p.notAfterTimestamp)  revert DecryptionExpired();
-        if (p.maxDecryptions     != 0 && round.ciphertextCount   >= p.maxDecryptions)    revert DecryptionLimitReached();
+        if (p.maxDecryptions     != 0 && epoch.ciphertextCount   >= p.maxDecryptions)    revert DecryptionLimitReached();
 
-        if (_ciphertexts[roundId][ciphertextIndex] != bytes32(0)) revert CiphertextAlreadySubmitted();
+        if (_ciphertexts[epochId][ciphertextIndex] != bytes32(0)) revert CiphertextAlreadySubmitted();
 
-        _ciphertexts[roundId][ciphertextIndex] = keccak256(abi.encode(c1x, c1y, c2x, c2y));
-        unchecked { round.ciphertextCount += 1; }
+        _ciphertexts[epochId][ciphertextIndex] = keccak256(abi.encode(c1x, c1y, c2x, c2y));
+        unchecked { epoch.ciphertextCount += 1; }
 
-        emit CiphertextSubmitted(roundId, ciphertextIndex, msg.sender, c1x, c1y, c2x, c2y);
+        emit CiphertextSubmitted(epochId, ciphertextIndex, msg.sender, c1x, c1y, c2x, c2y);
     }
 
-    /// @dev Returns true iff (x, y) are canonical field elements (< Q) and satisfy the
-    ///      reduced-form BabyJubJub equation  −x² + y² ≡ 1 + D·x²·y² (mod Q).
-    ///      Requiring canonical coords ensures `keccak256(abi.encode(x, y))` in
-    ///      `submitCiphertext` matches the combine transcript's canonical `(x, y)` —
-    ///      any non-canonical form would bind to a different hash and fail combine.
-    function _isOnBabyJubJub(uint256 x, uint256 y) internal pure returns (bool) {
-        uint256 q = BabyJubJub_Q;
-        if (x >= q || y >= q) return false;
-        uint256 xx = mulmod(x, x, q);
-        uint256 yy = mulmod(y, y, q);
-        // lhs = (-1)·x² + y² = (Q - xx) + yy  (all mod Q)
-        uint256 lhs = addmod(mulmod(BabyJubJub_A_NEG, xx, q), yy, q);
-        // rhs = 1 + D·x²·y²
-        uint256 rhs = addmod(1, mulmod(BabyJubJub_D, mulmod(xx, yy, q), q), q);
-        return lhs == rhs;
+    /// @dev Validate that (x, y) is a canonical, on-curve, non-identity point
+    ///      in the prime-order subgroup. Reverts with InvalidCiphertext()
+    ///      (rather than the BabyJubJub library's specific errors) so callers
+    ///      observe a single failure mode at submitCiphertext time.
+    ///      DEEPSEEK §2.2 hardening: matches the registry's
+    ///      `_requireValidEncryptionPoint` naming + policy.
+    function _requireValidEncryptionPoint(uint256 x, uint256 y) internal view {
+        if (!BabyJubJub.isCanonical(x, y)) revert InvalidCiphertext();
+        if (BabyJubJub.isIdentity(x, y)) revert InvalidCiphertext();
+        if (!BabyJubJub.isOnCurve(x, y)) revert InvalidCiphertext();
+        if (!BabyJubJub.isInPrimeSubgroup(x, y)) revert InvalidCiphertext();
     }
 
     /// @notice Combine `t` partial decryptions via Lagrange interpolation and
@@ -955,8 +883,19 @@ contract DKGManager is IDKGManager {
     ///         ciphertext itself has been submitted via `submitCiphertext`.
     ///         The proof's ciphertext public inputs are bound to the stored
     ///         ciphertext hash; a combiner cannot substitute a different ct.
+    /// @notice Per-application combine. The `aid` parameter selects the
+    ///         application registered against `epochId`; if the app exists
+    ///         in mode 1 (organizer co-decryption), the previously stored
+    ///         `Δ_org` is supplied to the verifier as the correction point;
+    ///         in mode 0, the stored derivation tag `S` is supplied.
+    /// @dev    Public-input layout (13 fields): eid, aid, ctIdx, mode, S,
+    ///         deltaOrgX, deltaOrgY, threshold, shareCount, combineHash,
+    ///         plaintextHash, challenge, transcriptCommitment. Matches the
+    ///         circuit definition in `circuits/decryptcombine/circuit.go`
+    ///         per paper §5.5 lines 1051–1077.
     function combineDecryption(
-        bytes12 roundId,
+        bytes12 epochId,
+        bytes32 aid,
         uint16 ciphertextIndex,
         bytes32 combineHash,
         uint256 plaintext,
@@ -964,249 +903,389 @@ contract DKGManager is IDKGManager {
         bytes calldata proof,
         bytes calldata input
     ) external {
-        Round storage round = rounds[roundId];
-        if (round.organizer == address(0)) revert InvalidRound();
-        if (round.status != DKGTypes.RoundStatus.Finalized) revert InvalidPhase();
+        Epoch storage epoch = epochs[epochId];
+        if (epoch.organizer == address(0)) revert InvalidEpoch();
+        if (epoch.status != DKGTypes.EpochPhase.Finalized) revert InvalidPhase();
         if (ciphertextIndex == 0 || ciphertextIndex > MAX_CIPHERTEXT_INDEX || combineHash == bytes32(0)) revert InvalidCombinedDecryption();
-        bytes32 storedCtHash = _ciphertexts[roundId][ciphertextIndex];
+        bytes32 storedCtHash = _ciphertexts[epochId][ciphertextIndex];
         if (storedCtHash == bytes32(0)) revert CiphertextNotSubmitted();
-        if (roundPartialDecryptionCounts[roundId][ciphertextIndex] < round.policy.threshold) revert InsufficientPartialDecryptions();
+        if (epochPartialDecryptionCounts[epochId][ciphertextIndex] < epoch.policy.threshold) revert InsufficientPartialDecryptions();
 
-        DKGTypes.CombinedDecryptionRecord storage record = roundCombinedDecryptions[roundId][ciphertextIndex];
+        DKGTypes.CombinedDecryptionRecord storage record = epochCombinedDecryptions[epochId][ciphertextIndex];
         if (record.completed) revert AlreadyCombined();
 
+        // Resolve the application's per-app correction. If `aid == 0`, this
+        // is a legacy combine that pre-dates the application surface — fall
+        // back to mode 0 with S = 0 (identity correction), preserving the
+        // semantics of the per-epoch combine path.
+        uint8 mode = uint8(DKGProtocol.MODE_PUBLIC_DERIVATION);
+        uint256 derivationS;
+        DKGTypes.Point memory deltaOrg = DKGTypes.Point({x: 0, y: 1});
+        if (aid != bytes32(0)) {
+            DKGTypes.Application storage app = applications[epochId][aid];
+            if (!app.exists) revert InvalidApplication();
+            mode = uint8(app.mode);
+            if (mode == uint8(DKGProtocol.MODE_PUBLIC_DERIVATION)) {
+                derivationS = app.derivationS;
+            } else {
+                DKGTypes.OrganizerShareRecord storage org = organizerShares[epochId][aid][ciphertextIndex];
+                if (!org.accepted) revert InsufficientPartialDecryptions();
+                deltaOrg = org.deltaOrg;
+            }
+        }
+
         IZKVerifier(DECRYPT_COMBINE_VERIFIER).verifyProof(proof, input);
-        uint256[7] memory publicInputs = abi.decode(input, (uint256[7]));
+        uint256[13] memory publicInputs = abi.decode(input, (uint256[13]));
         if (
-            publicInputs[0] != _roundScalar(roundId) || publicInputs[1] != round.policy.threshold
-                || bytes32(publicInputs[3]) != combineHash || publicInputs[4] != plaintext
+            publicInputs[0] != _epochScalar(epochId)
+                || publicInputs[1] != uint256(aid)
+                || publicInputs[2] != uint256(ciphertextIndex)
+                || publicInputs[3] != uint256(mode)
+                || publicInputs[4] != derivationS
+                || publicInputs[5] != deltaOrg.x
+                || publicInputs[6] != deltaOrg.y
+                || publicInputs[7] != epoch.policy.threshold
+                || bytes32(publicInputs[9]) != combineHash
+                || publicInputs[10] != plaintext
         ) revert InvalidProofInput();
-        if (publicInputs[2] < round.policy.threshold) revert InvalidProofInput();
+        if (publicInputs[8] < epoch.policy.threshold) revert InvalidProofInput();
         uint256 challenge = BRLC.deriveChallenge(
-            roundId,
+            epochId,
             DECRYPT_COMBINE_TRANSCRIPT_DOMAIN,
             keccak256(abi.encodePacked(combineHash, bytes32(plaintext)))
         );
-        if (publicInputs[5] != challenge) revert InvalidProofInput();
+        if (publicInputs[11] != challenge) revert InvalidProofInput();
 
-        // Transcript layout (4 + 3N words):
-        //   words [0..4)         ciphertext
-        //   words [4..4+N)       participantIndexes
-        //   words [4+N..4+3N)    partialDecryptions  (N points × 2 coords)
         if (transcript.length != COMBINE_TRANSCRIPT_WORDS * 32) revert InvalidProofInput();
-        // Bind the combine proof's ciphertext public inputs (first 4 transcript words)
-        // to the on-chain ciphertext hash written at submitCiphertext time.
         if (keccak256(transcript[0:128]) != storedCtHash) revert InvalidProofInput();
-        _verifyCombineTranscript(roundId, ciphertextIndex, round, publicInputs[2], transcript);
+        _verifyCombineTranscript(epochId, ciphertextIndex, epoch, publicInputs[8], transcript);
 
         uint256 dOff;
         assembly { dOff := transcript.offset }
-        if (BRLC.commitCalldata(challenge, dOff, COMBINE_TRANSCRIPT_WORDS) != publicInputs[6]) revert InvalidProofInput();
+        if (BRLC.commitCalldata(challenge, dOff, COMBINE_TRANSCRIPT_WORDS) != publicInputs[12]) revert InvalidProofInput();
 
         record.completed = true;
         record.plaintext = plaintext;
 
-        emit DecryptionCombined(roundId, ciphertextIndex, combineHash, plaintext);
+        emit DecryptionCombined(epochId, ciphertextIndex, combineHash, plaintext);
     }
 
-    /// @notice Publish a committee member's secret share `d_i` under the
-    ///         disclosure path.
-    /// @dev    Only callable when the round was created with
-    ///         `disclosureAllowed = true`. The Groth16 proof establishes
-    ///         `d_i · G = D_i`, binding the revealed scalar to the on-chain
-    ///         share commitment.
-    function submitRevealedShare(
-        bytes12 roundId,
-        uint16 participantIndex,
-        uint256 shareValue,
-        bytes calldata proof,
-        bytes calldata input
+    /// @notice Submit an organizer's Δ_org = sk_org · C_1 share for a
+    ///         mode-1 application's ciphertext, together with its DLEQ proof.
+    ///         The proof reuses `PartialDecryptVerifier` with role=ORGANIZER
+    ///         (paper §6.3 line 1161).
+    /// @param  epochId         Anchor epoch identifier.
+    /// @param  aid             Application identifier (must exist in mode 1).
+    /// @param  ciphertextIndex Per-application ciphertext index.
+    /// @param  deltaOrgX       X coordinate of Δ_org.
+    /// @param  deltaOrgY       Y coordinate of Δ_org.
+    /// @param  dleqProof       Encoded DLEQ proof bytes (ABI-encoded uint[8] / uint[4]).
+    /// @param  dleqInput       Encoded DLEQ public input (uint[16]).
+    function submitOrganizerShare(
+        bytes12 epochId,
+        bytes32 aid,
+        uint16 ciphertextIndex,
+        uint256 deltaOrgX,
+        uint256 deltaOrgY,
+        bytes calldata dleqProof,
+        bytes calldata dleqInput
     ) external {
-        Round storage round = rounds[roundId];
-        if (round.organizer == address(0)) revert InvalidRound();
-        if (!round.policy.disclosureAllowed) revert DisclosureDisabled();
-        if (round.status != DKGTypes.RoundStatus.Finalized) revert InvalidPhase();
-        if (!selectedOperators[roundId][msg.sender]) revert NotSelectedParticipant();
-        if (participantIndex == 0 || participantIndex > round.policy.committeeSize || shareValue == 0) {
-            revert InvalidRevealedShare();
-        }
-        if (roundParticipants[roundId][participantIndex - 1] != msg.sender) revert InvalidProofInput();
+        Epoch storage epoch = epochs[epochId];
+        if (epoch.organizer == address(0)) revert InvalidEpoch();
+        if (epoch.status != DKGTypes.EpochPhase.Finalized) revert InvalidPhase();
+        if (ciphertextIndex == 0 || ciphertextIndex > MAX_CIPHERTEXT_INDEX) revert InvalidCiphertext();
+        DKGTypes.Application storage app = applications[epochId][aid];
+        if (!app.exists) revert InvalidApplication();
+        if (uint8(app.mode) != uint8(DKGProtocol.MODE_ORGANIZER_CODEC)) revert InvalidApplication();
+        if (_ciphertexts[epochId][ciphertextIndex] == bytes32(0)) revert CiphertextNotSubmitted();
+        if (organizerShares[epochId][aid][ciphertextIndex].accepted) revert AlreadyPartiallyDecrypted();
 
-        DKGTypes.RevealedShareRecord storage record = roundRevealedShares[roundId][msg.sender];
-        if (record.accepted) revert AlreadyRevealed();
+        BabyJubJub.requireValidPoint(deltaOrgX, deltaOrgY);
 
-        IZKVerifier(REVEAL_SUBMIT_VERIFIER).verifyProof(proof, input);
-        uint256[5] memory publicInputs = abi.decode(input, (uint256[5]));
-        bytes32 storedScHash = roundShareCommitmentHashes[roundId][participantIndex];
+        // Verify the Chaum-Pedersen DLEQ proof via PartialDecryptVerifier.
+        // The verifier checks that (PK_org, Δ_org) have the same discrete log
+        // wrt (G, C_1), with role=ORGANIZER bound into the Fiat-Shamir
+        // transcript. The contract is responsible for binding the public
+        // inputs (eid, aid, ctIdx, role, PK_org, Δ_org) to authoritative
+        // on-chain state before invoking the verifier.
+        IZKVerifier(PARTIAL_DECRYPT_VERIFIER).verifyProof(dleqProof, dleqInput);
+        uint256[16] memory pi = abi.decode(dleqInput, (uint256[16]));
         if (
-            publicInputs[0] != _roundScalar(roundId) || publicInputs[1] != participantIndex || publicInputs[2] != shareValue
-                || storedScHash == bytes32(0)
-                || keccak256(abi.encode(publicInputs[3], publicInputs[4])) != storedScHash
+            pi[0] != _epochScalar(epochId)
+                || pi[1] != uint256(aid)
+                || pi[2] != uint256(ciphertextIndex)
+                || pi[3] != uint256(DKGProtocol.ROLE_ORGANIZER)
+                // pi[4] = participant index — must be 0 for organizer (per paper §6.3)
+                || pi[4] != 0
+                // pi[5..6] = base point (C_1); pi[7..8] = pubKey (PK_org); pi[9..10] = delta (Δ_org)
+                || pi[9] != app.organizerPK.x
+                || pi[10] != app.organizerPK.y
+                || pi[11] != deltaOrgX
+                || pi[12] != deltaOrgY
         ) revert InvalidProofInput();
 
-        bytes32 shareHash = bytes32(shareValue);
+        organizerShares[epochId][aid][ciphertextIndex] = DKGTypes.OrganizerShareRecord({
+            deltaOrg: DKGTypes.Point({x: deltaOrgX, y: deltaOrgY}),
+            dleqHash: keccak256(dleqInput),
+            accepted: true
+        });
 
-        // Persist only what reconstructSecret reads:
-        //   - shareValue (used in the BRLC verify)
-        //   - participantIndex + accepted (identity gate)
-        // Drop redundant `participant` and `shareHash`.
-        DKGTypes.RevealedShareRecord storage rrec = roundRevealedShares[roundId][msg.sender];
-        rrec.participantIndex = participantIndex;
-        rrec.accepted = true;
-        rrec.shareValue = shareValue;
-        round.revealedShareCount++;
-
-        emit RevealedShareSubmitted(roundId, msg.sender, participantIndex, shareHash);
+        emit OrganizerShareSubmitted(epochId, aid, ciphertextIndex, deltaOrgX, deltaOrgY);
     }
 
-    /// @notice Reconstruct the round secret `sk = F(0)` from `≥ t` revealed
-    ///         shares via Lagrange interpolation and transition the round to
-    ///         Completed.
-    /// @dev    Only callable when `disclosureAllowed = true`.
-    function reconstructSecret(
-        bytes12 roundId,
-        bytes32 disclosureHash,
-        bytes32 reconstructedSecretHash,
-        bytes calldata transcript,
-        bytes calldata proof,
-        bytes calldata input
-    ) external {
-        Round storage round = rounds[roundId];
-        if (round.organizer == address(0)) revert InvalidRound();
-        if (!round.policy.disclosureAllowed) revert DisclosureDisabled();
-        if (round.status != DKGTypes.RoundStatus.Finalized) revert InvalidPhase();
-        if (disclosureHash == bytes32(0) || reconstructedSecretHash == bytes32(0)) revert InvalidReconstruction();
-        if (round.revealedShareCount < round.policy.threshold) revert InsufficientRevealedShares();
+    // ─── Application lifecycle (paper §4.3, §6, PLAN.md §4.3) ────────────────
 
-        IZKVerifier(REVEAL_SHARE_VERIFIER).verifyProof(proof, input);
-        uint256[7] memory publicInputs = abi.decode(input, (uint256[7]));
-        if (
-            publicInputs[0] != _roundScalar(roundId) || publicInputs[1] != round.policy.threshold
-                || bytes32(publicInputs[3]) != disclosureHash || bytes32(publicInputs[4]) != reconstructedSecretHash
-        ) revert InvalidProofInput();
-        if (publicInputs[2] < round.policy.threshold) revert InvalidProofInput();
-        uint256 challenge = BRLC.deriveChallenge(
-            roundId,
-            REVEAL_SHARE_TRANSCRIPT_DOMAIN,
-            keccak256(abi.encodePacked(disclosureHash, reconstructedSecretHash))
+    /// @notice Register an application against a finalized epoch in
+    ///         public-derivation mode (paper §4.3). Computes the per-application
+    ///         derivation tag `S = keccak256(eid || PK_ep || aid) mod q` and
+    ///         stores the application record. The implicit per-application
+    ///         encryption key is `PK_aid = PK_ep + S·G`, recomputable on-chain
+    ///         or off-chain by any reader from the stored `S`.
+    /// @param  epochId  Anchor epoch identifier (must be Finalized).
+    /// @param  aid      Caller-supplied non-zero application identifier.
+    /// @param  policy   Per-application access policy (gates submitCiphertext).
+    function registerApplication(
+        bytes12 epochId,
+        bytes32 aid,
+        DKGTypes.AppPolicy calldata policy
+    ) external {
+        Epoch storage epoch = epochs[epochId];
+        if (epoch.organizer == address(0)) revert InvalidEpoch();
+        if (epoch.status != DKGTypes.EpochPhase.Finalized) revert InvalidPhase();
+        if (aid == bytes32(0)) revert InvalidApplication();
+        DKGTypes.Application storage existing = applications[epochId][aid];
+        if (existing.exists) revert ApplicationAlreadyExists();
+
+        DKGTypes.Point storage pkep = _collectiveKey[epochId];
+        if (pkep.y == 0) revert InvalidEpoch();
+
+        // S = keccak256(eid || PK_ep.x || PK_ep.y || aid) mod q
+        uint256 s = uint256(
+            keccak256(abi.encodePacked(epochId, pkep.x, pkep.y, aid))
+        ) % BabyJubJub.SUBGROUP_ORDER;
+
+        existing.creator = msg.sender;
+        existing.mode = DKGTypes.AppMode.PublicDerivation;
+        existing.derivationS = s;
+        existing.organizerPK = DKGTypes.Point({x: 0, y: 1}); // identity
+        existing.policy = policy;
+        existing.createdAtBlock = uint64(block.number);
+        existing.exists = true;
+
+        emit ApplicationRegistered(
+            epochId,
+            aid,
+            msg.sender,
+            uint8(DKGProtocol.MODE_PUBLIC_DERIVATION),
+            s,
+            0,
+            1
         );
-        if (publicInputs[5] != challenge) revert InvalidProofInput();
-
-        // Transcript layout (2N words):
-        //   words [0..N)   participantIndexes
-        //   words [N..2N)  revealedShares
-        if (transcript.length != RECONSTRUCT_TRANSCRIPT_WORDS * 32) revert InvalidProofInput();
-        _verifyReconstructTranscript(roundId, round.policy.committeeSize, publicInputs[2], transcript);
-
-        uint256 dOff;
-        assembly { dOff := transcript.offset }
-        if (BRLC.commitCalldata(challenge, dOff, RECONSTRUCT_TRANSCRIPT_WORDS) != publicInputs[6]) revert InvalidProofInput();
-
-        // SECURITY (C-2): the reveal-share circuit deliberately does NOT
-        // prove the Lagrange identity sk = Σ λ_i d_i. Without this on-chain
-        // recomputation an attacker can publish any value as the round's
-        // reconstructed secret. We recompute it here from the same transcript
-        // calldata that BRLC just committed to and require it to match the
-        // claimed ReconstructedSecretHash public input.
-        _verifyLagrangeReconstruction(publicInputs[2], reconstructedSecretHash, transcript);
-
-        round.status = DKGTypes.RoundStatus.Completed;
-        // disclosureHash + reconstructedSecretHash are emitted in the event.
-
-        emit SecretReconstructed(roundId, disclosureHash, reconstructedSecretHash);
     }
 
-    /// @notice Abort a non-terminal round. Organizer only.
-    /// @dev    Finalized rounds may NOT be aborted: the collective public key has
+    /// @notice Register an application against a finalized epoch in
+    ///         organizer co-decryption mode (paper §6). Verifies a Schnorr
+    ///         proof of knowledge of `sk_org` per paper §6.2 / paper line 1138:
+    ///
+    ///             c = Poseidon(domain || eid || aid || PK_org || A)
+    ///             z·G == A + c·PK_org
+    ///
+    ///         The implicit per-application key is `PK_aid = PK_ep + PK_org`.
+    /// @param  epochId    Anchor epoch identifier (must be Finalized).
+    /// @param  aid        Caller-supplied non-zero application identifier.
+    /// @param  policy     Per-application access policy.
+    /// @param  pkOrgX     Organizer public key X coordinate.
+    /// @param  pkOrgY     Organizer public key Y coordinate.
+    /// @param  schnorrAx  Schnorr nonce point A = w·G — X.
+    /// @param  schnorrAy  Schnorr nonce point Y.
+    /// @param  schnorrZ   Schnorr response z = w + c·sk_org (mod L).
+    function registerApplicationCoDec(
+        bytes12 epochId,
+        bytes32 aid,
+        DKGTypes.AppPolicy calldata policy,
+        uint256 pkOrgX,
+        uint256 pkOrgY,
+        uint256 schnorrAx,
+        uint256 schnorrAy,
+        uint256 schnorrZ
+    ) external {
+        Epoch storage epoch = epochs[epochId];
+        if (epoch.organizer == address(0)) revert InvalidEpoch();
+        if (epoch.status != DKGTypes.EpochPhase.Finalized) revert InvalidPhase();
+        if (aid == bytes32(0)) revert InvalidApplication();
+        DKGTypes.Application storage existing = applications[epochId][aid];
+        if (existing.exists) revert ApplicationAlreadyExists();
+
+        BabyJubJub.requireValidPoint(pkOrgX, pkOrgY);
+        BabyJubJub.requireValidPoint(schnorrAx, schnorrAy);
+
+        if (
+            !_verifyOrganizerSchnorr(
+                epochId, aid, pkOrgX, pkOrgY, schnorrAx, schnorrAy, schnorrZ
+            )
+        ) revert InvalidSchnorrProof();
+
+        existing.creator = msg.sender;
+        existing.mode = DKGTypes.AppMode.OrganizerCoDec;
+        existing.derivationS = 0;
+        existing.organizerPK = DKGTypes.Point({x: pkOrgX, y: pkOrgY});
+        existing.policy = policy;
+        existing.createdAtBlock = uint64(block.number);
+        existing.exists = true;
+
+        emit ApplicationRegistered(
+            epochId,
+            aid,
+            msg.sender,
+            uint8(DKGProtocol.MODE_ORGANIZER_CODEC),
+            0,
+            pkOrgX,
+            pkOrgY
+        );
+    }
+
+    /// @notice Read an application record.
+    function getApplication(bytes12 epochId, bytes32 aid)
+        external
+        view
+        returns (DKGTypes.Application memory)
+    {
+        return applications[epochId][aid];
+    }
+
+    /// @dev Two-pass Poseidon (T5+T5) Fiat-Shamir transcript for the organizer
+    ///      Schnorr proof. Layout (paper §6.2 line 1138):
+    ///
+    ///         inner = T5(domain, eid, PK_org.x, PK_org.y)
+    ///         c     = T5(inner, aid_field, A.x, A.y)
+    ///
+    ///      `aid_field = uint256(aid) % BN254.Q` to keep the value in the
+    ///      Poseidon input field. The shared `DOMAIN_ORGANIZER_REGISTER_V1`
+    ///      digest namespaces the proof so it cannot be replayed against the
+    ///      operator-registry Schnorr verification.
+    function _organizerSchnorrChallenge(
+        bytes12 epochId,
+        bytes32 aid,
+        uint256 pkX,
+        uint256 pkY,
+        uint256 ax,
+        uint256 ay
+    ) internal pure returns (uint256) {
+        uint256 domainField = uint256(DKGProtocol.DOMAIN_ORGANIZER_REGISTER_V1) % BabyJubJub.Q;
+        uint256[4] memory in1;
+        in1[0] = domainField;
+        in1[1] = uint256(uint96(epochId));
+        in1[2] = pkX;
+        in1[3] = pkY;
+        uint256 inner = PoseidonT5.hash(in1);
+        uint256[4] memory in2;
+        in2[0] = inner;
+        in2[1] = uint256(aid) % BabyJubJub.Q;
+        in2[2] = ax;
+        in2[3] = ay;
+        return PoseidonT5.hash(in2);
+    }
+
+    /// @dev Verify the organizer Schnorr PoK: `z·G == A + c·PK_org`.
+    function _verifyOrganizerSchnorr(
+        bytes12 epochId,
+        bytes32 aid,
+        uint256 pkX,
+        uint256 pkY,
+        uint256 ax,
+        uint256 ay,
+        uint256 z
+    ) internal view returns (bool) {
+        uint256 c = _organizerSchnorrChallenge(epochId, aid, pkX, pkY, ax, ay);
+        (uint256 zGx, uint256 zGy) = BabyJubJub.scalarMulBase(z);
+        (uint256 cPKx, uint256 cPKy) = BabyJubJub.scalarMul(c, pkX, pkY);
+        (uint256 rhsX, uint256 rhsY) = BabyJubJub.pointAdd(ax, ay, cPKx, cPKy);
+        return zGx == rhsX && zGy == rhsY;
+    }
+
+    /// @notice Abort a non-terminal epoch. Organizer only.
+    /// @dev    Finalized epochs may NOT be aborted: the collective public key has
     ///         already been published and messages may already be encrypted to it.
     ///         Aborting after finalization would permanently block decryption for
     ///         those messages. Only Registration and Contribution phases are
     ///         abortable.
-    /// @param  roundId The round identifier.
-    function abortRound(bytes12 roundId) external {
-        Round storage round = rounds[roundId];
-        if (round.organizer == address(0)) revert InvalidRound();
-        if (msg.sender != round.organizer) revert Unauthorized();
+    /// @param  epochId The epoch identifier.
+    function abortEpoch(bytes12 epochId) external {
+        Epoch storage epoch = epochs[epochId];
+        if (epoch.organizer == address(0)) revert InvalidEpoch();
+        if (msg.sender != epoch.organizer) revert Unauthorized();
         if (
-            round.status == DKGTypes.RoundStatus.Finalized
-                || round.status == DKGTypes.RoundStatus.Completed
-                || round.status == DKGTypes.RoundStatus.Aborted
+            epoch.status == DKGTypes.EpochPhase.Finalized
+                || epoch.status == DKGTypes.EpochPhase.Completed
+                || epoch.status == DKGTypes.EpochPhase.Aborted
         ) {
             revert InvalidPhase();
         }
 
-        round.status = DKGTypes.RoundStatus.Aborted;
-        emit RoundAborted(roundId);
+        epoch.status = DKGTypes.EpochPhase.Aborted;
+        emit EpochAborted(epochId);
     }
 
-    function getRound(bytes12 roundId) external view returns (Round memory) {
-        return rounds[roundId];
+    function getEpoch(bytes12 epochId) external view returns (Epoch memory) {
+        return epochs[epochId];
     }
 
-    function selectedParticipants(bytes12 roundId) external view returns (address[] memory) {
-        return roundParticipants[roundId];
+    function selectedParticipants(bytes12 epochId) external view returns (address[] memory) {
+        return epochParticipants[epochId];
     }
 
-    function getContribution(bytes12 roundId, address contributor)
+    function getContribution(bytes12 epochId, address contributor)
         external
         view
         returns (DKGTypes.ContributionRecord memory)
     {
-        return roundContributions[roundId][contributor];
+        return epochContributions[epochId][contributor];
     }
 
-    function getPartialDecryption(bytes12 roundId, address participant, uint16 ciphertextIndex)
+    function getPartialDecryption(bytes12 epochId, address participant, uint16 ciphertextIndex)
         external
         view
         returns (DKGTypes.PartialDecryptionRecord memory)
     {
-        return roundPartialDecryptions[roundId][ciphertextIndex][participant];
+        return epochPartialDecryptions[epochId][ciphertextIndex][participant];
     }
 
-    function getCombinedDecryption(bytes12 roundId, uint16 ciphertextIndex)
+    function getCombinedDecryption(bytes12 epochId, uint16 ciphertextIndex)
         external
         view
         returns (DKGTypes.CombinedDecryptionRecord memory)
     {
-        return roundCombinedDecryptions[roundId][ciphertextIndex];
-    }
-
-    function getRevealedShare(bytes12 roundId, address participant)
-        external
-        view
-        returns (DKGTypes.RevealedShareRecord memory)
-    {
-        return roundRevealedShares[roundId][participant];
+        return epochCombinedDecryptions[epochId][ciphertextIndex];
     }
 
     /// @notice Returns the keccak256(abi.encode(x, y)) commitment hash for a
     /// participant's share commitment. The pre-image (x,y) is exposed off-chain via
-    /// the RoundFinalized event log.
-    function getShareCommitmentHash(bytes12 roundId, uint16 participantIndex)
+    /// the EpochFinalized event log.
+    function getShareCommitmentHash(bytes12 epochId, uint16 participantIndex)
         external
         view
         returns (bytes32)
     {
-        return roundShareCommitmentHashes[roundId][participantIndex];
+        return epochShareCommitmentHashes[epochId][participantIndex];
     }
 
     /// @notice keccak256(abi.encode(c1x, c1y, c2x, c2y)) of the ciphertext stored
-    ///         at `ciphertextIndex` for `roundId`. Returns bytes32(0) if no
+    ///         at `ciphertextIndex` for `epochId`. Returns bytes32(0) if no
     ///         ciphertext has been submitted at this slot.
-    function getCiphertextHash(bytes12 roundId, uint16 ciphertextIndex) external view returns (bytes32) {
-        return _ciphertexts[roundId][ciphertextIndex];
+    function getCiphertextHash(bytes12 epochId, uint16 ciphertextIndex) external view returns (bytes32) {
+        return _ciphertexts[epochId][ciphertextIndex];
     }
 
-    /// @notice Recovered plaintext for (roundId, ciphertextIndex). Returns 0 if
+    /// @notice Recovered plaintext for (epochId, ciphertextIndex). Returns 0 if
     ///         the decryption has not been combined yet; callers should also
     ///         consult `getCombinedDecryption(...)` / `DecryptionCombined`
     ///         events to disambiguate "not yet combined" from "plaintext is 0".
-    function getPlaintext(bytes12 roundId, uint16 ciphertextIndex) external view returns (uint256) {
-        return roundCombinedDecryptions[roundId][ciphertextIndex].plaintext;
+    function getPlaintext(bytes12 epochId, uint16 ciphertextIndex) external view returns (uint256) {
+        return epochCombinedDecryptions[epochId][ciphertextIndex].plaintext;
     }
 
-    function getDecryptionPolicy(bytes12 roundId) external view returns (DKGTypes.DecryptionPolicy memory) {
-        return rounds[roundId].decryptionPolicy;
+    function getDecryptionPolicy(bytes12 epochId) external view returns (DKGTypes.DecryptionPolicy memory) {
+        return epochs[epochId].decryptionPolicy;
     }
 
     function getContributionVerifierVKeyHash() external view returns (bytes32) {
@@ -1225,15 +1304,7 @@ contract DKGManager is IDKGManager {
         return IZKVerifier(DECRYPT_COMBINE_VERIFIER).provingKeyHash();
     }
 
-    function getRevealSubmitVerifierVKeyHash() external view returns (bytes32) {
-        return IZKVerifier(REVEAL_SUBMIT_VERIFIER).provingKeyHash();
-    }
-
-    function getRevealShareVerifierVKeyHash() external view returns (bytes32) {
-        return IZKVerifier(REVEAL_SHARE_VERIFIER).provingKeyHash();
-    }
-
-    function _roundScalar(bytes12 roundId) internal pure returns (uint256) {
-        return uint256(uint96(roundId));
+    function _epochScalar(bytes12 epochId) internal pure returns (uint256) {
+        return uint256(uint96(epochId));
     }
 }

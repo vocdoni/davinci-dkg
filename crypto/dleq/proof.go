@@ -26,7 +26,7 @@ func Prove(secret, roundHash, participantIndex *big.Int, pubKey, base, target ty
 		return nil, fmt.Errorf("secret is required")
 	}
 	if roundHash == nil {
-		return nil, fmt.Errorf("round hash is required")
+		return nil, fmt.Errorf("epoch hash is required")
 	}
 	if participantIndex == nil {
 		return nil, fmt.Errorf("participant index is required")

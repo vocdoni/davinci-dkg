@@ -26,7 +26,7 @@ type Assignment struct {
 // Validate checks that the assignment fits the current circuit bounds.
 func (a Assignment) Validate() error {
 	if a.RoundHash == nil {
-		return fmt.Errorf("round hash is required")
+		return fmt.Errorf("epoch hash is required")
 	}
 	if a.Threshold == 0 || a.CommitteeSize == 0 {
 		return fmt.Errorf("threshold and committee size are required")

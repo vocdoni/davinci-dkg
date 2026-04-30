@@ -124,6 +124,15 @@ solidity-bind: ## Regenerate Go ABI bindings from compiled Solidity artifacts
 	@echo "Generating Go ABI bindings ..."
 	@cd solidity && bash go_bind.sh
 
+vectors: ## Regenerate cross-impl test vectors under tests/vectors/
+	@echo "Regenerating cross-impl vectors ..."
+	@go run ./cmd/protocol-vectors -dir tests/vectors
+
+vectors-check: ## Regenerate vectors and fail if anything changed (CI guard)
+	@go run ./cmd/protocol-vectors -dir tests/vectors
+	@git diff --exit-code -- tests/vectors/ \
+		|| (echo "tests/vectors/ is out of date — run 'make vectors' and commit." && exit 1)
+
 solidity-deploy: ## Deploy contracts (set RPC_URL, CHAIN_ID, PRIVATE_KEY)
 	@# The script also loads RPC_URL / CHAIN_ID / PRIVATE_KEY / ETHERSCAN_API_KEY
 	@# from a repo-root .env file when present, so the Makefile only enforces

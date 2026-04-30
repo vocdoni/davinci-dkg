@@ -41,22 +41,21 @@ func TestDKGRoundHappyPath(t *testing.T) {
 	head, err := services.Contracts.Client().BlockNumber(ctx)
 	c.Assert(err, qt.IsNil)
 
-	policy := types.RoundPolicy{
+	policy := types.EpochPolicy{
 		Threshold:                 1,
 		CommitteeSize:             1,
 		MinValidContributions:     1,
 		RegistrationDeadlineBlock: head + 25,
 		ContributionDeadlineBlock: head + 50,
 		FinalizeNotBeforeBlock:    head + 51,
-		DisclosureAllowed:         false,
 	}
 	coefficients := []*big.Int{big.NewInt(7)}
 
 	result, err := helpers.CreateFinalizedSingleParticipantRound(ctx, services, policy, coefficients)
 	c.Assert(err, qt.IsNil)
-	c.Assert(result.RoundID, qt.Not(qt.Equals), [12]byte{})
-	c.Assert(result.Round.Status, qt.Equals, uint8(3))
-	c.Assert(result.Round.ContributionCount, qt.Equals, uint16(1))
+	c.Assert(result.EpochID, qt.Not(qt.Equals), [12]byte{})
+	c.Assert(result.Epoch.Status, qt.Equals, uint8(3))
+	c.Assert(result.Epoch.ContributionCount, qt.Equals, uint16(1))
 	// AggregateCommitmentsHash / CollectivePublicKeyHash are no longer persisted
-	// in storage; they live in the RoundFinalized event.
+	// in storage; they live in the EpochFinalized event.
 }

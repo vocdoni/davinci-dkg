@@ -10,9 +10,13 @@ RUN apt-get update \
 
 WORKDIR /workspace
 
-# Copy only what Foundry needs to deploy
-COPY solidity/        /workspace/solidity/
-COPY testnet/deploy.sh /workspace/testnet/deploy.sh
+# Copy only what Foundry needs to deploy. davinci-contracts/ holds the
+# vendored Poseidon-Solidity package referenced by solidity/remappings.txt
+# (poseidon-solidity/=../davinci-contracts/lib/poseidon-solidity/contracts/);
+# without it the deploy build fails with "PoseidonTN.sol not found".
+COPY solidity/          /workspace/solidity/
+COPY davinci-contracts/ /workspace/davinci-contracts/
+COPY testnet/deploy.sh  /workspace/testnet/deploy.sh
 RUN chmod +x /workspace/testnet/deploy.sh
 
 EXPOSE 8888

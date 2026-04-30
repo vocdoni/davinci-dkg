@@ -6,7 +6,7 @@ library DKGIdLib {
         return uint32(uint256(keccak256(abi.encodePacked(chainId, manager))));
     }
 
-    function computeRoundId(uint32 prefix, uint64 nonce) internal pure returns (bytes12) {
+    function computeEpochId(uint32 prefix, uint64 nonce) internal pure returns (bytes12) {
         return bytes12((uint96(prefix) << 64) | uint96(nonce));
     }
 }

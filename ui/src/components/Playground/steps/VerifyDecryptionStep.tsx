@@ -5,32 +5,32 @@ import { useQuery } from '@tanstack/react-query'
 import { LuUsers, LuCombine, LuEye } from 'react-icons/lu'
 import { StepCard, type StepStatus } from '../StepCard'
 import { useDkgClient } from '~hooks/use-dkg-client'
-import { useRound } from '~queries/rounds'
+import { useEpoch } from '~queries/epochs'
 import { Polling } from '~constants/polling'
 import { QueryKeys } from '~queries/keys'
 import { HowItWorks } from '../HowItWorks'
 
 interface Props {
   status: StepStatus
-  roundId: Hex | null
+  epochId: Hex | null
   ciphertextIndex: number | null
   expectedPlaintext: bigint | null
   log: (msg: string, level?: 'info' | 'success' | 'error' | 'chain') => void
 }
 
-export function VerifyDecryptionStep({ status, roundId, ciphertextIndex, expectedPlaintext, log }: Props) {
+export function VerifyDecryptionStep({ status, epochId, ciphertextIndex, expectedPlaintext, log }: Props) {
   const { dkg } = useDkgClient()
-  const round = useRound((roundId ?? undefined) as `0x${string}` | undefined)
+  const epoch = useEpoch((epochId ?? undefined) as `0x${string}` | undefined)
 
   // Polls the contract's CombinedDecryption record for the configured
   // ciphertext index. Stops polling automatically once `completed` is true.
   const decryption = useQuery({
-    queryKey: roundId && ciphertextIndex ? QueryKeys.decryption(roundId, ciphertextIndex) : ['decryption', 'idle'],
+    queryKey: epochId && ciphertextIndex ? QueryKeys.decryption(epochId, ciphertextIndex) : ['decryption', 'idle'],
     queryFn: () => {
-      if (!roundId || !ciphertextIndex) throw new Error('idle')
-      return dkg.getCombinedDecryption(roundId, ciphertextIndex)
+      if (!epochId || !ciphertextIndex) throw new Error('idle')
+      return dkg.getCombinedDecryption(epochId, ciphertextIndex)
     },
-    enabled: Boolean(roundId && ciphertextIndex),
+    enabled: Boolean(epochId && ciphertextIndex),
     refetchInterval: (q) => (q.state.data?.completed ? false : Polling.decryption),
   })
 
@@ -54,10 +54,10 @@ export function VerifyDecryptionStep({ status, roundId, ciphertextIndex, expecte
           </Text>
         ) : (
           <Stack gap={3}>
-            {round.data && (
+            {epoch.data && (
               <Text fontSize='xs' color='ink.3'>
-                Pieces collected: {round.data.round.partialDecryptionCount.toString()} of{' '}
-                {round.data.round.policy.threshold} needed
+                Pieces collected: {epoch.data.epoch.partialDecryptionCount.toString()} of{' '}
+                {epoch.data.epoch.policy.threshold} needed
               </Text>
             )}
             {decryption.isLoading && (

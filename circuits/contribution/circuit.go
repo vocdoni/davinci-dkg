@@ -112,7 +112,7 @@ func (c *ContributionCircuit) Define(api frontend.API) error {
 		// the prover can pick s' = honest_share + 7·r (still <p when
 		// honest_share<δ) and have AddModSubgroupOrder publish a
 		// MaskedShare that decrypts to honest_share+(r−δ)≠honest_share.
-		// That breaks recipient-side Feldman and DoSes the round.
+		// That breaks recipient-side Feldman and DoSes the epoch.
 		api.AssertIsLessOrEqual(c.Shares[i], subgroupOrderMinusOne)
 		activeShare := api.Select(recipientMask[i], c.Shares[i], 0)
 

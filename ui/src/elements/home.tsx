@@ -3,10 +3,10 @@ import { Link as RouterLink } from 'react-router-dom'
 import type { ReactNode } from 'react'
 import { useConfig } from '~providers/ConfigProvider'
 import { useBlockNumber } from '~queries/chain'
-import { useRecentRounds } from '~queries/rounds'
-import { useRegistryStats, useRoundCount } from '~queries/registry'
+import { useRecentEpochs } from '~queries/epochs'
+import { useRegistryStats, useEpochCount } from '~queries/registry'
 import { StatCard } from '~components/ui/StatCard'
-import { RoundList } from '~components/Round/RoundList'
+import { EpochList } from '~components/Epoch/EpochList'
 import { QueryDataLayout } from '~components/Layout/QueryDataLayout'
 import { Routes } from '~router/routes'
 
@@ -16,9 +16,9 @@ const DAVINCI_URL = 'https://davinci.vote'
 export function Home() {
   const config = useConfig()
   const { data: block } = useBlockNumber()
-  const { data: roundNonce } = useRoundCount()
+  const { data: epochNonce } = useEpochCount()
   const stats = useRegistryStats()
-  const recent = useRecentRounds(5)
+  const recent = useRecentEpochs(5)
 
   return (
     <Stack gap={{ base: 14, md: 20 }}>
@@ -68,7 +68,7 @@ export function Home() {
             body={
               <>
                 Anyone can <RouterQuick to={Routes.runNode}>run a node</RouterQuick>{' '}
-                and join the registry. For each round, a verifiable on-chain
+                and join the registry. For each epoch, a verifiable on-chain
                 lottery selects a committee from the registered operators — no
                 gatekeeper, no allowlist.
               </>
@@ -113,7 +113,7 @@ export function Home() {
           />
           <Property
             label='Non-interactive'
-            body='Each step is a single self-contained transaction. No complaint or dispute round; invalid contributions are rejected at submission time.'
+            body='Each step is a single self-contained transaction. No complaint or dispute epoch; invalid contributions are rejected at submission time.'
           />
           <Property
             label='Verified on-chain'
@@ -130,7 +130,7 @@ export function Home() {
         <SimpleGrid columns={{ base: 2, md: 4 }} gap={{ base: 3, md: 4 }} mt={1}>
           <StatCard
             label='Rounds'
-            value={roundNonce != null ? roundNonce.toString() : '—'}
+            value={epochNonce != null ? epochNonce.toString() : '—'}
             hint='total ever created'
           />
           <StatCard
@@ -148,17 +148,17 @@ export function Home() {
         </SimpleGrid>
       </Section>
 
-      {/* Recent rounds */}
-      <Section title='Recent rounds' action={<RouterQuick to={Routes.rounds}>View all</RouterQuick>}>
+      {/* Recent epochs */}
+      <Section title='Recent epochs' action={<RouterQuick to={Routes.epochs}>View all</RouterQuick>}>
         <Box mt={1}>
           <QueryDataLayout
             isLoading={recent.isLoading}
             isError={recent.isError}
             error={recent.error}
             isEmpty={recent.data?.length === 0}
-            emptyMessage='No rounds have been created yet.'
+            emptyMessage='No epochs have been created yet.'
           >
-            {recent.data && <RoundList rounds={recent.data} />}
+            {recent.data && <EpochList epochs={recent.data} />}
           </QueryDataLayout>
         </Box>
       </Section>

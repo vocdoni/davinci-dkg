@@ -9,91 +9,89 @@ import (
 	"github.com/vocdoni/davinci-dkg/types"
 )
 
-// SaveRound stores a new round.
-func (s *Storage) SaveRound(round types.Round) error {
-	if round.ID == "" {
-		return fmt.Errorf("round id is required")
+// SaveEpoch stores a new epoch.
+func (s *Storage) SaveEpoch(epoch types.Epoch) error {
+	if epoch.ID == "" {
+		return fmt.Errorf("epoch id is required")
 	}
 	if s.db != nil {
-		if _, err := s.Round(round.ID); err == nil {
-			return fmt.Errorf("round already exists")
+		if _, err := s.Epoch(epoch.ID); err == nil {
+			return fmt.Errorf("epoch already exists")
 		}
-		payload, err := json.Marshal(round)
+		payload, err := json.Marshal(epoch)
 		if err != nil {
 			return err
 		}
 		tx := s.db.WriteTx()
 		defer tx.Discard()
-		if err := tx.Set(roundKey(round.ID), payload); err != nil {
+		if err := tx.Set(roundKey(epoch.ID), payload); err != nil {
 			return err
 		}
 		return tx.Commit()
 	}
-	if _, exists := s.rounds[round.ID]; exists {
-		return fmt.Errorf("round already exists")
+	if _, exists := s.epochs[epoch.ID]; exists {
+		return fmt.Errorf("epoch already exists")
 	}
-	s.rounds[round.ID] = round
-	s.ready[round.ID] = make(map[common.Address]struct{})
-	s.contributions[round.ID] = make(map[common.Address]types.Contribution)
-	s.decryptions[round.ID] = make(map[common.Address]map[uint16]types.PartialDecryption)
-	s.disclosures[round.ID] = make(map[common.Address]types.RevealedShare)
+	s.epochs[epoch.ID] = epoch
+	s.ready[epoch.ID] = make(map[common.Address]struct{})
+	s.contributions[epoch.ID] = make(map[common.Address]types.Contribution)
+	s.decryptions[epoch.ID] = make(map[common.Address]map[uint16]types.PartialDecryption)
 	return nil
 }
 
-// UpsertRound stores or replaces a round snapshot.
-func (s *Storage) UpsertRound(round types.Round) error {
-	if round.ID == "" {
-		return fmt.Errorf("round id is required")
+// UpsertEpoch stores or replaces a epoch snapshot.
+func (s *Storage) UpsertEpoch(epoch types.Epoch) error {
+	if epoch.ID == "" {
+		return fmt.Errorf("epoch id is required")
 	}
 	if s.db != nil {
-		payload, err := json.Marshal(round)
+		payload, err := json.Marshal(epoch)
 		if err != nil {
 			return err
 		}
 		tx := s.db.WriteTx()
 		defer tx.Discard()
-		if err := tx.Set(roundKey(round.ID), payload); err != nil {
+		if err := tx.Set(roundKey(epoch.ID), payload); err != nil {
 			return err
 		}
 		return tx.Commit()
 	}
-	if _, exists := s.rounds[round.ID]; !exists {
-		s.ready[round.ID] = make(map[common.Address]struct{})
-		s.contributions[round.ID] = make(map[common.Address]types.Contribution)
-		s.decryptions[round.ID] = make(map[common.Address]map[uint16]types.PartialDecryption)
-		s.disclosures[round.ID] = make(map[common.Address]types.RevealedShare)
+	if _, exists := s.epochs[epoch.ID]; !exists {
+		s.ready[epoch.ID] = make(map[common.Address]struct{})
+		s.contributions[epoch.ID] = make(map[common.Address]types.Contribution)
+		s.decryptions[epoch.ID] = make(map[common.Address]map[uint16]types.PartialDecryption)
 	}
-	s.rounds[round.ID] = round
+	s.epochs[epoch.ID] = epoch
 	return nil
 }
 
-// Round returns the stored round.
-func (s *Storage) Round(id string) (types.Round, error) {
+// Epoch returns the stored epoch.
+func (s *Storage) Epoch(id string) (types.Epoch, error) {
 	if s.db != nil {
 		payload, err := s.db.Get(roundKey(id))
 		if err != nil {
 			if err == db.ErrKeyNotFound {
-				return types.Round{}, fmt.Errorf("round not found")
+				return types.Epoch{}, fmt.Errorf("epoch not found")
 			}
-			return types.Round{}, err
+			return types.Epoch{}, err
 		}
-		var round types.Round
-		if err := json.Unmarshal(payload, &round); err != nil {
-			return types.Round{}, err
+		var epoch types.Epoch
+		if err := json.Unmarshal(payload, &epoch); err != nil {
+			return types.Epoch{}, err
 		}
-		return round, nil
+		return epoch, nil
 	}
-	round, ok := s.rounds[id]
+	epoch, ok := s.epochs[id]
 	if !ok {
-		return types.Round{}, fmt.Errorf("round not found")
+		return types.Epoch{}, fmt.Errorf("epoch not found")
 	}
-	return round, nil
+	return epoch, nil
 }
 
-// MarkReady marks a participant as ready for the round.
+// MarkReady marks a participant as ready for the epoch.
 func (s *Storage) MarkReady(id string, operator common.Address) error {
 	if s.db != nil {
-		if _, err := s.Round(id); err != nil {
+		if _, err := s.Epoch(id); err != nil {
 			return err
 		}
 		key := readyKey(id, operator)
@@ -109,8 +107,8 @@ func (s *Storage) MarkReady(id string, operator common.Address) error {
 		}
 		return tx.Commit()
 	}
-	if _, ok := s.rounds[id]; !ok {
-		return fmt.Errorf("round not found")
+	if _, ok := s.epochs[id]; !ok {
+		return fmt.Errorf("epoch not found")
 	}
 	if _, ok := s.ready[id][operator]; ok {
 		return fmt.Errorf("operator already marked ready")
@@ -119,7 +117,7 @@ func (s *Storage) MarkReady(id string, operator common.Address) error {
 	return nil
 }
 
-// ReadyCount returns the number of ready participants for the round.
+// ReadyCount returns the number of ready participants for the epoch.
 func (s *Storage) ReadyCount(id string) int {
 	if s.db != nil {
 		count := 0
@@ -132,15 +130,15 @@ func (s *Storage) ReadyCount(id string) int {
 	return len(s.ready[id])
 }
 
-// SetSelectedParticipants stores the ordered committee and advances the round phase.
+// SetSelectedParticipants stores the ordered committee and advances the epoch phase.
 func (s *Storage) SetSelectedParticipants(id string, participants []common.Address) error {
 	if s.db != nil {
-		stored, err := s.Round(id)
+		stored, err := s.Epoch(id)
 		if err != nil {
 			return err
 		}
 		stored.SelectedParticipants = append([]common.Address(nil), participants...)
-		stored.Phase = types.RoundPhaseContribution
+		stored.Phase = types.EpochPhaseContribution
 		payload, err := json.Marshal(stored)
 		if err != nil {
 			return err
@@ -152,18 +150,18 @@ func (s *Storage) SetSelectedParticipants(id string, participants []common.Addre
 		}
 		return tx.Commit()
 	}
-	round, err := s.Round(id)
+	epoch, err := s.Epoch(id)
 	if err != nil {
 		return err
 	}
-	round.SelectedParticipants = append([]common.Address(nil), participants...)
-	round.Phase = types.RoundPhaseContribution
-	s.rounds[id] = round
+	epoch.SelectedParticipants = append([]common.Address(nil), participants...)
+	epoch.Phase = types.EpochPhaseContribution
+	s.epochs[id] = epoch
 	return nil
 }
 
 func roundKey(id string) []byte {
-	return []byte("round/" + id)
+	return []byte("epoch/" + id)
 }
 
 func readyPrefix(id string) []byte {

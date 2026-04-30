@@ -2,11 +2,11 @@ package types
 
 import "github.com/ethereum/go-ethereum/common"
 
-// Round is the local typed representation of one DKG round.
-type Round struct {
+// Epoch is the local typed representation of one DKG epoch.
+type Epoch struct {
 	ID                   string
 	Organizer            common.Address
-	Policy               RoundPolicy
-	Phase                RoundPhase
+	Policy               EpochPolicy
+	Phase                EpochPhase
 	SelectedParticipants []common.Address
 }

@@ -4,11 +4,11 @@ pragma solidity 0.8.28;
 import {DKGTypes} from "./DKGTypes.sol";
 
 library PhaseLib {
-    function inRegistration(DKGTypes.RoundStatus status, uint64 registrationDeadlineBlock) internal view returns (bool) {
-        return status == DKGTypes.RoundStatus.Registration && block.number <= registrationDeadlineBlock;
+    function inRegistration(DKGTypes.EpochPhase status, uint64 registrationDeadlineBlock) internal view returns (bool) {
+        return status == DKGTypes.EpochPhase.Registration && block.number <= registrationDeadlineBlock;
     }
 
-    function inContribution(DKGTypes.RoundStatus status, uint64 contributionDeadlineBlock) internal view returns (bool) {
-        return status == DKGTypes.RoundStatus.Contribution && block.number <= contributionDeadlineBlock;
+    function inContribution(DKGTypes.EpochPhase status, uint64 contributionDeadlineBlock) internal view returns (bool) {
+        return status == DKGTypes.EpochPhase.Contribution && block.number <= contributionDeadlineBlock;
     }
 }

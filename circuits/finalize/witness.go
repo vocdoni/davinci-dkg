@@ -227,7 +227,7 @@ func BuildWitnessFromCommitmentPoints(a CommitmentPointsAssignment) (*FinalizeCi
 	// (set coefficients[k] = 1 and override the commitment computation).
 	// We do this by building the witness manually from the provided points.
 	if a.RoundHash == nil {
-		return nil, nil, fmt.Errorf("round hash is required")
+		return nil, nil, fmt.Errorf("epoch hash is required")
 	}
 	if a.Threshold == 0 || a.CommitteeSize == 0 {
 		return nil, nil, fmt.Errorf("threshold and committee size are required")

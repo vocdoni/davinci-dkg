@@ -53,7 +53,7 @@ describe('ElGamal on BabyJubJub', () => {
   });
 
   // The 2^32 cap is enforced by BSGS (see crypto/elgamal.ts). Values that
-  // would have busted the previous 2^20 brute-force ceiling must round-trip;
+  // would have busted the previous 2^20 brute-force ceiling must epoch-trip;
   // values at or above the new cap must throw.
   it('decrypt handles values well above the old 2^20 brute-force ceiling', () => {
     const { privKey, pubKey } = eg.generateKeyPair();

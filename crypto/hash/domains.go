@@ -6,5 +6,5 @@ var (
 	// DomainPartialDecrypt separates partial-decryption transcript hashing.
 	DomainPartialDecrypt = []byte("davinci-dkg/partial-decrypt/v1")
 	// DomainRoundSelection separates committee selection hashing.
-	DomainRoundSelection = []byte("davinci-dkg/round-selection/v1")
+	DomainRoundSelection = []byte("davinci-dkg/epoch-selection/v1")
 )

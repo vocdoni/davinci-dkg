@@ -47,9 +47,19 @@ update_sol_pk_hash() {
         echo "warning: missing hash for ${sol_file}, skipping" >&2
         return
     fi
-    # Replace the 64-hex-char value inside hex"..." on the PROVING_KEY_HASH line.
-    sed -i "s|PROVING_KEY_HASH =\n\?\s*hex\"[0-9a-f]*\"|PROVING_KEY_HASH =\n        hex\"${new_hash}\"|" "${sol_file}" 2>/dev/null || \
-    sed -i "/PROVING_KEY_HASH/{ n; s|hex\"[0-9a-f]*\"|hex\"${new_hash}\"|; }" "${sol_file}"
+    if [ ! -f "${sol_file}" ]; then
+        echo "warning: ${sol_file} not found, skipping" >&2
+        return
+    fi
+    # Solidity layout is two lines:
+    #   bytes32 internal constant PROVING_KEY_HASH =
+    #       hex"<64-char-hash>";
+    # Match the marker line, advance to the next, swap the hex literal.
+    # GNU sed does not honor \n inside `s` patterns, so we use the
+    # n-and-substitute form unconditionally instead of trying a multi-line
+    # `s` first (the previous attempt silently matched nothing and exited
+    # 0, which short-circuited the || fallback so nothing was patched).
+    sed -i "/PROVING_KEY_HASH =/{ n; s|hex\"[0-9a-f]*\"|hex\"${new_hash}\"|; }" "${sol_file}"
 }
 
 # ── Go config ──────────────────────────────────────────────────────────────
@@ -70,14 +80,6 @@ update_go_hash DecryptCombineCircuitHash         "$(jq -r '.decryptcombine.circu
 update_go_hash DecryptCombineProvingKeyHash      "$(jq -r '.decryptcombine.proving_key_hash'     "${JSON}")"
 update_go_hash DecryptCombineVerificationKeyHash "$(jq -r '.decryptcombine.verifying_key_hash'   "${JSON}")"
 
-update_go_hash RevealSubmitCircuitHash         "$(jq -r '.revealsubmit.circuit_hash'         "${JSON}")"
-update_go_hash RevealSubmitProvingKeyHash      "$(jq -r '.revealsubmit.proving_key_hash'      "${JSON}")"
-update_go_hash RevealSubmitVerificationKeyHash "$(jq -r '.revealsubmit.verifying_key_hash'    "${JSON}")"
-
-update_go_hash RevealShareCircuitHash         "$(jq -r '.revealshare.circuit_hash'          "${JSON}")"
-update_go_hash RevealShareProvingKeyHash      "$(jq -r '.revealshare.proving_key_hash'       "${JSON}")"
-update_go_hash RevealShareVerificationKeyHash "$(jq -r '.revealshare.verifying_key_hash'     "${JSON}")"
-
 echo "Updated ${CONFIG} with hashes from ${JSON}"
 
 # ── Solidity verifier wrapper contracts ────────────────────────────────────
@@ -86,7 +88,5 @@ update_sol_pk_hash "${VERIFIERS_DIR}/ContributionVerifier.sol"  "$(jq -r '.contr
 update_sol_pk_hash "${VERIFIERS_DIR}/FinalizeVerifier.sol"      "$(jq -r '.finalize.proving_key_hash'       "${JSON}")"
 update_sol_pk_hash "${VERIFIERS_DIR}/PartialDecryptVerifier.sol" "$(jq -r '.partialdecrypt.proving_key_hash' "${JSON}")"
 update_sol_pk_hash "${VERIFIERS_DIR}/DecryptCombineVerifier.sol" "$(jq -r '.decryptcombine.proving_key_hash' "${JSON}")"
-update_sol_pk_hash "${VERIFIERS_DIR}/RevealShareVerifier.sol"   "$(jq -r '.revealshare.proving_key_hash'    "${JSON}")"
-update_sol_pk_hash "${VERIFIERS_DIR}/RevealSubmitVerifier.sol"  "$(jq -r '.revealsubmit.proving_key_hash'   "${JSON}")"
 
 echo "Updated Solidity verifier wrapper contracts in ${VERIFIERS_DIR}/"

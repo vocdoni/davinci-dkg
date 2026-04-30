@@ -7,7 +7,7 @@ import {
 } from 'viem';
 import { dkgManagerAbi, dkgRegistryAbi } from './abi.js';
 import {
-  type RoundPolicy,
+  type EpochPolicy,
   type DecryptionPolicy,
   type DKGWriterConfig,
   OpenDecryptionPolicy,
@@ -36,24 +36,24 @@ export class DKGWriter extends DKGClient {
   // ── DKGManager write functions ─────────────────────────────────────────────
 
   /**
-   * Create a new DKG round.
+   * Create a new DKG epoch.
    *
-   * @param policy            committee / phase policy for the round.
+   * @param policy            committee / phase policy for the epoch.
    * @param decryptionPolicy  gate on `submitCiphertext` (owner-only, time
    *                          windows, submission cap). Defaults to fully open —
    *                          anyone can submit, no caps, no windows. Pair with
    *                          `OpenDecryptionPolicy` for the permissive default.
-   * @returns The transaction hash. Use `waitForRoundId` to obtain the round ID
+   * @returns The transaction hash. Use `waitForRoundId` to obtain the epoch ID
    *          once the tx is mined.
    */
-  async createRound(
-    policy: RoundPolicy,
+  async createEpoch(
+    policy: EpochPolicy,
     decryptionPolicy: DecryptionPolicy = OpenDecryptionPolicy,
   ): Promise<Hash> {
     const { request } = await this.publicClient.simulateContract({
       address: this.managerAddress,
       abi: dkgManagerAbi,
-      functionName: 'createRound',
+      functionName: 'createEpoch',
       args: [
         policy.threshold,
         policy.committeeSize,
@@ -63,7 +63,6 @@ export class DKGWriter extends DKGClient {
         policy.registrationDeadlineBlock,
         policy.contributionDeadlineBlock,
         policy.finalizeNotBeforeBlock,
-        policy.disclosureAllowed,
         decryptionPolicy,
       ],
       account: this._writerAccount,
@@ -72,42 +71,42 @@ export class DKGWriter extends DKGClient {
   }
 
   /**
-   * Claim a lottery slot in a round.
+   * Claim a lottery slot in a epoch.
    * The caller must be a registered and active DKG node.
-   * The seed block (seedBlock from the round) must have been mined.
+   * The seed block (seedBlock from the epoch) must have been mined.
    */
-  async claimSlot(roundId: `0x${string}`): Promise<Hash> {
+  async claimSlot(epochId: `0x${string}`): Promise<Hash> {
     const { request } = await this.publicClient.simulateContract({
       address: this.managerAddress,
       abi: dkgManagerAbi,
       functionName: 'claimSlot',
-      args: [roundId as any],
+      args: [epochId as any],
       account: this._writerAccount,
     });
     return this.walletClient.writeContract(request);
   }
 
   /**
-   * Extend the registration deadline of a round.
-   * Only callable by the round organizer.
+   * Extend the registration deadline of a epoch.
+   * Only callable by the epoch organizer.
    */
-  async extendRegistration(roundId: `0x${string}`): Promise<Hash> {
+  async extendRegistration(epochId: `0x${string}`): Promise<Hash> {
     const { request } = await this.publicClient.simulateContract({
       address: this.managerAddress,
       abi: dkgManagerAbi,
       functionName: 'extendRegistration',
-      args: [roundId as any],
+      args: [epochId as any],
       account: this._writerAccount,
     });
     return this.walletClient.writeContract(request);
   }
 
   /**
-   * Submit a contribution (ZK proof + encrypted shares) for a round.
+   * Submit a contribution (ZK proof + encrypted shares) for a epoch.
    * Only callable by selected participants.
    */
   async submitContribution(
-    roundId: `0x${string}`,
+    epochId: `0x${string}`,
     contributorIndex: number,
     commitmentsHash: `0x${string}`,
     encryptedSharesHash: `0x${string}`,
@@ -122,7 +121,7 @@ export class DKGWriter extends DKGClient {
       abi: dkgManagerAbi,
       functionName: 'submitContribution',
       args: [
-        roundId as any,
+        epochId as any,
         contributorIndex,
         commitmentsHash,
         encryptedSharesHash,
@@ -138,11 +137,11 @@ export class DKGWriter extends DKGClient {
   }
 
   /**
-   * Finalize a round by submitting the aggregate commitments and collective
+   * Finalize a epoch by submitting the aggregate commitments and collective
    * public key (ZK proof required).
    */
-  async finalizeRound(
-    roundId: `0x${string}`,
+  async finalizeEpoch(
+    epochId: `0x${string}`,
     aggregateCommitmentsHash: `0x${string}`,
     collectivePublicKeyHash: `0x${string}`,
     shareCommitmentHash: `0x${string}`,
@@ -153,9 +152,9 @@ export class DKGWriter extends DKGClient {
     const { request } = await this.publicClient.simulateContract({
       address: this.managerAddress,
       abi: dkgManagerAbi,
-      functionName: 'finalizeRound',
+      functionName: 'finalizeEpoch',
       args: [
-        roundId as any,
+        epochId as any,
         aggregateCommitmentsHash,
         collectivePublicKeyHash,
         shareCommitmentHash,
@@ -170,9 +169,13 @@ export class DKGWriter extends DKGClient {
 
   /**
    * Submit a partial decryption for a ciphertext.
+   *
+   * `aid` binds the proof transcript to a specific application (P9).
+   * Pass `0x00…00` for the legacy per-epoch path.
    */
   async submitPartialDecryption(
-    roundId: `0x${string}`,
+    epochId: `0x${string}`,
+    aid: `0x${string}`,
     participantIndex: number,
     ciphertextIndex: number,
     deltaHash: `0x${string}`,
@@ -183,7 +186,7 @@ export class DKGWriter extends DKGClient {
       address: this.managerAddress,
       abi: dkgManagerAbi,
       functionName: 'submitPartialDecryption',
-      args: [roundId as any, participantIndex, ciphertextIndex, deltaHash, proof, input],
+      args: [epochId as any, aid as any, participantIndex, ciphertextIndex, deltaHash, proof, input],
       account: this._writerAccount,
     });
     return this.walletClient.writeContract(request);
@@ -191,10 +194,10 @@ export class DKGWriter extends DKGClient {
 
   /**
    * Submit a ciphertext to be threshold-decrypted by the committee.
-   * The round must be Finalized and the submission must pass the round's
+   * The epoch must be Finalized and the submission must pass the epoch's
    * DecryptionPolicy (owner-only, time windows, max count).
    *
-   * `ciphertextIndex` is caller-chosen and write-once per round.
+   * `ciphertextIndex` is caller-chosen and write-once per epoch.
    *
    * Inputs are expected in circomlib TE form (the form that this SDK's
    * `encrypt` returns and that davinci-sdk also uses). They are converted
@@ -202,7 +205,7 @@ export class DKGWriter extends DKGClient {
    * (`_isOnBabyJubJub`, in RTE) accepts them. See `crypto/babyjub-form.ts`.
    */
   async submitCiphertext(
-    roundId: `0x${string}`,
+    epochId: `0x${string}`,
     ciphertextIndex: number,
     c1x: bigint,
     c1y: bigint,
@@ -215,7 +218,7 @@ export class DKGWriter extends DKGClient {
       address: this.managerAddress,
       abi: dkgManagerAbi,
       functionName: 'submitCiphertext',
-      args: [roundId as any, ciphertextIndex, c1xR, c1yR, c2xR, c2yR],
+      args: [epochId as any, ciphertextIndex, c1xR, c1yR, c2xR, c2yR],
       account: this._writerAccount,
     });
     return this.walletClient.writeContract(request);
@@ -223,11 +226,15 @@ export class DKGWriter extends DKGClient {
 
   /**
    * Combine partial decryptions to finalize a decryption. The on-chain
-   * `CombinedDecryptionRecord` will hold the recovered `plaintext` and an
+   * `CombinedDecryptionRecord` will hold the recovered `plaintext` and a
    * `DecryptionCombined` event is emitted.
+   *
+   * `aid` is the per-application identifier (P9). Pass `0x00…00` for the
+   * legacy per-epoch path that doesn't use applications.
    */
   async combineDecryption(
-    roundId: `0x${string}`,
+    epochId: `0x${string}`,
+    aid: `0x${string}`,
     ciphertextIndex: number,
     combineHash: `0x${string}`,
     plaintext: bigint,
@@ -240,7 +247,8 @@ export class DKGWriter extends DKGClient {
       abi: dkgManagerAbi,
       functionName: 'combineDecryption',
       args: [
-        roundId as any,
+        epochId as any,
+        aid as any,
         ciphertextIndex,
         combineHash,
         plaintext,
@@ -253,48 +261,58 @@ export class DKGWriter extends DKGClient {
     return this.walletClient.writeContract(request);
   }
 
+  // ── Application lifecycle (P8/P9) ──────────────────────────────────────────
+
   /**
-   * Submit a revealed share (for disclosure mode rounds).
+   * Register a public-derivation (mode 0) application against `(epochId, aid)`.
+   * The contract derives `S = keccak256(eid || PK_ep || aid) % L` on-chain;
+   * callers can preview the same value via `computeS()` from `~/derive`.
    */
-  async submitRevealedShare(
-    roundId: `0x${string}`,
-    participantIndex: number,
-    shareValue: bigint,
-    proof: `0x${string}`,
-    input: `0x${string}`,
+  async registerApplication(
+    epochId: `0x${string}`,
+    aid: `0x${string}`,
+    policy: import('./types.js').AppPolicy,
   ): Promise<Hash> {
     const { request } = await this.publicClient.simulateContract({
       address: this.managerAddress,
       abi: dkgManagerAbi,
-      functionName: 'submitRevealedShare',
-      args: [roundId as any, participantIndex, shareValue, proof, input],
+      functionName: 'registerApplication',
+      args: [epochId as any, aid as any, policy as any],
       account: this._writerAccount,
     });
     return this.walletClient.writeContract(request);
   }
 
   /**
-   * Reconstruct the secret from revealed shares.
+   * Register an organizer-co-decryption (mode 1) application. The
+   * `(pkOrgX, pkOrgY)` pair must arrive in TE form — the writer converts
+   * to RTE before signing. The Schnorr proof `(ax, ay, z)` arrives in RTE
+   * form (it's computed against the on-chain transcript).
    */
-  async reconstructSecret(
-    roundId: `0x${string}`,
-    disclosureHash: `0x${string}`,
-    reconstructedSecretHash: `0x${string}`,
-    transcript: `0x${string}`,
-    proof: `0x${string}`,
-    input: `0x${string}`,
+  async registerApplicationCoDec(
+    epochId: `0x${string}`,
+    aid: `0x${string}`,
+    policy: import('./types.js').AppPolicy,
+    pkOrgX: bigint,
+    pkOrgY: bigint,
+    schnorrAx: bigint,
+    schnorrAy: bigint,
+    schnorrZ: bigint,
   ): Promise<Hash> {
+    const [pkXR, pkYR] = fromTEtoRTE(pkOrgX, pkOrgY);
     const { request } = await this.publicClient.simulateContract({
       address: this.managerAddress,
       abi: dkgManagerAbi,
-      functionName: 'reconstructSecret',
+      functionName: 'registerApplicationCoDec',
       args: [
-        roundId as any,
-        disclosureHash,
-        reconstructedSecretHash,
-        transcript,
-        proof,
-        input,
+        epochId as any,
+        aid as any,
+        policy as any,
+        pkXR,
+        pkYR,
+        schnorrAx,
+        schnorrAy,
+        schnorrZ,
       ],
       account: this._writerAccount,
     });
@@ -302,15 +320,48 @@ export class DKGWriter extends DKGClient {
   }
 
   /**
-   * Abort a round. Only callable by the organizer when the round
-   * has not reached the minimum contribution threshold.
+   * Submit the organizer's `Δ_org = sk_org · C_1` share (with Chaum-Pedersen
+   * DLEQ binding it to `PK_org`). Only used in mode 1 (organizer co-decryption).
+   * `deltaOrgX`/`deltaOrgY` arrive in TE form; the writer converts to RTE.
    */
-  async abortRound(roundId: `0x${string}`): Promise<Hash> {
+  async submitOrganizerShare(
+    epochId: `0x${string}`,
+    aid: `0x${string}`,
+    ciphertextIndex: number,
+    deltaOrgX: bigint,
+    deltaOrgY: bigint,
+    dleqProof: `0x${string}`,
+    dleqInput: `0x${string}`,
+  ): Promise<Hash> {
+    const [dxR, dyR] = fromTEtoRTE(deltaOrgX, deltaOrgY);
     const { request } = await this.publicClient.simulateContract({
       address: this.managerAddress,
       abi: dkgManagerAbi,
-      functionName: 'abortRound',
-      args: [roundId as any],
+      functionName: 'submitOrganizerShare',
+      args: [
+        epochId as any,
+        aid as any,
+        ciphertextIndex,
+        dxR,
+        dyR,
+        dleqProof,
+        dleqInput,
+      ],
+      account: this._writerAccount,
+    });
+    return this.walletClient.writeContract(request);
+  }
+
+  /**
+   * Abort a epoch. Only callable by the organizer when the epoch
+   * has not reached the minimum contribution threshold.
+   */
+  async abortEpoch(epochId: `0x${string}`): Promise<Hash> {
+    const { request } = await this.publicClient.simulateContract({
+      address: this.managerAddress,
+      abi: dkgManagerAbi,
+      functionName: 'abortEpoch',
+      args: [epochId as any],
       account: this._writerAccount,
     });
     return this.walletClient.writeContract(request);
@@ -319,31 +370,45 @@ export class DKGWriter extends DKGClient {
   // ── DKGRegistry write functions ────────────────────────────────────────────
 
   /**
-   * Register a new BabyJubJub key in the DKG Registry.
-   * The caller becomes an active DKG node.
+   * Register a new BabyJubJub key in the DKG Registry. The caller proves
+   * knowledge of the private key via a Schnorr PoK bound to the wallet
+   * address (P4); the SDK builds the proof in-browser from `privateKey`
+   * and never sends it on the wire. The derived public key + proof are
+   * submitted in RTE form, matching the on-chain transcript.
+   *
+   * `nonce` exists only for tests that need a deterministic witness;
+   * production callers should leave it undefined to draw fresh.
    */
-  async registerKey(pubX: bigint, pubY: bigint): Promise<Hash> {
+  async registerKey(privateKey: bigint, nonce?: bigint): Promise<Hash> {
+    const operator = this._writerAccount;
+    const { proveOperator } = await import('./schnorr.js');
+    const { pubX, pubY, proof } = proveOperator(privateKey, operator, nonce);
     const registryAddress = await this._registryAddressResolved();
     const { request } = await this.publicClient.simulateContract({
       address: registryAddress,
       abi: dkgRegistryAbi,
       functionName: 'registerKey',
-      args: [pubX, pubY],
+      args: [pubX, pubY, proof.ax, proof.ay, proof.z],
       account: this._writerAccount,
     });
     return this.walletClient.writeContract(request);
   }
 
   /**
-   * Update an existing registered key.
+   * Update an existing registered key. Requires a fresh Schnorr PoK over
+   * the new key (P4 — `updateKey` and `registerKey` enforce the same check
+   * to prevent silent key replacement without proof of knowledge).
    */
-  async updateKey(pubX: bigint, pubY: bigint): Promise<Hash> {
+  async updateKey(privateKey: bigint, nonce?: bigint): Promise<Hash> {
+    const operator = this._writerAccount;
+    const { proveOperator } = await import('./schnorr.js');
+    const { pubX, pubY, proof } = proveOperator(privateKey, operator, nonce);
     const registryAddress = await this._registryAddressResolved();
     const { request } = await this.publicClient.simulateContract({
       address: registryAddress,
       abi: dkgRegistryAbi,
       functionName: 'updateKey',
-      args: [pubX, pubY],
+      args: [pubX, pubY, proof.ax, proof.ay, proof.z],
       account: this._writerAccount,
     });
     return this.walletClient.writeContract(request);
@@ -402,11 +467,11 @@ export class DKGWriter extends DKGClient {
   }
 
   /**
-   * Create a round and wait for the receipt.
+   * Create a epoch and wait for the receipt.
    * Returns the transaction receipt (check `status === 'success'`).
    */
-  async createRoundAndWait(policy: RoundPolicy) {
-    const hash = await this.createRound(policy);
+  async createRoundAndWait(policy: EpochPolicy) {
+    const hash = await this.createEpoch(policy);
     return this.waitForTransaction(hash);
   }
 }

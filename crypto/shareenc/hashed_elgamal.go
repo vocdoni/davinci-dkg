@@ -17,7 +17,7 @@ type Ciphertext struct {
 }
 
 // EncryptShare masks one Shamir share for a recipient using the protocol transcript.
-func EncryptShare(roundID string, contributorIndex, recipientIndex uint16, share *big.Int, recipient types.NodeKey) (*Ciphertext, error) {
+func EncryptShare(epochID string, contributorIndex, recipientIndex uint16, share *big.Int, recipient types.NodeKey) (*Ciphertext, error) {
 	modulus := group.ScalarField()
 	nonce, err := rand.Int(rand.Reader, modulus)
 	if err != nil {
@@ -27,19 +27,19 @@ func EncryptShare(roundID string, contributorIndex, recipientIndex uint16, share
 		nonce = big.NewInt(1)
 	}
 
-	return EncryptShareWithNonce(roundID, contributorIndex, recipientIndex, share, recipient, nonce)
+	return EncryptShareWithNonce(epochID, contributorIndex, recipientIndex, share, recipient, nonce)
 }
 
 // EncryptShareWithNonce masks one Shamir share for a recipient using caller-provided randomness.
 func EncryptShareWithNonce(
-	roundID string,
+	epochID string,
 	contributorIndex, recipientIndex uint16,
 	share *big.Int,
 	recipient types.NodeKey,
 	nonce *big.Int,
 ) (*Ciphertext, error) {
 	return encryptShareWithRoundValue(
-		new(big.Int).SetBytes([]byte(roundID)),
+		new(big.Int).SetBytes([]byte(epochID)),
 		contributorIndex,
 		recipientIndex,
 		share,
@@ -48,7 +48,7 @@ func EncryptShareWithNonce(
 	)
 }
 
-// EncryptShareWithNonceRoundHash masks one Shamir share using a numeric round hash.
+// EncryptShareWithNonceRoundHash masks one Shamir share using a numeric epoch hash.
 func EncryptShareWithNonceRoundHash(
 	roundHash *big.Int,
 	contributorIndex, recipientIndex uint16,
@@ -70,7 +70,7 @@ func encryptShareWithRoundValue(
 		return nil, fmt.Errorf("share is required")
 	}
 	if roundValue == nil {
-		return nil, fmt.Errorf("round hash is required")
+		return nil, fmt.Errorf("epoch hash is required")
 	}
 	if nonce == nil {
 		return nil, fmt.Errorf("nonce is required")
@@ -114,9 +114,9 @@ func encryptShareWithRoundValue(
 }
 
 // DecryptShare removes the masking term from one encrypted share.
-func DecryptShare(roundID string, contributorIndex, recipientIndex uint16, ciphertext Ciphertext, privateKey *big.Int) (*big.Int, error) {
+func DecryptShare(epochID string, contributorIndex, recipientIndex uint16, ciphertext Ciphertext, privateKey *big.Int) (*big.Int, error) {
 	return DecryptShareRoundHash(
-		new(big.Int).SetBytes([]byte(roundID)),
+		new(big.Int).SetBytes([]byte(epochID)),
 		contributorIndex,
 		recipientIndex,
 		ciphertext,
@@ -124,7 +124,7 @@ func DecryptShare(roundID string, contributorIndex, recipientIndex uint16, ciphe
 	)
 }
 
-// DecryptShareRoundHash removes the masking term from one encrypted share using a numeric round hash.
+// DecryptShareRoundHash removes the masking term from one encrypted share using a numeric epoch hash.
 func DecryptShareRoundHash(
 	roundHash *big.Int,
 	contributorIndex, recipientIndex uint16,
@@ -135,7 +135,7 @@ func DecryptShareRoundHash(
 		return nil, fmt.Errorf("private key is required")
 	}
 	if roundHash == nil {
-		return nil, fmt.Errorf("round hash is required")
+		return nil, fmt.Errorf("epoch hash is required")
 	}
 	if ciphertext.MaskedShare == nil {
 		return nil, fmt.Errorf("masked share is required")

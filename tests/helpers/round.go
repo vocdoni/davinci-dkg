@@ -13,46 +13,46 @@ import (
 
 // ZeroDecryptionPolicy is an all-zero decryption policy: no owner restriction,
 // no time locks, no submission cap. Used by tests that don't care about
-// submission gating; callers constructing CreateRound calls directly should
+// submission gating; callers constructing CreateEpoch calls directly should
 // pass this to keep behaviour equivalent to the pre-DecryptionPolicy era.
 func ZeroDecryptionPolicy() golangtypes.DKGTypesDecryptionPolicy {
 	return golangtypes.DKGTypesDecryptionPolicy{}
 }
 
 func RoundIDFromString(value string) [12]byte {
-	var roundID [12]byte
-	copy(roundID[:], []byte(value))
-	return roundID
+	var epochID [12]byte
+	copy(epochID[:], []byte(value))
+	return epochID
 }
 
-func RoundIDToString(roundID [12]byte) string {
-	return strings.TrimRight(string(roundID[:]), "\x00")
+func RoundIDToString(epochID [12]byte) string {
+	return strings.TrimRight(string(epochID[:]), "\x00")
 }
 
 func ComputeRoundID(prefix uint32, nonce uint64) [12]byte {
-	var roundID [12]byte
-	binary.BigEndian.PutUint32(roundID[:4], prefix)
-	binary.BigEndian.PutUint64(roundID[4:], nonce)
-	return roundID
+	var epochID [12]byte
+	binary.BigEndian.PutUint32(epochID[:4], prefix)
+	binary.BigEndian.PutUint64(epochID[4:], nonce)
+	return epochID
 }
 
-func CreateRound(ctx context.Context, services *TestServices, policy types.RoundPolicy) ([12]byte, error) {
+func CreateEpoch(ctx context.Context, services *TestServices, policy types.EpochPolicy) ([12]byte, error) {
 	var zero [12]byte
 
-	prefix, err := services.Manager.ROUNDPREFIX(services.CallOpts(ctx))
+	prefix, err := services.Manager.EPOCHPREFIX(services.CallOpts(ctx))
 	if err != nil {
-		return zero, fmt.Errorf("get round prefix: %w", err)
+		return zero, fmt.Errorf("get epoch prefix: %w", err)
 	}
-	currentNonce, err := services.Manager.RoundNonce(services.CallOpts(ctx))
+	currentNonce, err := services.Manager.EpochNonce(services.CallOpts(ctx))
 	if err != nil {
-		return zero, fmt.Errorf("get round nonce: %w", err)
+		return zero, fmt.Errorf("get epoch nonce: %w", err)
 	}
 
 	auth, err := services.TxManager.NewTransactOpts(ctx)
 	if err != nil {
 		return zero, err
 	}
-	tx, err := services.Manager.CreateRound(
+	tx, err := services.Manager.CreateEpoch(
 		auth,
 		policy.Threshold,
 		policy.CommitteeSize,
@@ -62,7 +62,6 @@ func CreateRound(ctx context.Context, services *TestServices, policy types.Round
 		policy.RegistrationDeadlineBlock,
 		policy.ContributionDeadlineBlock,
 		policy.FinalizeNotBeforeBlock,
-		policy.DisclosureAllowed,
 		golangtypes.DKGTypesDecryptionPolicy{
 			OwnerOnly:          policy.DecryptionPolicy.OwnerOnly,
 			MaxDecryptions:     policy.DecryptionPolicy.MaxDecryptions,
@@ -73,7 +72,7 @@ func CreateRound(ctx context.Context, services *TestServices, policy types.Round
 		},
 	)
 	if err != nil {
-		return zero, fmt.Errorf("create round: %w", err)
+		return zero, fmt.Errorf("create epoch: %w", err)
 	}
 	if err := services.TxManager.WaitTxByHash(tx.Hash(), DefaultTxTimeout); err != nil {
 		return zero, err
@@ -82,29 +81,29 @@ func CreateRound(ctx context.Context, services *TestServices, policy types.Round
 	return ComputeRoundID(prefix, currentNonce+1), nil
 }
 
-// ClaimSlot has the caller race for a committee slot in the round. The caller
-// must be a registered node and pass the lottery for that round.
-func ClaimSlot(ctx context.Context, services *TestServices, roundID [12]byte) error {
+// ClaimSlot has the caller race for a committee slot in the epoch. The caller
+// must be a registered node and pass the lottery for that epoch.
+func ClaimSlot(ctx context.Context, services *TestServices, epochID [12]byte) error {
 	auth, err := services.TxManager.NewTransactOpts(ctx)
 	if err != nil {
 		return err
 	}
-	tx, err := services.Manager.ClaimSlot(auth, roundID)
+	tx, err := services.Manager.ClaimSlot(auth, epochID)
 	if err != nil {
 		return fmt.Errorf("claim slot: %w", err)
 	}
 	return services.TxManager.WaitTxByHash(tx.Hash(), DefaultTxTimeout)
 }
 
-func WaitRoundStatus(ctx context.Context, services *TestServices, roundID [12]byte, status uint8) (web3.RoundView, error) {
-	var round web3.RoundView
+func WaitEpochPhase(ctx context.Context, services *TestServices, epochID [12]byte, status uint8) (web3.EpochView, error) {
+	var epoch web3.EpochView
 	err := WaitUntilCondition(ctx, DefaultWaitInterval, func() bool {
 		var fetchErr error
-		round, fetchErr = services.Contracts.GetRound(ctx, roundID)
-		return fetchErr == nil && round.Status == status
+		epoch, fetchErr = services.Contracts.GetEpoch(ctx, epochID)
+		return fetchErr == nil && epoch.Status == status
 	})
 	if err != nil {
-		return web3.RoundView{}, err
+		return web3.EpochView{}, err
 	}
-	return round, nil
+	return epoch, nil
 }

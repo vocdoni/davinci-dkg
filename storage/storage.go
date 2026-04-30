@@ -9,11 +9,10 @@ import (
 // Storage is the in-memory store for DKG state.
 type Storage struct {
 	db            db.Database
-	rounds        map[string]types.Round
+	epochs        map[string]types.Epoch
 	ready         map[string]map[common.Address]struct{}
 	contributions map[string]map[common.Address]types.Contribution
 	decryptions   map[string]map[common.Address]map[uint16]types.PartialDecryption
-	disclosures   map[string]map[common.Address]types.RevealedShare
 }
 
 // New creates a new in-memory storage.
@@ -25,10 +24,9 @@ func New() *Storage {
 func NewWithDB(database db.Database) *Storage {
 	return &Storage{
 		db:            database,
-		rounds:        make(map[string]types.Round),
+		epochs:        make(map[string]types.Epoch),
 		ready:         make(map[string]map[common.Address]struct{}),
 		contributions: make(map[string]map[common.Address]types.Contribution),
 		decryptions:   make(map[string]map[common.Address]map[uint16]types.PartialDecryption),
-		disclosures:   make(map[string]map[common.Address]types.RevealedShare),
 	}
 }

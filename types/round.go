@@ -2,43 +2,40 @@ package types
 
 import "fmt"
 
-// RoundPhase identifies the current lifecycle phase of a DKG round.
-type RoundPhase uint8
+// EpochPhase identifies the current lifecycle phase of a DKG epoch.
+type EpochPhase uint8
 
 const (
-	RoundPhaseUnknown RoundPhase = iota
-	RoundPhaseRegistration
-	RoundPhaseContribution
-	RoundPhaseFinalized
-	RoundPhaseDecryption
-	RoundPhaseDisclosure
-	RoundPhaseAborted
-	RoundPhaseCompleted
+	EpochPhaseUnknown EpochPhase = iota
+	EpochPhaseRegistration
+	EpochPhaseContribution
+	EpochPhaseFinalized
+	EpochPhaseDecryption
+	EpochPhaseAborted
+	EpochPhaseCompleted
 )
 
-func (p RoundPhase) String() string {
+func (p EpochPhase) String() string {
 	switch p {
-	case RoundPhaseRegistration:
+	case EpochPhaseRegistration:
 		return "registration"
-	case RoundPhaseContribution:
+	case EpochPhaseContribution:
 		return "contribution"
-	case RoundPhaseFinalized:
+	case EpochPhaseFinalized:
 		return "finalized"
-	case RoundPhaseDecryption:
+	case EpochPhaseDecryption:
 		return "decryption"
-	case RoundPhaseDisclosure:
-		return "disclosure"
-	case RoundPhaseAborted:
+	case EpochPhaseAborted:
 		return "aborted"
-	case RoundPhaseCompleted:
+	case EpochPhaseCompleted:
 		return "completed"
 	default:
 		return "unknown"
 	}
 }
 
-// RoundPolicy configures the thresholds and phase windows for one DKG round.
-type RoundPolicy struct {
+// EpochPolicy configures the thresholds and phase windows for one DKG epoch.
+type EpochPolicy struct {
 	Threshold                 uint16
 	CommitteeSize             uint16
 	MinValidContributions     uint16
@@ -46,17 +43,16 @@ type RoundPolicy struct {
 	SeedDelay                 uint16
 	RegistrationDeadlineBlock uint64
 	ContributionDeadlineBlock uint64
-	// FinalizeNotBeforeBlock is the earliest block at which finalizeRound can
+	// FinalizeNotBeforeBlock is the earliest block at which finalizeEpoch can
 	// succeed. Must be strictly greater than ContributionDeadlineBlock; allows
 	// every selected participant time to submit before the contribution set is
 	// frozen.
 	FinalizeNotBeforeBlock uint64
-	DisclosureAllowed      bool
 	DecryptionPolicy       DecryptionPolicy
 }
 
 // DecryptionPolicy mirrors the on-chain DKGTypes.DecryptionPolicy struct and
-// gates who may call submitCiphertext for a round. All checks AND together;
+// gates who may call submitCiphertext for a epoch. All checks AND together;
 // a zero-valued field is a no-op for that check.
 type DecryptionPolicy struct {
 	OwnerOnly          bool
@@ -68,7 +64,7 @@ type DecryptionPolicy struct {
 }
 
 // Validate checks that the policy is internally coherent.
-func (p RoundPolicy) Validate() error {
+func (p EpochPolicy) Validate() error {
 	if p.Threshold == 0 || p.CommitteeSize == 0 {
 		return fmt.Errorf("threshold and committee size must be non-zero")
 	}

@@ -4,50 +4,49 @@ pragma solidity 0.8.28;
 import {DKGTypes} from "../libraries/DKGTypes.sol";
 
 interface IDKGManager {
-    struct Round {
+    struct Epoch {
         address organizer;
-        DKGTypes.RoundPolicy policy;
+        DKGTypes.EpochPolicy policy;
         DKGTypes.DecryptionPolicy decryptionPolicy;
-        DKGTypes.RoundStatus status;
+        DKGTypes.EpochPhase status;
         uint64 nonce;
         uint64 seedBlock;            // block whose blockhash becomes the lottery seed
         bytes32 seed;                // captured lazily on the first claimSlot
-        uint256 lotteryThreshold;    // node-eligibility threshold (snapshotted at createRound)
+        uint256 lotteryThreshold;    // node-eligibility threshold (snapshotted at createEpoch)
         uint16 claimedCount;
         uint16 contributionCount;
         uint16 partialDecryptionCount;
-        uint16 revealedShareCount;
-        uint16 ciphertextCount;      // number of submitCiphertext calls accepted for this round
+        uint16 ciphertextCount;      // number of submitCiphertext calls accepted for this epoch
     }
 
-    event RoundCreated(bytes12 indexed roundId, address indexed organizer, uint64 seedBlock, uint256 lotteryThreshold);
-    event RegistrationExtended(bytes12 indexed roundId, uint64 newSeedBlock, uint64 newRegistrationDeadline);
-    event SeedResolved(bytes12 indexed roundId, bytes32 seed);
-    event SlotClaimed(bytes12 indexed roundId, address indexed claimer, uint16 slot);
-    event RegistrationClosed(bytes12 indexed roundId);
-    event RoundEvicted(bytes12 indexed roundId);
+    event EpochCreated(bytes12 indexed epochId, address indexed organizer, uint64 seedBlock, uint256 lotteryThreshold);
+    event RegistrationExtended(bytes12 indexed epochId, uint64 newSeedBlock, uint64 newRegistrationDeadline);
+    event SeedResolved(bytes12 indexed epochId, bytes32 seed);
+    event SlotClaimed(bytes12 indexed epochId, address indexed claimer, uint16 slot);
+    event RegistrationClosed(bytes12 indexed epochId);
+    event EpochEvicted(bytes12 indexed epochId);
     event ContributionSubmitted(
-        bytes12 indexed roundId,
+        bytes12 indexed epochId,
         address indexed contributor,
         uint16 contributorIndex,
         bytes32 commitmentsHash,
         bytes32 encryptedSharesHash
     );
-    event RoundFinalized(
-        bytes12 indexed roundId,
+    event EpochFinalized(
+        bytes12 indexed epochId,
         bytes32 aggregateCommitmentsHash,
         bytes32 collectivePublicKeyHash,
         bytes32 shareCommitmentHash
     );
     event PartialDecryptionSubmitted(
-        bytes12 indexed roundId,
+        bytes12 indexed epochId,
         address indexed participant,
         uint16 participantIndex,
         uint16 ciphertextIndex,
         bytes32 deltaHash
     );
     event CiphertextSubmitted(
-        bytes12 indexed roundId,
+        bytes12 indexed epochId,
         uint16 indexed ciphertextIndex,
         address indexed submitter,
         uint256 c1x,
@@ -56,16 +55,33 @@ interface IDKGManager {
         uint256 c2y
     );
     event DecryptionCombined(
-        bytes12 indexed roundId, uint16 indexed ciphertextIndex, bytes32 combineHash, uint256 plaintext
+        bytes12 indexed epochId, uint16 indexed ciphertextIndex, bytes32 combineHash, uint256 plaintext
     );
-    event RevealedShareSubmitted(bytes12 indexed roundId, address indexed participant, uint16 participantIndex, bytes32 shareHash);
-    event SecretReconstructed(bytes12 indexed roundId, bytes32 disclosureHash, bytes32 reconstructedSecretHash);
-    event RoundAborted(bytes12 indexed roundId);
+    event EpochAborted(bytes12 indexed epochId);
+    event ApplicationRegistered(
+        bytes12 indexed epochId,
+        bytes32 indexed aid,
+        address indexed creator,
+        uint8 mode,
+        uint256 derivationS,
+        uint256 organizerPKx,
+        uint256 organizerPKy
+    );
+    event OrganizerShareSubmitted(
+        bytes12 indexed epochId,
+        bytes32 indexed aid,
+        uint16 indexed ciphertextIndex,
+        uint256 deltaOrgX,
+        uint256 deltaOrgY
+    );
 
     error InvalidPolicy();
+    error InvalidApplication();
+    error ApplicationAlreadyExists();
+    error InvalidSchnorrProof();
     error InvalidChainId();
     error InvalidAddress();
-    error InvalidRound();
+    error InvalidEpoch();
     error InvalidPhase();
     error NotEligible();
     error AlreadyClaimed();
@@ -85,13 +101,8 @@ interface IDKGManager {
     error InvalidVerifier();
     error Unauthorized();
     error AlreadyCombined();
-    error AlreadyRevealed();
     error InvalidCombinedDecryption();
-    error InvalidRevealedShare();
-    error InvalidReconstruction();
     error InsufficientPartialDecryptions();
-    error InsufficientRevealedShares();
-    error DisclosureDisabled();
     error InvalidProofInput();
     error NotOwner();
     error InvalidDecryptionPolicy();
@@ -102,7 +113,7 @@ interface IDKGManager {
     error CiphertextNotSubmitted();
     error InvalidCiphertext();
 
-    function createRound(
+    function createEpoch(
         uint16 threshold,
         uint16 committeeSize,
         uint16 minValidContributions,
@@ -111,22 +122,21 @@ interface IDKGManager {
         uint64 registrationDeadlineBlock,
         uint64 contributionDeadlineBlock,
         uint64 finalizeNotBeforeBlock,
-        bool disclosureAllowed,
         DKGTypes.DecryptionPolicy calldata decryptionPolicy
     ) external returns (bytes12);
 
-    function claimSlot(bytes12 roundId) external;
+    function claimSlot(bytes12 epochId) external;
     function submitCiphertext(
-        bytes12 roundId,
+        bytes12 epochId,
         uint16 ciphertextIndex,
         uint256 c1x,
         uint256 c1y,
         uint256 c2x,
         uint256 c2y
     ) external;
-    function extendRegistration(bytes12 roundId) external;
+    function extendRegistration(bytes12 epochId) external;
     function submitContribution(
-        bytes12 roundId,
+        bytes12 epochId,
         uint16 contributorIndex,
         bytes32 commitmentsHash,
         bytes32 encryptedSharesHash,
@@ -136,8 +146,8 @@ interface IDKGManager {
         bytes calldata proof,
         bytes calldata input
     ) external;
-    function finalizeRound(
-        bytes12 roundId,
+    function finalizeEpoch(
+        bytes12 epochId,
         bytes32 aggregateCommitmentsHash,
         bytes32 collectivePublicKeyHash,
         bytes32 shareCommitmentHash,
@@ -146,7 +156,8 @@ interface IDKGManager {
         bytes calldata input
     ) external;
     function submitPartialDecryption(
-        bytes12 roundId,
+        bytes12 epochId,
+        bytes32 aid,
         uint16 participantIndex,
         uint16 ciphertextIndex,
         bytes32 deltaHash,
@@ -154,7 +165,8 @@ interface IDKGManager {
         bytes calldata input
     ) external;
     function combineDecryption(
-        bytes12 roundId,
+        bytes12 epochId,
+        bytes32 aid,
         uint16 ciphertextIndex,
         bytes32 combineHash,
         uint256 plaintext,
@@ -162,46 +174,34 @@ interface IDKGManager {
         bytes calldata proof,
         bytes calldata input
     ) external;
-    function submitRevealedShare(
-        bytes12 roundId,
-        uint16 participantIndex,
-        uint256 shareValue,
-        bytes calldata proof,
-        bytes calldata input
+    function submitOrganizerShare(
+        bytes12 epochId,
+        bytes32 aid,
+        uint16 ciphertextIndex,
+        uint256 deltaOrgX,
+        uint256 deltaOrgY,
+        bytes calldata dleqProof,
+        bytes calldata dleqInput
     ) external;
-    function reconstructSecret(
-        bytes12 roundId,
-        bytes32 disclosureHash,
-        bytes32 reconstructedSecretHash,
-        bytes calldata transcript,
-        bytes calldata proof,
-        bytes calldata input
-    ) external;
-    function abortRound(bytes12 roundId) external;
-    function getRound(bytes12 roundId) external view returns (Round memory);
-    function selectedParticipants(bytes12 roundId) external view returns (address[] memory);
-    function getContribution(bytes12 roundId, address contributor) external view returns (DKGTypes.ContributionRecord memory);
-    function getPartialDecryption(bytes12 roundId, address participant, uint16 ciphertextIndex)
+    function abortEpoch(bytes12 epochId) external;
+    function getEpoch(bytes12 epochId) external view returns (Epoch memory);
+    function selectedParticipants(bytes12 epochId) external view returns (address[] memory);
+    function getContribution(bytes12 epochId, address contributor) external view returns (DKGTypes.ContributionRecord memory);
+    function getPartialDecryption(bytes12 epochId, address participant, uint16 ciphertextIndex)
         external
         view
         returns (DKGTypes.PartialDecryptionRecord memory);
-    function getCombinedDecryption(bytes12 roundId, uint16 ciphertextIndex)
+    function getCombinedDecryption(bytes12 epochId, uint16 ciphertextIndex)
         external
         view
         returns (DKGTypes.CombinedDecryptionRecord memory);
-    function getRevealedShare(bytes12 roundId, address participant)
-        external
-        view
-        returns (DKGTypes.RevealedShareRecord memory);
-    function getShareCommitmentHash(bytes12 roundId, uint16 participantIndex) external view returns (bytes32);
-    function getCollectivePublicKey(bytes12 roundId) external view returns (DKGTypes.Point memory);
-    function getCiphertextHash(bytes12 roundId, uint16 ciphertextIndex) external view returns (bytes32);
-    function getPlaintext(bytes12 roundId, uint16 ciphertextIndex) external view returns (uint256);
-    function getDecryptionPolicy(bytes12 roundId) external view returns (DKGTypes.DecryptionPolicy memory);
+    function getShareCommitmentHash(bytes12 epochId, uint16 participantIndex) external view returns (bytes32);
+    function getCollectivePublicKey(bytes12 epochId) external view returns (DKGTypes.Point memory);
+    function getCiphertextHash(bytes12 epochId, uint16 ciphertextIndex) external view returns (bytes32);
+    function getPlaintext(bytes12 epochId, uint16 ciphertextIndex) external view returns (uint256);
+    function getDecryptionPolicy(bytes12 epochId) external view returns (DKGTypes.DecryptionPolicy memory);
     function getContributionVerifierVKeyHash() external view returns (bytes32);
     function getPartialDecryptVerifierVKeyHash() external view returns (bytes32);
     function getFinalizeVerifierVKeyHash() external view returns (bytes32);
     function getDecryptCombineVerifierVKeyHash() external view returns (bytes32);
-    function getRevealSubmitVerifierVKeyHash() external view returns (bytes32);
-    function getRevealShareVerifierVKeyHash() external view returns (bytes32);
 }

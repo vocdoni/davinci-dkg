@@ -8,8 +8,8 @@ import { buildErrorReport } from '~lib/error-report'
 
 interface Props {
   error: unknown
-  /** Extra context (e.g. roundId on a round detail page). */
-  extra?: { roundId?: string; blockNumber?: bigint | number }
+  /** Extra context (e.g. epochId on a epoch detail page). */
+  extra?: { epochId?: string; blockNumber?: bigint | number }
 }
 
 // One-click "Copy error report". Bundles route, chain, wallet, and any
@@ -28,7 +28,7 @@ export function ErrorReportButton({ error, extra }: Props) {
       chainId: config.chainId,
       chainName: config.chainName,
       walletAddress: address,
-      roundId: extra?.roundId,
+      epochId: extra?.epochId,
       blockNumber: extra?.blockNumber,
       buildVersion: import.meta.env.VITE_BUILD_VERSION as string | undefined,
     })

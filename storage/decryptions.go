@@ -10,16 +10,16 @@ import (
 	"github.com/vocdoni/davinci-dkg/types"
 )
 
-// SavePartialDecryption stores one accepted partial decryption keyed by round, participant, and ciphertext.
+// SavePartialDecryption stores one accepted partial decryption keyed by epoch, participant, and ciphertext.
 func (s *Storage) SavePartialDecryption(decryption types.PartialDecryption) error {
 	if err := decryption.Validate(); err != nil {
 		return err
 	}
 	if s.db != nil {
-		if _, err := s.Round(decryption.RoundID); err != nil {
+		if _, err := s.Epoch(decryption.EpochID); err != nil {
 			return err
 		}
-		key := partialDecryptionKey(decryption.RoundID, decryption.Participant, decryption.CiphertextIndex)
+		key := partialDecryptionKey(decryption.EpochID, decryption.Participant, decryption.CiphertextIndex)
 		if _, err := s.db.Get(key); err == nil {
 			return fmt.Errorf("partial decryption already exists")
 		} else if err != db.ErrKeyNotFound {
@@ -36,20 +36,20 @@ func (s *Storage) SavePartialDecryption(decryption types.PartialDecryption) erro
 		}
 		return tx.Commit()
 	}
-	if _, err := s.Round(decryption.RoundID); err != nil {
+	if _, err := s.Epoch(decryption.EpochID); err != nil {
 		return err
 	}
-	if _, ok := s.decryptions[decryption.RoundID][decryption.Participant]; !ok {
-		s.decryptions[decryption.RoundID][decryption.Participant] = make(map[uint16]types.PartialDecryption)
+	if _, ok := s.decryptions[decryption.EpochID][decryption.Participant]; !ok {
+		s.decryptions[decryption.EpochID][decryption.Participant] = make(map[uint16]types.PartialDecryption)
 	}
-	if _, ok := s.decryptions[decryption.RoundID][decryption.Participant][decryption.CiphertextIndex]; ok {
+	if _, ok := s.decryptions[decryption.EpochID][decryption.Participant][decryption.CiphertextIndex]; ok {
 		return fmt.Errorf("partial decryption already exists")
 	}
-	s.decryptions[decryption.RoundID][decryption.Participant][decryption.CiphertextIndex] = decryption
+	s.decryptions[decryption.EpochID][decryption.Participant][decryption.CiphertextIndex] = decryption
 	return nil
 }
 
-// PartialDecryptions returns all stored partial decryptions for the round.
+// PartialDecryptions returns all stored partial decryptions for the epoch.
 func (s *Storage) PartialDecryptions(id string) []types.PartialDecryption {
 	if s.db != nil {
 		result := []types.PartialDecryption{}

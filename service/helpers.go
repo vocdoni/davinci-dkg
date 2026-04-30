@@ -22,8 +22,8 @@ func participantIndex(participants []common.Address, operator common.Address) ui
 	return 0
 }
 
-func hasContribution(st *storage.Storage, roundID string, operator common.Address) bool {
-	for _, contribution := range st.Contributions(roundID) {
+func hasContribution(st *storage.Storage, epochID string, operator common.Address) bool {
+	for _, contribution := range st.Contributions(epochID) {
 		if contribution.Contributor == operator {
 			return true
 		}
@@ -31,8 +31,8 @@ func hasContribution(st *storage.Storage, roundID string, operator common.Addres
 	return false
 }
 
-func hasPartialDecryption(st *storage.Storage, roundID string, operator common.Address, ciphertextIndex uint16) bool {
-	for _, decryption := range st.PartialDecryptions(roundID) {
+func hasPartialDecryption(st *storage.Storage, epochID string, operator common.Address, ciphertextIndex uint16) bool {
+	for _, decryption := range st.PartialDecryptions(epochID) {
 		if decryption.Participant == operator && decryption.CiphertextIndex == ciphertextIndex {
 			return true
 		}
@@ -40,21 +40,6 @@ func hasPartialDecryption(st *storage.Storage, roundID string, operator common.A
 	return false
 }
 
-func hasRevealedShare(st *storage.Storage, roundID string, operator common.Address) bool {
-	for _, share := range st.RevealedShares(roundID) {
-		if share.Participant == operator {
-			return true
-		}
-	}
-	return false
-}
-
-func allowsDecryption(phase types.RoundPhase) bool {
-	return phase == types.RoundPhaseFinalized || phase == types.RoundPhaseDecryption
-}
-
-func allowsDisclosure(phase types.RoundPhase) bool {
-	// RoundPhaseCompleted is the terminal state after reconstructSecret;
-	// disclosure is already done at that point.
-	return phase == types.RoundPhaseFinalized || phase == types.RoundPhaseDisclosure
+func allowsDecryption(phase types.EpochPhase) bool {
+	return phase == types.EpochPhaseFinalized || phase == types.EpochPhaseDecryption
 }

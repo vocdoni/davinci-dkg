@@ -12,7 +12,7 @@ func TestContributionValidate(t *testing.T) {
 	c := qt.New(t)
 
 	contribution := Contribution{
-		RoundID:          "round-1",
+		EpochID:          "epoch-1",
 		Contributor:      common.HexToAddress("0x1000000000000000000000000000000000000001"),
 		ContributorIndex: 1,
 		Commitments: []CurvePoint{
@@ -36,7 +36,7 @@ func TestContributionValidateRejectsMissingEncryptedShares(t *testing.T) {
 	c := qt.New(t)
 
 	contribution := Contribution{
-		RoundID:          "round-1",
+		EpochID:          "epoch-1",
 		Contributor:      common.HexToAddress("0x1000000000000000000000000000000000000001"),
 		ContributorIndex: 1,
 		Commitments: []CurvePoint{
@@ -54,7 +54,7 @@ func TestFinalizedOutputValidate(t *testing.T) {
 	c := qt.New(t)
 
 	output := FinalizedOutput{
-		RoundID:             "round-1",
+		EpochID:             "epoch-1",
 		CollectivePublicKey: CurvePoint{X: big.NewInt(1), Y: big.NewInt(2)},
 		AggregateCommitments: []CurvePoint{
 			{X: big.NewInt(3), Y: big.NewInt(4)},

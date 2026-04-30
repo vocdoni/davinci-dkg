@@ -2,9 +2,9 @@ import { useCallback, useState } from 'react'
 import { Box, Grid, GridItem, HStack, Stack, Text } from '@chakra-ui/react'
 import { useAccount } from 'wagmi'
 import type { Hex } from 'viem'
-import { RoundStatus, type ElGamalCiphertext } from '@vocdoni/davinci-dkg-sdk'
+import { EpochPhase, type ElGamalCiphertext } from '@vocdoni/davinci-dkg-sdk'
 import { ConnectStep } from '~components/Playground/steps/ConnectStep'
-import { CreateRoundStep } from '~components/Playground/steps/CreateRoundStep'
+import { CreateEpochStep } from '~components/Playground/steps/CreateEpochStep'
 import { WatchProgressStep } from '~components/Playground/steps/WatchProgressStep'
 import { KeyAvailableStep } from '~components/Playground/steps/KeyAvailableStep'
 import { EncryptStep } from '~components/Playground/steps/EncryptStep'
@@ -15,9 +15,9 @@ import type { StepStatus } from '~components/Playground/StepCard'
 import { DetailDisclosure } from '~components/Debug/DetailDisclosure'
 import { useDebugMode } from '~hooks/use-debug-mode'
 import { PageHeader } from '~components/Layout/PageHeader'
-import { useRound } from '~queries/rounds'
+import { useEpoch } from '~queries/epochs'
 import { useBlockNumber } from '~queries/chain'
-import { roundFailure } from '~lib/round-utils'
+import { roundFailure } from '~lib/epoch-utils'
 
 // Playground page. Editorial masthead, then a two-column layout: the
 // numbered step cards on the left, a sticky activity-log panel on the
@@ -28,7 +28,7 @@ export function Playground() {
   const { isConnected } = useAccount()
   const { enabled: debug } = useDebugMode()
 
-  const [roundId, setRoundId] = useState<Hex | null>(null)
+  const [epochId, setRoundId] = useState<Hex | null>(null)
   const [collectivePubKey, setCollectivePubKey] = useState<{ x: bigint; y: bigint } | null>(null)
   const [ciphertext, setCiphertext] = useState<ElGamalCiphertext | null>(null)
   const [plaintext, setPlaintext] = useState<bigint | null>(null)
@@ -39,25 +39,25 @@ export function Playground() {
     setLog((prev) => [...prev, { ts: Date.now(), msg, level }])
   }, [])
 
-  // Surface a round-failure state up here so every downstream step can
+  // Surface a epoch-failure state up here so every downstream step can
   // freeze. Same React Query key as the WatchProgressStep, so this is a
   // free read from the cache.
-  const round = useRound((roundId ?? undefined) as `0x${string}` | undefined)
+  const epoch = useEpoch((epochId ?? undefined) as `0x${string}` | undefined)
   const { data: block } = useBlockNumber()
-  const failure = round.data ? roundFailure(round.data.round, block ?? null) : null
-  const aborted = round.data?.round.status === RoundStatus.Aborted
+  const failure = epoch.data ? roundFailure(epoch.data.epoch, block ?? null) : null
+  const aborted = epoch.data?.epoch.status === EpochPhase.Aborted
   const blocked = Boolean(failure || aborted)
 
   const stepWallet: StepStatus = isConnected ? 'done' : 'active'
-  const stepCreate: StepStatus = !isConnected ? 'pending' : roundId ? 'done' : 'active'
-  const stepWatch: StepStatus = !roundId
+  const stepCreate: StepStatus = !isConnected ? 'pending' : epochId ? 'done' : 'active'
+  const stepWatch: StepStatus = !epochId
     ? 'pending'
     : blocked
       ? 'error'
       : collectivePubKey
         ? 'done'
         : 'active'
-  const stepKey: StepStatus = !roundId
+  const stepKey: StepStatus = !epochId
     ? 'pending'
     : blocked
       ? 'pending'
@@ -76,16 +76,16 @@ export function Playground() {
     <Stack gap={{ base: 8, md: 12 }}>
       <PageHeader
         title='Playground'
-        subtitle='A guided walkthrough of the full DKG flow: create a round, wait for nodes to contribute, read the collective public key, encrypt a value, submit the ciphertext, and watch the committee threshold-decrypt it on-chain.'
+        subtitle='A guided walkthrough of the full DKG flow: create a epoch, wait for nodes to contribute, read the collective public key, encrypt a value, submit the ciphertext, and watch the committee threshold-decrypt it on-chain.'
       />
 
       <Grid templateColumns={{ base: '1fr', lg: '2fr 1fr' }} gap={{ base: 6, lg: 8 }} alignItems='start'>
         <GridItem>
           <Stack gap={5}>
             <ConnectStep status={stepWallet} />
-            <CreateRoundStep status={stepCreate} roundId={roundId} setRoundId={setRoundId} log={addLog} />
-            <WatchProgressStep status={stepWatch} roundId={roundId} log={addLog} />
-            <KeyAvailableStep status={stepKey} roundId={roundId} onKeyReady={setCollectivePubKey} log={addLog} />
+            <CreateEpochStep status={stepCreate} epochId={epochId} setRoundId={setRoundId} log={addLog} />
+            <WatchProgressStep status={stepWatch} epochId={epochId} log={addLog} />
+            <KeyAvailableStep status={stepKey} epochId={epochId} onKeyReady={setCollectivePubKey} log={addLog} />
             <EncryptStep
               status={stepEncrypt}
               collectivePubKey={collectivePubKey}
@@ -98,14 +98,14 @@ export function Playground() {
             />
             <SubmitCiphertextStep
               status={stepSubmit}
-              roundId={roundId}
+              epochId={epochId}
               ciphertext={ciphertext}
               onSubmitted={onSubmitted}
               log={addLog}
             />
             <VerifyDecryptionStep
               status={stepVerify}
-              roundId={roundId}
+              epochId={epochId}
               ciphertextIndex={submittedIndex}
               expectedPlaintext={plaintext}
               log={addLog}

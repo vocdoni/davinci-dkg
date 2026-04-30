@@ -12,7 +12,10 @@ import (
 
 // PublicInputs is the native representation of the partial decrypt public inputs.
 type PublicInputs struct {
-	RoundHash        *big.Int
+	RoundHash        *big.Int // semantically: eid
+	Aid              *big.Int
+	CtIdx            *big.Int
+	Role             *big.Int
 	ParticipantIndex *big.Int
 	Base             types.CurvePoint
 	PublicKey        types.CurvePoint
@@ -29,6 +32,21 @@ func BuildWitness(a Assignment) (*PartialDecryptCircuit, *PublicInputs, error) {
 	}
 
 	participantIndex := big.NewInt(int64(a.ParticipantIndex))
+	// Default the per-app transcript binding fields to zero / committee
+	// when callers don't supply them. The circuit binds these into the
+	// Fiat-Shamir state so the values must match between prover and verifier.
+	aid := new(big.Int)
+	if a.Aid != nil {
+		aid.Set(a.Aid)
+	}
+	ctIdx := new(big.Int)
+	if a.CtIdx != nil {
+		ctIdx.Set(a.CtIdx)
+	}
+	role := big.NewInt(1) // ROLE_COMMITTEE
+	if a.Role != nil {
+		role.Set(a.Role)
+	}
 	order := group.ScalarField()
 	secret := new(big.Int).Mod(new(big.Int).Set(a.Secret), order)
 	nonce := new(big.Int).Mod(new(big.Int).Set(a.Nonce), order)
@@ -56,6 +74,9 @@ func BuildWitness(a Assignment) (*PartialDecryptCircuit, *PublicInputs, error) {
 	challengeState, err := ccommon.HashFieldElementsNative(
 		ccommon.PartialDecryptDomain(),
 		a.RoundHash,
+		aid,
+		ctIdx,
+		role,
 		participantIndex,
 	)
 	if err != nil {
@@ -78,6 +99,9 @@ func BuildWitness(a Assignment) (*PartialDecryptCircuit, *PublicInputs, error) {
 
 	witness := &PartialDecryptCircuit{
 		RoundHash:        new(big.Int).Set(a.RoundHash),
+		Aid:              new(big.Int).Set(aid),
+		CtIdx:            new(big.Int).Set(ctIdx),
+		Role:             new(big.Int).Set(role),
 		ParticipantIndex: participantIndex,
 		Base:             ccommon.CircuitPoint(a.Base),
 		PublicKey:        ccommon.CircuitPoint(group.Encode(publicKeyPoint)),
@@ -90,6 +114,9 @@ func BuildWitness(a Assignment) (*PartialDecryptCircuit, *PublicInputs, error) {
 	}
 	publicInputs := &PublicInputs{
 		RoundHash:        new(big.Int).Set(a.RoundHash),
+		Aid:              new(big.Int).Set(aid),
+		CtIdx:            new(big.Int).Set(ctIdx),
+		Role:             new(big.Int).Set(role),
 		ParticipantIndex: new(big.Int).Set(participantIndex),
 		Base:             a.Base,
 		PublicKey:        group.Encode(publicKeyPoint),
@@ -105,6 +132,9 @@ func BuildWitness(a Assignment) (*PartialDecryptCircuit, *PublicInputs, error) {
 func (p PublicInputs) PublicWitness() *PartialDecryptCircuit {
 	return &PartialDecryptCircuit{
 		RoundHash:        p.RoundHash,
+		Aid:              p.Aid,
+		CtIdx:            p.CtIdx,
+		Role:             p.Role,
 		ParticipantIndex: p.ParticipantIndex,
 		Base:             ccommon.CircuitPoint(p.Base),
 		PublicKey:        ccommon.CircuitPoint(p.PublicKey),

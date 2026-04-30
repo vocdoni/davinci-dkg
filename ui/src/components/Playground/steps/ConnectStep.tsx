@@ -13,7 +13,7 @@ export function ConnectStep({ status }: { status: StepStatus }) {
       n={1}
       title='Connect a wallet'
       status={status}
-      description='You need a wallet to create a round and submit a ciphertext. Browsing the explorer works without one.'
+      description='You need a wallet to create a epoch and submit a ciphertext. Browsing the explorer works without one.'
     >
       <Stack gap={4}>
         {!isConnected ? (
@@ -33,7 +33,7 @@ export function ConnectStep({ status }: { status: StepStatus }) {
           body={
             <>
               Your wallet signs the two transactions later in this walkthrough — one to create
-              the round, and one to publish the ciphertext for the committee to decrypt. Nothing
+              the epoch, and one to publish the ciphertext for the committee to decrypt. Nothing
               is sent on-chain yet; the connect step just hands the page an address it can sign
               from.
             </>

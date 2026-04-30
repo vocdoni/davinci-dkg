@@ -10,29 +10,26 @@ const (
 )
 
 var (
-	ContributionCircuitHash         = "11e527d3b9f4028bfeb6390ff2657cc11f9df9f759c7d88326509bbf5cdbdec4"
-	ContributionProvingKeyHash      = "1a4df626104a92627e8919a3f3a8e1777837aa64bd6896836c7839cd03315302"
-	ContributionVerificationKeyHash = "2e7c197568d6227d4f5bdf41c050b89a55e99611b56f8dfb5498a29ce4edd20b"
+	ContributionCircuitHash = "11e527d3b9f4028bfeb6390ff2657cc11f9df9f759c7d88326509bbf5cdbdec4"
+	ContributionProvingKeyHash = "5c77f8f911a3b7933667cc03856a40146de22b1461006e333f6e623b350bb48c"
+	ContributionVerificationKeyHash = "8f858f4226de14efc4a938cc66e4c113782afdfe12bbe47849cde6b3e5be12bf"
 
-	FinalizeCircuitHash         = "856e1e6d4d52362e78c8978afe92183443224198b9710eed9a36ec03d1b71035"
-	FinalizeProvingKeyHash      = "1b8d1a37c4213616630f88f306700964aea396548ca06864c2968d9664319384"
-	FinalizeVerificationKeyHash = "b1aac5c4fc181cd427cf781fde357406e2d897e71f88ddc0dcef7432c7185131"
+	FinalizeCircuitHash = "856e1e6d4d52362e78c8978afe92183443224198b9710eed9a36ec03d1b71035"
+	FinalizeProvingKeyHash = "b7d50091bbf5d4629605846b345d0113903db148242238c55d039eb0c88e51d9"
+	FinalizeVerificationKeyHash = "e0bb00a05d2a34725cfa9864d625a72bf794485bab4a13faa8dbd73a8604f22f"
 
-	PartialDecryptCircuitHash         = "863bc4cf95ea534c14fa074c463aa55afd8a5dfad156db5cbec2faec9a3452ce"
-	PartialDecryptProvingKeyHash      = "dcf6281e9f1e2e7f989ce76bc8c495b7538b2079e9dc3cfa333078f1eb0e59b1"
-	PartialDecryptVerificationKeyHash = "c66684bb10be535c0ddc5b358824ebacc4220820bf9060dc25471ad3edcff2fd"
+	// Hashes regenerated in P6 after the P5 circuit changes (added Aid,
+	// CtIdx, Role public inputs to partialdecrypt; added Aid, CtIdx, Mode,
+	// S, DeltaOrg + mode-aware T branch to decryptcombine). These pk/vk
+	// hashes correspond to a DEV trusted setup; the production ceremony
+	// in S2 will regenerate fresh keys and bump these again.
+	PartialDecryptCircuitHash = "ea643967ac06560492d2e2a52d433288d13c59aafe1fd2ccd7f756fdf66c4268"
+	PartialDecryptProvingKeyHash = "e36767c950be07ed840c6f59c9a3c3cd54f08594a256d18eceb07997a9ff5245"
+	PartialDecryptVerificationKeyHash = "dddca136f8b31f2508d4e5ce237f06f8738224a0d6ceb0afd48325e00eb07388"
 
-	DecryptCombineCircuitHash         = "556e91b4798a777d6b8cdb83947cf605d25e88657634c6a75dc9917e1baa5117"
-	DecryptCombineProvingKeyHash      = "372e21cbb0782715e3f90e1d7f4b719549afe862079d87fc8004a43fdbadf2b2"
-	DecryptCombineVerificationKeyHash = "1e9773d92a10e13d064bd44930920923cecb58a2e1a4cfccf735cfd726a83b6c"
-
-	RevealShareCircuitHash         = "b942794d9d90da50c24b57eb6c2590f4e6ba92ebb359b9e5482d1daa817d8849"
-	RevealShareProvingKeyHash      = "0b4aeed5e5188ebf298b2cb018fd3df2213f92fddda334557ac36957590f0755"
-	RevealShareVerificationKeyHash = "fadabadeba9ca793dfb4d51adf6a0b9ccecaf604c2c4897856436b3b59ad817f"
-
-	RevealSubmitCircuitHash         = "e8a000a5e8d40715d2c9364ab8708cb81c83171e95612a1c9e9e7dce8f0b657f"
-	RevealSubmitProvingKeyHash      = "56288ec5b25ac49e83b527dded1a7835b5d485f5859197b31321da08011908e7"
-	RevealSubmitVerificationKeyHash = "c0ab2b039010e9ddac118c3e28452e1bb70782565d9d390f8dcc9363a28405e9"
+	DecryptCombineCircuitHash = "f7e203480ffab16f1e55f39f61cdd05782be2d7ea0033b284293b49bee5d133b"
+	DecryptCombineProvingKeyHash = "d1cd294544102bb194baa6a3255de8e23899df4c1f489c4d45c23b84bb44af43"
+	DecryptCombineVerificationKeyHash = "a3af90bb13983d5dee88a0dc9fd133af13fefaab4af39ac8af87581a64d1c7ec"
 
 	ContributionCircuitURL         = artifactURL(ContributionCircuitHash, "ccs")
 	ContributionProvingKeyURL      = artifactURL(ContributionProvingKeyHash, "pk")
@@ -49,14 +46,6 @@ var (
 	DecryptCombineCircuitURL         = artifactURL(DecryptCombineCircuitHash, "ccs")
 	DecryptCombineProvingKeyURL      = artifactURL(DecryptCombineProvingKeyHash, "pk")
 	DecryptCombineVerificationKeyURL = artifactURL(DecryptCombineVerificationKeyHash, "vk")
-
-	RevealShareCircuitURL         = artifactURL(RevealShareCircuitHash, "ccs")
-	RevealShareProvingKeyURL      = artifactURL(RevealShareProvingKeyHash, "pk")
-	RevealShareVerificationKeyURL = artifactURL(RevealShareVerificationKeyHash, "vk")
-
-	RevealSubmitCircuitURL         = artifactURL(RevealSubmitCircuitHash, "ccs")
-	RevealSubmitProvingKeyURL      = artifactURL(RevealSubmitProvingKeyHash, "pk")
-	RevealSubmitVerificationKeyURL = artifactURL(RevealSubmitVerificationKeyHash, "vk")
 )
 
 func artifactURL(hash, ext string) string {

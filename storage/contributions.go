@@ -9,16 +9,16 @@ import (
 	"github.com/vocdoni/davinci-dkg/types"
 )
 
-// SaveContribution stores one accepted contribution keyed by round and contributor.
+// SaveContribution stores one accepted contribution keyed by epoch and contributor.
 func (s *Storage) SaveContribution(contribution types.Contribution) error {
 	if err := contribution.Validate(); err != nil {
 		return err
 	}
 	if s.db != nil {
-		if _, err := s.Round(contribution.RoundID); err != nil {
+		if _, err := s.Epoch(contribution.EpochID); err != nil {
 			return err
 		}
-		key := contributionKey(contribution.RoundID, contribution.Contributor)
+		key := contributionKey(contribution.EpochID, contribution.Contributor)
 		if _, err := s.db.Get(key); err == nil {
 			return fmt.Errorf("contribution already exists")
 		} else if err != db.ErrKeyNotFound {
@@ -35,13 +35,13 @@ func (s *Storage) SaveContribution(contribution types.Contribution) error {
 		}
 		return tx.Commit()
 	}
-	if _, err := s.Round(contribution.RoundID); err != nil {
+	if _, err := s.Epoch(contribution.EpochID); err != nil {
 		return err
 	}
-	if _, ok := s.contributions[contribution.RoundID][contribution.Contributor]; ok {
+	if _, ok := s.contributions[contribution.EpochID][contribution.Contributor]; ok {
 		return fmt.Errorf("contribution already exists")
 	}
-	s.contributions[contribution.RoundID][contribution.Contributor] = contribution
+	s.contributions[contribution.EpochID][contribution.Contributor] = contribution
 	return nil
 }
 
@@ -68,7 +68,7 @@ func (s *Storage) Contribution(id string, contributor common.Address) (types.Con
 	return contribution, nil
 }
 
-// Contributions returns all stored contributions for the round.
+// Contributions returns all stored contributions for the epoch.
 func (s *Storage) Contributions(id string) []types.Contribution {
 	if s.db != nil {
 		result := []types.Contribution{}

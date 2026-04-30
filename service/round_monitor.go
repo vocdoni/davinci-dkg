@@ -11,39 +11,39 @@ import (
 )
 
 type RoundReader interface {
-	GetRound(ctx context.Context, roundID [12]byte) (web3.RoundView, error)
-	SelectedParticipants(ctx context.Context, roundID [12]byte) ([]common.Address, error)
+	GetEpoch(ctx context.Context, epochID [12]byte) (web3.EpochView, error)
+	SelectedParticipants(ctx context.Context, epochID [12]byte) ([]common.Address, error)
 }
 
-type RoundMonitor struct {
+type EpochMonitor struct {
 	contracts RoundReader
 	storage   *storage.Storage
 }
 
-func NewRoundMonitor(contracts RoundReader, st *storage.Storage) *RoundMonitor {
+func NewEpochMonitor(contracts RoundReader, st *storage.Storage) *EpochMonitor {
 	if st == nil {
 		st = storage.New()
 	}
-	return &RoundMonitor{
+	return &EpochMonitor{
 		contracts: contracts,
 		storage:   st,
 	}
 }
 
-func (m *RoundMonitor) SyncRound(ctx context.Context, roundID [12]byte) error {
-	roundView, err := m.contracts.GetRound(ctx, roundID)
+func (m *EpochMonitor) SyncRound(ctx context.Context, epochID [12]byte) error {
+	roundView, err := m.contracts.GetEpoch(ctx, epochID)
 	if err != nil {
 		return err
 	}
-	selected, err := m.contracts.SelectedParticipants(ctx, roundID)
+	selected, err := m.contracts.SelectedParticipants(ctx, epochID)
 	if err != nil {
 		return err
 	}
 
-	round := types.Round{
-		ID:        strings.TrimRight(string(roundID[:]), "\x00"),
+	epoch := types.Epoch{
+		ID:        strings.TrimRight(string(epochID[:]), "\x00"),
 		Organizer: roundView.Organizer,
-		Policy: types.RoundPolicy{
+		Policy: types.EpochPolicy{
 			Threshold:                 roundView.Policy.Threshold,
 			CommitteeSize:             roundView.Policy.CommitteeSize,
 			MinValidContributions:     roundView.Policy.MinValidContributions,
@@ -52,35 +52,34 @@ func (m *RoundMonitor) SyncRound(ctx context.Context, roundID [12]byte) error {
 			RegistrationDeadlineBlock: roundView.Policy.RegistrationDeadlineBlock,
 			ContributionDeadlineBlock: roundView.Policy.ContributionDeadlineBlock,
 			FinalizeNotBeforeBlock:    roundView.Policy.FinalizeNotBeforeBlock,
-			DisclosureAllowed:         roundView.Policy.DisclosureAllowed,
 		},
-		Phase:                mapRoundPhase(roundView.Status),
+		Phase:                mapEpochPhase(roundView.Status),
 		SelectedParticipants: selected,
 	}
-	return m.storage.UpsertRound(round)
+	return m.storage.UpsertEpoch(epoch)
 }
 
-// mapRoundPhase converts an on-chain DKGTypes.RoundStatus uint8 to the
-// Go-side RoundPhase constant. The on-chain enum is:
+// mapEpochPhase converts an on-chain DKGTypes.EpochPhase uint8 to the
+// Go-side EpochPhase constant. The on-chain enum is:
 //
 //	None=0, Readiness=1, Contribution=2, Finalized=3, Aborted=4, Completed=5
 //
-// Note: RoundPhaseDecryption and RoundPhaseDisclosure are Go-side phases used
-// for local state tracking; they are never mapped from chain status (the chain
-// keeps the Finalized status throughout both decryption and disclosure).
-func mapRoundPhase(status uint8) types.RoundPhase {
+// Note: EpochPhaseDecryption is a Go-side phase used for local state
+// tracking; it is never mapped from chain status (the chain keeps the
+// Finalized status throughout the decryption pipeline).
+func mapEpochPhase(status uint8) types.EpochPhase {
 	switch status {
 	case 1:
-		return types.RoundPhaseRegistration
+		return types.EpochPhaseRegistration
 	case 2:
-		return types.RoundPhaseContribution
+		return types.EpochPhaseContribution
 	case 3:
-		return types.RoundPhaseFinalized
+		return types.EpochPhaseFinalized
 	case 4:
-		return types.RoundPhaseAborted
+		return types.EpochPhaseAborted
 	case 5:
-		return types.RoundPhaseCompleted
+		return types.EpochPhaseCompleted
 	default:
-		return types.RoundPhaseUnknown
+		return types.EpochPhaseUnknown
 	}
 }

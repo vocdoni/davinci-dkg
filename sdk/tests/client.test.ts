@@ -49,10 +49,10 @@ describe('DKGClient (read-only)', () => {
     expect(active).toBeLessThanOrEqual(total);
   });
 
-  it('roundNonce starts at 0 on a fresh chain', async () => {
+  it('epochNonce starts at 0 on a fresh chain', async () => {
     const { enabled } = useHarness();
     if (!enabled) return;
-    const nonce = await client.roundNonce();
+    const nonce = await client.epochNonce();
     expect(typeof nonce).toBe('bigint');
     expect(nonce).toBeGreaterThanOrEqual(0n);
   });
@@ -64,12 +64,12 @@ describe('DKGClient (read-only)', () => {
     expect(window).toBeGreaterThan(0n);
   });
 
-  it('getRound returns zero-status round for a nonexistent round ID', async () => {
+  it('getEpoch returns zero-status epoch for a nonexistent epoch ID', async () => {
     const { enabled } = useHarness();
     if (!enabled) return;
     const fakeId = '0x000000000000000000000000' as `0x${string}`;
-    const round  = await client.getRound(fakeId);
-    expect(round.status).toBe(0);
+    const epoch  = await client.getEpoch(fakeId);
+    expect(epoch.status).toBe(0);
   });
 
   it('isActive returns false for an unregistered address', async () => {

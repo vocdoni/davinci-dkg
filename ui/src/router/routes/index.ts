@@ -4,8 +4,8 @@
 
 export const Routes = {
   home: '/',
-  rounds: '/rounds',
-  round: '/rounds/:id',
+  epochs: '/epochs',
+  epoch: '/epochs/:id',
   registry: '/registry',
   playground: '/playground',
   runNode: '/run-a-node',

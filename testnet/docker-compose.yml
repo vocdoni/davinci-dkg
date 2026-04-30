@@ -66,6 +66,12 @@ services:
       - --hardfork
       - "cancun"
       - --disable-code-size-limit
+      # Raise the per-block gas ceiling so the giant PoseidonT3/T5/T6
+      # deployments fit. Default 30M is below what the full P0 deploy
+      # needs (the precompile-style poseidon contracts are huge — that's
+      # also why we set --disable-code-size-limit above).
+      - --gas-limit
+      - "100000000"
     ports:
       - "0.0.0.0:${ANVIL_PORT:-8545}:8545"
     healthcheck:

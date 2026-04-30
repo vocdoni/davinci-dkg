@@ -6,7 +6,7 @@ import {Verifier as BasePartialDecryptVerifier} from "./partialdecrypt_vkey.sol"
 
 contract PartialDecryptVerifier is BasePartialDecryptVerifier, IZKVerifier {
     bytes32 internal constant PROVING_KEY_HASH =
-        hex"3871aae077eee32665f8ee95220a1ef4ff279fc8c2387bcffedd1869b66466e8";
+        hex"e36767c950be07ed840c6f59c9a3c3cd54f08594a256d18eceb07997a9ff5245";
 
     error InvalidProofEncoding();
     error InvalidInputEncoding();
@@ -17,23 +17,23 @@ contract PartialDecryptVerifier is BasePartialDecryptVerifier, IZKVerifier {
 
     function verifyProof(bytes calldata proof, bytes calldata input) external view {
         if (proof.length == 32 * 8) {
-            if (input.length != 32 * 13) revert InvalidInputEncoding();
+            if (input.length != 32 * 16) revert InvalidInputEncoding();
             _delegateStaticCall(
                 abi.encodeWithSelector(
                     BasePartialDecryptVerifier.verifyProof.selector,
                     abi.decode(proof, (uint256[8])),
-                    abi.decode(input, (uint256[13]))
+                    abi.decode(input, (uint256[16]))
                 )
             );
             return;
         }
         if (proof.length == 32 * 4) {
-            if (input.length != 32 * 13) revert InvalidInputEncoding();
+            if (input.length != 32 * 16) revert InvalidInputEncoding();
             _delegateStaticCall(
                 abi.encodeWithSelector(
                     BasePartialDecryptVerifier.verifyCompressedProof.selector,
                     abi.decode(proof, (uint256[4])),
-                    abi.decode(input, (uint256[13]))
+                    abi.decode(input, (uint256[16]))
                 )
             );
             return;

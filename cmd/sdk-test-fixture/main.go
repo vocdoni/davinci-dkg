@@ -3,8 +3,8 @@
 // bootstraps the default Anvil node keys, and provides two actions:
 //
 //	--action=create  (default) creates a finalized single-participant DKG
-//	                 round and writes JSON to stdout:
-//	                   {"roundId":"0x…","collectivePublicKeyHash":"0x…","share":"<decimal>"}
+//	                 epoch and writes JSON to stdout:
+//	                   {"epochId":"0x…","collectivePublicKeyHash":"0x…","share":"<decimal>"}
 //	                 The `share` is the polynomial share value held by
 //	                 participant 1 (= the only contribution coefficient
 //	                 used by the fixture), which the test passes back to
@@ -16,10 +16,10 @@
 //	                 builds the partial decryption proof, calls
 //	                 submitPartialDecryption, then combineDecryption.
 //	                 Required additional flags:
-//	                   --round-id, --ciphertext-index, --share
+//	                   --epoch-id, --ciphertext-index, --share
 //	                 Outputs `{"ok":true}` on success.
 //
-// The TypeScript tests use these together to verify the full round-trip
+// The TypeScript tests use these together to verify the full epoch-trip
 // (encrypt -> submitCiphertext -> partial decrypt -> combine -> getPlaintext)
 // without having to generate Groth16 proofs in TypeScript.
 //
@@ -45,7 +45,7 @@ import (
 )
 
 type fixtureResult struct {
-	RoundID                 string `json:"roundId"`
+	EpochID                 string `json:"epochId"`
 	CollectivePublicKeyHash string `json:"collectivePublicKeyHash"`
 	Share                   string `json:"share"`
 }
@@ -54,8 +54,19 @@ type decryptResult struct {
 	OK bool `json:"ok"`
 }
 
+// prepareCombineResult is emitted by `--action=prepare-combine` so the SDK
+// can drive the on-chain combineDecryption call itself. All bytes are
+// 0x-prefixed lower-case hex.
+type prepareCombineResult struct {
+	CombineHash string `json:"combineHash"`
+	Plaintext   string `json:"plaintext"`  // decimal
+	Transcript  string `json:"transcript"` // 0x-hex
+	Proof       string `json:"proof"`      // 0x-hex
+	Input       string `json:"input"`      // 0x-hex
+}
+
 // fixtureShare is the polynomial share value held by participant 1 of the
-// fixture round. CreateSDKTestFixture uses coefficients=[11] so f(1) = 11.
+// fixture epoch. CreateSDKTestFixture uses coefficients=[11] so f(1) = 11.
 const fixtureShare int64 = 11
 
 func main() {
@@ -72,8 +83,8 @@ func main() {
 		"path to addresses.env file (as served by the deployer container)")
 	flag.StringVar(&action, "action", "create",
 		"action to perform: 'create' (default) or 'decrypt'")
-	flag.StringVar(&roundIDHex, "round-id", "",
-		"(decrypt) round id as a 0x-prefixed 12-byte hex string")
+	flag.StringVar(&roundIDHex, "epoch-id", "",
+		"(decrypt) epoch id as a 0x-prefixed 12-byte hex string")
 	flag.IntVar(&ciphertextIndex, "ciphertext-index", 0,
 		"(decrypt) ciphertext index to combine (must be > 0)")
 	flag.StringVar(&shareDec, "share", "",
@@ -115,7 +126,7 @@ func main() {
 			os.Exit(1)
 		}
 		out := fixtureResult{
-			RoundID:                 fmt.Sprintf("0x%x", result.RoundID),
+			EpochID:                 fmt.Sprintf("0x%x", result.EpochID),
 			CollectivePublicKeyHash: fmt.Sprintf("0x%x", result.CollectivePublicKeyHash),
 			Share:                   big.NewInt(fixtureShare).String(),
 		}
@@ -128,7 +139,7 @@ func main() {
 
 	case "decrypt":
 		if roundIDHex == "" {
-			fmt.Fprintln(os.Stderr, "error: --round-id is required for decrypt")
+			fmt.Fprintln(os.Stderr, "error: --epoch-id is required for decrypt")
 			os.Exit(1)
 		}
 		if ciphertextIndex <= 0 || ciphertextIndex > 0xffff {
@@ -146,17 +157,64 @@ func main() {
 		}
 		raw, err := hex.DecodeString(strings.TrimPrefix(roundIDHex, "0x"))
 		if err != nil || len(raw) != 12 {
-			fmt.Fprintf(os.Stderr, "error: --round-id must be 0x-prefixed 12-byte hex, got %q\n", roundIDHex)
+			fmt.Fprintf(os.Stderr, "error: --epoch-id must be 0x-prefixed 12-byte hex, got %q\n", roundIDHex)
 			os.Exit(1)
 		}
-		var roundID [12]byte
-		copy(roundID[:], raw)
+		var epochID [12]byte
+		copy(epochID[:], raw)
 
-		if err := helpers.CombineSingleParticipantDecryption(ctx, services, roundID, uint16(ciphertextIndex), share); err != nil {
+		if err := helpers.CombineSingleParticipantDecryption(ctx, services, epochID, uint16(ciphertextIndex), share); err != nil {
 			fmt.Fprintf(os.Stderr, "error: combine decryption: %v\n", err)
 			os.Exit(1)
 		}
 		encoded, err := json.Marshal(decryptResult{OK: true})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: marshal result: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println(string(encoded))
+
+	case "prepare-combine":
+		if roundIDHex == "" {
+			fmt.Fprintln(os.Stderr, "error: --epoch-id is required for prepare-combine")
+			os.Exit(1)
+		}
+		if ciphertextIndex <= 0 || ciphertextIndex > 0xffff {
+			fmt.Fprintln(os.Stderr, "error: --ciphertext-index must be in (0, 65535]")
+			os.Exit(1)
+		}
+		if shareDec == "" {
+			fmt.Fprintln(os.Stderr, "error: --share is required for prepare-combine")
+			os.Exit(1)
+		}
+		share, ok := new(big.Int).SetString(shareDec, 10)
+		if !ok {
+			fmt.Fprintf(os.Stderr, "error: --share %q is not a valid decimal\n", shareDec)
+			os.Exit(1)
+		}
+		raw, err := hex.DecodeString(strings.TrimPrefix(roundIDHex, "0x"))
+		if err != nil || len(raw) != 12 {
+			fmt.Fprintf(os.Stderr, "error: --epoch-id must be 0x-prefixed 12-byte hex, got %q\n", roundIDHex)
+			os.Exit(1)
+		}
+		var epochID [12]byte
+		copy(epochID[:], raw)
+
+		payload, err := helpers.PrepareSingleParticipantCombinePayload(
+			ctx, services, epochID, uint16(ciphertextIndex), share,
+		)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: prepare combine: %v\n", err)
+			os.Exit(1)
+		}
+		out := prepareCombineResult{
+			CombineHash: "0x" + hex.EncodeToString(payload.CombineHash[:]),
+			Plaintext:   payload.Plaintext.String(),
+			Transcript:  "0x" + hex.EncodeToString(payload.Transcript),
+			Proof:       "0x" + hex.EncodeToString(payload.Proof),
+			Input:       "0x" + hex.EncodeToString(payload.Input),
+		}
+		encoded, err := json.Marshal(out)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: marshal result: %v\n", err)
 			os.Exit(1)

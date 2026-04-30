@@ -18,9 +18,8 @@ import (
 	"github.com/vocdoni/davinci-dkg/circuits/contribution"
 	"github.com/vocdoni/davinci-dkg/circuits/decryptcombine"
 	"github.com/vocdoni/davinci-dkg/circuits/finalize"
+	"github.com/vocdoni/davinci-dkg/internal/protocol"
 	"github.com/vocdoni/davinci-dkg/circuits/partialdecrypt"
-	"github.com/vocdoni/davinci-dkg/circuits/revealshare"
-	"github.com/vocdoni/davinci-dkg/circuits/revealsubmit"
 	"github.com/vocdoni/davinci-dkg/crypto/group"
 	"github.com/vocdoni/davinci-dkg/types"
 )
@@ -36,7 +35,7 @@ type ContributionSubmission struct {
 	RoundHash           *big.Int
 }
 
-type FinalizeRoundOutput struct {
+type FinalizeEpochOutput struct {
 	Proof                    []byte
 	Input                    []byte
 	Transcript               []byte
@@ -65,23 +64,6 @@ type DecryptCombineOutput struct {
 	CiphertextC2 types.CurvePoint
 }
 
-type RevealShareOutput struct {
-	Proof                   []byte
-	Input                   []byte
-	Transcript              []byte
-	ShareHash               [32]byte
-	DisclosureHash          [32]byte
-	ReconstructedSecretHash [32]byte
-	ReconstructedSecret     *big.Int
-}
-
-type RevealShareSubmission struct {
-	Proof      []byte
-	Input      []byte
-	ShareHash  [32]byte
-	ShareValue *big.Int
-}
-
 var (
 	contributionRuntimeOnce   sync.Once
 	contributionRuntime       *circuits.CircuitRuntime
@@ -95,26 +77,20 @@ var (
 	decryptCombineRuntimeOnce sync.Once
 	decryptCombineRuntime     *circuits.CircuitRuntime
 	decryptCombineRuntimeErr  error
-	revealShareRuntimeOnce    sync.Once
-	revealShareRuntime        *circuits.CircuitRuntime
-	revealShareRuntimeErr     error
-	revealSubmitRuntimeOnce   sync.Once
-	revealSubmitRuntime       *circuits.CircuitRuntime
-	revealSubmitRuntimeErr    error
 )
 
 func BuildContributionSubmission(
 	ctx context.Context,
 	services *TestServices,
-	roundID [12]byte,
+	epochID [12]byte,
 	threshold uint16,
 	committeeSize uint16,
 	contributorIndex uint16,
 	coefficients []*big.Int,
 	recipientIndexes []uint16,
 ) (*ContributionSubmission, error) {
-	roundHash := RoundScalar(roundID)
-	recipientKeys, encryptionNonces, err := contributionRecipients(ctx, services, roundID, recipientIndexes)
+	roundHash := RoundScalar(epochID)
+	recipientKeys, encryptionNonces, err := contributionRecipients(ctx, services, epochID, recipientIndexes)
 	if err != nil {
 		return nil, err
 	}
@@ -170,10 +146,10 @@ func BuildContributionSubmission(
 func contributionRecipients(
 	ctx context.Context,
 	services *TestServices,
-	roundID [12]byte,
+	epochID [12]byte,
 	recipientIndexes []uint16,
 ) ([]types.NodeKey, []*big.Int, error) {
-	participants, err := services.Contracts.SelectedParticipants(ctx, roundID)
+	participants, err := services.Contracts.SelectedParticipants(ctx, epochID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("selected participants: %w", err)
 	}
@@ -198,15 +174,15 @@ func contributionRecipients(
 	return keys, nonces, nil
 }
 
-func BuildFinalizeRoundOutput(
+func BuildFinalizeEpochOutput(
 	ctx context.Context,
-	roundID [12]byte,
+	epochID [12]byte,
 	threshold uint16,
 	committeeSize uint16,
 	participantIndexes []uint16,
 	contributionCoefficients [][]*big.Int,
-) (*FinalizeRoundOutput, error) {
-	roundHash := RoundScalar(roundID)
+) (*FinalizeEpochOutput, error) {
+	roundHash := RoundScalar(epochID)
 	assignment := finalize.Assignment{
 		RoundHash:                roundHash,
 		Threshold:                threshold,
@@ -240,7 +216,7 @@ func BuildFinalizeRoundOutput(
 		return nil, err
 	}
 
-	return &FinalizeRoundOutput{
+	return &FinalizeEpochOutput{
 		Proof:                    proofBytes,
 		Input:                    inputBytes,
 		Transcript:               transcriptBytes,
@@ -252,51 +228,15 @@ func BuildFinalizeRoundOutput(
 	}, nil
 }
 
-func BuildRevealShareSubmission(
-	ctx context.Context,
-	roundID [12]byte,
-	participantIndex uint16,
-	shareValue *big.Int,
-	shareCommitment types.CurvePoint,
-) (*RevealShareSubmission, error) {
-	assignment := revealsubmit.Assignment{
-		RoundHash:        RoundScalar(roundID),
-		ParticipantIndex: participantIndex,
-		ShareValue:       shareValue,
-		ShareCommitment:  shareCommitment,
-	}
-	witness, publicInputs, err := revealsubmit.BuildWitness(assignment)
-	if err != nil {
-		return nil, err
-	}
-
-	runtime, err := loadRevealSubmitRuntime(ctx)
-	if err != nil {
-		return nil, err
-	}
-	proof, err := runtime.ProveAndVerify(witness)
-	if err != nil {
-		return nil, fmt.Errorf("prove reveal submit: %w", err)
-	}
-	proofBytes, err := marshalSolidityProof(proof)
-	if err != nil {
-		return nil, err
-	}
-	inputBytes, err := encodePublicAssignment(publicInputs.PublicWitness())
-	if err != nil {
-		return nil, err
-	}
-	return &RevealShareSubmission{
-		Proof:      proofBytes,
-		Input:      inputBytes,
-		ShareHash:  common.BigToHash(shareValue),
-		ShareValue: new(big.Int).Set(shareValue),
-	}, nil
-}
-
+// BuildPartialDecryptionSubmission for the legacy per-epoch path —
+// defaults aid/ctIdx/role to (0, 1, COMMITTEE), which matches what
+// `submitPartialDecryption` enforces when the caller passes aid=0 and
+// ciphertextIndex=1. Callers needing a different ciphertextIndex (the
+// SDK ciphertext-e2e flow) must use the FromBase variant directly with
+// the matching ctIdx.
 func BuildPartialDecryptionSubmission(
 	ctx context.Context,
-	roundID [12]byte,
+	epochID [12]byte,
 	participantIndex uint16,
 	base *big.Int,
 	secret *big.Int,
@@ -304,7 +244,7 @@ func BuildPartialDecryptionSubmission(
 ) (*PartialDecryptionSubmission, error) {
 	basePoint := group.Generator()
 	basePoint.ScalarBaseMult(base)
-	return BuildPartialDecryptionSubmissionFromBase(ctx, roundID, participantIndex, group.Encode(basePoint), secret, nonce)
+	return BuildPartialDecryptionSubmissionFromBase(ctx, epochID, [32]byte{}, 1, participantIndex, group.Encode(basePoint), secret, nonce)
 }
 
 // BuildPartialDecryptionSubmissionFromBase is the variant used when the caller
@@ -312,17 +252,27 @@ func BuildPartialDecryptionSubmission(
 // event log) instead of the scalar k that produced it. The flow.test SDK e2e
 // path goes through this entry point because the SDK encrypts with a random k
 // that the test fixture never sees.
+//
+// `aid` and `ciphertextIndex` are bound into the Fiat-Shamir transcript
+// via the witness builder so the on-chain submitPartialDecryption check
+// (publicInputs[1]==aid, publicInputs[2]==ctIdx, publicInputs[3]==COMMITTEE)
+// succeeds. Pass `[32]byte{}` aid for the legacy per-epoch path.
 func BuildPartialDecryptionSubmissionFromBase(
 	ctx context.Context,
-	roundID [12]byte,
+	epochID [12]byte,
+	aid [32]byte,
+	ciphertextIndex uint16,
 	participantIndex uint16,
 	base types.CurvePoint,
 	secret *big.Int,
 	nonce *big.Int,
 ) (*PartialDecryptionSubmission, error) {
-	roundHash := RoundScalar(roundID)
+	roundHash := RoundScalar(epochID)
 	assignment := partialdecrypt.Assignment{
 		RoundHash:        roundHash,
+		Aid:              new(big.Int).SetBytes(aid[:]),
+		CtIdx:            new(big.Int).SetUint64(uint64(ciphertextIndex)),
+		Role:             big.NewInt(int64(protocol.RoleCommittee)),
 		ParticipantIndex: participantIndex,
 		Base:             base,
 		Secret:           secret,
@@ -365,7 +315,7 @@ func BuildPartialDecryptionSubmissionFromBase(
 
 func BuildDecryptCombineOutput(
 	ctx context.Context,
-	roundID [12]byte,
+	epochID [12]byte,
 	threshold uint16,
 	base *big.Int,
 	participantIndexes []uint16,
@@ -390,7 +340,7 @@ func BuildDecryptCombineOutput(
 	c2Point.Set(messagePoint)
 	c2Point.Add(c2Point, combinedNative)
 
-	return BuildDecryptCombineOutputFromCiphertext(ctx, roundID, threshold,
+	return BuildDecryptCombineOutputFromCiphertext(ctx, epochID, threshold,
 		group.Encode(c1Point), group.Encode(c2Point),
 		participantIndexes, partialDecryptions, plaintext)
 }
@@ -399,9 +349,48 @@ func BuildDecryptCombineOutput(
 // already has c1, c2 as curve points (e.g. recovered from a SDK-submitted
 // CiphertextSubmitted event log) and the plaintext was discovered out-of-band
 // via brute-force discrete log on m·G = c2 - sum(λᵢ·Δᵢ).
+// BuildDecryptCombineOutputFromCiphertext builds the combine proof for the
+// legacy per-epoch path (aid=0, mode=0=PUBLIC_DERIVATION, S=0, no organizer
+// share). The on-chain `combineDecryption` requires publicInputs[1..3] to
+// equal aid / ctIdx / mode, so we set them explicitly even when zero.
+//
+// `ciphertextIndex` is bound into both the contract-side check
+// (publicInputs[2]==ciphertextIndex) and the in-circuit transcript.
 func BuildDecryptCombineOutputFromCiphertext(
 	ctx context.Context,
-	roundID [12]byte,
+	epochID [12]byte,
+	threshold uint16,
+	ciphertextC1 types.CurvePoint,
+	ciphertextC2 types.CurvePoint,
+	participantIndexes []uint16,
+	partialDecryptions []types.CurvePoint,
+	plaintext *big.Int,
+) (*DecryptCombineOutput, error) {
+	return BuildDecryptCombineOutputForApp(
+		ctx, epochID, [32]byte{}, 1, 0 /* mode */, big.NewInt(0) /* S */,
+		identityPoint(), threshold, ciphertextC1, ciphertextC2,
+		participantIndexes, partialDecryptions, plaintext,
+	)
+}
+
+// identityPoint returns the BabyJubJub identity (0, 1) used as the default
+// DeltaOrg for the legacy mode-0 combine path.
+func identityPoint() types.CurvePoint {
+	return types.CurvePoint{X: big.NewInt(0), Y: big.NewInt(1)}
+}
+
+// BuildDecryptCombineOutputForApp is the per-application variant. Mode 0
+// uses S+identity-DeltaOrg; mode 1 uses S=0+real DeltaOrg from the
+// organizer's submitted share. The witness bindings here MUST match the
+// contract's submitOrganizerShare / combineDecryption checks.
+func BuildDecryptCombineOutputForApp(
+	ctx context.Context,
+	epochID [12]byte,
+	aid [32]byte,
+	ciphertextIndex uint16,
+	mode uint8,
+	s *big.Int,
+	deltaOrg types.CurvePoint,
 	threshold uint16,
 	ciphertextC1 types.CurvePoint,
 	ciphertextC2 types.CurvePoint,
@@ -410,7 +399,12 @@ func BuildDecryptCombineOutputFromCiphertext(
 	plaintext *big.Int,
 ) (*DecryptCombineOutput, error) {
 	assignment := decryptcombine.Assignment{
-		RoundHash:          RoundScalar(roundID),
+		RoundHash:          RoundScalar(epochID),
+		Aid:                new(big.Int).SetBytes(aid[:]),
+		CtIdx:              new(big.Int).SetUint64(uint64(ciphertextIndex)),
+		Mode:               new(big.Int).SetUint64(uint64(mode)),
+		S:                  s,
+		DeltaOrg:           deltaOrg,
 		Threshold:          threshold,
 		CiphertextC1:       ciphertextC1,
 		CiphertextC2:       ciphertextC2,
@@ -455,58 +449,8 @@ func BuildDecryptCombineOutputFromCiphertext(
 	}, nil
 }
 
-func BuildRevealShareOutput(
-	ctx context.Context,
-	roundID [12]byte,
-	threshold uint16,
-	participantIndexes []uint16,
-	revealedShares []*big.Int,
-) (*RevealShareOutput, error) {
-	assignment := revealshare.Assignment{
-		RoundHash:          RoundScalar(roundID),
-		Threshold:          threshold,
-		ParticipantIndexes: participantIndexes,
-		RevealedShares:     revealedShares,
-	}
-	witness, publicInputs, err := revealshare.BuildWitness(assignment)
-	if err != nil {
-		return nil, err
-	}
-
-	runtime, err := loadRevealShareRuntime(ctx)
-	if err != nil {
-		return nil, err
-	}
-	proof, err := runtime.ProveAndVerify(witness)
-	if err != nil {
-		return nil, fmt.Errorf("prove reveal share: %w", err)
-	}
-	proofBytes, err := marshalSolidityProof(proof)
-	if err != nil {
-		return nil, err
-	}
-	inputBytes, err := encodePublicAssignment(publicInputs.PublicWitness())
-	if err != nil {
-		return nil, err
-	}
-	transcriptBytes, err := encodeSolidityWords(publicInputs.TranscriptScalars()...)
-	if err != nil {
-		return nil, err
-	}
-
-	return &RevealShareOutput{
-		Proof:                   proofBytes,
-		Input:                   inputBytes,
-		Transcript:              transcriptBytes,
-		ShareHash:               common.BigToHash(revealedShares[0]),
-		DisclosureHash:          common.BigToHash(publicInputs.DisclosureHash),
-		ReconstructedSecretHash: common.BigToHash(publicInputs.ReconstructedSecretHash),
-		ReconstructedSecret:     new(big.Int).Set(publicInputs.ReconstructedSecretHash),
-	}, nil
-}
-
-func RoundScalar(roundID [12]byte) *big.Int {
-	return new(big.Int).SetBytes(roundID[:])
+func RoundScalar(epochID [12]byte) *big.Int {
+	return new(big.Int).SetBytes(epochID[:])
 }
 
 func loadContributionRuntime(ctx context.Context) (*circuits.CircuitRuntime, error) {
@@ -556,32 +500,6 @@ func loadDecryptCombineRuntime(ctx context.Context) (*circuits.CircuitRuntime, e
 		)
 	})
 	return decryptCombineRuntime, decryptCombineRuntimeErr
-}
-
-func loadRevealShareRuntime(ctx context.Context) (*circuits.CircuitRuntime, error) {
-	if err := ensureArtifactsBaseDir(); err != nil {
-		return nil, err
-	}
-	revealShareRuntimeOnce.Do(func() {
-		revealShareRuntime, revealShareRuntimeErr = revealshare.Artifacts.LoadOrSetupForCircuit(
-			ctx,
-			&revealshare.RevealShareCircuit{},
-		)
-	})
-	return revealShareRuntime, revealShareRuntimeErr
-}
-
-func loadRevealSubmitRuntime(ctx context.Context) (*circuits.CircuitRuntime, error) {
-	if err := ensureArtifactsBaseDir(); err != nil {
-		return nil, err
-	}
-	revealSubmitRuntimeOnce.Do(func() {
-		revealSubmitRuntime, revealSubmitRuntimeErr = revealsubmit.Artifacts.LoadOrSetupForCircuit(
-			ctx,
-			&revealsubmit.RevealSubmitCircuit{},
-		)
-	})
-	return revealSubmitRuntime, revealSubmitRuntimeErr
 }
 
 func marshalSolidityProof(proof groth16backend.Proof) ([]byte, error) {

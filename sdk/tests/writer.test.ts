@@ -1,9 +1,9 @@
-// DKGWriter tests — createRound, registerKey, claimSlot.
+// DKGWriter tests — createEpoch, registerKey, claimSlot.
 // Require a live testnet (RUN_INTEGRATION_TESTS=true).
 
 import { describe, it, expect, beforeAll } from 'vitest';
 import { inject } from 'vitest';
-import { DKGWriter, RoundStatus, buildElGamal, buildRoundId, parseRoundId } from '../src/index.js';
+import { DKGWriter, EpochPhase, buildElGamal, buildEpochId, parseEpochId } from '../src/index.js';
 import { makePublicClient, makeWalletClient } from './helpers/accounts.js';
 import { mineUntilSeedAvailable } from './helpers/chain.js';
 
@@ -35,15 +35,15 @@ describe('DKGWriter', () => {
     if (!enabled) return;
 
     const eg         = await buildElGamal();
-    const { pubKey } = eg.generateKeyPair();
+    const { privKey, pubKey } = eg.generateKeyPair();
     const account    = writer.walletClient.account!.address;
 
     // The Go fixture (flow.test.ts runs before writer.test.ts alphabetically)
     // may have already registered this account.  Use updateKey in that case.
     const existing = await writer.getNode(account);
     const hash = existing.status === 0
-      ? await writer.registerKey(pubKey[0], pubKey[1])
-      : await writer.updateKey(pubKey[0], pubKey[1]);
+      ? await writer.registerKey(privKey)
+      : await writer.updateKey(privKey);
 
     const receipt = await writer.waitForTransaction(hash);
     expect(receipt.status).toBe('success');
@@ -51,21 +51,25 @@ describe('DKGWriter', () => {
     const isActive = await writer.isActive(account);
     expect(isActive).toBe(true);
 
+    // The contract stores the pubkey in RTE form; SDK ElGamal works in TE.
+    // Convert before comparing.
     const node = await writer.getNode(account);
-    expect(node.pubX).toBe(pubKey[0]);
-    expect(node.pubY).toBe(pubKey[1]);
+    const { fromTEtoRTE } = await import('../src/crypto/babyjub-form.js');
+    const [pkX_RTE, pkY_RTE] = fromTEtoRTE(pubKey[0], pubKey[1]);
+    expect(node.pubX).toBe(pkX_RTE);
+    expect(node.pubY).toBe(pkY_RTE);
   });
 
-  // ── Round creation ────────────────────────────────────────────────────────
+  // ── Epoch creation ────────────────────────────────────────────────────────
 
-  it('createRound creates a round in Registration status', async () => {
+  it('createEpoch creates a epoch in Registration status', async () => {
     const { enabled } = useHarness();
     if (!enabled) return;
 
     const currentBlock = await writer.blockNumber();
-    const nonceBefore  = await writer.roundNonce();
+    const nonceBefore  = await writer.epochNonce();
 
-    const hash = await writer.createRound({
+    const hash = await writer.createEpoch({
       threshold:                 1,
       committeeSize:             1,
       minValidContributions:     1,
@@ -74,37 +78,36 @@ describe('DKGWriter', () => {
       registrationDeadlineBlock: currentBlock + 25n,
       contributionDeadlineBlock: currentBlock + 50n,
       finalizeNotBeforeBlock:    currentBlock + 51n,
-      disclosureAllowed:         false,
     });
     const receipt = await writer.waitForTransaction(hash);
     expect(receipt.status).toBe('success');
 
-    // Round nonce incremented
-    const nonceAfter = await writer.roundNonce();
+    // Epoch nonce incremented
+    const nonceAfter = await writer.epochNonce();
     expect(nonceAfter).toBe(nonceBefore + 1n);
 
-    // Derive round ID
-    const prefix  = await writer._managerContract.read.ROUND_PREFIX();
-    const roundId = buildRoundId(prefix, nonceBefore + 1n);
+    // Derive epoch ID
+    const prefix  = await writer._managerContract.read.EPOCH_PREFIX();
+    const epochId = buildEpochId(prefix, nonceBefore + 1n);
 
-    const round = await writer.getRound(roundId);
-    expect(round.status).toBe(RoundStatus.Registration);
-    expect(round.policy.threshold).toBe(1);
-    expect(round.policy.committeeSize).toBe(1);
+    const epoch = await writer.getEpoch(epochId);
+    expect(epoch.status).toBe(EpochPhase.Registration);
+    expect(epoch.policy.threshold).toBe(1);
+    expect(epoch.policy.committeeSize).toBe(1);
   });
 
-  it('buildRoundId and parseRoundId are inverses', () => {
+  it('buildEpochId and parseEpochId are inverses', () => {
     const prefix = 1337;
     const nonce  = 42n;
-    const id     = buildRoundId(prefix, nonce);
-    const parsed = parseRoundId(id);
+    const id     = buildEpochId(prefix, nonce);
+    const parsed = parseEpochId(id);
     expect(parsed.prefix).toBe(prefix);
     expect(parsed.nonce).toBe(nonce);
   });
 
   // ── Slot claiming ─────────────────────────────────────────────────────────
 
-  it('claimSlot claims a slot after seedDelay blocks and advances round to Contribution', async () => {
+  it('claimSlot claims a slot after seedDelay blocks and advances epoch to Contribution', async () => {
     const { enabled } = useHarness();
     if (!enabled) return;
 
@@ -122,7 +125,7 @@ describe('DKGWriter', () => {
     const currentBlock = await writer.blockNumber();
     const seedDelay    = 1;
 
-    const createHash = await writer.createRound({
+    const createHash = await writer.createEpoch({
       threshold:                 1,
       committeeSize:             1,
       minValidContributions:     1,
@@ -131,29 +134,28 @@ describe('DKGWriter', () => {
       registrationDeadlineBlock: currentBlock + 30n,
       contributionDeadlineBlock: currentBlock + 60n,
       finalizeNotBeforeBlock:    currentBlock + 61n,
-      disclosureAllowed:         false,
     });
     await writer.waitForTransaction(createHash);
 
-    const prefix  = await writer._managerContract.read.ROUND_PREFIX();
-    const nonce   = await writer.roundNonce();
-    const roundId = buildRoundId(prefix, nonce);
+    const prefix  = await writer._managerContract.read.EPOCH_PREFIX();
+    const nonce   = await writer.epochNonce();
+    const epochId = buildEpochId(prefix, nonce);
 
     // Mine past the seed block
-    const round = await writer.getRound(roundId);
-    await mineUntilSeedAvailable(writer.publicClient, round.seedBlock);
+    const epoch = await writer.getEpoch(epochId);
+    await mineUntilSeedAvailable(writer.publicClient, epoch.seedBlock);
 
     // Claim slot
-    const claimHash = await writer.claimSlot(roundId);
+    const claimHash = await writer.claimSlot(epochId);
     const claimReceipt = await writer.waitForTransaction(claimHash);
     expect(claimReceipt.status).toBe('success');
 
-    // Round should now be in Contribution phase
-    const updated = await writer.getRound(roundId);
-    expect(updated.status).toBe(RoundStatus.Contribution);
+    // Epoch should now be in Contribution phase
+    const updated = await writer.getEpoch(epochId);
+    expect(updated.status).toBe(EpochPhase.Contribution);
 
     // Our address should be in selectedParticipants
-    const participants = await writer.selectedParticipants(roundId);
+    const participants = await writer.selectedParticipants(epochId);
     expect(participants.map((a) => a.toLowerCase())).toContain(account.toLowerCase());
   });
 });

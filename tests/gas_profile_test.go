@@ -26,7 +26,7 @@ func TestGasProfiles(t *testing.T) {
 	head, err := services.Contracts.Client().BlockNumber(ctx)
 	c.Assert(err, qt.IsNil)
 
-	policy := types.RoundPolicy{
+	policy := types.EpochPolicy{
 		Threshold:                 1,
 		CommitteeSize:             1,
 		MinValidContributions:     1,
@@ -35,32 +35,27 @@ func TestGasProfiles(t *testing.T) {
 		RegistrationDeadlineBlock: head + 25,
 		ContributionDeadlineBlock: head + 50,
 		FinalizeNotBeforeBlock:    head + 51,
-		DisclosureAllowed:         true,
 	}
 
-	roundID, createGas := createRoundForGasProfile(t, ctx, policy)
+	epochID, createGas := createEpochForGasProfile(t, ctx, policy)
 	// At committee size 1 this claimSlot call pays every one-time cost the
 	// lottery can incur (seed resolve + committee snapshot + lottery check),
 	// so the number is higher than the per-node amortised claimSlot cost in
 	// BENCHMARKS.md — don't compare them directly.
-	claimSlotGas := claimSlotForGasProfile(t, ctx, roundID, policy)
-	contributionGas := submitContributionForGasProfile(t, ctx, roundID)
-	finalizeGas := finalizeForGasProfile(t, ctx, roundID)
-	partialDecryptGas := submitPartialDecryptForGasProfile(t, ctx, roundID)
-	combineGas := combineDecryptionForGasProfile(t, ctx, roundID)
-	revealGas := revealShareForGasProfile(t, ctx, roundID)
-	reconstructGas := reconstructSecretForGasProfile(t, ctx, roundID)
+	claimSlotGas := claimSlotForGasProfile(t, ctx, epochID, policy)
+	contributionGas := submitContributionForGasProfile(t, ctx, epochID)
+	finalizeGas := finalizeForGasProfile(t, ctx, epochID)
+	partialDecryptGas := submitPartialDecryptForGasProfile(t, ctx, epochID)
+	combineGas := combineDecryptionForGasProfile(t, ctx, epochID)
 
 	t.Logf(
-		"gas profile create=%d claimSlot=%d contribution=%d finalize=%d partial_decrypt=%d combine=%d reveal=%d reconstruct=%d",
+		"gas profile create=%d claimSlot=%d contribution=%d finalize=%d partial_decrypt=%d combine=%d",
 		createGas,
 		claimSlotGas,
 		contributionGas,
 		finalizeGas,
 		partialDecryptGas,
 		combineGas,
-		revealGas,
-		reconstructGas,
 	)
 
 	// Generous ceilings — this is a benchmark, not a regression gate. BENCHMARKS.md
@@ -73,22 +68,20 @@ func TestGasProfiles(t *testing.T) {
 	c.Assert(finalizeGas < uint64(1_200_000), qt.IsTrue)
 	c.Assert(partialDecryptGas < uint64(500_000), qt.IsTrue)
 	c.Assert(combineGas < uint64(500_000), qt.IsTrue)
-	c.Assert(revealGas < uint64(400_000), qt.IsTrue)
-	c.Assert(reconstructGas < uint64(400_000), qt.IsTrue)
 }
 
-func createRoundForGasProfile(t *testing.T, ctx context.Context, policy types.RoundPolicy) ([12]byte, uint64) {
+func createEpochForGasProfile(t *testing.T, ctx context.Context, policy types.EpochPolicy) ([12]byte, uint64) {
 	t.Helper()
 	c := qt.New(t)
 
-	prefix, err := services.Manager.ROUNDPREFIX(services.CallOpts(ctx))
+	prefix, err := services.Manager.EPOCHPREFIX(services.CallOpts(ctx))
 	c.Assert(err, qt.IsNil)
-	currentNonce, err := services.Manager.RoundNonce(services.CallOpts(ctx))
+	currentNonce, err := services.Manager.EpochNonce(services.CallOpts(ctx))
 	c.Assert(err, qt.IsNil)
 
 	auth, err := services.TxManager.NewTransactOpts(ctx)
 	c.Assert(err, qt.IsNil)
-	tx, err := services.Manager.CreateRound(
+	tx, err := services.Manager.CreateEpoch(
 		auth,
 		policy.Threshold,
 		policy.CommitteeSize,
@@ -98,7 +91,6 @@ func createRoundForGasProfile(t *testing.T, ctx context.Context, policy types.Ro
 		policy.RegistrationDeadlineBlock,
 		policy.ContributionDeadlineBlock,
 		policy.FinalizeNotBeforeBlock,
-		policy.DisclosureAllowed,
 		helpers.ZeroDecryptionPolicy(),
 	)
 	c.Assert(err, qt.IsNil)
@@ -114,7 +106,7 @@ func createRoundForGasProfile(t *testing.T, ctx context.Context, policy types.Ro
 // one-time cost: seed resolve (blockhash lookup), lottery check, committee
 // snapshot. The BENCHMARKS.md averaged figure is lower because later claimers
 // share those costs — do not compare this number directly.
-func claimSlotForGasProfile(t *testing.T, ctx context.Context, roundID [12]byte, policy types.RoundPolicy) uint64 {
+func claimSlotForGasProfile(t *testing.T, ctx context.Context, epochID [12]byte, policy types.EpochPolicy) uint64 {
 	t.Helper()
 	c := qt.New(t)
 
@@ -123,7 +115,7 @@ func claimSlotForGasProfile(t *testing.T, ctx context.Context, roundID [12]byte,
 
 	auth, err := services.TxManager.NewTransactOpts(ctx)
 	c.Assert(err, qt.IsNil)
-	tx, err := services.Manager.ClaimSlot(auth, roundID)
+	tx, err := services.Manager.ClaimSlot(auth, epochID)
 	c.Assert(err, qt.IsNil)
 	c.Assert(services.TxManager.WaitTxByHash(tx.Hash(), helpers.DefaultTxTimeout), qt.IsNil)
 	receipt, err := services.Contracts.Client().TransactionReceipt(ctx, tx.Hash())
@@ -132,18 +124,18 @@ func claimSlotForGasProfile(t *testing.T, ctx context.Context, roundID [12]byte,
 	return receipt.GasUsed
 }
 
-func submitContributionForGasProfile(t *testing.T, ctx context.Context, roundID [12]byte) uint64 {
+func submitContributionForGasProfile(t *testing.T, ctx context.Context, epochID [12]byte) uint64 {
 	t.Helper()
 	c := qt.New(t)
 
-	submission, err := helpers.BuildContributionSubmission(ctx, services, roundID, 1, 1, 1, []*big.Int{big.NewInt(7)}, []uint16{1})
+	submission, err := helpers.BuildContributionSubmission(ctx, services, epochID, 1, 1, 1, []*big.Int{big.NewInt(7)}, []uint16{1})
 	c.Assert(err, qt.IsNil)
 
 	auth, err := services.TxManager.NewTransactOpts(ctx)
 	c.Assert(err, qt.IsNil)
 	tx, err := services.Manager.SubmitContribution(
 		auth,
-		roundID,
+		epochID,
 		1,
 		submission.CommitmentsHash,
 		submission.EncryptedSharesHash,
@@ -161,20 +153,20 @@ func submitContributionForGasProfile(t *testing.T, ctx context.Context, roundID 
 	return receipt.GasUsed
 }
 
-func finalizeForGasProfile(t *testing.T, ctx context.Context, roundID [12]byte) uint64 {
+func finalizeForGasProfile(t *testing.T, ctx context.Context, epochID [12]byte) uint64 {
 	t.Helper()
 	c := qt.New(t)
 
-	output, err := helpers.BuildFinalizeRoundOutput(ctx, roundID, 1, 1, []uint16{1}, [][]*big.Int{{big.NewInt(7)}})
+	output, err := helpers.BuildFinalizeEpochOutput(ctx, epochID, 1, 1, []uint16{1}, [][]*big.Int{{big.NewInt(7)}})
 	c.Assert(err, qt.IsNil)
 
-	c.Assert(helpers.WaitForFinalizeGate(ctx, services, roundID), qt.IsNil)
+	c.Assert(helpers.WaitForFinalizeGate(ctx, services, epochID), qt.IsNil)
 
 	auth, err := services.TxManager.NewTransactOpts(ctx)
 	c.Assert(err, qt.IsNil)
-	tx, err := services.Manager.FinalizeRound(
+	tx, err := services.Manager.FinalizeEpoch(
 		auth,
-		roundID,
+		epochID,
 		output.AggregateCommitmentsHash,
 		output.CollectivePublicKeyHash,
 		output.ShareCommitmentHash,
@@ -190,16 +182,16 @@ func finalizeForGasProfile(t *testing.T, ctx context.Context, roundID [12]byte) 
 	return receipt.GasUsed
 }
 
-func submitPartialDecryptForGasProfile(t *testing.T, ctx context.Context, roundID [12]byte) uint64 {
+func submitPartialDecryptForGasProfile(t *testing.T, ctx context.Context, epochID [12]byte) uint64 {
 	t.Helper()
 	c := qt.New(t)
 
-	output, err := helpers.BuildPartialDecryptionSubmission(ctx, roundID, 1, big.NewInt(9), big.NewInt(7), big.NewInt(5))
+	output, err := helpers.BuildPartialDecryptionSubmission(ctx, epochID, 1, big.NewInt(9), big.NewInt(7), big.NewInt(5))
 	c.Assert(err, qt.IsNil)
 
 	auth, err := services.TxManager.NewTransactOpts(ctx)
 	c.Assert(err, qt.IsNil)
-	tx, err := services.Manager.SubmitPartialDecryption(auth, roundID, 1, 1, output.DeltaHash, output.Proof, output.Input)
+	tx, err := services.Manager.SubmitPartialDecryption(auth, epochID, 1, 1, output.DeltaHash, output.Proof, output.Input)
 	c.Assert(err, qt.IsNil)
 	c.Assert(services.TxManager.WaitTxByHash(tx.Hash(), helpers.DefaultTxTimeout), qt.IsNil)
 	receipt, err := services.Contracts.Client().TransactionReceipt(ctx, tx.Hash())
@@ -208,7 +200,7 @@ func submitPartialDecryptForGasProfile(t *testing.T, ctx context.Context, roundI
 	return receipt.GasUsed
 }
 
-func combineDecryptionForGasProfile(t *testing.T, ctx context.Context, roundID [12]byte) uint64 {
+func combineDecryptionForGasProfile(t *testing.T, ctx context.Context, epochID [12]byte) uint64 {
 	t.Helper()
 	c := qt.New(t)
 
@@ -216,7 +208,7 @@ func combineDecryptionForGasProfile(t *testing.T, ctx context.Context, roundID [
 	deltaPoint.ScalarBaseMult(big.NewInt(63))
 	output, err := helpers.BuildDecryptCombineOutput(
 		ctx,
-		roundID,
+		epochID,
 		1,
 		big.NewInt(9),
 		[]uint16{1},
@@ -227,7 +219,7 @@ func combineDecryptionForGasProfile(t *testing.T, ctx context.Context, roundID [
 
 	c.Assert(helpers.SubmitCiphertextAs(ctx,
 		&helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager},
-		roundID, 1,
+		epochID, 1,
 		output.CiphertextC1.X, output.CiphertextC1.Y,
 		output.CiphertextC2.X, output.CiphertextC2.Y,
 	), qt.IsNil)
@@ -236,7 +228,8 @@ func combineDecryptionForGasProfile(t *testing.T, ctx context.Context, roundID [
 	c.Assert(err, qt.IsNil)
 	tx, err := services.Manager.CombineDecryption(
 		auth,
-		roundID,
+		epochID,
+		[32]byte{}, // legacy per-epoch path: zero aid
 		1,
 		output.CombineHash,
 		output.Plaintext,
@@ -252,48 +245,3 @@ func combineDecryptionForGasProfile(t *testing.T, ctx context.Context, roundID [
 	return receipt.GasUsed
 }
 
-func revealShareForGasProfile(t *testing.T, ctx context.Context, roundID [12]byte) uint64 {
-	t.Helper()
-	c := qt.New(t)
-
-	finalizeOutput, err := helpers.BuildFinalizeRoundOutput(ctx, roundID, 1, 1, []uint16{1}, [][]*big.Int{{big.NewInt(7)}})
-	c.Assert(err, qt.IsNil)
-	output, err := helpers.BuildRevealShareSubmission(ctx, roundID, 1, big.NewInt(7), finalizeOutput.ShareCommitments[0])
-	c.Assert(err, qt.IsNil)
-
-	auth, err := services.TxManager.NewTransactOpts(ctx)
-	c.Assert(err, qt.IsNil)
-	tx, err := services.Manager.SubmitRevealedShare(auth, roundID, 1, output.ShareValue, output.Proof, output.Input)
-	c.Assert(err, qt.IsNil)
-	c.Assert(services.TxManager.WaitTxByHash(tx.Hash(), helpers.DefaultTxTimeout), qt.IsNil)
-	receipt, err := services.Contracts.Client().TransactionReceipt(ctx, tx.Hash())
-	c.Assert(err, qt.IsNil)
-
-	return receipt.GasUsed
-}
-
-func reconstructSecretForGasProfile(t *testing.T, ctx context.Context, roundID [12]byte) uint64 {
-	t.Helper()
-	c := qt.New(t)
-
-	output, err := helpers.BuildRevealShareOutput(ctx, roundID, 1, []uint16{1}, []*big.Int{big.NewInt(7)})
-	c.Assert(err, qt.IsNil)
-
-	auth, err := services.TxManager.NewTransactOpts(ctx)
-	c.Assert(err, qt.IsNil)
-	tx, err := services.Manager.ReconstructSecret(
-		auth,
-		roundID,
-		output.DisclosureHash,
-		output.ReconstructedSecretHash,
-		output.Transcript,
-		output.Proof,
-		output.Input,
-	)
-	c.Assert(err, qt.IsNil)
-	c.Assert(services.TxManager.WaitTxByHash(tx.Hash(), helpers.DefaultTxTimeout), qt.IsNil)
-	receipt, err := services.Contracts.Client().TransactionReceipt(ctx, tx.Hash())
-	c.Assert(err, qt.IsNil)
-
-	return receipt.GasUsed
-}

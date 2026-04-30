@@ -14,11 +14,11 @@ contract DKGIdLibTest is Test {
 
     function test_ComputeRoundId_EmbedsPrefixAndNonce() public pure {
         uint32 prefix = 0xAABBCCDD;
-        bytes12 roundId = DKGIdLib.computeRoundId(prefix, 7);
+        bytes12 epochId = DKGIdLib.computeEpochId(prefix, 7);
 
         // forge-lint: disable-next-line(unsafe-typecast)
-        assertEq(uint32(bytes4(roundId)), prefix);
+        assertEq(uint32(bytes4(epochId)), prefix);
         // forge-lint: disable-next-line(unsafe-typecast)
-        assertEq(uint64(bytes8(roundId << 32)), 7);
+        assertEq(uint64(bytes8(epochId << 32)), 7);
     }
 }

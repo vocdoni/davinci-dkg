@@ -40,8 +40,6 @@ func ParseContractAddressesEnv(data []byte) (types.ContractAddresses, error) {
 		FinalizeVerifier:       common.HexToAddress(values["FINALIZE_VERIFIER"]),
 		PartialDecryptVerifier: common.HexToAddress(values["PARTIAL_DECRYPT_VERIFIER"]),
 		DecryptCombineVerifier: common.HexToAddress(values["DECRYPT_COMBINE_VERIFIER"]),
-		RevealSubmitVerifier:   common.HexToAddress(values["REVEAL_SUBMIT_VERIFIER"]),
-		RevealShareVerifier:    common.HexToAddress(values["REVEAL_SHARE_VERIFIER"]),
 	}
 	if err := addresses.Validate(); err != nil {
 		return types.ContractAddresses{}, err

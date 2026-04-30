@@ -9,9 +9,9 @@ import (
 )
 
 // DeriveBRLCChallenge derives a BN254-scalar challenge from domain-separated inputs.
-func DeriveBRLCChallenge(roundID [12]byte, domain string, anchor common.Hash) *big.Int {
+func DeriveBRLCChallenge(epochID [12]byte, domain string, anchor common.Hash) *big.Int {
 	modulus := ecc.BN254.ScalarField()
-	payload := append(append(roundID[:], []byte(domain)...), anchor.Bytes()...)
+	payload := append(append(epochID[:], []byte(domain)...), anchor.Bytes()...)
 	sum := crypto.Keccak256(payload)
 	return new(big.Int).Mod(new(big.Int).SetBytes(sum), modulus)
 }

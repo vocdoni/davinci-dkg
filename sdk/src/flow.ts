@@ -5,10 +5,10 @@
  * primitives into the common end-to-end flows.
  *
  * Full flow:
- *   1. organizer calls createRound()
+ *   1. organizer calls createEpoch()
  *   2. DKG nodes call claimSlot() once the seed block is mined
- *   3. Nodes submit contributions → round moves to Contribution phase
- *   4. Nodes finalize round → round moves to Finalized; collective public key available
+ *   3. Nodes submit contributions → epoch moves to Contribution phase
+ *   4. Nodes finalize epoch → epoch moves to Finalized; collective public key available
  *   5. Anyone can encrypt data using the collective public key (ElGamal)
  *   6. DKG nodes submit partial decryptions for a given ciphertext
  *   7. Any node calls combineDecryption → DecryptionCombined event emitted
@@ -17,17 +17,17 @@
 
 import { type PublicClient, type Hash } from 'viem';
 import { DKGClient } from './client.js';
-import { type RoundPolicy, type ElGamalCiphertext, type BabyJubPoint } from './types.js';
-import { waitForRoundStatus, waitForDecryption } from './monitor.js';
+import { type EpochPolicy, type ElGamalCiphertext, type BabyJubPoint } from './types.js';
+import { waitForEpochPhase, waitForDecryption } from './monitor.js';
 import { buildElGamal } from './crypto/elgamal.js';
-import { RoundStatus } from './types.js';
+import { EpochPhase } from './types.js';
 
 export interface CollectivePublicKey {
   /**
    * The BabyJubJub point that is the collective public key.
    * Equals PK = Σ_i a_{i,0}·G, the sum of each contributor's zeroth Feldman
    * commitment. The contract accumulates this incrementally as contributions
-   * are accepted. Retrieve it with `client.getCollectivePublicKey(roundId)`.
+   * are accepted. Retrieve it with `client.getCollectivePublicKey(epochId)`.
    *
    * NOTE: The on-chain `collectivePublicKeyHash` is keccak256(x, y).
    */
@@ -36,21 +36,21 @@ export interface CollectivePublicKey {
 }
 
 /**
- * Wait until a round is Finalized, then return the collective public key hash
- * (keccak256 of the key point, emitted in the RoundFinalized event).
+ * Wait until a epoch is Finalized, then return the collective public key hash
+ * (keccak256 of the key point, emitted in the EpochFinalized event).
  *
- * To get the actual curve point (x, y) call `client.getCollectivePublicKey(roundId)` —
+ * To get the actual curve point (x, y) call `client.getCollectivePublicKey(epochId)` —
  * a simple view-call that returns the key accumulated on-chain during contribution.
  */
 export async function waitForCollectivePublicKeyHash(
   client: DKGClient,
-  roundId: `0x${string}`,
+  epochId: `0x${string}`,
   options?: { intervalMs?: number; timeoutMs?: number },
 ): Promise<`0x${string}`> {
-  await waitForRoundStatus(client, roundId, RoundStatus.Finalized, options);
-  const events = await client.getRoundFinalizedEvents(roundId);
+  await waitForEpochPhase(client, epochId, EpochPhase.Finalized, options);
+  const events = await client.getEpochFinalizedEvents(epochId);
   if (events.length === 0) {
-    throw new Error(`No RoundFinalized event found for round ${roundId}`);
+    throw new Error(`No EpochFinalized event found for epoch ${epochId}`);
   }
   return events[events.length - 1].collectivePublicKeyHash;
 }
@@ -95,17 +95,17 @@ export async function decrypt(
  */
 export async function waitForCombinedDecryption(
   client: DKGClient,
-  roundId: `0x${string}`,
+  epochId: `0x${string}`,
   ciphertextIndex: number,
   options?: { intervalMs?: number; timeoutMs?: number },
 ) {
-  return waitForDecryption(client, roundId, ciphertextIndex, options);
+  return waitForDecryption(client, epochId, ciphertextIndex, options);
 }
 
 /**
  * End-to-end encrypt/decrypt flow for testing and documentation.
  *
- * Assumes the round was already created. The function encrypts `plaintext`
+ * Assumes the epoch was already created. The function encrypts `plaintext`
  * with `collectivePub`, then waits for the on-chain combined decryption to
  * complete.
  *
@@ -114,15 +114,15 @@ export async function waitForCombinedDecryption(
  * and any caller with enough partial decryptions calls combineDecryption.
  *
  * @param client         Read-only DKGClient
- * @param roundId        The round ID
+ * @param epochId        The epoch ID
  * @param collectivePub  The collective public key point [x, y] (from
- *                       `client.getCollectivePublicKey(roundId)`)
+ *                       `client.getCollectivePublicKey(epochId)`)
  * @param plaintext      Small integer to encrypt/decrypt
  * @param ciphertextIndex  Index to identify which ciphertext to wait for (1-based)
  */
 export async function demonstrateEncryptDecryptFlow(
   client: DKGClient,
-  roundId: `0x${string}`,
+  epochId: `0x${string}`,
   collectivePub: BabyJubPoint,
   plaintext: bigint,
   ciphertextIndex: number,
@@ -134,7 +134,7 @@ export async function demonstrateEncryptDecryptFlow(
   const ciphertext = await encrypt(plaintext, collectivePub);
 
   // 2. Wait for the DKG nodes to decrypt on-chain
-  const record = await waitForCombinedDecryption(client, roundId, ciphertextIndex, {
+  const record = await waitForCombinedDecryption(client, epochId, ciphertextIndex, {
     timeoutMs: 300_000,
   });
 

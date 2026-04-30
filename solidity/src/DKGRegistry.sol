@@ -2,6 +2,10 @@
 pragma solidity 0.8.28;
 
 import {IDKGRegistry} from "./interfaces/IDKGRegistry.sol";
+import {BabyJubJub} from "./libraries/BabyJubJub.sol";
+import {DKGProtocol} from "./libraries/DKGProtocol.sol";
+import {PoseidonT3} from "poseidon-solidity/PoseidonT3.sol";
+import {PoseidonT6} from "poseidon-solidity/PoseidonT6.sol";
 
 /// @title DKGRegistry
 /// @notice Append-only registry of operator BabyJubJub encryption keys used
@@ -70,15 +74,29 @@ contract DKGRegistry is IDKGRegistry {
         emit ManagerSet(m);
     }
 
-    /// @notice Register the caller's BabyJubJub encryption key.
-    /// @dev    Reverts if either coordinate is zero or if the caller has
-    ///         already registered. Initialises liveness with the current
-    ///         block number and increments `activeCount`.
-    function registerKey(uint256 pubX, uint256 pubY) external override {
-        if (pubX == 0 || pubY == 0) revert InvalidKey();
+    /// @notice Register the caller's BabyJubJub encryption key together
+    ///         with a Schnorr proof of knowledge of the secret. Implements
+    ///         paper §5.1.1 (line ~747) and PLAN.md A14.
+    /// @dev    Validates the key is a canonical, on-curve, non-identity
+    ///         point. Then verifies the Schnorr PoK natively in BabyJubJub
+    ///         arithmetic (no SNARK). Initialises liveness and increments
+    ///         `activeCount`.
+    function registerKey(
+        uint256 pubX,
+        uint256 pubY,
+        uint256 schnorrAx,
+        uint256 schnorrAy,
+        uint256 schnorrZ
+    ) external override {
+        _requireValidEncryptionPoint(pubX, pubY);
+        _requireValidEncryptionPoint(schnorrAx, schnorrAy);
 
         NodeKey storage node = nodes[msg.sender];
         if (node.status != NodeStatus.NONE) revert AlreadyRegistered();
+
+        if (!_verifyOperatorSchnorr(msg.sender, pubX, pubY, schnorrAx, schnorrAy, schnorrZ)) {
+            revert InvalidSchnorrProof();
+        }
 
         node.operator = msg.sender;
         node.pubX = pubX;
@@ -95,14 +113,26 @@ contract DKGRegistry is IDKGRegistry {
     }
 
     /// @notice Rotate the caller's previously registered BabyJubJub key.
-    /// @dev    If the caller was previously reaped (status == INACTIVE),
+    /// @dev    Requires a fresh Schnorr proof of knowledge over the new key.
+    ///         If the caller was previously reaped (status == INACTIVE),
     ///         this call implicitly reactivates them — rotating a key is a
     ///         strong signal that the operator is alive.
-    function updateKey(uint256 pubX, uint256 pubY) external override {
-        if (pubX == 0 || pubY == 0) revert InvalidKey();
+    function updateKey(
+        uint256 pubX,
+        uint256 pubY,
+        uint256 schnorrAx,
+        uint256 schnorrAy,
+        uint256 schnorrZ
+    ) external override {
+        _requireValidEncryptionPoint(pubX, pubY);
+        _requireValidEncryptionPoint(schnorrAx, schnorrAy);
 
         NodeKey storage node = nodes[msg.sender];
         if (node.status == NodeStatus.NONE) revert NotRegistered();
+
+        if (!_verifyOperatorSchnorr(msg.sender, pubX, pubY, schnorrAx, schnorrAy, schnorrZ)) {
+            revert InvalidSchnorrProof();
+        }
 
         node.pubX = pubX;
         node.pubY = pubY;
@@ -119,10 +149,80 @@ contract DKGRegistry is IDKGRegistry {
         emit NodeMarkedActive(msg.sender, uint64(block.number));
     }
 
+    // ─── Schnorr proof of knowledge (paper §6.2 with operator identifiers) ──
+
+    /// @dev Compute the Fiat-Shamir challenge `c = Poseidon(...)` over the
+    ///      operator Schnorr transcript. Two-pass because the Poseidon
+    ///      library only supports up to 5 inputs (T6); we hash the first 5
+    ///      fields then mix in `A_y` with T3.
+    ///
+    ///      Transcript layout (paper §6.2 with operator identifiers
+    ///      substituted for organizer identifiers, per paper line 747):
+    ///
+    ///        challenge = Poseidon(
+    ///          inner = T6(domain, operator, pubX, pubY, A_x),
+    ///          A_y
+    ///        )
+    ///
+    ///      The shared `DOMAIN_OPERATOR_REGISTER_V1` digest namespaces the
+    ///      proof so it cannot be replayed as an organizer Schnorr proof
+    ///      (cross-protocol replay safety, PLAN §2.8).
+    function _operatorSchnorrChallenge(
+        address op,
+        uint256 pubX,
+        uint256 pubY,
+        uint256 ax,
+        uint256 ay
+    ) internal pure returns (uint256) {
+        // Reduce the bytes32 domain digest into BN254 scalar field so it is
+        // a valid Poseidon input.
+        uint256 domainField = uint256(DKGProtocol.DOMAIN_OPERATOR_REGISTER_V1) % BabyJubJub.Q;
+        uint256[5] memory in1;
+        in1[0] = domainField;
+        in1[1] = uint256(uint160(op));
+        in1[2] = pubX;
+        in1[3] = pubY;
+        in1[4] = ax;
+        uint256 inner = PoseidonT6.hash(in1);
+        uint256[2] memory in2;
+        in2[0] = inner;
+        in2[1] = ay;
+        return PoseidonT3.hash(in2);
+    }
+
+    /// @dev Verify the Schnorr PoK: `z·G == A + c·PK_op` on BabyJubJub.
+    ///      Returns true on success; the caller reverts with
+    ///      `InvalidSchnorrProof` on false.
+    function _verifyOperatorSchnorr(
+        address op,
+        uint256 pubX,
+        uint256 pubY,
+        uint256 ax,
+        uint256 ay,
+        uint256 z
+    ) internal view returns (bool) {
+        uint256 c = _operatorSchnorrChallenge(op, pubX, pubY, ax, ay);
+        (uint256 zGx, uint256 zGy) = BabyJubJub.scalarMulBase(z);
+        (uint256 cPKx, uint256 cPKy) = BabyJubJub.scalarMul(c, pubX, pubY);
+        (uint256 rhsX, uint256 rhsY) = BabyJubJub.pointAdd(ax, ay, cPKx, cPKy);
+        return zGx == rhsX && zGy == rhsY;
+    }
+
+    /// @dev Validate that a BabyJubJub point received as encryption key or
+    ///      Schnorr nonce is canonical, on-curve, and non-identity. Prime-
+    ///      subgroup membership is implicit in the Schnorr PoK (any scalar
+    ///      multiple of the generator G lies in the prime subgroup), so we
+    ///      do not pay for the explicit `isInPrimeSubgroup` check here.
+    function _requireValidEncryptionPoint(uint256 x, uint256 y) internal pure {
+        if (x >= BabyJubJub.Q || y >= BabyJubJub.Q) revert PointNotCanonical();
+        if (x == 0 && y == 1) revert PointIsIdentity();
+        if (!BabyJubJub.isOnCurve(x, y)) revert PointNotOnCurve();
+    }
+
     /// @notice Refresh an operator's `lastActiveBlock` after a successful
     ///         contribution. Only the configured DKGManager may call this.
     /// @dev    Silently no-ops for unregistered or inactive nodes so the
-    ///         manager never reverts mid-round on a stale registry row.
+    ///         manager never reverts mid-epoch on a stale registry row.
     ///         Skips the SSTORE when the row was already refreshed at the
     ///         same block (cheap hot path).
     function markActive(address operator) external override {
@@ -175,7 +275,7 @@ contract DKGRegistry is IDKGRegistry {
     }
 
     /// @notice Refresh the caller's `lastActiveBlock` without touching the
-    ///         key or participating in a round. The escape valve for
+    ///         key or participating in a epoch. The escape valve for
     ///         healthy operators that the lottery never selects.
     /// @dev    Reverts `NotActive` if the caller is not currently ACTIVE
     ///         (use `reactivate` first in that case).

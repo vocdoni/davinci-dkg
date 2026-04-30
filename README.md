@@ -812,7 +812,7 @@ event log.
 | `getPlaintext(roundId, ciphertextIndex)` | `uint256` — recovered plaintext scalar; `0` if the decryption has not been combined yet (check `getCombinedDecryption(...).completed` to disambiguate). |
 | `getCiphertextHash(roundId, ciphertextIndex)` | `bytes32` — `keccak256(abi.encode(c1x, c1y, c2x, c2y))` of the submitted ciphertext; raw coordinates are only in the `CiphertextSubmitted` event. |
 | `getRevealedShare(roundId, participant)` | `RevealedShareRecord` (only `participantIndex`, `shareValue`, `accepted` persisted) |
-| `getShareCommitmentHash(roundId, participantIndex)` | `bytes32` = `keccak256(abi.encode(x, y))`. The pre-image lives in the `RoundFinalized` event. |
+| `getShareCommitmentHash(roundId, participantIndex)` | `bytes32` = `keccak256(abi.encode(x, y))`. The pre-image lives in the `EpochFinalized` event. |
 | `getContributionVerifierVKeyHash()` | `bytes32` |
 | `getPartialDecryptVerifierVKeyHash()` | `bytes32` |
 | `getFinalizeVerifierVKeyHash()` | `bytes32` |

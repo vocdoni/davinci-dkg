@@ -28,7 +28,7 @@ func TestProveVerify(t *testing.T) {
 	c.Assert(err, qt.IsNil)
 	c.Assert(Verify(*proof, roundHash, idx, group.Encode(pubKey), group.Encode(base), group.Encode(target)), qt.IsNil)
 
-	// Tampering the round hash must reject the proof.
+	// Tampering the epoch hash must reject the proof.
 	wrongRound := big.NewInt(0xCAFEBABE)
 	c.Assert(
 		Verify(*proof, wrongRound, idx, group.Encode(pubKey), group.Encode(base), group.Encode(target)),

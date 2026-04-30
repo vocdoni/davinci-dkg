@@ -277,7 +277,7 @@ func TestContributionCircuitProveAndVerifyN12AllContributors(t *testing.T) {
 		nonces[j] = big.NewInt(int64(1000 + j + 1))
 	}
 
-	// Realistic-looking roundHash (simulate a 12-byte blockchain round ID).
+	// Realistic-looking roundHash (simulate a 12-byte blockchain epoch ID).
 	roundHash := new(big.Int).SetBytes([]byte{0xde, 0xad, 0xbe, 0xef, 0xca, 0xfe, 0xba, 0xbe, 0x00, 0x00, 0x00, 0x03})
 
 	runtime, err := Artifacts.LoadOrSetupForCircuit(context.Background(), &ContributionCircuit{})

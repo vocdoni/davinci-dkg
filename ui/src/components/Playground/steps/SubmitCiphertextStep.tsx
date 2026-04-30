@@ -10,28 +10,28 @@ import { HowItWorks } from '../HowItWorks'
 
 interface Props {
   status: StepStatus
-  roundId: Hex | null
+  epochId: Hex | null
   ciphertext: ElGamalCiphertext | null
   onSubmitted: (ciphertextIndex: number, txHash: Hex) => void
   log: (msg: string, level?: 'info' | 'success' | 'error' | 'tx') => void
 }
 
 // Index 1 by default — the playground only ever submits one ciphertext per
-// round. The contract enforces write-once per index.
+// epoch. The contract enforces write-once per index.
 const CIPHERTEXT_INDEX = 1
 
-export function SubmitCiphertextStep({ status, roundId, ciphertext, onSubmitted, log }: Props) {
+export function SubmitCiphertextStep({ status, epochId, ciphertext, onSubmitted, log }: Props) {
   const writer = useDkgWriter()
   const [busy, setBusy] = useState(false)
   const [tx, setTx] = useState<Hex | null>(null)
 
   const onSubmit = async () => {
-    if (!writer || !roundId || !ciphertext) return
+    if (!writer || !epochId || !ciphertext) return
     setBusy(true)
     try {
       log('Sending submitCiphertext…', 'tx')
       const hash = await writer.submitCiphertext(
-        roundId,
+        epochId,
         CIPHERTEXT_INDEX,
         ciphertext.c1[0],
         ciphertext.c1[1],
@@ -73,7 +73,7 @@ export function SubmitCiphertextStep({ status, roundId, ciphertext, onSubmitted,
             </Box>
           </Stack>
         ) : (
-          <Button colorPalette='cyan' size='sm' onClick={onSubmit} loading={busy} disabled={!writer || !roundId}>
+          <Button colorPalette='cyan' size='sm' onClick={onSubmit} loading={busy} disabled={!writer || !epochId}>
             Publish ciphertext →
           </Button>
         )}

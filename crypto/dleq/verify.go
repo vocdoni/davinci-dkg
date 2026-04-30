@@ -16,7 +16,7 @@ func Verify(proof Proof, roundHash, participantIndex *big.Int, pubKey, base, tar
 		return fmt.Errorf("response is required")
 	}
 	if roundHash == nil {
-		return fmt.Errorf("round hash is required")
+		return fmt.Errorf("epoch hash is required")
 	}
 	if participantIndex == nil {
 		return fmt.Errorf("participant index is required")

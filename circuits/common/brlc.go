@@ -70,7 +70,7 @@ func HashPackedBigIntsNative(values ...*big.Int) (*big.Int, error) {
 // DeriveChallengeNative mirrors the Solidity BRLC challenge derivation.
 func DeriveChallengeNative(roundHash *big.Int, domain [32]byte, anchor *big.Int) (*big.Int, error) {
 	if roundHash == nil {
-		return nil, fmt.Errorf("round hash is required")
+		return nil, fmt.Errorf("epoch hash is required")
 	}
 	if anchor == nil {
 		return nil, fmt.Errorf("anchor is required")

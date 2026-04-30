@@ -1,7 +1,7 @@
 // dkg-runner is the testnet scenario orchestrator.
 //
-// It creates a DKG round, waits for N DKG nodes to signal readiness and submit
-// contributions, finalises the round, encrypts a test message under the
+// It creates a DKG epoch, waits for N DKG nodes to signal readiness and submit
+// contributions, finalises the epoch, encrypts a test message under the
 // collective public key, waits for all nodes to submit partial decryptions,
 // combines them, and asserts the recovered plaintext equals the original.
 //
@@ -73,7 +73,6 @@ type cfg struct {
 	ReadinessDeadlineBlocks    int
 	ContributionDeadlineBlocks int
 	FinalizeDelayBlocks        int
-	DisclosureAllowed          bool
 }
 
 func loadCfg() (*cfg, error) {
@@ -91,8 +90,7 @@ func loadCfg() (*cfg, error) {
 	fs.Duration("wait-decrypt", 20*time.Minute, "timeout for partial-decryption phase")
 	fs.Int("readiness-deadline-blocks", 30, "block offset from current head for readiness deadline")
 	fs.Int("contribution-deadline-blocks", 600, "block offset from current head for contribution deadline (~20 min at 2s blocks)")
-	fs.Int("finalize-delay-blocks", 1, "blocks past contributionDeadline before finalizeRound is allowed (must be ≥ 1)")
-	fs.Bool("disclosure-allowed", false, "enable the reveal-share disclosure/reconstruction phase on the round")
+	fs.Int("finalize-delay-blocks", 1, "blocks past contributionDeadline before finalizeEpoch is allowed (must be ≥ 1)")
 
 	if err := fs.Parse(os.Args[1:]); err != nil {
 		return nil, err
@@ -119,7 +117,6 @@ func loadCfg() (*cfg, error) {
 		ReadinessDeadlineBlocks:    v.GetInt("readiness-deadline-blocks"),
 		ContributionDeadlineBlocks: v.GetInt("contribution-deadline-blocks"),
 		FinalizeDelayBlocks:        v.GetInt("finalize-delay-blocks"),
-		DisclosureAllowed:          v.GetBool("disclosure-allowed"),
 	}
 	if c.PrivKey == "" {
 		return nil, fmt.Errorf("--privkey required")
@@ -193,16 +190,16 @@ func runScenario(c *cfg) error {
 	n, t := uint16(c.Nodes), uint16(c.Threshold)
 	log.Infow("runner connected", "organiser", txm.Address(), "nodes", n, "threshold", t)
 
-	// ── 1. create round ──────────────────────────────────────────────────────
+	// ── 1. create epoch ──────────────────────────────────────────────────────
 	head, err := contracts.Client().BlockNumber(ctx)
 	if err != nil {
 		return err
 	}
-	prefix, err := manager.ROUNDPREFIX(callOpts)
+	prefix, err := manager.EPOCHPREFIX(callOpts)
 	if err != nil {
 		return err
 	}
-	nonce0, err := manager.RoundNonce(callOpts)
+	nonce0, err := manager.EpochNonce(callOpts)
 	if err != nil {
 		return err
 	}
@@ -217,36 +214,35 @@ func runScenario(c *cfg) error {
 	// reseed. On average ~1.5 × committeeSize nodes pass the check; the first
 	// committeeSize to call claimSlot fill the committee.
 	const lotteryAlphaBps uint16 = 15000 // α = 1.5
-	const seedDelay uint16 = 1           // 1 block gap between createRound and seedBlock
+	const seedDelay uint16 = 1           // 1 block gap between createEpoch and seedBlock
 	finalizeDelay := c.FinalizeDelayBlocks
 	if finalizeDelay < 1 {
 		finalizeDelay = 1
 	}
-	tx, err := manager.CreateRound(auth, t, n, t,
+	tx, err := manager.CreateEpoch(auth, t, n, t,
 		lotteryAlphaBps, seedDelay,
 		head+uint64(c.ReadinessDeadlineBlocks),
 		head+uint64(c.ContributionDeadlineBlocks),
 		head+uint64(c.ContributionDeadlineBlocks)+uint64(finalizeDelay),
-		c.DisclosureAllowed,
 		emptyDecryptionPolicy(),
 	)
 	if err != nil {
-		return fmt.Errorf("create round: %w", err)
+		return fmt.Errorf("create epoch: %w", err)
 	}
 	if err := txm.WaitTxByHash(tx.Hash(), 60*time.Second); err != nil {
 		return err
 	}
-	roundID := makeRoundID(prefix, nonce0+1)
+	epochID := makeRoundID(prefix, nonce0+1)
 	var createGas uint64
 	if rec, err := contracts.Client().TransactionReceipt(ctx, tx.Hash()); err == nil {
 		createGas = rec.GasUsed
 	}
-	log.Infow("round created", "id", roundHex(roundID), "tx", tx.Hash().Hex(), "gas", createGas)
+	log.Infow("epoch created", "id", roundHex(epochID), "tx", tx.Hash().Hex(), "gas", createGas)
 
 	// ── 2. wait for committee to self-fill via claimSlot ─────────────────────
 	log.Infow("waiting for committee to fill...", "want", n)
 	if err := poll(c.WaitReadiness, "claimSlot", func() (bool, error) {
-		r, err := contracts.GetRound(ctx, roundID)
+		r, err := contracts.GetEpoch(ctx, epochID)
 		if err != nil {
 			return false, err
 		}
@@ -255,7 +251,7 @@ func runScenario(c *cfg) error {
 	}); err != nil {
 		return err
 	}
-	committee, err := contracts.SelectedParticipants(ctx, roundID)
+	committee, err := contracts.SelectedParticipants(ctx, epochID)
 	if err != nil {
 		return err
 	}
@@ -266,7 +262,7 @@ func runScenario(c *cfg) error {
 	var lastCount uint16
 	var stableTicks int
 	if err := poll(c.WaitContrib, "contributions", func() (bool, error) {
-		r, err := contracts.GetRound(ctx, roundID)
+		r, err := contracts.GetEpoch(ctx, epochID)
 		if err != nil {
 			return false, err
 		}
@@ -287,12 +283,12 @@ func runScenario(c *cfg) error {
 		return err
 	}
 
-	// ── 5. finalize round ─────────────────────────────────────────────────────
+	// ── 5. finalize epoch ─────────────────────────────────────────────────────
 	// Wait until block.number >= finalizeNotBeforeBlock so the on-chain gate is open.
 	{
-		r, err := contracts.GetRound(ctx, roundID)
+		r, err := contracts.GetEpoch(ctx, epochID)
 		if err != nil {
-			return fmt.Errorf("read round before finalize: %w", err)
+			return fmt.Errorf("read epoch before finalize: %w", err)
 		}
 		if err := poll(c.WaitContrib, "finalize gate", func() (bool, error) {
 			head, err := contracts.Client().BlockNumber(ctx)
@@ -304,15 +300,15 @@ func runScenario(c *cfg) error {
 			return err
 		}
 	}
-	log.Infow("finalizing round...")
-	shareCommitments, err := finalizeRound(ctx, contracts, manager, txm, roundID, t, n, committee)
+	log.Infow("finalizing epoch...")
+	shareCommitments, err := finalizeEpoch(ctx, contracts, manager, txm, epochID, t, n, committee)
 	if err != nil {
 		return fmt.Errorf("finalize: %w", err)
 	}
-	log.Infow("round finalized")
+	log.Infow("epoch finalized")
 
 	// ── 6. encrypt test message ───────────────────────────────────────────────
-	pk, err := collectivePK(ctx, contracts, manager, roundID, t, n, committee)
+	pk, err := collectivePK(ctx, contracts, manager, epochID, t, n, committee)
 	if err != nil {
 		return fmt.Errorf("recover PK: %w", err)
 	}
@@ -356,7 +352,7 @@ func runScenario(c *cfg) error {
 	if err != nil {
 		return fmt.Errorf("submitCiphertext tx opts: %w", err)
 	}
-	submitTx, err := manager.SubmitCiphertext(submitAuth, roundID, 1, c1enc.X, c1enc.Y, c2enc.X, c2enc.Y)
+	submitTx, err := manager.SubmitCiphertext(submitAuth, epochID, 1, c1enc.X, c1enc.Y, c2enc.X, c2enc.Y)
 	if err != nil {
 		return fmt.Errorf("submit ciphertext: %w", err)
 	}
@@ -372,7 +368,7 @@ func runScenario(c *cfg) error {
 		submitGas = submitReceipt.GasUsed
 	}
 	log.Infow("ciphertext submitted on-chain",
-		"round", roundHex(roundID), "ctIdx", 1,
+		"epoch", roundHex(epochID), "ctIdx", 1,
 		"tx", submitTx.Hash().Hex(),
 		"gas", submitGas,
 	)
@@ -382,7 +378,7 @@ func runScenario(c *cfg) error {
 	if err := poll(c.WaitDecrypt, "partial decryptions", func() (bool, error) {
 		count := uint16(0)
 		for _, addr := range committee {
-			rec, err := manager.GetPartialDecryption(&bind.CallOpts{Context: ctx}, roundID, addr, 1)
+			rec, err := manager.GetPartialDecryption(&bind.CallOpts{Context: ctx}, epochID, addr, 1)
 			if err == nil && rec.Accepted {
 				count++
 			}
@@ -395,12 +391,12 @@ func runScenario(c *cfg) error {
 
 	// ── 8. combine decryptions ────────────────────────────────────────────────
 	log.Infow("combining partial decryptions...")
-	if err := combineDecryptions(ctx, contracts, manager, txm, roundID, t, committee, c1enc, c2enc, m); err != nil {
+	if err := combineDecryptions(ctx, contracts, manager, txm, epochID, t, committee, c1enc, c2enc, m); err != nil {
 		return fmt.Errorf("combine: %w", err)
 	}
 
 	// ── 9. verify ─────────────────────────────────────────────────────────────
-	combined, err := contracts.GetCombinedDecryption(ctx, roundID, 1)
+	combined, err := contracts.GetCombinedDecryption(ctx, epochID, 1)
 	if err != nil {
 		return fmt.Errorf("get combined: %w", err)
 	}
@@ -416,18 +412,18 @@ func runScenario(c *cfg) error {
 
 // ── finalize ─────────────────────────────────────────────────────────────────
 
-// finalizeRound is a thin wrapper around the shared finalizer.BuildAndSubmit
+// finalizeEpoch is a thin wrapper around the shared finalizer.BuildAndSubmit
 // helper, kept for compatibility with existing call sites.
-func finalizeRound(
+func finalizeEpoch(
 	ctx context.Context,
 	c *web3.Contracts,
 	m *gtypes.DKGManager,
 	txm *txmanager.Manager,
-	roundID [12]byte,
+	epochID [12]byte,
 	t, n uint16,
 	committee []common.Address,
 ) ([]nodetypes.CurvePoint, error) {
-	res, err := finalizer.BuildAndSubmit(ctx, c, m, txm, roundID, t, n, committee)
+	res, err := finalizer.BuildAndSubmit(ctx, c, m, txm, epochID, t, n, committee)
 	if err != nil {
 		return nil, err
 	}
@@ -478,7 +474,7 @@ func commitmentPointsFromCalldata(
 
 // parseCommitmentPoints extracts the first t Feldman commitment points from
 // the submitContribution calldata transcript.
-// submitContribution(roundId, index, commitmentsHash, encryptedSharesHash,
+// submitContribution(epochId, index, commitmentsHash, encryptedSharesHash,
 //
 //	commitment0X, commitment0Y, transcript, proof, input)
 //
@@ -525,7 +521,7 @@ func collectivePK(
 	ctx context.Context,
 	c *web3.Contracts,
 	m *gtypes.DKGManager,
-	roundID [12]byte,
+	epochID [12]byte,
 	t, n uint16,
 	committee []common.Address,
 ) (nodetypes.CurvePoint, error) {
@@ -535,7 +531,7 @@ func collectivePK(
 	sum.SetZero()
 
 	for _, addr := range committee {
-		rec, err := m.GetContribution(callOpts, roundID, addr)
+		rec, err := m.GetContribution(callOpts, epochID, addr)
 		if err != nil || !rec.Accepted {
 			continue
 		}
@@ -562,7 +558,7 @@ func combineDecryptions(
 	c *web3.Contracts,
 	m *gtypes.DKGManager,
 	txm *txmanager.Manager,
-	roundID [12]byte,
+	epochID [12]byte,
 	t uint16,
 	committee []common.Address,
 	c1, c2 nodetypes.CurvePoint,
@@ -576,7 +572,7 @@ func combineDecryptions(
 		if uint16(len(idxs)) >= t {
 			break
 		}
-		rec, err := m.GetPartialDecryption(callOpts, roundID, addr, 1)
+		rec, err := m.GetPartialDecryption(callOpts, epochID, addr, 1)
 		if err != nil || !rec.Accepted {
 			continue
 		}
@@ -595,7 +591,7 @@ func combineDecryptions(
 	}
 
 	asgn := decryptcombine.Assignment{
-		RoundHash:          roundScalar(roundID),
+		RoundHash:          roundScalar(epochID),
 		Threshold:          t,
 		CiphertextC1:       c1,
 		CiphertextC2:       c2,
@@ -631,7 +627,7 @@ func combineDecryptions(
 	if err != nil {
 		return err
 	}
-	tx, err := m.CombineDecryption(auth, roundID, 1,
+	tx, err := m.CombineDecryption(auth, epochID, [32]byte{}, 1,
 		common.BigToHash(pi.CombineHash),
 		pi.PlaintextHash,
 		transcriptBytes, proofBytes, inputBytes,

@@ -7,6 +7,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/vocdoni/davinci-dkg/crypto/schnorr"
 	"github.com/vocdoni/davinci-dkg/solidity/golang-types"
 	"github.com/vocdoni/davinci-dkg/web3"
 	"github.com/vocdoni/davinci-dkg/web3/txmanager"
@@ -49,12 +50,12 @@ func (s *TestServices) Actor(index int) (*TestActor, error) {
 	return s.ActorFromPrivateKey(DefaultAnvilPrivateKeys[index])
 }
 
-func ClaimSlotAs(ctx context.Context, actor *TestActor, roundID [12]byte) error {
+func ClaimSlotAs(ctx context.Context, actor *TestActor, epochID [12]byte) error {
 	auth, err := actor.TxManager.NewTransactOpts(ctx)
 	if err != nil {
 		return err
 	}
-	tx, err := actor.Manager.ClaimSlot(auth, roundID)
+	tx, err := actor.Manager.ClaimSlot(auth, epochID)
 	if err != nil {
 		return fmt.Errorf("claim slot: %w", err)
 	}
@@ -64,7 +65,7 @@ func ClaimSlotAs(ctx context.Context, actor *TestActor, roundID [12]byte) error 
 func SubmitContributionAs(
 	ctx context.Context,
 	actor *TestActor,
-	roundID [12]byte,
+	epochID [12]byte,
 	contributorIndex uint16,
 	commitmentsHash [32]byte,
 	encryptedSharesHash [32]byte,
@@ -80,7 +81,7 @@ func SubmitContributionAs(
 	}
 	tx, err := actor.Manager.SubmitContribution(
 		auth,
-		roundID,
+		epochID,
 		contributorIndex,
 		commitmentsHash,
 		encryptedSharesHash,
@@ -99,7 +100,7 @@ func SubmitContributionAs(
 func SubmitPartialDecryptionAs(
 	ctx context.Context,
 	actor *TestActor,
-	roundID [12]byte,
+	epochID [12]byte,
 	participantIndex uint16,
 	ciphertextIndex uint16,
 	deltaHash [32]byte,
@@ -112,7 +113,8 @@ func SubmitPartialDecryptionAs(
 	}
 	tx, err := actor.Manager.SubmitPartialDecryption(
 		auth,
-		roundID,
+		epochID,
+		[32]byte{}, // legacy per-epoch path: zero aid
 		participantIndex,
 		ciphertextIndex,
 		deltaHash,
@@ -125,30 +127,10 @@ func SubmitPartialDecryptionAs(
 	return actor.TxManager.WaitTxByHash(tx.Hash(), DefaultTxTimeout)
 }
 
-func SubmitRevealedShareAs(
+func FinalizeEpochAs(
 	ctx context.Context,
 	actor *TestActor,
-	roundID [12]byte,
-	participantIndex uint16,
-	shareValue *big.Int,
-	proof []byte,
-	input []byte,
-) error {
-	auth, err := actor.TxManager.NewTransactOpts(ctx)
-	if err != nil {
-		return err
-	}
-	tx, err := actor.Manager.SubmitRevealedShare(auth, roundID, participantIndex, shareValue, proof, input)
-	if err != nil {
-		return fmt.Errorf("submit revealed share: %w", err)
-	}
-	return actor.TxManager.WaitTxByHash(tx.Hash(), DefaultTxTimeout)
-}
-
-func FinalizeRoundAs(
-	ctx context.Context,
-	actor *TestActor,
-	roundID [12]byte,
+	epochID [12]byte,
 	aggregateCommitmentsHash [32]byte,
 	collectivePublicKeyHash [32]byte,
 	shareCommitmentHash [32]byte,
@@ -160,9 +142,9 @@ func FinalizeRoundAs(
 	if err != nil {
 		return err
 	}
-	tx, err := actor.Manager.FinalizeRound(
+	tx, err := actor.Manager.FinalizeEpoch(
 		auth,
-		roundID,
+		epochID,
 		aggregateCommitmentsHash,
 		collectivePublicKeyHash,
 		shareCommitmentHash,
@@ -171,7 +153,7 @@ func FinalizeRoundAs(
 		input,
 	)
 	if err != nil {
-		return fmt.Errorf("finalize round: %w", err)
+		return fmt.Errorf("finalize epoch: %w", err)
 	}
 	return actor.TxManager.WaitTxByHash(tx.Hash(), DefaultTxTimeout)
 }
@@ -179,7 +161,7 @@ func FinalizeRoundAs(
 func CombineDecryptionAs(
 	ctx context.Context,
 	actor *TestActor,
-	roundID [12]byte,
+	epochID [12]byte,
 	ciphertextIndex uint16,
 	combineHash [32]byte,
 	plaintext *big.Int,
@@ -191,7 +173,7 @@ func CombineDecryptionAs(
 	if err != nil {
 		return err
 	}
-	tx, err := actor.Manager.CombineDecryption(auth, roundID, ciphertextIndex, combineHash, plaintext, transcript, proof, input)
+	tx, err := actor.Manager.CombineDecryption(auth, epochID, [32]byte{}, ciphertextIndex, combineHash, plaintext, transcript, proof, input)
 	if err != nil {
 		return fmt.Errorf("combine decryption: %w", err)
 	}
@@ -202,7 +184,7 @@ func CombineDecryptionAs(
 func SubmitCiphertextAs(
 	ctx context.Context,
 	actor *TestActor,
-	roundID [12]byte,
+	epochID [12]byte,
 	ciphertextIndex uint16,
 	c1x, c1y, c2x, c2y *big.Int,
 ) error {
@@ -210,30 +192,9 @@ func SubmitCiphertextAs(
 	if err != nil {
 		return err
 	}
-	tx, err := actor.Manager.SubmitCiphertext(auth, roundID, ciphertextIndex, c1x, c1y, c2x, c2y)
+	tx, err := actor.Manager.SubmitCiphertext(auth, epochID, ciphertextIndex, c1x, c1y, c2x, c2y)
 	if err != nil {
 		return fmt.Errorf("submit ciphertext: %w", err)
-	}
-	return actor.TxManager.WaitTxByHash(tx.Hash(), DefaultTxTimeout)
-}
-
-func ReconstructSecretAs(
-	ctx context.Context,
-	actor *TestActor,
-	roundID [12]byte,
-	disclosureHash [32]byte,
-	reconstructedSecretHash [32]byte,
-	transcript []byte,
-	proof []byte,
-	input []byte,
-) error {
-	auth, err := actor.TxManager.NewTransactOpts(ctx)
-	if err != nil {
-		return err
-	}
-	tx, err := actor.Manager.ReconstructSecret(auth, roundID, disclosureHash, reconstructedSecretHash, transcript, proof, input)
-	if err != nil {
-		return fmt.Errorf("reconstruct secret: %w", err)
 	}
 	return actor.TxManager.WaitTxByHash(tx.Hash(), DefaultTxTimeout)
 }
@@ -242,7 +203,7 @@ func ReconstructSecretAs(
 // not already registered with the correct key. The key is derived deterministically
 // from actor.PrivKey using the same domain as the DKG node binary.
 func EnsureNodeKeyRegistered(ctx context.Context, services *TestServices, actor *TestActor) error {
-	expectedX, expectedY, _, err := deterministicNodeKeyMaterial(actor.PrivKey)
+	expectedX, expectedY, secret, err := deterministicNodeKeyMaterial(actor.PrivKey)
 	if err != nil {
 		return fmt.Errorf("derive deterministic node key for %s: %w", actor.Address().Hex(), err)
 	}
@@ -259,6 +220,11 @@ func EnsureNodeKeyRegistered(ctx context.Context, services *TestServices, actor 
 		return nil
 	}
 
+	_, _, proof, err := schnorr.ProveOperatorRegister(secret, actor.Address())
+	if err != nil {
+		return fmt.Errorf("schnorr proof for %s: %w", actor.Address().Hex(), err)
+	}
+
 	auth, err := actor.TxManager.NewTransactOpts(ctx)
 	if err != nil {
 		return fmt.Errorf("tx opts for %s: %w", actor.Address().Hex(), err)
@@ -266,13 +232,13 @@ func EnsureNodeKeyRegistered(ctx context.Context, services *TestServices, actor 
 
 	var txHash common.Hash
 	if node.Status == 0 {
-		tx, err := actor.Registry.RegisterKey(auth, expectedX, expectedY)
+		tx, err := actor.Registry.RegisterKey(auth, expectedX, expectedY, proof.Ax, proof.Ay, proof.Z)
 		if err != nil {
 			return fmt.Errorf("register key for %s: %w", actor.Address().Hex(), err)
 		}
 		txHash = tx.Hash()
 	} else {
-		tx, err := actor.Registry.UpdateKey(auth, expectedX, expectedY)
+		tx, err := actor.Registry.UpdateKey(auth, expectedX, expectedY, proof.Ax, proof.Ay, proof.Z)
 		if err != nil {
 			return fmt.Errorf("update key for %s: %w", actor.Address().Hex(), err)
 		}
@@ -282,12 +248,12 @@ func EnsureNodeKeyRegistered(ctx context.Context, services *TestServices, actor 
 }
 
 // ClaimSlotMeasured claims a slot for actor and returns the gas used.
-func ClaimSlotMeasured(ctx context.Context, services *TestServices, actor *TestActor, roundID [12]byte) (uint64, error) {
+func ClaimSlotMeasured(ctx context.Context, services *TestServices, actor *TestActor, epochID [12]byte) (uint64, error) {
 	auth, err := actor.TxManager.NewTransactOpts(ctx)
 	if err != nil {
 		return 0, err
 	}
-	tx, err := actor.Manager.ClaimSlot(auth, roundID)
+	tx, err := actor.Manager.ClaimSlot(auth, epochID)
 	if err != nil {
 		return 0, fmt.Errorf("claim slot: %w", err)
 	}
@@ -306,7 +272,7 @@ func SubmitContributionMeasured(
 	ctx context.Context,
 	services *TestServices,
 	actor *TestActor,
-	roundID [12]byte,
+	epochID [12]byte,
 	contributorIndex uint16,
 	sub *ContributionSubmission,
 ) (uint64, error) {
@@ -316,7 +282,7 @@ func SubmitContributionMeasured(
 	}
 	tx, err := actor.Manager.SubmitContribution(
 		auth,
-		roundID,
+		epochID,
 		contributorIndex,
 		sub.CommitmentsHash,
 		sub.EncryptedSharesHash,
@@ -344,7 +310,7 @@ func SubmitPartialDecryptionMeasured(
 	ctx context.Context,
 	services *TestServices,
 	actor *TestActor,
-	roundID [12]byte,
+	epochID [12]byte,
 	participantIndex uint16,
 	ciphertextIndex uint16,
 	partial *PartialDecryptionSubmission,
@@ -355,7 +321,8 @@ func SubmitPartialDecryptionMeasured(
 	}
 	tx, err := actor.Manager.SubmitPartialDecryption(
 		auth,
-		roundID,
+		epochID,
+		[32]byte{}, // legacy per-epoch path: zero aid
 		participantIndex,
 		ciphertextIndex,
 		partial.DeltaHash,

@@ -18,7 +18,7 @@ export async function mineBlocks(client: PublicClient, count: number): Promise<v
  * is in the past, so claimSlot can resolve the blockhash.
  *
  * @param client      viem PublicClient
- * @param seedBlock   the round's seedBlock value (bigint)
+ * @param seedBlock   the epoch's seedBlock value (bigint)
  */
 export async function mineUntilSeedAvailable(
   client: PublicClient,

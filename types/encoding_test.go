@@ -13,7 +13,7 @@ func TestContributionJSONRoundTrip(t *testing.T) {
 	c := qt.New(t)
 
 	original := Contribution{
-		RoundID:          "round-1",
+		EpochID:          "epoch-1",
 		Contributor:      common.HexToAddress("0x1000000000000000000000000000000000000001"),
 		ContributorIndex: 1,
 		Commitments: []CurvePoint{
@@ -38,7 +38,7 @@ func TestContributionJSONRoundTrip(t *testing.T) {
 	var decoded Contribution
 	c.Assert(json.Unmarshal(payload, &decoded), qt.IsNil)
 
-	c.Assert(decoded.RoundID, qt.Equals, original.RoundID)
+	c.Assert(decoded.EpochID, qt.Equals, original.EpochID)
 	c.Assert(decoded.Contributor, qt.Equals, original.Contributor)
 	c.Assert(decoded.ContributorIndex, qt.Equals, original.ContributorIndex)
 	c.Assert(decoded.Commitments[0].X.Cmp(original.Commitments[0].X), qt.Equals, 0)

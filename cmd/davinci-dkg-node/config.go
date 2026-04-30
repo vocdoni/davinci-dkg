@@ -110,7 +110,7 @@ func validateConfig(cfg *Config) error {
 }
 
 // HasChainConfig reports whether enough configuration is present to connect to
-// the chain and participate in DKG rounds. A private key is always required; the
+// the chain and participate in DKG epochs. A private key is always required; the
 // DKGManager address may come from --manager or from a --network preset.
 func (c *Config) HasChainConfig() bool {
 	if c.PrivKey == "" {
