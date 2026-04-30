@@ -94,11 +94,16 @@ func (c *FinalizeCircuit) Define(api frontend.API) error {
 		if err := ccommon.AssertPointOnCurve(api, c.ShareCommitments[i]); err != nil {
 			return err
 		}
+		// Range-check the participant index so the small-scalar path in
+		// CommitmentPolynomialValue can use width = participantIndexBits·k
+		// for power_k = x^k.
+		api.AssertIsLessOrEqual(c.ParticipantIndexes[i], MaxParticipants-1)
 		shareCommitment, err := ccommon.CommitmentPolynomialValue(
 			api,
 			maskedAggregate,
 			nil, // mask already baked in
 			c.ParticipantIndexes[i],
+			participantIndexBits,
 		)
 		if err != nil {
 			return err

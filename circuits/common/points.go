@@ -92,6 +92,52 @@ func AssertPointOnCurve(api frontend.API, point twistededwards.Point) error {
 	return nil
 }
 
+// ScalarMulSmallScalar computes `scalar · point` for a scalar that the
+// caller has range-checked to fit in `nbBits` bits. Standard left-to-right
+// double-and-add over the explicitly-decomposed scalar, with `nbBits ≤
+// MaxN.BitLen()*N` typically much smaller than the BN254.Fr width — that's
+// where the savings come from versus `curve.ScalarMul`, which goes through
+// the half-GCD trick over the full ~252-bit scalar field even for small
+// inputs.
+//
+// Bits are obtained via `api.ToBinary(scalar, nbBits)` which uses gnark's
+// internal bit-decomposition hint AND emits the range-check constraints,
+// so passing an oversized scalar fails the proof rather than producing a
+// silently-wrong result.
+//
+// For `nbBits = 0` returns the identity (caller should special-case this).
+func ScalarMulSmallScalar(
+	api frontend.API,
+	point twistededwards.Point,
+	scalar frontend.Variable,
+	nbBits int,
+) twistededwards.Point {
+	if nbBits <= 0 {
+		return IdentityPoint()
+	}
+	curve, err := twistededwards.NewEdCurve(api, ecc_tweds.BN254)
+	if err != nil {
+		panic(err)
+	}
+	bits := api.ToBinary(scalar, nbBits)
+	// Standard left-to-right double-and-add. Initialize res with the
+	// highest bit, then for each remaining bit double-and-conditionally-add.
+	identity := IdentityPoint()
+	res := twistededwards.Point{
+		X: api.Select(bits[nbBits-1], point.X, identity.X),
+		Y: api.Select(bits[nbBits-1], point.Y, identity.Y),
+	}
+	for i := nbBits - 2; i >= 0; i-- {
+		res = curve.Double(res)
+		added := curve.Add(res, point)
+		res = twistededwards.Point{
+			X: api.Select(bits[i], added.X, res.X),
+			Y: api.Select(bits[i], added.Y, res.Y),
+		}
+	}
+	return res
+}
+
 // CommitmentPolynomialValue evaluates a commitment polynomial Σ_k cₖ·x^k.
 //
 // If `mask` is non-nil, slot k is included only when mask[k] == 1; this matches
@@ -99,11 +145,19 @@ func AssertPointOnCurve(api frontend.API, point twistededwards.Point) error {
 // folded the mask into the commitments (e.g. by replacing inactive slots with
 // the curve identity point), which lets the inner loop skip the per-iteration
 // Select on the running sum and saves ~2 constraints per coefficient per call.
+//
+// `xMaxBits` is the caller's bound on `log2(x)`. When >0, each scalar mul
+// uses the small-scalar variant with bit width `k * xMaxBits` (the natural
+// ceiling on x^k). This is the dominant saving in the contribution circuit:
+// for `xMaxBits = 5` (x ≤ MaxN-1 = 31) at MaxN=32, the scalar muls drop
+// from 32×~2400 ≈ 77k constraints per recipient to roughly half that.
+// `xMaxBits = 0` falls back to the original full-width scalar mul.
 func CommitmentPolynomialValue(
 	api frontend.API,
 	commitments []twistededwards.Point,
 	mask []frontend.Variable,
 	x frontend.Variable,
+	xMaxBits int,
 ) (twistededwards.Point, error) {
 	curve, err := twistededwards.NewEdCurve(api, ecc_tweds.BN254)
 	if err != nil {
@@ -112,7 +166,17 @@ func CommitmentPolynomialValue(
 	sum := IdentityPoint()
 	power := frontend.Variable(1)
 	for i, commitment := range commitments {
-		scaled := curve.ScalarMul(commitment, power)
+		var scaled twistededwards.Point
+		switch {
+		case i == 0:
+			// power = 1, scaled = commitment[0]. No mul, no doublings.
+			scaled = commitment
+		case xMaxBits > 0:
+			// power < x^i ≤ 2^(xMaxBits·i). Use the small-scalar variant.
+			scaled = ScalarMulSmallScalar(api, commitment, power, xMaxBits*i)
+		default:
+			scaled = curve.ScalarMul(commitment, power)
+		}
 		next := curve.Add(sum, scaled)
 		if mask == nil {
 			sum.X = next.X

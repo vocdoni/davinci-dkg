@@ -12,6 +12,11 @@ import (
 const (
 	MaxCoefficients = ccommon.MaxN
 	MaxRecipients   = ccommon.MaxN
+	// recipientIndexBits is ceil(log2(MaxRecipients)) — the bit width that
+	// covers any in-range recipient index. Used by the small-scalar
+	// CommitmentPolynomialValue path (see circuits/common/points.go).
+	// Must be wide enough to contain MaxRecipients-1 unsigned.
+	recipientIndexBits = 5 // covers MaxRecipients up to 32
 )
 
 // ContributionCircuit proves the full DKG phase-4 statement from the paper:
@@ -123,7 +128,17 @@ func (c *ContributionCircuit) Define(api frontend.API) error {
 			return err
 		}
 
-		feldmanPoint, err := ccommon.CommitmentPolynomialValue(api, maskedCommitments, nil, c.RecipientIndexes[i])
+		// Range-check the recipient index to log2(MaxN) bits. This is what
+		// lets CommitmentPolynomialValue use the small-scalar variant for
+		// the scaled commitments below: for k ≥ 1, power_k = x^k fits in
+		// `recipientIndexBits·k` bits, and the per-iteration scalar mul
+		// shrinks from ~2.4k constraints to ~14·(bit count) constraints.
+		// Saves ~1.3M constraints in the full circuit at MaxN = 32.
+		api.AssertIsLessOrEqual(c.RecipientIndexes[i], MaxRecipients-1)
+
+		feldmanPoint, err := ccommon.CommitmentPolynomialValue(
+			api, maskedCommitments, nil, c.RecipientIndexes[i], recipientIndexBits,
+		)
 		if err != nil {
 			return err
 		}
