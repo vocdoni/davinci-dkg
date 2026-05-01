@@ -39,6 +39,7 @@ The protocol is designed as the key-generation and threshold-decryption layer fo
 - [Smart Contracts](#smart-contracts)
   - [DKGRegistry](#dkgregistry)
   - [DKGManager](#dkgmanager)
+  - [DKGAppManager](#dkgappmanager)
   - [Per-Application Surface](#per-application-surface)
 - [Getting Started](#getting-started)
   - [Prerequisites](#prerequisites)
@@ -700,6 +701,18 @@ implicitly validates that the witnesses were used correctly.
 
 The Solidity workspace lives in `solidity/` (Foundry, `solc 0.8.28`, EVM Cancun, `via_ir = true`).
 
+The production deployment is three contracts: `DKGRegistry` (operator
+identities + liveness), `DKGManager` (epoch lifecycle, contributions,
+finalize, ciphertexts, partial / combined decryption), and
+`DKGAppManager` (per-application surface: `registerApplication`,
+`registerApplicationCoDec`, `submitOrganizerShare`, `getApplication`).
+The manager / app-manager split is a deployment concern: it keeps each
+contract under the EIP-170 24,576-byte runtime limit. Deploy order is
+`DKGRegistry → DKGManager → DKGAppManager`, followed by the one-shot
+wiring calls `DKGRegistry.setManager(DKGManager)` and
+`DKGManager.setAppManager(DKGAppManager)`. After wiring, both manager
+contracts share the same on-chain epoch storage through the manager.
+
 ### DKGRegistry
 
 **Source**: `solidity/src/DKGRegistry.sol`
@@ -759,10 +772,12 @@ the event log.
 | `submitCiphertext(epochId, aid, ciphertextIndex, c1x, c1y, c2x, c2y)` | Finalized | `aid == bytes32(0)` is the legacy per-epoch path gated by the epoch `DecryptionPolicy`; non-zero `aid` is gated by the application's own `AppPolicy`. Write-once per `(epochId, aid, ciphertextIndex)`. | Publish a ciphertext to be threshold-decrypted under either the epoch key (`aid = 0`) or the application-specific key. Stores `keccak256(c1,c2)` and emits `CiphertextSubmitted` carrying the raw coordinates so nodes (and consumers) can read them from the event log. |
 | `submitPartialDecryption(epochId, aid, participantIndex, ciphertextIndex, c1x, c1y, c2x, c2y, deltaHash, proof, input)` | Finalized | Selected participant | Submit a partial decryption `δ_i = d_i · C_1` with a Chaum-Pedersen DLEQ proof. Keyed by `(epochId, aid, participant, ciphertextIndex)` to support multiple ciphertexts per epoch and per application. |
 | `combineDecryption(epochId, aid, ciphertextIndex, combineHash, plaintext, transcript, proof, input)` | Finalized, ciphertext submitted, ≥t partials | Open | Combine `t` partial decryptions via Lagrange interpolation. Proof is bound to the on-chain ciphertext hash (no substitution possible). For `aid != 0` in mode-1 applications the combine step also folds in the organizer's `Δ_org`. Stores the recovered plaintext `uint256`; readable via `getPlaintext`. |
-| `submitOrganizerShare(epochId, aid, ciphertextIndex, c1x, c1y, c2x, c2y, deltaOrgX, deltaOrgY, dleqProof, dleqInput)` | Finalized, mode-1 application | Organizer (the holder of `sk_org`) | Publish the organizer's `Δ_org = sk_org · C_1` with a Chaum-Pedersen DLEQ proof. Required before `combineDecryption` in organizer co-decryption mode. |
-| `registerApplication(epochId, aid, policy)` | Finalized | Open | Register a public-derivation (mode-0) application. See [Per-Application Surface](#per-application-surface). |
-| `registerApplicationCoDec(epochId, aid, policy, pkOrgX, pkOrgY, schnorrAx, schnorrAy, schnorrZ)` | Finalized | Holder of `sk_org` | Register an organizer co-decryption (mode-1) application. The Schnorr proof of knowledge of `sk_org` is verified on-chain. |
 | `abortEpoch(epochId)` | Any non-terminal | Organizer | Abort the epoch. Advances to Aborted. |
+
+> `registerApplication`, `registerApplicationCoDec`, `submitOrganizerShare`,
+> and the read-side `getApplication` live on
+> [`DKGAppManager`](#dkgappmanager), not `DKGManager`. They operate on
+> the same epoch storage via the wired manager reference.
 
 #### View Functions
 
@@ -778,17 +793,33 @@ the event log.
 | `getPlaintext(epochId, aid, ciphertextIndex)` | `uint256` — recovered plaintext scalar; `0` if the decryption has not been combined yet (check `getCombinedDecryption(...).completed` to disambiguate). |
 | `getCiphertextHash(epochId, aid, ciphertextIndex)` | `bytes32` — `keccak256(abi.encode(c1x, c1y, c2x, c2y))` of the submitted ciphertext; raw coordinates are only in the `CiphertextSubmitted` event. |
 | `getShareCommitmentHash(epochId, participantIndex)` | `bytes32` = `keccak256(abi.encode(x, y))`. The pre-image lives in the `EpochFinalized` event. |
-| `getApplication(epochId, aid)` | `Application` struct: `creator, mode, derivationS, organizerPK, policy, createdAtBlock, exists`. |
 | `getContributionVerifierVKeyHash()` | `bytes32` |
 | `getPartialDecryptVerifierVKeyHash()` | `bytes32` |
 | `getFinalizeVerifierVKeyHash()` | `bytes32` |
 | `getDecryptCombineVerifierVKeyHash()` | `bytes32` |
 
+### DKGAppManager
+
+**Source**: `solidity/src/DKGAppManager.sol`
+
+Sibling contract to `DKGManager` that hosts the per-application surface.
+Split out of `DKGManager` to keep both contracts under the EIP-170 24,576-byte
+runtime-bytecode limit; conceptually the two are one logical "manager" that
+shares the same epoch and application storage. The link is established
+exactly once by the deployer via `DKGManager.setAppManager(address)`.
+
+| Function | Description |
+|---|---|
+| `registerApplication(epochId, aid, policy)` | Register a public-derivation (mode-0) application against a finalized epoch. Derives `S = keccak256(epochId ‖ PK_ep ‖ aid) mod q` on-chain and stores it. |
+| `registerApplicationCoDec(epochId, aid, policy, pkOrgX, pkOrgY, schnorrAx, schnorrAy, schnorrZ)` | Register an organizer co-decryption (mode-1) application. Verifies the Schnorr proof of knowledge of `sk_org` on-chain (challenge `c = keccak256(domain ‖ epochId ‖ aid ‖ PK_org ‖ A) mod L`). |
+| `submitOrganizerShare(epochId, aid, ciphertextIndex, c1x, c1y, c2x, c2y, deltaOrgX, deltaOrgY, dleqProof, dleqInput)` | Publish the organizer's `Δ_org = sk_org · C_1` with a Chaum-Pedersen DLEQ proof. Required before `combineDecryption` in organizer co-decryption mode. |
+| `getApplication(epochId, aid)` | `Application` struct: `creator, mode, derivationS, organizerPK, policy, createdAtBlock, exists`. |
+
 ### Per-Application Surface
 
 A finalized epoch fixes a single collective public key `PK_ep` shared by the
 committee. To support many independent encryption contexts that all reuse the
-same committee — without re-running DKG — `DKGManager` exposes a per-application
+same committee — without re-running DKG — `DKGAppManager` exposes a per-application
 key derivation surface keyed by an arbitrary `bytes32 aid`. Each application
 records a `creator`, `mode`, `derivationS`, `organizerPK`, an `AppPolicy`
 (`authorizedSubmitter, maxCiphertexts, notBeforeBlock, notAfterBlock`),
@@ -922,10 +953,14 @@ For the Docker-based integration harness, the deployer container handles this au
 ## Gas Profile
 
 Gas costs are bounded per phase. A single committee node pays for a slot
-claim, one contribution (the most expensive call, dominated by Groth16
-verification plus calldata), and — when scheduled — one partial
-decryption per ciphertext. The organizer pays only for `createEpoch` and
-optionally `finalizeEpoch` if no node finalizes first. The authoritative
+claim, one contribution (~213 k gas, dominated by Groth16 verification
+plus calldata), and — when scheduled — one partial decryption per
+ciphertext (~99 k). The organizer pays only for `createEpoch` and
+optionally `finalizeEpoch` if no node finalizes first. The two
+heavyweight entry points are `registerKey` on `DKGRegistry` (~1.27 M
+after the keccak-Schnorr swap, paid once per node-key lifetime) and
+`submitCiphertext` on `DKGManager` (~2.06 M with the full BabyJubJub
+prime-subgroup check on both ciphertext points). The authoritative
 per-call breakdown, including how figures shift with `MaxN` and committee
 size, lives in [`BENCHMARKS.md`](BENCHMARKS.md).
 

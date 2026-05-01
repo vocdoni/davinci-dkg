@@ -75,45 +75,58 @@ Median values from `forge test --gas-report`. The min often reflects revert
 paths and the max sometimes includes a cold-storage boundary; the median is
 the production-relevant number.
 
-### DKGManager — write paths
+> **Contract layout.** `DKGManager` and `DKGAppManager` are deployed as a
+> sibling pair to fit the EIP-170 24,576-byte contract-size limit. The
+> per-application surface (`registerApplication`, `registerApplicationCoDec`,
+> `submitOrganizerShare`, `getApplication`) lives on `DKGAppManager` and is
+> wired one-shot via `DKGManager.setAppManager()`. The two contracts share
+> the same epoch storage through the manager, but bill gas independently.
+
+### DKGManager / DKGAppManager — write paths
 
 | Function                              |    Min |     Median |        Max |
 |---------------------------------------|-------:|-----------:|-----------:|
-| `createEpoch`                         |  24,734 |   226,458 |   246,544 |
-| `claimSlot`                           |  28,831 |   159,970 |   207,824 |
-| `submitContribution`                  |  71,736 |   212,739 |   212,751 |
-| `finalizeEpoch`                       | 317,190 |   747,917 |   747,917 |
-| `submitCiphertext`                    |  27,260 | 2,183,806 | 2,183,976 |
-| `submitPartialDecryption`             |  34,800 |    98,550 |   132,738 |
-| `combineDecryption`                   |  47,206 |    92,643 |   138,080 |
-| `registerApplication` (mode 0)        |  24,846 |    29,424 |   176,103 |
-| `registerApplicationCoDec` (mode 1)   |  27,063 |    28,172 |    29,282 |
-| `extendRegistration`                  |  30,959 |    35,997 |    41,036 |
-| `abortEpoch`                          |  26,069 |    28,222 |    30,376 |
+| `createEpoch`                         |  24,694 |   227,676 |   247,774 |
+| `claimSlot`                           |  28,831 |   160,153 |   208,087 |
+| `submitContribution`                  |  71,736 |   213,420 |   213,432 |
+| `finalizeEpoch`                       | 317,228 |   747,825 |   747,825 |
+| `submitCiphertext`                    |  27,293 | 2,055,970 | 2,056,140 |
+| `submitPartialDecryption`             |  34,798 |    99,045 |   133,233 |
+| `combineDecryption`                   |  47,217 |    92,844 |   138,472 |
+| `registerApplication` (mode 0)        |  52,025 |    54,571 |   178,521 |
+| `registerApplicationCoDec` (mode 1)   |  54,414 |    54,496 |    54,579 |
+| `extendRegistration`                  |  31,037 |    36,116 |    41,195 |
+| `abortEpoch`                          |  26,149 |    28,302 |    30,456 |
+
+`registerApplication`, `registerApplicationCoDec` (and the read-side
+`getApplication`) live on `DKGAppManager`; everything else above is
+`DKGManager`. Both contracts share the same Foundry gas-report run.
 
 ### DKGRegistry — write paths
 
 | Function           |    Min |       Median |          Max |
 |--------------------|-------:|-------------:|-------------:|
-| `registerKey`      | 23,513 |  **1,555,996** |  1,576,656 |
-| `updateKey`        | 27,590 |  **1,463,833** |  1,471,916 |
-| `markActive`       | 23,874 |       25,050 |     30,758 |
-| `heartbeat`        | 23,484 |       25,748 |     28,013 |
-| `reactivate`       | 23,719 |       34,642 |     34,642 |
-| `reap`             | 23,868 |       33,894 |     33,894 |
+| `registerKey`      | 23,513 |  **1,269,784** |  1,278,511 |
+| `updateKey`        | 27,693 |  **1,165,147** |  1,180,691 |
+| `markActive`       | 23,874 |       25,063 |     30,959 |
+| `heartbeat`        | 23,484 |       25,772 |     28,061 |
+| `reactivate`       | 23,719 |       35,036 |     35,036 |
+| `reap`             | 23,895 |       34,053 |     34,053 |
 
 `registerKey` and `updateKey` carry the on-chain Schnorr proof of knowledge
 that the caller controls the secret behind the published BabyJubJub public
-key (paper §5.1.1). The cost is dominated by the in-EVM Poseidon hashing
-(`PoseidonT6` + `PoseidonT3`) and the double scalar multiplication that
-verifies `z·G == A + c·PK`. The verifier uses a width-2 windowed
-Strauss–Shamir double-and-add over the basis `(G, -PK)` with multiples of
-`G` precomputed as Solidity constants, so the per-window cost is two
-doublings plus at most one conditional add against a 16-entry
+key (paper §5.1.1). The Fiat-Shamir challenge is now `c = keccak256(domain ‖
+… ‖ PK ‖ A) mod L` — the legacy `PoseidonT5` / `PoseidonT6` helper
+contracts (which exceeded EIP-170 anyway) are no longer deployed. After the
+keccak swap the dominant cost is the in-EVM BabyJubJub double scalar
+multiplication that verifies `z·G == A + c·PK`. The verifier uses a width-2
+windowed Strauss–Shamir double-and-add over the basis `(G, -PK)` with
+multiples of `G` precomputed as Solidity constants, so the per-window cost
+is two doublings plus at most one conditional add against a 16-entry
 `i·G + j·(-PK)` lookup table. Twisted-Edwards `pointAdd` uses the
-single-inverse trick: both denominators are inverted via one
-`bigModExp` precompile call instead of two. Paid exactly once per
-node-key lifecycle event.
+single-inverse trick: both denominators are inverted via one `bigModExp`
+precompile call instead of two. Paid exactly once per node-key lifecycle
+event.
 
 `submitCiphertext` runs a full prime-subgroup membership check on both
 ciphertext points (`isInPrimeSubgroup` = `[L]·P == identity`). This costs
@@ -126,37 +139,42 @@ park a ciphertext slot the combine circuit could never accept.
 
 | Function                          |     Gas |
 |-----------------------------------|--------:|
-| `getEpoch`                        |  23,336 |
-| `getApplication`                  |  17,141 |
-| `getContribution`                 |  12,409 |
-| `getPartialDecryption`            |   6,485 |
-| `getCombinedDecryption`           |   5,690 |
-| `getCiphertextHash`               |   2,814 |
-| `getPlaintext`                    |   2,974 |
-| `selectedParticipants` (n = 2)    |   8,026 |
-| `getContributionVerifierVKeyHash` |   3,392 |
-| `getPartialDecryptVerifierVKeyHash` | 3,876 |
-| `nodeCount`                       |   2,366 |
-| `activeCount`                     |   2,328 |
+| `getEpoch`                        |  23,751 |
+| `getApplication`                  |  17,250 |
+| `getContribution`                 |  12,366 |
+| `getPartialDecryption`            |   6,473 |
+| `getCombinedDecryption`           |   5,633 |
+| `getCiphertextHash`               |   2,813 |
+| `getPlaintext`                    |   2,917 |
+| `getCollectivePublicKey`          |   5,022 |
+| `selectedParticipants` (n = 2)    |   7,985 |
+| `getContributionVerifierVKeyHash` |   3,395 |
+| `getPartialDecryptVerifierVKeyHash` | 3,791 |
+| `nodeCount`                       |   2,372 |
+| `activeCount`                     |   2,334 |
 | `isActive`                        |   2,637 |
 
 ### Deployment
 
-| Contract     | Bytecode size | Deploy gas |
-|--------------|--------------:|-----------:|
-| DKGManager   |        26,491 |  5,611,226 |
-| DKGRegistry  |         5,111 |  1,115,813 |
-| PoseidonT2   |         7,600 |  1,515,601 |
-| PoseidonT3   |        29,345 |  5,870,224 |
-| PoseidonT6   |       115,920 | 23,225,077 |
+| Contract       | Runtime bytecode | Deploy gas |
+|----------------|-----------------:|-----------:|
+| DKGManager     |           20,818 |  4,560,386 |
+| DKGAppManager  |            8,216 |  1,832,236 |
+| DKGRegistry    |            4,931 |  1,120,982 |
 
-The `PoseidonTN` helper contracts are deployed once per chain by
-`script/DeployAll.s.sol`. The DKGManager and DKGRegistry constructors take
-their addresses, so deploying both Poseidon helpers + the two DKG contracts
-adds up to roughly **37.3 M gas** end-to-end. The four Groth16 verifier
-contracts (one per circuit) are deployed separately by the circuit-compile
-pipeline; their bytecode is purely the verifying-key dump and the standard
-gnark verifier scaffolding.
+The three production contracts are deployed by `script/DeployAll.s.sol` in
+the order `DKGRegistry → DKGManager → DKGAppManager`, followed by the
+one-shot wiring calls `DKGRegistry.setManager(...)` and
+`DKGManager.setAppManager(...)`. Total core deployment cost is roughly
+**7.5 M gas**. The `DKGManager` runtime is 20,818 bytes, leaving a
+3,758-byte margin against the 24,576-byte EIP-170 limit; splitting the
+per-application surface into `DKGAppManager` is what created that margin.
+Because the on-chain Schnorr challenge moved from Poseidon to keccak256,
+the legacy `PoseidonT2 / PoseidonT3 / PoseidonT5 / PoseidonT6` helper
+contracts are no longer required for the production deploy. The four
+Groth16 verifier contracts (one per circuit) are deployed separately by
+the circuit-compile pipeline; their bytecode is purely the verifying-key
+dump and the standard gnark verifier scaffolding.
 
 ---
 
@@ -167,20 +185,20 @@ one threshold decryption:
 
 | Phase | n = 16 | n = 32 |
 |---|---:|---:|
-| `createEpoch`                                      |     226,458 |     226,458 |
-| n × `claimSlot`                                    |   2,559,520 |   5,119,040 |
-| n × `submitContribution`                           |   3,403,824 |   6,807,648 |
-| 1 × `finalizeEpoch`                                |     747,917 |     747,917 |
-| 1 × `submitCiphertext`                             |   2,183,806 |   2,183,806 |
-| t × `submitPartialDecryption` (t = ⌈2n/3⌉)         |   1,084,050 (×11) |   2,168,100 (×22) |
-| 1 × `combineDecryption`                            |      92,643 |      92,643 |
-| **Round total**                                    | **10,298,218** | **17,345,612** |
+| `createEpoch`                                      |     227,676 |     227,676 |
+| n × `claimSlot`                                    |   2,562,448 |   5,124,896 |
+| n × `submitContribution`                           |   3,414,720 |   6,829,440 |
+| 1 × `finalizeEpoch`                                |     747,825 |     747,825 |
+| 1 × `submitCiphertext`                             |   2,055,970 |   2,055,970 |
+| t × `submitPartialDecryption` (t = ⌈2n/3⌉)         |   1,089,495 (×11) |   2,178,990 (×22) |
+| 1 × `combineDecryption`                            |      92,844 |      92,844 |
+| **Round total**                                    | **10,190,978** | **17,257,641** |
 
 These are *epoch-only* costs — application registration is paid once per
-`(eid, aid)` pair (~29 k for mode 0, ~28 k for mode 1).
+`(eid, aid)` pair on `DKGAppManager` (~55 k for mode 0, ~55 k for mode 1).
 
-The big-ticket cost is node registration via `registerKey` (~3.7 M each),
-amortised across every epoch the node participates in.
+The big-ticket cost is node registration via `registerKey` (~1.27 M after
+the keccak swap), amortised across every epoch the node participates in.
 
 ---
 
