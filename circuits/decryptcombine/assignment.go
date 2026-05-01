@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math/big"
 
+	ccommon "github.com/vocdoni/davinci-dkg/circuits/common"
 	"github.com/vocdoni/davinci-dkg/types"
 )
 
@@ -64,6 +65,11 @@ func (a Assignment) Validate() error {
 	}
 	if a.Plaintext == nil {
 		return fmt.Errorf("plaintext is required")
+	}
+	// CIRCUITS_AUDIT2 #3: mirror the in-circuit canonical-range bound so the
+	// prover fails fast at witness build instead of inside the SNARK.
+	if a.Plaintext.Sign() < 0 || a.Plaintext.Cmp(ccommon.SubgroupOrderMinusOne()) > 0 {
+		return fmt.Errorf("plaintext is not canonical: must be in [0, r_bjj-1]")
 	}
 	return nil
 }

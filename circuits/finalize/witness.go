@@ -238,6 +238,24 @@ func BuildWitnessFromCommitmentPoints(a CommitmentPointsAssignment) (*FinalizeCi
 	if len(a.ContributionPoints) != len(a.ParticipantIndexes) {
 		return nil, nil, fmt.Errorf("contribution point count mismatch")
 	}
+	if len(a.ParticipantIndexes) > int(a.CommitteeSize) {
+		return nil, nil, fmt.Errorf("participant count %d exceeds committee size %d", len(a.ParticipantIndexes), a.CommitteeSize)
+	}
+	// CIRCUITS_AUDIT2 #1: reject duplicate participant indexes — see
+	// finalize.Assignment.Validate.
+	seen := make(map[uint16]struct{}, len(a.ParticipantIndexes))
+	for i, idx := range a.ParticipantIndexes {
+		if idx == 0 {
+			return nil, nil, fmt.Errorf("participant index %d is zero", i)
+		}
+		if idx > a.CommitteeSize {
+			return nil, nil, fmt.Errorf("participant index %d exceeds committee size %d", idx, a.CommitteeSize)
+		}
+		if _, dup := seen[idx]; dup {
+			return nil, nil, fmt.Errorf("duplicate participant index %d", idx)
+		}
+		seen[idx] = struct{}{}
+	}
 
 	modulus := ecc.BN254.ScalarField()
 	threshold := big.NewInt(int64(a.Threshold))

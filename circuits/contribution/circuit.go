@@ -65,6 +65,18 @@ func (c *ContributionCircuit) Define(api frontend.API) error {
 	api.AssertIsEqual(c.CommitmentX0, c.Commitments[0].X)
 	api.AssertIsEqual(c.CommitmentY0, c.Commitments[0].Y)
 
+	// CIRCUITS_AUDIT2 #4: bound the public count inputs to their fixed
+	// array sizes. PrefixMask returns all-active when count > size, so
+	// without these the statement could prove a partial set while
+	// claiming a larger one.
+	api.AssertIsLessOrEqual(c.Threshold, MaxCoefficients)
+	api.AssertIsLessOrEqual(c.CommitteeSize, MaxRecipients)
+	api.AssertIsLessOrEqual(c.Threshold, c.CommitteeSize)
+	// Honest contributor index is one-based in [1, CommitteeSize]. Asserting
+	// the upper bound here closes a future-composition gap; the contract
+	// already enforces non-zero.
+	api.AssertIsLessOrEqual(c.ContributorIndex, c.CommitteeSize)
+
 	coeffMask := ccommon.PrefixMask(api, c.Threshold, MaxCoefficients)
 	recipientMask := ccommon.PrefixMask(api, c.CommitteeSize, MaxRecipients)
 

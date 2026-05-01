@@ -186,12 +186,29 @@ func submitPartialDecryptForGasProfile(t *testing.T, ctx context.Context, epochI
 	t.Helper()
 	c := qt.New(t)
 
+	// CIRCUITS_AUDIT2 #5: submitPartialDecryption requires the
+	// ciphertext to exist on-chain so it can bind C1 into the proof.
+	// Submit a small canonical ciphertext at index 1 first.
+	c1 := group.Generator()
+	c1.ScalarBaseMult(big.NewInt(9))
+	c2 := group.Generator()
+	c2.ScalarBaseMult(big.NewInt(11))
+	c1Enc, c2Enc := group.Encode(c1), group.Encode(c2)
+	c.Assert(helpers.SubmitCiphertextAs(ctx,
+		&helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager},
+		epochID, 1, c1Enc.X, c1Enc.Y, c2Enc.X, c2Enc.Y,
+	), qt.IsNil)
+
 	output, err := helpers.BuildPartialDecryptionSubmission(ctx, epochID, 1, big.NewInt(9), big.NewInt(7), big.NewInt(5))
 	c.Assert(err, qt.IsNil)
 
 	auth, err := services.TxManager.NewTransactOpts(ctx)
 	c.Assert(err, qt.IsNil)
-	tx, err := services.Manager.SubmitPartialDecryption(auth, epochID, 1, 1, output.DeltaHash, output.Proof, output.Input)
+	tx, err := services.Manager.SubmitPartialDecryption(
+		auth, epochID, [32]byte{}, 1, 1,
+		c1Enc.X, c1Enc.Y, c2Enc.X, c2Enc.Y,
+		output.DeltaHash, output.Proof, output.Input,
+	)
 	c.Assert(err, qt.IsNil)
 	c.Assert(services.TxManager.WaitTxByHash(tx.Hash(), helpers.DefaultTxTimeout), qt.IsNil)
 	receipt, err := services.Contracts.Client().TransactionReceipt(ctx, tx.Hash())

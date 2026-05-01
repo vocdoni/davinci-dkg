@@ -430,6 +430,51 @@ contract DKGManagerTest is Test, TestHelpers {
         assertEq(uint256(after_.status), uint256(DKGTypes.EpochPhase.Finalized));
     }
 
+    /// CIRCUITS_AUDIT2 #1: a finalize transcript with duplicated participant
+    /// indexes ([1, 1] instead of [1, 2]) must be rejected even when both
+    /// contributions are accepted, since otherwise the proof can finalize an
+    /// aggregate disjoint from the on-chain accumulated `_collectiveKey`.
+    function test_FinalizeEpoch_RejectsDuplicateParticipantRows() public {
+        bytes12 epochId = createSelectedRound();
+
+        manager.submitContribution(
+            epochId, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH,
+            0, 1, contributionTranscript(2), contributionProof(),
+            contributionInput(epochId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH, 0, 1)
+        );
+        vm.prank(address(0xBEEF));
+        manager.submitContribution(
+            epochId, 2,
+            bytes32(uint256(CONTRIBUTION_COMMITMENTS_HASH) + 1),
+            bytes32(uint256(CONTRIBUTION_ENCRYPTED_SHARES_HASH) + 1),
+            0, 1, contributionTranscript(2), contributionProof(),
+            contributionInput(
+                epochId, 2, 2, 2,
+                bytes32(uint256(CONTRIBUTION_COMMITMENTS_HASH) + 1),
+                bytes32(uint256(CONTRIBUTION_ENCRYPTED_SHARES_HASH) + 1),
+                0, 1
+            )
+        );
+
+        _advanceToFinalize(epochId);
+
+        vm.expectRevert(IDKGManager.InvalidProofInput.selector);
+        manager.finalizeEpoch(
+            epochId,
+            FINALIZED_AGGREGATE_COMMITMENTS_HASH,
+            FINALIZED_COLLECTIVE_PUBLIC_KEY_HASH,
+            FINALIZED_SHARE_COMMITMENT_HASH,
+            finalizeTranscriptWithDuplicateRows(),
+            finalizeProof(),
+            finalizeInputWithDuplicateRows(
+                epochId,
+                FINALIZED_AGGREGATE_COMMITMENTS_HASH,
+                FINALIZED_COLLECTIVE_PUBLIC_KEY_HASH,
+                FINALIZED_SHARE_COMMITMENT_HASH
+            )
+        );
+    }
+
     function test_CreateEpoch_RejectsFinalizeNotBeforeAtOrBelowContribution() public {
         // finalizeNotBeforeBlock == contributionDeadlineBlock → revert
         vm.expectRevert(IDKGManager.InvalidPolicy.selector);

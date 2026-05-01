@@ -38,29 +38,34 @@ func TestThresholdDecryptionHappyPath(t *testing.T) {
 	partial, err := helpers.BuildPartialDecryptionSubmission(ctx, result.EpochID, 1, big.NewInt(9), coefficients[0], big.NewInt(5))
 	c.Assert(err, qt.IsNil)
 
-	auth, err := services.TxManager.NewTransactOpts(ctx)
-	c.Assert(err, qt.IsNil)
-	tx, err := services.Manager.SubmitPartialDecryption(
-		auth,
-		result.EpochID,
-		1,
-		1,
-		partial.DeltaHash,
-		partial.Proof,
-		partial.Input,
-	)
-	c.Assert(err, qt.IsNil)
-	c.Assert(services.TxManager.WaitTxByHash(tx.Hash(), helpers.DefaultTxTimeout), qt.IsNil)
-
 	combine, err := helpers.BuildDecryptCombineOutput(ctx, result.EpochID, 1, big.NewInt(9), []uint16{1}, []types.CurvePoint{partial.Delta}, big.NewInt(3))
 	c.Assert(err, qt.IsNil)
 
+	// submitCiphertext must precede submitPartialDecryption: the
+	// partial-decrypt verifier binds pi[5..6] to the on-chain C1.
 	c.Assert(helpers.SubmitCiphertextAs(ctx,
 		&helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager},
 		result.EpochID, 1,
 		combine.CiphertextC1.X, combine.CiphertextC1.Y,
 		combine.CiphertextC2.X, combine.CiphertextC2.Y,
 	), qt.IsNil)
+
+	auth, err := services.TxManager.NewTransactOpts(ctx)
+	c.Assert(err, qt.IsNil)
+	tx, err := services.Manager.SubmitPartialDecryption(
+		auth,
+		result.EpochID,
+		[32]byte{}, // legacy per-epoch path: zero aid
+		1,
+		1,
+		combine.CiphertextC1.X, combine.CiphertextC1.Y,
+		combine.CiphertextC2.X, combine.CiphertextC2.Y,
+		partial.DeltaHash,
+		partial.Proof,
+		partial.Input,
+	)
+	c.Assert(err, qt.IsNil)
+	c.Assert(services.TxManager.WaitTxByHash(tx.Hash(), helpers.DefaultTxTimeout), qt.IsNil)
 
 	auth, err = services.TxManager.NewTransactOpts(ctx)
 	c.Assert(err, qt.IsNil)
@@ -126,20 +131,6 @@ func TestThresholdDecryptionSupportsMultipleCiphertextsPerRound(t *testing.T) {
 		)
 		c.Assert(err, qt.IsNil)
 
-		auth, err := services.TxManager.NewTransactOpts(ctx)
-		c.Assert(err, qt.IsNil)
-		tx, err := services.Manager.SubmitPartialDecryption(
-			auth,
-			result.EpochID,
-			1,
-			ciphertextIndex,
-			partial.DeltaHash,
-			partial.Proof,
-			partial.Input,
-		)
-		c.Assert(err, qt.IsNil)
-		c.Assert(services.TxManager.WaitTxByHash(tx.Hash(), helpers.DefaultTxTimeout), qt.IsNil)
-
 		combine, err := helpers.BuildDecryptCombineOutput(
 			ctx,
 			result.EpochID,
@@ -151,12 +142,30 @@ func TestThresholdDecryptionSupportsMultipleCiphertextsPerRound(t *testing.T) {
 		)
 		c.Assert(err, qt.IsNil)
 
+		// submitCiphertext must precede submitPartialDecryption.
 		c.Assert(helpers.SubmitCiphertextAs(ctx,
 			&helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager},
 			result.EpochID, ciphertextIndex,
 			combine.CiphertextC1.X, combine.CiphertextC1.Y,
 			combine.CiphertextC2.X, combine.CiphertextC2.Y,
 		), qt.IsNil)
+
+		auth, err := services.TxManager.NewTransactOpts(ctx)
+		c.Assert(err, qt.IsNil)
+		tx, err := services.Manager.SubmitPartialDecryption(
+			auth,
+			result.EpochID,
+			[32]byte{}, // legacy per-epoch path: zero aid
+			1,
+			ciphertextIndex,
+			combine.CiphertextC1.X, combine.CiphertextC1.Y,
+			combine.CiphertextC2.X, combine.CiphertextC2.Y,
+			partial.DeltaHash,
+			partial.Proof,
+			partial.Input,
+		)
+		c.Assert(err, qt.IsNil)
+		c.Assert(services.TxManager.WaitTxByHash(tx.Hash(), helpers.DefaultTxTimeout), qt.IsNil)
 
 		auth, err = services.TxManager.NewTransactOpts(ctx)
 		c.Assert(err, qt.IsNil)

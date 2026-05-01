@@ -54,10 +54,22 @@ func (a Assignment) Validate() error {
 			len(a.ParticipantIndexes),
 		)
 	}
+	// CIRCUITS_AUDIT2 #1: reject duplicate participant indexes so local
+	// tooling cannot accidentally produce a finalize set that the contract
+	// would reject (and that a malicious prover could otherwise exploit to
+	// finalize an aggregate disjoint from the on-chain accumulated key).
+	seen := make(map[uint16]struct{}, len(a.ParticipantIndexes))
 	for i, index := range a.ParticipantIndexes {
 		if index == 0 {
 			return fmt.Errorf("participant index %d is zero", i)
 		}
+		if index > a.CommitteeSize {
+			return fmt.Errorf("participant index %d exceeds committee size %d", index, a.CommitteeSize)
+		}
+		if _, dup := seen[index]; dup {
+			return fmt.Errorf("duplicate participant index %d", index)
+		}
+		seen[index] = struct{}{}
 	}
 	for i, contribution := range a.ContributionCoefficients {
 		if len(contribution) != int(a.Threshold) {

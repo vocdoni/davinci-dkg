@@ -212,13 +212,20 @@ func TestPartialDecryptRejectsMalformedProof(t *testing.T) {
 	c.Assert(err, qt.IsNil)
 	partial.Input = partial.Input[:len(partial.Input)-32]
 
+	// This test deliberately tampers `partial.Input`, so the proof
+	// verifier rejects regardless of whether the on-chain ciphertext
+	// gate fires first. We pass identity coords; the gate may revert
+	// with CiphertextNotSubmitted before the verifier sees the bad
+	// proof, but either revert path satisfies the assertion below.
 	auth, err := services.TxManager.NewTransactOpts(ctx)
 	c.Assert(err, qt.IsNil)
 	tx, err := services.Manager.SubmitPartialDecryption(
 		auth,
 		result.EpochID,
+		[32]byte{}, // legacy per-epoch path: zero aid
 		1,
 		1,
+		big.NewInt(0), big.NewInt(1), big.NewInt(0), big.NewInt(1),
 		partial.DeltaHash,
 		partial.Proof,
 		partial.Input,

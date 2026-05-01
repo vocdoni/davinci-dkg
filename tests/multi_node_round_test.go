@@ -116,9 +116,6 @@ func TestCommitteeRoundHappyPath(t *testing.T) {
 	partial1, err := helpers.BuildPartialDecryptionSubmission(ctx, epochID, 2, big.NewInt(9), recoveredShares[1], big.NewInt(13))
 	c.Assert(err, qt.IsNil)
 
-	c.Assert(helpers.SubmitPartialDecryptionAs(ctx, &helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager}, epochID, 1, 1, partial0.DeltaHash, partial0.Proof, partial0.Input), qt.IsNil)
-	c.Assert(helpers.SubmitPartialDecryptionAs(ctx, actor1, epochID, 2, 1, partial1.DeltaHash, partial1.Proof, partial1.Input), qt.IsNil)
-
 	combineOutput, err := helpers.BuildDecryptCombineOutput(
 		ctx,
 		epochID,
@@ -130,12 +127,17 @@ func TestCommitteeRoundHappyPath(t *testing.T) {
 	)
 	c.Assert(err, qt.IsNil)
 
+	// submitCiphertext must precede submitPartialDecryption so the
+	// proof's pi[5..6] can be bound against the on-chain C1.
 	c.Assert(helpers.SubmitCiphertextAs(ctx,
 		&helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager},
 		epochID, 1,
 		combineOutput.CiphertextC1.X, combineOutput.CiphertextC1.Y,
 		combineOutput.CiphertextC2.X, combineOutput.CiphertextC2.Y,
 	), qt.IsNil)
+
+	c.Assert(helpers.SubmitPartialDecryptionAs(ctx, &helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager}, epochID, 1, 1, combineOutput.CiphertextC1, combineOutput.CiphertextC2, partial0.DeltaHash, partial0.Proof, partial0.Input), qt.IsNil)
+	c.Assert(helpers.SubmitPartialDecryptionAs(ctx, actor1, epochID, 2, 1, combineOutput.CiphertextC1, combineOutput.CiphertextC2, partial1.DeltaHash, partial1.Proof, partial1.Input), qt.IsNil)
 
 	auth, err = services.TxManager.NewTransactOpts(ctx)
 	c.Assert(err, qt.IsNil)

@@ -244,6 +244,10 @@ abstract contract TestHelpers is TestInputs {
             shareCommitments[i * 2] = 1000 + i + 1;
             shareCommitments[i * 2 + 1] = 2000 + i + 1;
         }
+        // CIRCUITS_AUDIT2 #1: the contract now requires aggregate[0] to equal
+        // the accumulated _collectiveKey. The fixtures all use commitment0 =
+        // (0, 1) (identity), so the running sum is identity (0, 1).
+        aggregateCommitments[1] = 1;
         return abi.encode(participantIndexes, contributionCommitments, aggregateCommitments, shareCommitments);
     }
 
@@ -265,6 +269,73 @@ abstract contract TestHelpers is TestInputs {
             values[offset] = 1000 + i + 1;
             values[offset + 1] = 2000 + i + 1;
         }
+        // aggregateCommitments[0] = identity (0, 1) — see finalizeTranscript.
+        // Slot offset is N + 2N² = 2080; aggregate[0].y is at 2081.
+        values[2081] = 1;
+        return BRLC.commit(challenge, values);
+    }
+
+    /// @dev Variant of finalizeTranscript used by the duplicate-row regression
+    /// test (CIRCUITS_AUDIT2 #1). Sets participantIndexes = [1, 1] for an
+    /// acceptedCount of 2 instead of [1, 2].
+    function finalizeTranscriptWithDuplicateRows() internal pure returns (bytes memory) {
+        uint256[32] memory participantIndexes;
+        uint256[2048] memory contributionCommitments;
+        uint256[64] memory aggregateCommitments;
+        uint256[64] memory shareCommitments;
+        participantIndexes[0] = 1;
+        participantIndexes[1] = 1;
+        for (uint256 i = 0; i < 2; i++) {
+            for (uint256 k = 5; k < 64; k += 2) {
+                contributionCommitments[i * 64 + k] = 1;
+            }
+            shareCommitments[i * 2] = 1000 + i + 1;
+            shareCommitments[i * 2 + 1] = 2000 + i + 1;
+        }
+        aggregateCommitments[1] = 1;
+        return abi.encode(participantIndexes, contributionCommitments, aggregateCommitments, shareCommitments);
+    }
+
+    function finalizeInputWithDuplicateRows(
+        bytes12 epochId,
+        bytes32 aggregateCommitmentsHash,
+        bytes32 collectivePublicKeyHash,
+        bytes32 shareCommitmentHash
+    ) internal pure returns (bytes memory) {
+        uint256 challenge = BRLC.deriveChallenge(
+            epochId, FINALIZE_TRANSCRIPT_DOMAIN, keccak256(abi.encodePacked(aggregateCommitmentsHash, collectivePublicKeyHash, shareCommitmentHash))
+        );
+        return abi.encode(
+            [
+                uint256(uint96(epochId)),
+                uint256(2),
+                uint256(2),
+                uint256(2),
+                uint256(aggregateCommitmentsHash),
+                uint256(collectivePublicKeyHash),
+                uint256(shareCommitmentHash),
+                challenge,
+                _finalizeTranscriptCommitmentWithDuplicateRows(challenge)
+            ]
+        );
+    }
+
+    function _finalizeTranscriptCommitmentWithDuplicateRows(uint256 challenge) private pure returns (uint256) {
+        uint256[] memory values = new uint256[](2208);
+        values[0] = 1;
+        values[1] = 1;
+        for (uint256 i = 0; i < 2; i++) {
+            uint256 offset = 32 + i * 64;
+            for (uint256 k = 5; k < 64; k += 2) {
+                values[offset + k] = 1;
+            }
+        }
+        for (uint256 i = 0; i < 2; i++) {
+            uint256 offset = 2144 + i * 2;
+            values[offset] = 1000 + i + 1;
+            values[offset + 1] = 2000 + i + 1;
+        }
+        values[2081] = 1;
         return BRLC.commit(challenge, values);
     }
 

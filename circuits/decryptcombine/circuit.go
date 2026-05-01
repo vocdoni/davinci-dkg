@@ -97,6 +97,11 @@ func (c *DecryptCombineCircuit) Define(api frontend.API) error {
 	}
 	api.AssertIsEqual(c.CombineHash, combineHash)
 	api.AssertIsEqual(c.PlaintextHash, c.Plaintext)
+	// CIRCUITS_AUDIT2 #3: Plaintext is interpreted as a BJJ scalar (M = m·G).
+	// Without a canonical-range bound the prover could pick m' ≡ m (mod r_bjj)
+	// outside [0, r_bjj-1]. The recovered plaintext stored on-chain would then
+	// disagree with what an honest verifier expects from the encrypted value.
+	api.AssertIsLessOrEqual(c.Plaintext, ccommon.SubgroupOrderMinusOne())
 
 	// The Lagrange interpolation accumulator. For inactive slots we mask the
 	// scalar to 0 so curve.ScalarMul yields the identity, then unconditionally

@@ -63,6 +63,7 @@ contract DKGManager is IDKGManager {
     uint256 internal constant FINALIZE_CONTRIB_BYTES_LEN    = 2 * MAX_N * MAX_N * 32;           // contributionCommitments length in bytes
     uint256 internal constant FINALIZE_PER_CONTRIB_BYTES    = 2 * MAX_N * 32;                   // bytes per contributor's commitments slice
     uint256 internal constant FINALIZE_SHARE_WORDS_OFFSET   = MAX_N + 2 * MAX_N * MAX_N + 2 * MAX_N; // shareCommitments start, in words
+    uint256 internal constant FINALIZE_AGG0_WORDS_OFFSET    = MAX_N + 2 * MAX_N * MAX_N;             // aggregateCommitments[0] start, in words
     // combine-time per-section byte offsets:
     uint256 internal constant COMBINE_PARTIALS_BYTES_OFFSET = (4 + MAX_N) * 32;                 // partialDecryptions start, in bytes
 
@@ -641,6 +642,26 @@ contract DKGManager is IDKGManager {
 
         _verifyFinalizeTranscript(epochId, epoch, challenge, publicInputs[8], transcript);
 
+        // CIRCUITS_AUDIT2 #1: defence-in-depth — the proof's aggregateCommitments[0]
+        // must equal the on-chain accumulated `_collectiveKey`. Without this a
+        // valid finalize proof over a duplicated/omitted contributor subset
+        // (which the duplicate-row bitmap already rejects) would still be
+        // distinguishable from any future bug that lets an inconsistent set
+        // through. Reads aggregate[0].x/y straight from the transcript calldata.
+        {
+            uint256 agg0Base = dOff + FINALIZE_AGG0_WORDS_OFFSET * 32;
+            uint256 agg0X;
+            uint256 agg0Y;
+            assembly ("memory-safe") {
+                agg0X := calldataload(agg0Base)
+                agg0Y := calldataload(add(agg0Base, 0x20))
+            }
+            DKGTypes.Point storage cpkRef = _collectiveKey[epochId];
+            uint256 cpkX = cpkRef.x;
+            uint256 cpkY = cpkRef.y == 0 ? 1 : cpkRef.y;
+            if (agg0X != cpkX || agg0Y != cpkY) revert InvalidProofInput();
+        }
+
         epoch.status = DKGTypes.EpochPhase.Finalized;
         // The three commitment hashes are not persisted to storage; they are emitted
         // in EpochFinalized below and reconstructed off-chain from the event log.
@@ -740,6 +761,12 @@ contract DKGManager is IDKGManager {
 
         uint256 ccount = epoch.contributionCount;
         uint256 cSize = epoch.policy.committeeSize;
+        // CIRCUITS_AUDIT2 #1: reject duplicate participant indexes in the
+        // active prefix. Without this an attacker could repeat one accepted
+        // contributor's row and omit another, finalising an aggregate that
+        // disagrees with the on-chain accumulated `_collectiveKey`. Bitmap
+        // fits because participantIndex ≤ MAX_N ≤ 32.
+        uint256 seenIndexes;
         for (uint256 i = 0; i < ccount; i++) {
             uint256 pIdxRaw;
             assembly ("memory-safe") {
@@ -747,6 +774,9 @@ contract DKGManager is IDKGManager {
             }
             uint16 participantIndex = uint16(pIdxRaw);
             if (participantIndex == 0 || participantIndex > cSize) revert InvalidProofInput();
+            uint256 indexBit = uint256(1) << participantIndex;
+            if (seenIndexes & indexBit != 0) revert InvalidProofInput();
+            seenIndexes |= indexBit;
             address participant = epochParticipants[epochId][participantIndex - 1];
             DKGTypes.ContributionRecord storage contribution = epochContributions[epochId][participant];
             if (!contribution.accepted || contribution.contributorIndex != participantIndex) revert InvalidProofInput();

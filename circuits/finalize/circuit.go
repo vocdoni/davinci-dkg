@@ -28,6 +28,14 @@ type FinalizeCircuit struct {
 }
 
 func (c *FinalizeCircuit) Define(api frontend.API) error {
+	// CIRCUITS_AUDIT2 #4: bound the public count inputs to their fixed
+	// array sizes and to each other so PrefixMask cannot be coerced
+	// into masking the wrong slot count.
+	api.AssertIsLessOrEqual(c.Threshold, MaxCoefficients)
+	api.AssertIsLessOrEqual(c.AcceptedCount, MaxParticipants)
+	api.AssertIsLessOrEqual(c.AcceptedCount, c.CommitteeSize)
+	api.AssertIsLessOrEqual(c.Threshold, c.AcceptedCount)
+
 	coeffMask := ccommon.PrefixMask(api, c.Threshold, MaxCoefficients)
 	participantMask := ccommon.PrefixMask(api, c.AcceptedCount, MaxParticipants)
 
