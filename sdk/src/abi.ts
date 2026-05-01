@@ -46,111 +46,6 @@ export const dkgManagerAbi = [
     ],
     outputs: [],
   },
-  // ── application lifecycle (P8/P9) ────────────────────────────────────────
-  {
-    type: 'function',
-    name: 'registerApplication',
-    stateMutability: 'nonpayable',
-    inputs: [
-      { name: 'epochId', type: 'bytes12' },
-      { name: 'aid', type: 'bytes32' },
-      {
-        name: 'policy',
-        type: 'tuple',
-        components: [
-          { name: 'authorizedSubmitter', type: 'address' },
-          { name: 'maxCiphertexts', type: 'uint16' },
-          { name: 'notBeforeBlock', type: 'uint64' },
-          { name: 'notAfterBlock', type: 'uint64' },
-        ],
-      },
-    ],
-    outputs: [],
-  },
-  {
-    type: 'function',
-    name: 'registerApplicationCoDec',
-    stateMutability: 'nonpayable',
-    inputs: [
-      { name: 'epochId', type: 'bytes12' },
-      { name: 'aid', type: 'bytes32' },
-      {
-        name: 'policy',
-        type: 'tuple',
-        components: [
-          { name: 'authorizedSubmitter', type: 'address' },
-          { name: 'maxCiphertexts', type: 'uint16' },
-          { name: 'notBeforeBlock', type: 'uint64' },
-          { name: 'notAfterBlock', type: 'uint64' },
-        ],
-      },
-      { name: 'pkOrgX', type: 'uint256' },
-      { name: 'pkOrgY', type: 'uint256' },
-      { name: 'schnorrAx', type: 'uint256' },
-      { name: 'schnorrAy', type: 'uint256' },
-      { name: 'schnorrZ', type: 'uint256' },
-    ],
-    outputs: [],
-  },
-  {
-    type: 'function',
-    name: 'submitOrganizerShare',
-    stateMutability: 'nonpayable',
-    inputs: [
-      { name: 'epochId', type: 'bytes12' },
-      { name: 'aid', type: 'bytes32' },
-      { name: 'ciphertextIndex', type: 'uint16' },
-      { name: 'c1x', type: 'uint256' },
-      { name: 'c1y', type: 'uint256' },
-      { name: 'c2x', type: 'uint256' },
-      { name: 'c2y', type: 'uint256' },
-      { name: 'deltaOrgX', type: 'uint256' },
-      { name: 'deltaOrgY', type: 'uint256' },
-      { name: 'dleqProof', type: 'bytes' },
-      { name: 'dleqInput', type: 'bytes' },
-    ],
-    outputs: [],
-  },
-  {
-    type: 'function',
-    name: 'getApplication',
-    stateMutability: 'view',
-    inputs: [
-      { name: 'epochId', type: 'bytes12' },
-      { name: 'aid', type: 'bytes32' },
-    ],
-    outputs: [
-      {
-        name: '',
-        type: 'tuple',
-        components: [
-          { name: 'creator', type: 'address' },
-          { name: 'mode', type: 'uint8' },
-          { name: 'derivationS', type: 'uint256' },
-          {
-            name: 'organizerPK',
-            type: 'tuple',
-            components: [
-              { name: 'x', type: 'uint256' },
-              { name: 'y', type: 'uint256' },
-            ],
-          },
-          {
-            name: 'policy',
-            type: 'tuple',
-            components: [
-              { name: 'authorizedSubmitter', type: 'address' },
-              { name: 'maxCiphertexts', type: 'uint16' },
-              { name: 'notBeforeBlock', type: 'uint64' },
-              { name: 'notAfterBlock', type: 'uint64' },
-            ],
-          },
-          { name: 'createdAtBlock', type: 'uint64' },
-          { name: 'exists', type: 'bool' },
-        ],
-      },
-    ],
-  },
   {
     type: 'function',
     name: 'claimSlot',
@@ -279,6 +174,13 @@ export const dkgManagerAbi = [
   {
     type: 'function',
     name: 'REGISTRY',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'address' }],
+  },
+  {
+    type: 'function',
+    name: 'appManager',
     stateMutability: 'view',
     inputs: [],
     outputs: [{ name: '', type: 'address' }],
@@ -795,4 +697,179 @@ export const dkgRegistryAbi = [
   { type: 'error', name: 'NotActive', inputs: [] },
   { type: 'error', name: 'StillActive', inputs: [] },
   { type: 'error', name: 'NotInactive', inputs: [] },
+] as const;
+
+export const dkgAppManagerAbi = [
+  // ── write functions ───────────────────────────────────────────────────────
+  {
+    type: 'function',
+    name: 'registerApplication',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'epochId', type: 'bytes12' },
+      { name: 'aid', type: 'bytes32' },
+      {
+        name: 'policy',
+        type: 'tuple',
+        components: [
+          { name: 'authorizedSubmitter', type: 'address' },
+          { name: 'maxCiphertexts', type: 'uint16' },
+          { name: 'notBeforeBlock', type: 'uint64' },
+          { name: 'notAfterBlock', type: 'uint64' },
+        ],
+      },
+    ],
+    outputs: [],
+  },
+  {
+    type: 'function',
+    name: 'registerApplicationCoDec',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'epochId', type: 'bytes12' },
+      { name: 'aid', type: 'bytes32' },
+      {
+        name: 'policy',
+        type: 'tuple',
+        components: [
+          { name: 'authorizedSubmitter', type: 'address' },
+          { name: 'maxCiphertexts', type: 'uint16' },
+          { name: 'notBeforeBlock', type: 'uint64' },
+          { name: 'notAfterBlock', type: 'uint64' },
+        ],
+      },
+      { name: 'pkOrgX', type: 'uint256' },
+      { name: 'pkOrgY', type: 'uint256' },
+      { name: 'schnorrAx', type: 'uint256' },
+      { name: 'schnorrAy', type: 'uint256' },
+      { name: 'schnorrZ', type: 'uint256' },
+    ],
+    outputs: [],
+  },
+  {
+    type: 'function',
+    name: 'submitOrganizerShare',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'epochId', type: 'bytes12' },
+      { name: 'aid', type: 'bytes32' },
+      { name: 'ciphertextIndex', type: 'uint16' },
+      { name: 'c1x', type: 'uint256' },
+      { name: 'c1y', type: 'uint256' },
+      { name: 'c2x', type: 'uint256' },
+      { name: 'c2y', type: 'uint256' },
+      { name: 'deltaOrgX', type: 'uint256' },
+      { name: 'deltaOrgY', type: 'uint256' },
+      { name: 'dleqProof', type: 'bytes' },
+      { name: 'dleqInput', type: 'bytes' },
+    ],
+    outputs: [],
+  },
+
+  // ── view functions ────────────────────────────────────────────────────────
+  {
+    type: 'function',
+    name: 'getApplication',
+    stateMutability: 'view',
+    inputs: [
+      { name: 'epochId', type: 'bytes12' },
+      { name: 'aid', type: 'bytes32' },
+    ],
+    outputs: [
+      {
+        name: '',
+        type: 'tuple',
+        components: [
+          { name: 'creator', type: 'address' },
+          { name: 'mode', type: 'uint8' },
+          { name: 'derivationS', type: 'uint256' },
+          {
+            name: 'organizerPK',
+            type: 'tuple',
+            components: [
+              { name: 'x', type: 'uint256' },
+              { name: 'y', type: 'uint256' },
+            ],
+          },
+          {
+            name: 'policy',
+            type: 'tuple',
+            components: [
+              { name: 'authorizedSubmitter', type: 'address' },
+              { name: 'maxCiphertexts', type: 'uint16' },
+              { name: 'notBeforeBlock', type: 'uint64' },
+              { name: 'notAfterBlock', type: 'uint64' },
+            ],
+          },
+          { name: 'createdAtBlock', type: 'uint64' },
+          { name: 'exists', type: 'bool' },
+        ],
+      },
+    ],
+  },
+  {
+    type: 'function',
+    name: 'getRegisteredAids',
+    stateMutability: 'view',
+    inputs: [{ name: 'epochId', type: 'bytes12' }],
+    outputs: [{ name: '', type: 'bytes32[]' }],
+  },
+  {
+    type: 'function',
+    name: 'MANAGER',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'address' }],
+  },
+  {
+    type: 'function',
+    name: 'PARTIAL_DECRYPT_VERIFIER',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'address' }],
+  },
+
+  // ── events ────────────────────────────────────────────────────────────────
+  {
+    type: 'event',
+    name: 'ApplicationRegistered',
+    inputs: [
+      { name: 'epochId', type: 'bytes12', indexed: true },
+      { name: 'aid', type: 'bytes32', indexed: true },
+      { name: 'creator', type: 'address', indexed: true },
+      { name: 'mode', type: 'uint8', indexed: false },
+      { name: 'derivationS', type: 'uint256', indexed: false },
+      { name: 'organizerPKx', type: 'uint256', indexed: false },
+      { name: 'organizerPKy', type: 'uint256', indexed: false },
+    ],
+  },
+  {
+    type: 'event',
+    name: 'OrganizerShareSubmitted',
+    inputs: [
+      { name: 'epochId', type: 'bytes12', indexed: true },
+      { name: 'aid', type: 'bytes32', indexed: true },
+      { name: 'ciphertextIndex', type: 'uint16', indexed: true },
+      { name: 'deltaOrgX', type: 'uint256', indexed: false },
+      { name: 'deltaOrgY', type: 'uint256', indexed: false },
+    ],
+  },
+
+  // ── errors ────────────────────────────────────────────────────────────────
+  { type: 'error', name: 'InvalidApplication', inputs: [] },
+  { type: 'error', name: 'ApplicationAlreadyExists', inputs: [] },
+  { type: 'error', name: 'InvalidSchnorrProof', inputs: [] },
+  { type: 'error', name: 'InvalidEpoch', inputs: [] },
+  { type: 'error', name: 'InvalidPhase', inputs: [] },
+  { type: 'error', name: 'InvalidAddress', inputs: [] },
+  { type: 'error', name: 'InvalidVerifier', inputs: [] },
+  { type: 'error', name: 'InvalidCiphertext', inputs: [] },
+  { type: 'error', name: 'CiphertextNotSubmitted', inputs: [] },
+  { type: 'error', name: 'AlreadyPartiallyDecrypted', inputs: [] },
+  { type: 'error', name: 'InvalidProofInput', inputs: [] },
+  { type: 'error', name: 'NotOwner', inputs: [] },
+  { type: 'error', name: 'DecryptionNotYetAllowed', inputs: [] },
+  { type: 'error', name: 'DecryptionExpired', inputs: [] },
+  { type: 'error', name: 'DecryptionLimitReached', inputs: [] },
+  { type: 'error', name: 'InsufficientPartialDecryptions', inputs: [] },
 ] as const;

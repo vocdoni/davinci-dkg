@@ -4,7 +4,7 @@ import {
   type Address,
   type GetContractReturnType,
 } from 'viem';
-import { dkgManagerAbi, dkgRegistryAbi } from './abi.js';
+import { dkgManagerAbi, dkgRegistryAbi, dkgAppManagerAbi } from './abi.js';
 import {
   type Epoch,
   type ContributionRecord,
@@ -21,6 +21,7 @@ import { fromRTEtoTE } from './crypto/babyjub-form.js';
 
 type ManagerContract = GetContractReturnType<typeof dkgManagerAbi, PublicClient>;
 type RegistryContract = GetContractReturnType<typeof dkgRegistryAbi, PublicClient>;
+type AppManagerContract = GetContractReturnType<typeof dkgAppManagerAbi, PublicClient>;
 
 /** Default chunk size for chunked getLogs (blocks per request). */
 const DEFAULT_LOG_CHUNK = 2000n;
@@ -117,6 +118,8 @@ export class DKGClient {
   private _manager: ManagerContract;
   private _registry: RegistryContract | null;
   private _resolvedRegistryAddress: Address | null;
+  private _appManager: AppManagerContract | null;
+  private _resolvedAppManagerAddress: Address | null;
 
   constructor(config: DKGConfig) {
     this.publicClient = config.publicClient;
@@ -138,6 +141,18 @@ export class DKGClient {
     } else {
       this._resolvedRegistryAddress = null;
       this._registry = null;
+    }
+
+    if (config.appManagerAddress) {
+      this._resolvedAppManagerAddress = config.appManagerAddress;
+      this._appManager = getContract({
+        address: config.appManagerAddress,
+        abi: dkgAppManagerAbi,
+        client: this.publicClient,
+      });
+    } else {
+      this._resolvedAppManagerAddress = null;
+      this._appManager = null;
     }
   }
 
@@ -170,6 +185,37 @@ export class DKGClient {
     if (this._resolvedRegistryAddress) return this._resolvedRegistryAddress;
     await this._getRegistry();
     return this._resolvedRegistryAddress!;
+  }
+
+  /**
+   * The DKGAppManager address. Throws if not resolved yet — call
+   * `_getAppManagerAddress()` (async) when you don't already have it cached.
+   */
+  get appManagerAddress(): Address {
+    if (!this._resolvedAppManagerAddress) {
+      throw new Error('appManagerAddress not yet resolved; call an app-manager method first or provide it in config');
+    }
+    return this._resolvedAppManagerAddress;
+  }
+
+  /** Resolve and cache the app manager contract, fetching its address from the manager when needed. */
+  protected async _getAppManager(): Promise<AppManagerContract> {
+    if (this._appManager) return this._appManager;
+    const addr = (await this._manager.read.appManager()) as Address;
+    this._resolvedAppManagerAddress = addr;
+    this._appManager = getContract({
+      address: addr,
+      abi: dkgAppManagerAbi,
+      client: this.publicClient,
+    });
+    return this._appManager;
+  }
+
+  /** Resolve and return the app manager address, fetching from the manager when needed. */
+  protected async _getAppManagerAddress(): Promise<Address> {
+    if (this._resolvedAppManagerAddress) return this._resolvedAppManagerAddress;
+    await this._getAppManager();
+    return this._resolvedAppManagerAddress!;
   }
 
   // ── Epoch ID utilities ─────────────────────────────────────────────────────
@@ -244,7 +290,8 @@ export class DKGClient {
     epochId: `0x${string}`,
     aid: `0x${string}`,
   ): Promise<import('./types.js').ApplicationRecord> {
-    const r = (await this._manager.read.getApplication([epochId as any, aid as any])) as any;
+    const am = await this._getAppManager();
+    const r = (await am.read.getApplication([epochId as any, aid as any])) as any;
     const [pkX, pkY] = fromRTEtoTE(BigInt(r.organizerPK.x), BigInt(r.organizerPK.y));
     return {
       creator: r.creator,

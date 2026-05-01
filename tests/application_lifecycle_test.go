@@ -41,11 +41,11 @@ func TestApplicationRegistration_Mode0(t *testing.T) {
 	}
 	auth, err := services.TxManager.NewTransactOpts(ctx)
 	c.Assert(err, qt.IsNil)
-	tx, err := services.Manager.RegisterApplication(auth, res.EpochID, aid, policy)
+	tx, err := services.AppManager.RegisterApplication(auth, res.EpochID, aid, policy)
 	c.Assert(err, qt.IsNil)
 	c.Assert(services.TxManager.WaitTxByHash(tx.Hash(), helpers.DefaultTxTimeout), qt.IsNil)
 
-	app, err := services.Manager.GetApplication(services.CallOpts(ctx), res.EpochID, aid)
+	app, err := services.AppManager.GetApplication(services.CallOpts(ctx), res.EpochID, aid)
 	c.Assert(err, qt.IsNil)
 	c.Assert(app.Exists, qt.IsTrue)
 	c.Assert(app.Mode, qt.Equals, uint8(0))
@@ -58,7 +58,7 @@ func TestApplicationRegistration_Mode0(t *testing.T) {
 	// Identical re-registration must revert (aid is a one-shot binding).
 	auth, err = services.TxManager.NewTransactOpts(ctx)
 	c.Assert(err, qt.IsNil)
-	if _, err = services.Manager.RegisterApplication(auth, res.EpochID, aid, policy); err == nil {
+	if _, err = services.AppManager.RegisterApplication(auth, res.EpochID, aid, policy); err == nil {
 		t.Fatalf("expected duplicate registerApplication to revert")
 	}
 }
@@ -94,14 +94,14 @@ func TestApplicationRegistration_Mode1(t *testing.T) {
 	}
 	auth, err := services.TxManager.NewTransactOpts(ctx)
 	c.Assert(err, qt.IsNil)
-	tx, err := services.Manager.RegisterApplicationCoDec(
+	tx, err := services.AppManager.RegisterApplicationCoDec(
 		auth, res.EpochID, aid, policy,
 		pkX, pkY, proof.Ax, proof.Ay, proof.Z,
 	)
 	c.Assert(err, qt.IsNil)
 	c.Assert(services.TxManager.WaitTxByHash(tx.Hash(), helpers.DefaultTxTimeout), qt.IsNil)
 
-	app, err := services.Manager.GetApplication(services.CallOpts(ctx), res.EpochID, aid)
+	app, err := services.AppManager.GetApplication(services.CallOpts(ctx), res.EpochID, aid)
 	c.Assert(err, qt.IsNil)
 	c.Assert(app.Exists, qt.IsTrue)
 	c.Assert(app.Mode, qt.Equals, uint8(1))
@@ -138,7 +138,7 @@ func TestApplicationRegistration_Mode1_RejectsTamperedProof(t *testing.T) {
 	policy := golangtypes.DKGTypesAppPolicy{}
 	auth, err := services.TxManager.NewTransactOpts(ctx)
 	c.Assert(err, qt.IsNil)
-	if _, err = services.Manager.RegisterApplicationCoDec(
+	if _, err = services.AppManager.RegisterApplicationCoDec(
 		auth, res.EpochID, aid, policy,
 		pkX, pkY, proof.Ax, proof.Ay, tampered,
 	); err == nil {

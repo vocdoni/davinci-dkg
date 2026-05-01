@@ -61,27 +61,8 @@ interface IDKGManager {
         bytes12 indexed epochId, bytes32 indexed aid, uint16 indexed ciphertextIndex, bytes32 combineHash, uint256 plaintext
     );
     event EpochAborted(bytes12 indexed epochId);
-    event ApplicationRegistered(
-        bytes12 indexed epochId,
-        bytes32 indexed aid,
-        address indexed creator,
-        uint8 mode,
-        uint256 derivationS,
-        uint256 organizerPKx,
-        uint256 organizerPKy
-    );
-    event OrganizerShareSubmitted(
-        bytes12 indexed epochId,
-        bytes32 indexed aid,
-        uint16 indexed ciphertextIndex,
-        uint256 deltaOrgX,
-        uint256 deltaOrgY
-    );
 
     error InvalidPolicy();
-    error InvalidApplication();
-    error ApplicationAlreadyExists();
-    error InvalidSchnorrProof();
     error InvalidChainId();
     error InvalidAddress();
     error InvalidEpoch();
@@ -179,19 +160,6 @@ interface IDKGManager {
         bytes calldata transcript,
         bytes calldata proof,
         bytes calldata input
-    ) external;
-    function submitOrganizerShare(
-        bytes12 epochId,
-        bytes32 aid,
-        uint16 ciphertextIndex,
-        uint256 c1x,
-        uint256 c1y,
-        uint256 c2x,
-        uint256 c2y,
-        uint256 deltaOrgX,
-        uint256 deltaOrgY,
-        bytes calldata dleqProof,
-        bytes calldata dleqInput
     ) external;
     function abortEpoch(bytes12 epochId) external;
     function getEpoch(bytes12 epochId) external view returns (Epoch memory);

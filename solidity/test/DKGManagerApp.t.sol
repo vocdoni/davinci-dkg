@@ -4,7 +4,9 @@ pragma solidity 0.8.28;
 import {Test} from "forge-std/Test.sol";
 import {DKGRegistry} from "../src/DKGRegistry.sol";
 import {DKGManager} from "../src/DKGManager.sol";
+import {DKGAppManager} from "../src/DKGAppManager.sol";
 import {IDKGManager} from "../src/interfaces/IDKGManager.sol";
+import {IDKGAppManager} from "../src/interfaces/IDKGAppManager.sol";
 import {DKGTypes} from "../src/libraries/DKGTypes.sol";
 import {
     MockContributionVerifier,
@@ -27,6 +29,7 @@ import {
 contract DKGManagerAppTest is Test, TestHelpers {
     DKGRegistry public registry;
     DKGManager public manager;
+    DKGAppManager public appManager;
 
     // Schnorr operator vectors (THIS / BEEF), copied from DKGManager.t.sol.
     uint256 internal constant THIS_PUBX =
@@ -70,15 +73,18 @@ contract DKGManagerAppTest is Test, TestHelpers {
         registry.registerKey(THIS_PUBX, THIS_PUBY, THIS_AX, THIS_AY, THIS_Z);
         vm.prank(address(0xBEEF));
         registry.registerKey(BEEF_PUBX, BEEF_PUBY, BEEF_AX, BEEF_AY, BEEF_Z);
+        address partialDecryptVerifier = address(new MockPartialDecryptVerifier());
         manager = new DKGManager(
             31337,
             address(registry),
             address(new MockContributionVerifier()),
-            address(new MockPartialDecryptVerifier()),
+            partialDecryptVerifier,
             address(new MockFinalizeVerifier()),
             address(new MockDecryptCombineVerifier())
         );
         registry.setManager(address(manager));
+        appManager = new DKGAppManager(address(manager), partialDecryptVerifier);
+        manager.setAppManager(address(appManager));
     }
 
     // Helper: build a finalized-enough epoch by going through the full
@@ -157,9 +163,9 @@ contract DKGManagerAppTest is Test, TestHelpers {
     function test_RegisterApplication_PersistsRecord() public {
         bytes12 epochId = _finalizedEpoch();
         bytes32 aid = bytes32(uint256(42));
-        manager.registerApplication(epochId, aid, _emptyAppPolicy());
+        appManager.registerApplication(epochId, aid, _emptyAppPolicy());
 
-        DKGTypes.Application memory app = manager.getApplication(epochId, aid);
+        DKGTypes.Application memory app = appManager.getApplication(epochId, aid);
         assertEq(app.creator, address(this));
         assertEq(uint256(app.mode), uint256(DKGTypes.AppMode.PublicDerivation));
         // S = keccak256(eid || PK_ep || aid) % L. Just verify it is nonzero.
@@ -171,21 +177,21 @@ contract DKGManagerAppTest is Test, TestHelpers {
 
     function test_RegisterApplication_RejectsZeroAid() public {
         bytes12 epochId = _finalizedEpoch();
-        vm.expectRevert(IDKGManager.InvalidApplication.selector);
-        manager.registerApplication(epochId, bytes32(0), _emptyAppPolicy());
+        vm.expectRevert(IDKGAppManager.InvalidApplication.selector);
+        appManager.registerApplication(epochId, bytes32(0), _emptyAppPolicy());
     }
 
     function test_RegisterApplication_RejectsDuplicate() public {
         bytes12 epochId = _finalizedEpoch();
         bytes32 aid = bytes32(uint256(42));
-        manager.registerApplication(epochId, aid, _emptyAppPolicy());
-        vm.expectRevert(IDKGManager.ApplicationAlreadyExists.selector);
-        manager.registerApplication(epochId, aid, _emptyAppPolicy());
+        appManager.registerApplication(epochId, aid, _emptyAppPolicy());
+        vm.expectRevert(IDKGAppManager.ApplicationAlreadyExists.selector);
+        appManager.registerApplication(epochId, aid, _emptyAppPolicy());
     }
 
     function test_RegisterApplication_RejectsUnknownEpoch() public {
         vm.expectRevert(IDKGManager.InvalidEpoch.selector);
-        manager.registerApplication(bytes12(uint96(0xdead)), bytes32(uint256(1)), _emptyAppPolicy());
+        appManager.registerApplication(bytes12(uint96(0xdead)), bytes32(uint256(1)), _emptyAppPolicy());
     }
 
     // ─── Mode 1: organizer co-decryption ───────────────────────────────────
@@ -206,7 +212,7 @@ contract DKGManagerAppTest is Test, TestHelpers {
 
     function test_RegisterApplicationCoDec_RejectsUnknownEpoch() public {
         vm.expectRevert(IDKGManager.InvalidEpoch.selector);
-        manager.registerApplicationCoDec(
+        appManager.registerApplicationCoDec(
             bytes12(uint96(0xfeed)),
             bytes32(uint256(1)),
             _emptyAppPolicy(),
@@ -224,7 +230,7 @@ contract DKGManagerAppTest is Test, TestHelpers {
             _emptyDecryptionPolicy()
         );
         vm.expectRevert(IDKGManager.InvalidPhase.selector);
-        manager.registerApplicationCoDec(
+        appManager.registerApplicationCoDec(
             epochId,
             bytes32(uint256(1)),
             _emptyAppPolicy(),

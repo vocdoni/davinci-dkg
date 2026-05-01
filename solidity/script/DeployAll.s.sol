@@ -4,6 +4,7 @@ pragma solidity 0.8.28;
 import {Script, console} from "forge-std/Script.sol";
 import {DKGRegistry} from "../src/DKGRegistry.sol";
 import {DKGManager} from "../src/DKGManager.sol";
+import {DKGAppManager} from "../src/DKGAppManager.sol";
 import {ContributionVerifier} from "../src/verifiers/ContributionVerifier.sol";
 import {FinalizeVerifier} from "../src/verifiers/FinalizeVerifier.sol";
 import {PartialDecryptVerifier} from "../src/verifiers/PartialDecryptVerifier.sol";
@@ -54,6 +55,19 @@ contract DeployAllScript is Script {
         // call registry.markActive(...) from submitContribution.
         registry.setManager(address(manager));
         console.log("DKGRegistry.setManager:", address(manager));
+
+        // Deploy the sibling app manager (per-application surface). It needs
+        // the manager address (cyclic dependency resolved by setAppManager
+        // afterwards) and the same partial-decrypt verifier the manager uses
+        // for the organizer DLEQ proof.
+        DKGAppManager appManager = new DKGAppManager(
+            address(manager),
+            address(partialDecryptVerifier)
+        );
+        console.log("DKGAppManager deployed at:", address(appManager));
+
+        manager.setAppManager(address(appManager));
+        console.log("DKGManager.setAppManager:", address(appManager));
 
         vm.stopBroadcast();
     }

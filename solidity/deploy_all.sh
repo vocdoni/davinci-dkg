@@ -152,6 +152,7 @@ REVEAL_SUBMIT_VERIFIER=$(extract RevealSubmitVerifier)
 REVEAL_SHARE_VERIFIER=$(extract RevealShareVerifier)
 REGISTRY=$(extract DKGRegistry)
 MANAGER=$(extract DKGManager)
+APP_MANAGER=$(extract DKGAppManager)
 
 missing=0
 for pair in \
@@ -162,7 +163,8 @@ for pair in \
     "RevealSubmitVerifier=$REVEAL_SUBMIT_VERIFIER" \
     "RevealShareVerifier=$REVEAL_SHARE_VERIFIER" \
     "DKGRegistry=$REGISTRY" \
-    "DKGManager=$MANAGER"; do
+    "DKGManager=$MANAGER" \
+    "DKGAppManager=$APP_MANAGER"; do
     name=${pair%%=*}
     value=${pair#*=}
     if [ -z "$value" ]; then
@@ -182,6 +184,7 @@ cat >"$OUT_FILE" <<EOF
 # Chain:    $CHAIN_ID ($RPC_URL)
 REGISTRY=$REGISTRY
 MANAGER=$MANAGER
+APP_MANAGER=$APP_MANAGER
 CONTRIBUTION_VERIFIER=$CONTRIBUTION_VERIFIER
 FINALIZE_VERIFIER=$FINALIZE_VERIFIER
 PARTIAL_DECRYPT_VERIFIER=$PARTIAL_DECRYPT_VERIFIER
@@ -196,6 +199,8 @@ printf '%b===========================================%b\n' "$BOLD" "$NC"
 printf '%b  deployment complete%b\n'                        "$GREEN" "$NC"
 printf '%b===========================================%b\n' "$BOLD" "$NC"
 printf '  DKGRegistry               : %s\n' "$REGISTRY"
+printf '  DKGManager                : %s\n' "$MANAGER"
+printf '  DKGAppManager             : %s\n' "$APP_MANAGER"
 printf '  ContributionVerifier      : %s\n' "$CONTRIBUTION_VERIFIER"
 printf '  FinalizeVerifier          : %s\n' "$FINALIZE_VERIFIER"
 printf '  PartialDecryptVerifier    : %s\n' "$PARTIAL_DECRYPT_VERIFIER"

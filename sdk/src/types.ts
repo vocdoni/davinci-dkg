@@ -177,6 +177,12 @@ export interface DKGConfig {
    * When omitted, the client reads it from DKGManager.REGISTRY() on first use.
    */
   registryAddress?: Address;
+  /**
+   * Address of the deployed DKGAppManager contract (sibling to DKGManager
+   * that owns the per-application registration surface).
+   * When omitted, the client reads it from DKGManager.appManager() on first use.
+   */
+  appManagerAddress?: Address;
 }
 
 export interface DKGWriterConfig extends DKGConfig {

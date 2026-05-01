@@ -29,12 +29,13 @@ type HarnessConfig struct {
 }
 
 type TestServices struct {
-	RPCURL    string
-	Addresses types.ContractAddresses
-	Contracts *web3.Contracts
-	Registry  *golangtypes.DKGRegistry
-	Manager   *golangtypes.DKGManager
-	TxManager *txmanager.Manager
+	RPCURL     string
+	Addresses  types.ContractAddresses
+	Contracts  *web3.Contracts
+	Registry   *golangtypes.DKGRegistry
+	Manager    *golangtypes.DKGManager
+	AppManager *golangtypes.DKGAppManager
+	TxManager  *txmanager.Manager
 }
 
 func (s *TestServices) CallOpts(ctx context.Context) *bind.CallOpts {
@@ -102,13 +103,35 @@ func NewTestServices(ctx context.Context) (*TestServices, func(), error) {
 		return nil, nil, err
 	}
 
+	// Resolve AppManager either from the explicit address book or from the
+	// chain-side `manager.appManager()` view. The on-chain lookup keeps older
+	// addresses.env files (without APP_MANAGER) working.
+	appManagerAddr := cfg.Addresses.AppManager
+	if appManagerAddr == (common.Address{}) {
+		callOpts := &bind.CallOpts{Context: ctx}
+		resolved, callErr := manager.AppManager(callOpts)
+		if callErr != nil {
+			_ = contracts.Close()
+			cleanup()
+			return nil, nil, fmt.Errorf("resolve app manager from chain: %w", callErr)
+		}
+		appManagerAddr = resolved
+	}
+	appManager, err := golangtypes.NewDKGAppManager(appManagerAddr, contracts.Client())
+	if err != nil {
+		_ = contracts.Close()
+		cleanup()
+		return nil, nil, err
+	}
+
 	services := &TestServices{
-		RPCURL:    cfg.RPCURL,
-		Addresses: cfg.Addresses,
-		Contracts: contracts,
-		Registry:  registry,
-		Manager:   manager,
-		TxManager: txm,
+		RPCURL:     cfg.RPCURL,
+		Addresses:  cfg.Addresses,
+		Contracts:  contracts,
+		Registry:   registry,
+		Manager:    manager,
+		AppManager: appManager,
+		TxManager:  txm,
 	}
 
 	if cfg.BootstrapNodeKeys {

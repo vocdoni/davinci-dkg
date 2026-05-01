@@ -10,6 +10,7 @@ import (
 type ContractAddresses struct {
 	Registry               common.Address
 	Manager                common.Address
+	AppManager             common.Address
 	ContributionVerifier   common.Address
 	FinalizeVerifier       common.Address
 	PartialDecryptVerifier common.Address

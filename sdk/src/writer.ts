@@ -5,7 +5,7 @@ import {
   type Address,
   type Hash,
 } from 'viem';
-import { dkgManagerAbi, dkgRegistryAbi } from './abi.js';
+import { dkgManagerAbi, dkgRegistryAbi, dkgAppManagerAbi } from './abi.js';
 import {
   type EpochPolicy,
   type DecryptionPolicy,
@@ -280,9 +280,10 @@ export class DKGWriter extends DKGClient {
     aid: `0x${string}`,
     policy: import('./types.js').AppPolicy,
   ): Promise<Hash> {
+    const appManagerAddress = await this._getAppManagerAddress();
     const { request } = await this.publicClient.simulateContract({
-      address: this.managerAddress,
-      abi: dkgManagerAbi,
+      address: appManagerAddress,
+      abi: dkgAppManagerAbi,
       functionName: 'registerApplication',
       args: [epochId as any, aid as any, policy as any],
       account: this._writerAccount,
@@ -307,9 +308,10 @@ export class DKGWriter extends DKGClient {
     schnorrZ: bigint,
   ): Promise<Hash> {
     const [pkXR, pkYR] = fromTEtoRTE(pkOrgX, pkOrgY);
+    const appManagerAddress = await this._getAppManagerAddress();
     const { request } = await this.publicClient.simulateContract({
-      address: this.managerAddress,
-      abi: dkgManagerAbi,
+      address: appManagerAddress,
+      abi: dkgAppManagerAbi,
       functionName: 'registerApplicationCoDec',
       args: [
         epochId as any,
@@ -351,9 +353,10 @@ export class DKGWriter extends DKGClient {
     const [c1xR, c1yR] = fromTEtoRTE(c1x, c1y);
     const [c2xR, c2yR] = fromTEtoRTE(c2x, c2y);
     const [dxR, dyR] = fromTEtoRTE(deltaOrgX, deltaOrgY);
+    const appManagerAddress = await this._getAppManagerAddress();
     const { request } = await this.publicClient.simulateContract({
-      address: this.managerAddress,
-      abi: dkgManagerAbi,
+      address: appManagerAddress,
+      abi: dkgAppManagerAbi,
       functionName: 'submitOrganizerShare',
       args: [
         epochId as any,

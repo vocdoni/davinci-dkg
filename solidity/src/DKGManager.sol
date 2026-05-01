@@ -2,6 +2,7 @@
 pragma solidity 0.8.28;
 
 import {IDKGManager} from "./interfaces/IDKGManager.sol";
+import {IDKGAppManager} from "./interfaces/IDKGAppManager.sol";
 import {IDKGRegistry} from "./interfaces/IDKGRegistry.sol";
 import {IZKVerifier} from "./interfaces/IZKVerifier.sol";
 import {BabyJubJub} from "./libraries/BabyJubJub.sol";
@@ -10,7 +11,6 @@ import {BRLC} from "./libraries/BRLC.sol";
 import {DKGTypes} from "./libraries/DKGTypes.sol";
 import {DKGProtocol} from "./libraries/DKGProtocol.sol";
 import {PhaseLib} from "./libraries/PhaseLib.sol";
-import {PoseidonT5} from "poseidon-solidity/PoseidonT5.sol";
 
 /// @title  DKGManager
 /// @notice On-chain orchestrator for every phase of a davinci-dkg epoch.
@@ -25,6 +25,14 @@ import {PoseidonT5} from "poseidon-solidity/PoseidonT5.sol";
 ///         finalize/combine are read straight out of calldata via assembly
 ///         to avoid per-element bounds checks.
 contract DKGManager is IDKGManager {
+    /// @dev Sibling app manager has not been wired yet — applications cannot
+    ///      yet be registered, organizer shares cannot be submitted, and any
+    ///      cross-contract path (submitCiphertext with aid != 0,
+    ///      combineDecryption with aid != 0) reverts. The legacy aid == 0 path
+    ///      remains available before wiring.
+    error AppManagerNotSet();
+    error AppManagerAlreadySet();
+
     // ──────────────────────────────────────────────────────────────────────
     // Single source of truth for the per-circuit array bound.
     //
@@ -86,6 +94,18 @@ contract DKGManager is IDKGManager {
     address public immutable FINALIZE_VERIFIER;
     address public immutable DECRYPT_COMBINE_VERIFIER;
     uint64 public epochNonce;
+
+    /// @notice The sibling DKGAppManager that owns the per-application
+    ///         registration / organizer-share storage and verification logic.
+    ///         Set exactly once via `setAppManager` by the deployer (the
+    ///         constructor cannot take it because the app manager's
+    ///         constructor itself takes this contract's address — cyclic
+    ///         dependency resolved with a one-shot setter).
+    address public appManager;
+    bool private _appManagerSet;
+    /// @dev Address that deployed this contract; the only address allowed to
+    ///      call `setAppManager`. Immutable after construction.
+    address private immutable _deployer;
 
     /// @dev Fixed-size ring buffer of recent epoch IDs. New epochs push here at
     /// createEpoch; once the buffer is full, the displaced entry tells us which epoch
@@ -152,22 +172,6 @@ contract DKGManager is IDKGManager {
     bytes32 internal constant DECRYPT_COMBINE_TRANSCRIPT_DOMAIN = keccak256("davinci-dkg:decrypt-combine:v1");
     bytes32 internal constant FINALIZE_TRANSCRIPT_DOMAIN = keccak256("davinci-dkg:finalize:v1");
 
-    /// @dev Per-application registrations, keyed by `(eid, aid)`. See
-    ///      DKGTypes.Application for the record shape. Both
-    ///      registerApplication and registerApplicationCoDec write here; the
-    ///      mode flag distinguishes the two paths at decryption time.
-    mapping(bytes12 epochId => mapping(bytes32 aid => DKGTypes.Application app)) internal applications;
-    /// @dev List of registered aids per epoch (excluding bytes32(0)). Used by
-    ///      _evictRound to enumerate the per-aid storage that needs zeroing
-    ///      out for SSTORE refunds. Append-only; never reordered.
-    mapping(bytes12 epochId => bytes32[] aids) internal epochAidsList;
-
-    /// @dev Per-(eid, aid, ciphertextIndex) organizer share submissions for
-    ///      mode-1 applications. Written by submitOrganizerShare and read by
-    ///      combineDecryption when the application's mode is OrganizerCoDec.
-    mapping(bytes12 epochId => mapping(bytes32 aid => mapping(uint16 ciphertextIndex => DKGTypes.OrganizerShareRecord)))
-        internal organizerShares;
-
     constructor(
         uint32 _chainId,
         address _registry,
@@ -189,6 +193,19 @@ contract DKGManager is IDKGManager {
         PARTIAL_DECRYPT_VERIFIER = _partialDecryptVerifier;
         FINALIZE_VERIFIER = _finalizeVerifier;
         DECRYPT_COMBINE_VERIFIER = _decryptCombineVerifier;
+        _deployer = msg.sender;
+    }
+
+    /// @notice Pin the sibling DKGAppManager address. May only be called once
+    ///         by the deployer; subsequent calls revert. Mirrors
+    ///         DKGRegistry.setManager. Resolves the cyclic constructor
+    ///         dependency between the two contracts.
+    function setAppManager(address a) external {
+        if (msg.sender != _deployer) revert Unauthorized();
+        if (_appManagerSet) revert AppManagerAlreadySet();
+        if (a == address(0)) revert InvalidAddress();
+        appManager = a;
+        _appManagerSet = true;
     }
 
     /// @notice Create a new DKG epoch.
@@ -467,8 +484,13 @@ contract DKGManager is IDKGManager {
         address[] storage parts = epochParticipants[oldRoundId];
         uint256 n = parts.length;
         // Build the cleanup aid set: bytes32(0) (legacy per-epoch path) plus
-        // every registered application aid.
-        bytes32[] storage regAids = epochAidsList[oldRoundId];
+        // every registered application aid (sourced from the sibling app
+        // manager). When the app manager is not yet wired we only clean up
+        // the legacy path.
+        bytes32[] memory regAids;
+        if (_appManagerSet) {
+            regAids = IDKGAppManager(appManager).getRegisteredAids(oldRoundId);
+        }
         uint256 aidCount = regAids.length + 1;
         for (uint256 i = 0; i < n; i++) {
             address participant = parts[i];
@@ -500,9 +522,9 @@ contract DKGManager is IDKGManager {
                     delete _ciphertexts[oldRoundId][aid][ci];
                 }
             }
-            if (a > 0) delete applications[oldRoundId][aid];
+            // applications[oldRoundId][aid] now lives on DKGAppManager.
+            // Its lazy-cleanup is acceptable per the audit notes.
         }
-        delete epochAidsList[oldRoundId];
         delete epochParticipants[oldRoundId];
         delete epochContribPrefixHash[oldRoundId];
         delete _collectiveKey[oldRoundId];
@@ -948,15 +970,8 @@ contract DKGManager is IDKGManager {
             if (p.notAfterTimestamp  != 0 && uint64(block.timestamp) > p.notAfterTimestamp)  revert DecryptionExpired();
             if (p.maxDecryptions     != 0 && epoch.ciphertextCount   >= p.maxDecryptions)    revert DecryptionLimitReached();
         } else {
-            DKGTypes.Application storage app = applications[epochId][aid];
-            if (!app.exists) revert InvalidApplication();
-            DKGTypes.AppPolicy memory ap = app.policy;
-            if (ap.authorizedSubmitter != address(0) && msg.sender != ap.authorizedSubmitter) revert NotOwner();
-            if (ap.notBeforeBlock != 0 && uint64(block.number) < ap.notBeforeBlock) revert DecryptionNotYetAllowed();
-            if (ap.notAfterBlock  != 0 && uint64(block.number) > ap.notAfterBlock)  revert DecryptionExpired();
-            // maxCiphertexts is enforced per-app via ciphertextIndex bound:
-            // index in [1, maxCiphertexts] when maxCiphertexts > 0.
-            if (ap.maxCiphertexts != 0 && ciphertextIndex > ap.maxCiphertexts) revert DecryptionLimitReached();
+            if (!_appManagerSet) revert AppManagerNotSet();
+            IDKGAppManager(appManager).requireCanSubmitCiphertext(epochId, aid, ciphertextIndex, msg.sender);
         }
 
         if (_ciphertexts[epochId][aid][ciphertextIndex] != bytes32(0)) revert CiphertextAlreadySubmitted();
@@ -1055,16 +1070,12 @@ contract DKGManager is IDKGManager {
         uint256 derivationS;
         DKGTypes.Point memory deltaOrg = DKGTypes.Point({x: 0, y: 1});
         if (aid != bytes32(0)) {
-            DKGTypes.Application storage app = applications[epochId][aid];
-            if (!app.exists) revert InvalidApplication();
-            mode = uint8(app.mode);
-            if (mode == uint8(DKGProtocol.MODE_PUBLIC_DERIVATION)) {
-                derivationS = app.derivationS;
-            } else {
-                DKGTypes.OrganizerShareRecord storage org = organizerShares[epochId][aid][ciphertextIndex];
-                if (!org.accepted) revert InsufficientPartialDecryptions();
-                deltaOrg = org.deltaOrg;
-            }
+            if (!_appManagerSet) revert AppManagerNotSet();
+            (uint8 m, uint256 s, uint256 dx, uint256 dy) =
+                IDKGAppManager(appManager).getCombineCorrection(epochId, aid, ciphertextIndex);
+            mode = m;
+            derivationS = s;
+            deltaOrg = DKGTypes.Point({x: dx, y: dy});
         }
 
         uint256[13] memory publicInputs = abi.decode(input, (uint256[13]));
@@ -1096,272 +1107,6 @@ contract DKGManager is IDKGManager {
         return publicInputs[8];
     }
 
-    /// @notice Submit an organizer's Δ_org = sk_org · C_1 share for a
-    ///         mode-1 application's ciphertext, together with its DLEQ proof.
-    ///         The proof reuses `PartialDecryptVerifier` with role=ORGANIZER
-    ///         (paper §6.3 line 1161).
-    /// @param  epochId         Anchor epoch identifier.
-    /// @param  aid             Application identifier (must exist in mode 1).
-    /// @param  ciphertextIndex Per-application ciphertext index.
-    /// @param  deltaOrgX       X coordinate of Δ_org.
-    /// @param  deltaOrgY       Y coordinate of Δ_org.
-    /// @param  dleqProof       Encoded DLEQ proof bytes (ABI-encoded uint[8] / uint[4]).
-    /// @param  dleqInput       Encoded DLEQ public input (uint[16]).
-    /// @dev `c1x/c1y/c2x/c2y` are the raw ciphertext coordinates as
-    ///      submitted via submitCiphertext. Verified against the stored
-    ///      ciphertext hash and then bound to the proof's pi[5..6].
-    function submitOrganizerShare(
-        bytes12 epochId,
-        bytes32 aid,
-        uint16 ciphertextIndex,
-        uint256 c1x,
-        uint256 c1y,
-        uint256 c2x,
-        uint256 c2y,
-        uint256 deltaOrgX,
-        uint256 deltaOrgY,
-        bytes calldata dleqProof,
-        bytes calldata dleqInput
-    ) external {
-        Epoch storage epoch = epochs[epochId];
-        if (epoch.organizer == address(0)) revert InvalidEpoch();
-        if (epoch.status != DKGTypes.EpochPhase.Finalized) revert InvalidPhase();
-        if (ciphertextIndex == 0 || ciphertextIndex > MAX_CIPHERTEXT_INDEX) revert InvalidCiphertext();
-        DKGTypes.Application storage app = applications[epochId][aid];
-        if (!app.exists) revert InvalidApplication();
-        if (uint8(app.mode) != uint8(DKGProtocol.MODE_ORGANIZER_CODEC)) revert InvalidApplication();
-
-        // Bind C1 to the on-chain ciphertext before
-        // accepting any (PK_org, Δ_org) commitment. Without this the
-        // organizer can produce a valid DLEQ for an unrelated base, and
-        // the stored Δ_org corrects the wrong discrete log at combine.
-        bytes32 storedCt = _ciphertexts[epochId][aid][ciphertextIndex];
-        if (storedCt == bytes32(0)) revert CiphertextNotSubmitted();
-        if (_hash4(c1x, c1y, c2x, c2y) != storedCt) revert InvalidProofInput();
-
-        if (organizerShares[epochId][aid][ciphertextIndex].accepted) revert AlreadyPartiallyDecrypted();
-
-        BabyJubJub.requireValidPoint(deltaOrgX, deltaOrgY);
-
-        // Verify the Chaum-Pedersen DLEQ proof via PartialDecryptVerifier.
-        // The verifier checks that (PK_org, Δ_org) have the same discrete log
-        // wrt (G, C_1), with role=ORGANIZER bound into the Fiat-Shamir
-        // transcript. The contract is responsible for binding the public
-        // inputs (eid, aid, ctIdx, role, C_1, PK_org, Δ_org) to authoritative
-        // on-chain state before invoking the verifier.
-        IZKVerifier(PARTIAL_DECRYPT_VERIFIER).verifyProof(dleqProof, dleqInput);
-        uint256[16] memory pi = abi.decode(dleqInput, (uint256[16]));
-        // The public-input layout per
-        // circuits/partialdecrypt/circuit.go is
-        //   [0]=eid, [1]=aid, [2]=ctIdx, [3]=role, [4]=i,
-        //   [5..6]=Base/C1, [7..8]=PublicKey/D_i (= PK_org for organizer),
-        //   [9..10]=Delta (= Δ_org for organizer),
-        //   [11..12]=A1, [13..14]=A2, [15]=Response.
-        // The previous code checked PK_org against pi[9..10] and
-        // Δ_org against pi[11..12]; both were off by two slots, so a
-        // malicious caller could supply an arbitrary point as Δ_org.
-        if (
-            pi[0] != _epochScalar(epochId)
-                || pi[1] != uint256(aid)
-                || pi[2] != uint256(ciphertextIndex)
-                || pi[3] != uint256(DKGProtocol.ROLE_ORGANIZER)
-                // pi[4] = participant index — must be 0 for organizer (per paper §6.3)
-                || pi[4] != 0
-                // pi[5..6] = base point — bound to the stored ciphertext.
-                || pi[5] != c1x
-                || pi[6] != c1y
-                // pi[7..8] = D_i — for organizer, this is PK_org.
-                || pi[7] != app.organizerPK.x
-                || pi[8] != app.organizerPK.y
-                // pi[9..10] = Δ_org.
-                || pi[9] != deltaOrgX
-                || pi[10] != deltaOrgY
-        ) revert InvalidProofInput();
-
-        organizerShares[epochId][aid][ciphertextIndex] = DKGTypes.OrganizerShareRecord({
-            deltaOrg: DKGTypes.Point({x: deltaOrgX, y: deltaOrgY}),
-            accepted: true
-        });
-
-        emit OrganizerShareSubmitted(epochId, aid, ciphertextIndex, deltaOrgX, deltaOrgY);
-    }
-
-    // ─── Application lifecycle (paper §4.3, §6) ──────────────────────────────
-
-    /// @notice Register an application against a finalized epoch in
-    ///         public-derivation mode (paper §4.3). Computes the per-application
-    ///         derivation tag `S = keccak256(eid || PK_ep || aid) mod q` and
-    ///         stores the application record. The implicit per-application
-    ///         encryption key is `PK_aid = PK_ep + S·G`, recomputable on-chain
-    ///         or off-chain by any reader from the stored `S`.
-    /// @param  epochId  Anchor epoch identifier (must be Finalized).
-    /// @param  aid      Caller-supplied non-zero application identifier.
-    /// @param  policy   Per-application access policy (gates submitCiphertext).
-    function registerApplication(
-        bytes12 epochId,
-        bytes32 aid,
-        DKGTypes.AppPolicy calldata policy
-    ) external {
-        Epoch storage epoch = epochs[epochId];
-        if (epoch.organizer == address(0)) revert InvalidEpoch();
-        if (epoch.status != DKGTypes.EpochPhase.Finalized) revert InvalidPhase();
-        if (aid == bytes32(0)) revert InvalidApplication();
-        DKGTypes.Application storage existing = applications[epochId][aid];
-        if (existing.exists) revert ApplicationAlreadyExists();
-
-        DKGTypes.Point storage pkep = _collectiveKey[epochId];
-        if (pkep.y == 0) revert InvalidEpoch();
-
-        // S = keccak256(eid || PK_ep.x || PK_ep.y || aid) mod q
-        uint256 s = uint256(
-            keccak256(abi.encodePacked(epochId, pkep.x, pkep.y, aid))
-        ) % BabyJubJub.SUBGROUP_ORDER;
-
-        existing.creator = msg.sender;
-        existing.mode = DKGTypes.AppMode.PublicDerivation;
-        existing.derivationS = s;
-        // organizerPK is only consumed in mode 1 (organizer co-decryption);
-        // for mode 0 apps it is conceptually the identity (0, 1). Leaving the
-        // storage slot zero saves the one cold SSTORE per registration; the
-        // getter normalizes a zero slot to identity for consumers.
-        existing.policy = policy;
-        existing.createdAtBlock = uint64(block.number);
-        existing.exists = true;
-        epochAidsList[epochId].push(aid);
-
-        emit ApplicationRegistered(
-            epochId,
-            aid,
-            msg.sender,
-            uint8(DKGProtocol.MODE_PUBLIC_DERIVATION),
-            s,
-            0,
-            1
-        );
-    }
-
-    /// @notice Register an application against a finalized epoch in
-    ///         organizer co-decryption mode (paper §6). Verifies a Schnorr
-    ///         proof of knowledge of `sk_org` per paper §6.2 / paper line 1138:
-    ///
-    ///             c = Poseidon(domain || eid || aid || PK_org || A)
-    ///             z·G == A + c·PK_org
-    ///
-    ///         The implicit per-application key is `PK_aid = PK_ep + PK_org`.
-    /// @param  epochId    Anchor epoch identifier (must be Finalized).
-    /// @param  aid        Caller-supplied non-zero application identifier.
-    /// @param  policy     Per-application access policy.
-    /// @param  pkOrgX     Organizer public key X coordinate.
-    /// @param  pkOrgY     Organizer public key Y coordinate.
-    /// @param  schnorrAx  Schnorr nonce point A = w·G — X.
-    /// @param  schnorrAy  Schnorr nonce point Y.
-    /// @param  schnorrZ   Schnorr response z = w + c·sk_org (mod L).
-    function registerApplicationCoDec(
-        bytes12 epochId,
-        bytes32 aid,
-        DKGTypes.AppPolicy calldata policy,
-        uint256 pkOrgX,
-        uint256 pkOrgY,
-        uint256 schnorrAx,
-        uint256 schnorrAy,
-        uint256 schnorrZ
-    ) external {
-        Epoch storage epoch = epochs[epochId];
-        if (epoch.organizer == address(0)) revert InvalidEpoch();
-        if (epoch.status != DKGTypes.EpochPhase.Finalized) revert InvalidPhase();
-        if (aid == bytes32(0)) revert InvalidApplication();
-        DKGTypes.Application storage existing = applications[epochId][aid];
-        if (existing.exists) revert ApplicationAlreadyExists();
-
-        BabyJubJub.requireValidPoint(pkOrgX, pkOrgY);
-        BabyJubJub.requireValidPoint(schnorrAx, schnorrAy);
-
-        if (
-            !_verifyOrganizerSchnorr(
-                epochId, aid, pkOrgX, pkOrgY, schnorrAx, schnorrAy, schnorrZ
-            )
-        ) revert InvalidSchnorrProof();
-
-        existing.creator = msg.sender;
-        existing.mode = DKGTypes.AppMode.OrganizerCoDec;
-        existing.derivationS = 0;
-        existing.organizerPK = DKGTypes.Point({x: pkOrgX, y: pkOrgY});
-        existing.policy = policy;
-        existing.createdAtBlock = uint64(block.number);
-        existing.exists = true;
-        epochAidsList[epochId].push(aid);
-
-        emit ApplicationRegistered(
-            epochId,
-            aid,
-            msg.sender,
-            uint8(DKGProtocol.MODE_ORGANIZER_CODEC),
-            0,
-            pkOrgX,
-            pkOrgY
-        );
-    }
-
-    /// @notice Read an application record.
-    function getApplication(bytes12 epochId, bytes32 aid)
-        external
-        view
-        returns (DKGTypes.Application memory app)
-    {
-        app = applications[epochId][aid];
-        // Mode-0 apps don't store organizerPK (they leave it zeroed); normalize
-        // to the BabyJubJub identity (0, 1) for off-chain consumers.
-        if (app.organizerPK.y == 0) {
-            app.organizerPK = DKGTypes.Point({x: 0, y: 1});
-        }
-    }
-
-    /// @dev Two-pass Poseidon (T5+T5) Fiat-Shamir transcript for the organizer
-    ///      Schnorr proof. Layout (paper §6.2 line 1138):
-    ///
-    ///         inner = T5(domain, eid, PK_org.x, PK_org.y)
-    ///         c     = T5(inner, aid_field, A.x, A.y)
-    ///
-    ///      `aid_field = uint256(aid) % BN254.Q` to keep the value in the
-    ///      Poseidon input field. The shared `DOMAIN_ORGANIZER_REGISTER_V1`
-    ///      digest namespaces the proof so it cannot be replayed against the
-    ///      operator-registry Schnorr verification.
-    function _organizerSchnorrChallenge(
-        bytes12 epochId,
-        bytes32 aid,
-        uint256 pkX,
-        uint256 pkY,
-        uint256 ax,
-        uint256 ay
-    ) internal pure returns (uint256) {
-        uint256 domainField = uint256(DKGProtocol.DOMAIN_ORGANIZER_REGISTER_V1) % BabyJubJub.Q;
-        uint256[4] memory in1;
-        in1[0] = domainField;
-        in1[1] = uint256(uint96(epochId));
-        in1[2] = pkX;
-        in1[3] = pkY;
-        uint256 inner = PoseidonT5.hash(in1);
-        uint256[4] memory in2;
-        in2[0] = inner;
-        in2[1] = uint256(aid) % BabyJubJub.Q;
-        in2[2] = ax;
-        in2[3] = ay;
-        return PoseidonT5.hash(in2);
-    }
-
-    /// @dev Verify the organizer Schnorr PoK: `z·G == A + c·PK_org`.
-    function _verifyOrganizerSchnorr(
-        bytes12 epochId,
-        bytes32 aid,
-        uint256 pkX,
-        uint256 pkY,
-        uint256 ax,
-        uint256 ay,
-        uint256 z
-    ) internal view returns (bool) {
-        uint256 c = _organizerSchnorrChallenge(epochId, aid, pkX, pkY, ax, ay);
-        return BabyJubJub.verifySchnorrEquation(z, c, ax, ay, pkX, pkY);
-    }
 
     /// @notice Abort a non-terminal epoch. Organizer only.
     /// @dev    Finalized epochs may NOT be aborted: the collective public key has
