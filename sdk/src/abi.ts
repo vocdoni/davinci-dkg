@@ -174,8 +174,6 @@ export const dkgManagerAbi = [
       { name: 'contributorIndex', type: 'uint16' },
       { name: 'commitmentsHash', type: 'bytes32' },
       { name: 'encryptedSharesHash', type: 'bytes32' },
-      { name: 'commitment0X', type: 'uint256' },
-      { name: 'commitment0Y', type: 'uint256' },
       { name: 'transcript', type: 'bytes' },
       { name: 'proof', type: 'bytes' },
       { name: 'input', type: 'bytes' },

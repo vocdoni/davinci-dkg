@@ -142,8 +142,6 @@ interface IDKGManager {
         uint16 contributorIndex,
         bytes32 commitmentsHash,
         bytes32 encryptedSharesHash,
-        uint256 commitment0X,
-        uint256 commitment0Y,
         bytes calldata transcript,
         bytes calldata proof,
         bytes calldata input

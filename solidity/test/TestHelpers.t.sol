@@ -45,9 +45,7 @@ abstract contract TestHelpers is TestInputs {
         uint16 committeeSize,
         uint16 contributorIndex,
         bytes32 commitmentsHash,
-        bytes32 encryptedSharesHash,
-        uint256 commitment0X,
-        uint256 commitment0Y
+        bytes32 encryptedSharesHash
     ) internal pure returns (bytes memory) {
         uint256 challenge = BRLC.deriveChallenge(
             epochId,
@@ -63,9 +61,7 @@ abstract contract TestHelpers is TestInputs {
                 uint256(commitmentsHash),
                 uint256(encryptedSharesHash),
                 challenge,
-                contributionTranscriptCommitment(challenge, committeeSize),
-                commitment0X,
-                commitment0Y
+                contributionTranscriptCommitment(challenge, committeeSize)
             ]
         );
     }

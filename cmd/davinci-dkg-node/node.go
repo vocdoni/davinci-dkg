@@ -838,8 +838,6 @@ func (n *Node) doContribution(
 		auth, epochID, idx,
 		common.BigToHash(pi.CommitmentHash),
 		common.BigToHash(pi.ShareHash),
-		pi.CommitmentX0,
-		pi.CommitmentY0,
 		transcriptBytes, proofBytes, inputBytes,
 	)
 	if err != nil {

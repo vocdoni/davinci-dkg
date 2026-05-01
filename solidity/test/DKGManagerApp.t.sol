@@ -103,24 +103,24 @@ contract DKGManagerAppTest is Test, TestHelpers {
             epochId, 1,
             CONTRIBUTION_COMMITMENTS_HASH,
             CONTRIBUTION_ENCRYPTED_SHARES_HASH,
-            0, 1,
             contributionTranscript(2),
             contributionProof(),
-            contributionInput(epochId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH, 0, 1)
+            contributionInput(epochId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH)
         );
         vm.prank(address(0xBEEF));
         manager.submitContribution(
             epochId, 2,
             bytes32(uint256(CONTRIBUTION_COMMITMENTS_HASH) + 1),
             bytes32(uint256(CONTRIBUTION_ENCRYPTED_SHARES_HASH) + 1),
-            0, 1,
             contributionTranscript(2),
             contributionProof(),
             contributionInput(
-                epochId, 2, 2, 2,
+                epochId,
+                2,
+                2,
+                2,
                 bytes32(uint256(CONTRIBUTION_COMMITMENTS_HASH) + 1),
-                bytes32(uint256(CONTRIBUTION_ENCRYPTED_SHARES_HASH) + 1),
-                0, 1
+                bytes32(uint256(CONTRIBUTION_ENCRYPTED_SHARES_HASH) + 1)
             )
         );
         IDKGManager.Epoch memory r = manager.getEpoch(epochId);

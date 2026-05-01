@@ -510,8 +510,6 @@ contract DKGManager is IDKGManager {
         uint16 contributorIndex,
         bytes32 commitmentsHash,
         bytes32 encryptedSharesHash,
-        uint256 commitment0X,
-        uint256 commitment0Y,
         bytes calldata transcript,
         bytes calldata proof,
         bytes calldata input
@@ -527,7 +525,7 @@ contract DKGManager is IDKGManager {
         if (record.accepted) revert AlreadyContributed();
 
         IZKVerifier(CONTRIBUTION_VERIFIER).verifyProof(proof, input);
-        uint256[10] memory publicInputs = abi.decode(input, (uint256[10]));
+        uint256[8] memory publicInputs = abi.decode(input, (uint256[8]));
         if (
             publicInputs[0] != _epochScalar(epochId) || publicInputs[1] != epoch.policy.threshold
                 || publicInputs[2] != epoch.policy.committeeSize || publicInputs[3] != contributorIndex
@@ -540,9 +538,6 @@ contract DKGManager is IDKGManager {
         );
         if (publicInputs[6] != challenge) revert InvalidProofInput();
         // publicInputs[7] = TranscriptCommitment (verified below via BRLC)
-        // publicInputs[8] = CommitmentX0 (contributor's individual public key share x)
-        // publicInputs[9] = CommitmentY0 (contributor's individual public key share y)
-        if (publicInputs[8] != commitment0X || publicInputs[9] != commitment0Y) revert InvalidProofInput();
 
         // Transcript layout (8N words = 256 N=32, 128 N=16):
         //   words [0..2N)     commitmentPoints  (N points × 2 coords)
@@ -576,17 +571,6 @@ contract DKGManager is IDKGManager {
         rec.accepted = true;
         epoch.contributionCount++;
 
-        // Accumulate the collective public key: add commitment[0] = a_{i,0}·G
-        // to the running sum. The ZK proof guarantees commitment0X/Y is the
-        // correct zeroth Feldman commitment point of this contributor's polynomial.
-        // Identity is (0, 1); the initial mapping value (0, 0) is treated as (0, 1).
-        DKGTypes.Point storage cpk = _collectiveKey[epochId];
-        uint256 accX = cpk.x;
-        uint256 accY = cpk.y == 0 ? 1 : cpk.y; // treat uninitialized (0,0) as identity (0,1)
-        (uint256 newX, uint256 newY) = BabyJubJub.pointAdd(accX, accY, commitment0X, commitment0Y);
-        cpk.x = newX;
-        cpk.y = newY;
-
         // Refresh the contributor's liveness timestamp on the registry.
         // A successful proof-gated contribution is the strongest possible
         // signal that the operator is alive and well-configured.
@@ -595,11 +579,10 @@ contract DKGManager is IDKGManager {
         emit ContributionSubmitted(epochId, msg.sender, contributorIndex, commitmentsHash, encryptedSharesHash);
     }
 
-    /// @notice Returns the accumulated collective public key for a epoch.
-    ///         This is the running sum of all accepted contributors' commitment[0]
-    ///         points (a_{i,0}·G). Once the epoch is finalized it equals the
-    ///         full collective public key. The y-coordinate of an uninitialized
-    ///         (no contributions yet) key is returned as 1 (the identity element).
+    /// @notice Returns the collective public key for an epoch.
+    ///         Written exactly once at `finalizeEpoch` from
+    ///         `aggregateCommitments[0] = Σᵢ aᵢ,₀·G`. Returns the identity
+    ///         element `(0, 1)` for epochs that have not yet been finalized.
     function getCollectivePublicKey(bytes12 epochId) external view returns (DKGTypes.Point memory) {
         DKGTypes.Point storage cpk = _collectiveKey[epochId];
         if (cpk.y == 0) {
@@ -664,12 +647,12 @@ contract DKGManager is IDKGManager {
 
         _verifyFinalizeTranscript(epochId, epoch, challenge, publicInputs[8], transcript);
 
-        // Defence-in-depth — the proof's aggregateCommitments[0]
-        // must equal the on-chain accumulated `_collectiveKey`. Without this a
-        // valid finalize proof over a duplicated/omitted contributor subset
-        // (which the duplicate-row bitmap already rejects) would still be
-        // distinguishable from any future bug that lets an inconsistent set
-        // through. Reads aggregate[0].x/y straight from the transcript calldata.
+        // The collective public key is `aggregateCommitments[0]`. The proof
+        // attests that the aggregate is the correctly-summed Σᵢ Cᵢ over the
+        // accepted contributor set, and `_verifyFinalizeTranscript` rejects
+        // duplicate participant rows and binds each row to the on-chain
+        // accepted contribution digest. Read aggregate[0] straight from the
+        // transcript calldata and persist it once.
         {
             uint256 agg0Base = dOff + FINALIZE_AGG0_WORDS_OFFSET * 32;
             uint256 agg0X;
@@ -679,9 +662,8 @@ contract DKGManager is IDKGManager {
                 agg0Y := calldataload(add(agg0Base, 0x20))
             }
             DKGTypes.Point storage cpkRef = _collectiveKey[epochId];
-            uint256 cpkX = cpkRef.x;
-            uint256 cpkY = cpkRef.y == 0 ? 1 : cpkRef.y;
-            if (agg0X != cpkX || agg0Y != cpkY) revert InvalidProofInput();
+            cpkRef.x = agg0X;
+            cpkRef.y = agg0Y;
         }
 
         epoch.status = DKGTypes.EpochPhase.Finalized;

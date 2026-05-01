@@ -25,11 +25,11 @@ which the production deployment includes.
 
 | Circuit         | Constraints |
 |-----------------|------------:|
-| Contribution    |   1,430,854 |
+| Contribution    |   1,430,852 |
 | Finalize        |   1,021,651 |
 | PartialDecrypt  |      20,717 |
 | DecryptCombine  |      88,170 |
-| **Total**       | **2,561,392** |
+| **Total**       | **2,561,390** |
 
 The dominant cost in Contribution and Finalize is `CommitmentPolynomialValue`,
 which evaluates `Σ_k commitments[k] · x^k` for each recipient (or participant)
@@ -81,8 +81,8 @@ the production-relevant number.
 |---------------------------------------|-------:|-----------:|-----------:|
 | `createEpoch`                         |  24,734 |   226,458 |   246,544 |
 | `claimSlot`                           |  28,831 |   159,970 |   207,824 |
-| `submitContribution`                  |  72,438 |   238,286 |   238,286 |
-| `finalizeEpoch`                       | 317,193 |   727,896 |   727,896 |
+| `submitContribution`                  |  71,736 |   212,739 |   212,751 |
+| `finalizeEpoch`                       | 317,190 |   747,917 |   747,917 |
 | `submitCiphertext`                    |  27,260 | 2,183,806 | 2,183,976 |
 | `submitPartialDecryption`             |  34,819 |   159,339 |   176,427 |
 | `combineDecryption`                   |  47,228 |   101,258 |   155,289 |
@@ -169,12 +169,12 @@ one threshold decryption:
 |---|---:|---:|
 | `createEpoch`                                      |     226,458 |     226,458 |
 | n × `claimSlot`                                    |   2,559,520 |   5,119,040 |
-| n × `submitContribution`                           |   3,812,576 |   7,625,152 |
-| 1 × `finalizeEpoch`                                |     727,896 |     727,896 |
+| n × `submitContribution`                           |   3,403,824 |   6,807,648 |
+| 1 × `finalizeEpoch`                                |     747,917 |     747,917 |
 | 1 × `submitCiphertext`                             |   2,183,806 |   2,183,806 |
 | t × `submitPartialDecryption` (t = ⌈2n/3⌉)         |   1,752,729 (×11) |   3,505,458 (×22) |
 | 1 × `combineDecryption`                            |     101,258 |     101,258 |
-| **Round total**                                    | **11,364,243** | **19,489,068** |
+| **Round total**                                    | **10,975,512** | **18,691,585** |
 
 These are *epoch-only* costs — application registration is paid once per
 `(eid, aid)` pair (~29 k for mode 0, ~28 k for mode 1).

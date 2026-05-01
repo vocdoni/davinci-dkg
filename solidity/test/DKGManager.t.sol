@@ -116,12 +116,9 @@ contract DKGManagerTest is Test, TestHelpers {
             epochId,
             1,
             CONTRIBUTION_COMMITMENTS_HASH,
-            CONTRIBUTION_ENCRYPTED_SHARES_HASH,
-            0, // commitment0X
-            1, // commitment0Y
-            contributionTranscript(2),
+            CONTRIBUTION_ENCRYPTED_SHARES_HASH,            contributionTranscript(2),
             contributionProof(),
-            contributionInput(epochId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH, 0, 1)
+            contributionInput(epochId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH)
         );
 
         vm.prank(address(0xBEEF));
@@ -129,10 +126,7 @@ contract DKGManagerTest is Test, TestHelpers {
             epochId,
             2,
             bytes32(uint256(CONTRIBUTION_COMMITMENTS_HASH) + 1),
-            bytes32(uint256(CONTRIBUTION_ENCRYPTED_SHARES_HASH) + 1),
-            0, // commitment0X
-            1, // commitment0Y
-            contributionTranscript(2),
+            bytes32(uint256(CONTRIBUTION_ENCRYPTED_SHARES_HASH) + 1),            contributionTranscript(2),
             contributionProof(),
             contributionInput(
                 epochId,
@@ -140,9 +134,7 @@ contract DKGManagerTest is Test, TestHelpers {
                 2,
                 2,
                 bytes32(uint256(CONTRIBUTION_COMMITMENTS_HASH) + 1),
-                bytes32(uint256(CONTRIBUTION_ENCRYPTED_SHARES_HASH) + 1),
-                0,
-                1
+                bytes32(uint256(CONTRIBUTION_ENCRYPTED_SHARES_HASH) + 1)
             )
         );
 
@@ -235,12 +227,9 @@ contract DKGManagerTest is Test, TestHelpers {
             epochId,
             1,
             CONTRIBUTION_COMMITMENTS_HASH,
-            CONTRIBUTION_ENCRYPTED_SHARES_HASH,
-            0, // commitment0X
-            1, // commitment0Y
-            contributionTranscript(2),
+            CONTRIBUTION_ENCRYPTED_SHARES_HASH,            contributionTranscript(2),
             contributionProof(),
-            contributionInput(epochId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH, 0, 1)
+            contributionInput(epochId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH)
         );
 
         DKGTypes.ContributionRecord memory record = manager.getContribution(epochId, address(this));
@@ -263,12 +252,9 @@ contract DKGManagerTest is Test, TestHelpers {
             epochId,
             1,
             CONTRIBUTION_COMMITMENTS_HASH,
-            CONTRIBUTION_ENCRYPTED_SHARES_HASH,
-            0, // commitment0X
-            1, // commitment0Y
-            contributionTranscript(2),
+            CONTRIBUTION_ENCRYPTED_SHARES_HASH,            contributionTranscript(2),
             contributionProof(),
-            contributionInput(epochId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH, 0, 1)
+            contributionInput(epochId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH)
         );
     }
 
@@ -279,12 +265,9 @@ contract DKGManagerTest is Test, TestHelpers {
             epochId,
             1,
             CONTRIBUTION_COMMITMENTS_HASH,
-            CONTRIBUTION_ENCRYPTED_SHARES_HASH,
-            0, // commitment0X
-            1, // commitment0Y
-            contributionTranscript(2),
+            CONTRIBUTION_ENCRYPTED_SHARES_HASH,            contributionTranscript(2),
             contributionProof(),
-            contributionInput(epochId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH, 0, 1)
+            contributionInput(epochId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH)
         );
 
         vm.expectRevert(IDKGManager.AlreadyContributed.selector);
@@ -292,12 +275,9 @@ contract DKGManagerTest is Test, TestHelpers {
             epochId,
             1,
             CONTRIBUTION_COMMITMENTS_HASH,
-            CONTRIBUTION_ENCRYPTED_SHARES_HASH,
-            0, // commitment0X
-            1, // commitment0Y
-            contributionTranscript(2),
+            CONTRIBUTION_ENCRYPTED_SHARES_HASH,            contributionTranscript(2),
             contributionProof(),
-            contributionInput(epochId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH, 0, 1)
+            contributionInput(epochId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH)
         );
     }
 
@@ -309,10 +289,7 @@ contract DKGManagerTest is Test, TestHelpers {
             epochId,
             1,
             CONTRIBUTION_COMMITMENTS_HASH,
-            CONTRIBUTION_ENCRYPTED_SHARES_HASH,
-            0, // commitment0X
-            1, // commitment0Y
-            contributionTranscript(2),
+            CONTRIBUTION_ENCRYPTED_SHARES_HASH,            contributionTranscript(2),
             contributionProof(),
             CONTRIBUTION_INPUT_BAD
         );
@@ -339,12 +316,9 @@ contract DKGManagerTest is Test, TestHelpers {
             epochId,
             1,
             CONTRIBUTION_COMMITMENTS_HASH,
-            CONTRIBUTION_ENCRYPTED_SHARES_HASH,
-            0, // commitment0X
-            1, // commitment0Y
-            contributionTranscript(2),
+            CONTRIBUTION_ENCRYPTED_SHARES_HASH,            contributionTranscript(2),
             contributionProof(),
-            contributionInput(epochId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH, 0, 1)
+            contributionInput(epochId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH)
         );
 
         _advanceToFinalize(epochId);
@@ -373,20 +347,22 @@ contract DKGManagerTest is Test, TestHelpers {
 
         manager.submitContribution(
             epochId, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH,
-            0, 1, contributionTranscript(2), contributionProof(),
-            contributionInput(epochId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH, 0, 1)
+            contributionTranscript(2), contributionProof(),
+            contributionInput(epochId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH)
         );
         vm.prank(address(0xBEEF));
         manager.submitContribution(
             epochId, 2,
             bytes32(uint256(CONTRIBUTION_COMMITMENTS_HASH) + 1),
             bytes32(uint256(CONTRIBUTION_ENCRYPTED_SHARES_HASH) + 1),
-            0, 1, contributionTranscript(2), contributionProof(),
+            contributionTranscript(2), contributionProof(),
             contributionInput(
-                epochId, 2, 2, 2,
+                epochId,
+                2,
+                2,
+                2,
                 bytes32(uint256(CONTRIBUTION_COMMITMENTS_HASH) + 1),
-                bytes32(uint256(CONTRIBUTION_ENCRYPTED_SHARES_HASH) + 1),
-                0, 1
+                bytes32(uint256(CONTRIBUTION_ENCRYPTED_SHARES_HASH) + 1)
             )
         );
 
@@ -439,20 +415,22 @@ contract DKGManagerTest is Test, TestHelpers {
 
         manager.submitContribution(
             epochId, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH,
-            0, 1, contributionTranscript(2), contributionProof(),
-            contributionInput(epochId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH, 0, 1)
+            contributionTranscript(2), contributionProof(),
+            contributionInput(epochId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH)
         );
         vm.prank(address(0xBEEF));
         manager.submitContribution(
             epochId, 2,
             bytes32(uint256(CONTRIBUTION_COMMITMENTS_HASH) + 1),
             bytes32(uint256(CONTRIBUTION_ENCRYPTED_SHARES_HASH) + 1),
-            0, 1, contributionTranscript(2), contributionProof(),
+            contributionTranscript(2), contributionProof(),
             contributionInput(
-                epochId, 2, 2, 2,
+                epochId,
+                2,
+                2,
+                2,
                 bytes32(uint256(CONTRIBUTION_COMMITMENTS_HASH) + 1),
-                bytes32(uint256(CONTRIBUTION_ENCRYPTED_SHARES_HASH) + 1),
-                0, 1
+                bytes32(uint256(CONTRIBUTION_ENCRYPTED_SHARES_HASH) + 1)
             )
         );
 
@@ -729,12 +707,9 @@ contract DKGManagerTest is Test, TestHelpers {
             epochId,
             1,
             CONTRIBUTION_COMMITMENTS_HASH,
-            CONTRIBUTION_ENCRYPTED_SHARES_HASH,
-            0, // commitment0X
-            1, // commitment0Y
-            contributionTranscript(2),
+            CONTRIBUTION_ENCRYPTED_SHARES_HASH,            contributionTranscript(2),
             contributionProof(),
-            contributionInput(epochId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH, 0, 1)
+            contributionInput(epochId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH)
         );
 
         uint64 afterBlock = registry.getNode(address(this)).lastActiveBlock;
@@ -1053,20 +1028,22 @@ contract DKGManagerTest is Test, TestHelpers {
 
         manager.submitContribution(
             epochId, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH,
-            0, 1, contributionTranscript(2), contributionProof(),
-            contributionInput(epochId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH, 0, 1)
+            contributionTranscript(2), contributionProof(),
+            contributionInput(epochId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH)
         );
         vm.prank(address(0xBEEF));
         manager.submitContribution(
             epochId, 2,
             bytes32(uint256(CONTRIBUTION_COMMITMENTS_HASH) + 1),
             bytes32(uint256(CONTRIBUTION_ENCRYPTED_SHARES_HASH) + 1),
-            0, 1, contributionTranscript(2), contributionProof(),
+            contributionTranscript(2), contributionProof(),
             contributionInput(
-                epochId, 2, 2, 2,
+                epochId,
+                2,
+                2,
+                2,
                 bytes32(uint256(CONTRIBUTION_COMMITMENTS_HASH) + 1),
-                bytes32(uint256(CONTRIBUTION_ENCRYPTED_SHARES_HASH) + 1),
-                0, 1
+                bytes32(uint256(CONTRIBUTION_ENCRYPTED_SHARES_HASH) + 1)
             )
         );
         _advanceToFinalize(epochId);

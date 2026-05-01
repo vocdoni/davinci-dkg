@@ -617,13 +617,8 @@ constraint counts, proving / verifying times, and gas figures.
 ### Contribution Circuit (DKG Phase 3)
 
 **Package**: `circuits/contribution`
-**Public inputs** (10 scalars): `EpochHash`, `Threshold`, `CommitteeSize`, `ContributorIndex`,
-`CommitmentHash`, `ShareHash`, `Challenge`, `TranscriptCommitment`, `CommitmentX0`, `CommitmentY0`
-
-The last two inputs (`CommitmentX0`, `CommitmentY0`) are the BabyJubJub coordinates of the
-contributor's zeroth Feldman commitment point `a_{i,0}·G` — their individual public key share.
-The `DKGManager` reads these from the ZK public inputs and accumulates them on-chain into the
-epoch's collective public key via `_collectiveKey[epochId] += (CommitmentX0, CommitmentY0)`.
+**Public inputs** (8 scalars): `EpochHash`, `Threshold`, `CommitteeSize`, `ContributorIndex`,
+`CommitmentHash`, `ShareHash`, `Challenge`, `TranscriptCommitment`
 
 **Private inputs**: polynomial coefficients, encryption nonces, Shamir shares,
 mask quotients, share masks, carry bits
@@ -637,10 +632,11 @@ mask quotients, share masks, carry bits
 6. Commitment hash: `CommitmentHash = Poseidon1(EpochHash, ContributorIndex, t, C_i(0), …)`
 7. Share hash: `ShareHash = Poseidon1(EpochHash, ContributorIndex, n, idx_1, R_1, σ_1, …)`
 8. BRLC transcript: `TranscriptCommitment = BRLC(Challenge, transcript_vector)`
-9. Individual public key: `CommitmentX0 = C_i(0).X` and `CommitmentY0 = C_i(0).Y` (i.e., `a_{i,0}·G` — the contributor's public key share)
 
 The transcript vector encodes all commitments, recipient indexes, recipient public keys,
-ephemeral points, and masked shares.
+ephemeral points, and masked shares. The contributor's individual public key share
+`a_{i,0}·G` is the first element of the commitment vector inside the BRLC transcript;
+it is verified at finalize time as part of `aggregateCommitments[0]`.
 
 ### Finalize Circuit (DKG Phase 4)
 
@@ -758,7 +754,7 @@ the event log.
 | `createEpoch(threshold, committeeSize, minValidContributions, lotteryAlphaBps, seedDelay, registrationDeadlineBlock, contributionDeadlineBlock, finalizeNotBeforeBlock, decryptionPolicy)` | Any | Open | Create a new DKG epoch. Snapshots `activeCount` from the registry and derives the per-epoch lottery threshold. Pins `seedBlock = block.number + seedDelay`. `finalizeNotBeforeBlock` is the earliest block at which `finalizeEpoch` can succeed (must be `> contributionDeadlineBlock`); the gap gives selected participants a window to submit before the contribution set is frozen. `decryptionPolicy` gates the legacy per-epoch `submitCiphertext` path (owner-only, not-before/not-after block and timestamp, max submissions) — all-zero = no constraint. Returns `bytes12 epochId`. |
 | `claimSlot(epochId)` | Registration | Any registered eligible node | First-come-first-served self-claim. The first call after `block.number ≥ seedBlock` lazily resolves `seed = blockhash(seedBlock)`. The caller is admitted iff `keccak256(seed ‖ msg.sender) < lotteryThreshold`. The contract stops accepting claims once `committeeSize` slots are filled and immediately advances to Contribution. |
 | `extendRegistration(epochId)` | Registration, after deadline | Open | Reroll the seed if the epoch failed to fill in its registration window. Captures a fresh `blockhash` and pushes the deadline forward. |
-| `submitContribution(epochId, contributorIndex, commitmentsHash, encryptedSharesHash, commitment0X, commitment0Y, transcript, proof, input)` | Contribution | Selected participant | Submit polynomial commitments and encrypted shares with a Groth16 proof. `commitment0X`/`commitment0Y` are the coordinates of the contributor's zeroth Feldman commitment `a_{i,0}·G` (verified against the ZK public inputs); the contract accumulates them into the epoch's collective public key. The committee membership / pubkey list is verified against a single keccak snapshot taken when the lottery filled (no per-recipient registry calls). |
+| `submitContribution(epochId, contributorIndex, commitmentsHash, encryptedSharesHash, transcript, proof, input)` | Contribution | Selected participant | Submit polynomial commitments and encrypted shares with a Groth16 proof. The committee membership / pubkey list is verified against a single keccak snapshot taken when the lottery filled (no per-recipient registry calls). The collective public key is captured later by `finalizeEpoch` from `aggregateCommitments[0]`, so contributions don't pay for an on-chain BabyJubJub addition. |
 | `finalizeEpoch(epochId, aggregateCommitmentsHash, collectivePublicKeyHash, shareCommitmentHash, transcript, proof, input)` | After min contributions, on/after `finalizeNotBeforeBlock` | Open | Aggregate commitments, publish collective public key and share commitments. Advances to Finalized. Reverts with `FinalizeTooEarly` if `block.number < policy.finalizeNotBeforeBlock`. The transcript is read directly from calldata; share commitments are stored as `keccak256(x,y)` (1 slot each). In production, `davinci-dkg-node` instances finalize automatically after their contribution lands, using a deterministic per-epoch stagger derived from the lottery seed so only one node submits at a time (the rest see `AlreadyFinalized` and stop). |
 | `submitCiphertext(epochId, aid, ciphertextIndex, c1x, c1y, c2x, c2y)` | Finalized | `aid == bytes32(0)` is the legacy per-epoch path gated by the epoch `DecryptionPolicy`; non-zero `aid` is gated by the application's own `AppPolicy`. Write-once per `(epochId, aid, ciphertextIndex)`. | Publish a ciphertext to be threshold-decrypted under either the epoch key (`aid = 0`) or the application-specific key. Stores `keccak256(c1,c2)` and emits `CiphertextSubmitted` carrying the raw coordinates so nodes (and consumers) can read them from the event log. |
 | `submitPartialDecryption(epochId, aid, participantIndex, ciphertextIndex, c1x, c1y, c2x, c2y, deltaHash, proof, input)` | Finalized | Selected participant | Submit a partial decryption `δ_i = d_i · C_1` with a Chaum-Pedersen DLEQ proof. Keyed by `(epochId, aid, participant, ciphertextIndex)` to support multiple ciphertexts per epoch and per application. |
@@ -773,7 +769,7 @@ the event log.
 | Function | Returns |
 |---|---|
 | `getEpoch(epochId)` | `Epoch` struct: `organizer, policy, decryptionPolicy, status, nonce, seedBlock, seed, lotteryThreshold, claimedCount, contributionCount, partialDecryptionCount, ciphertextCount`. The `policy` field is an `EpochPolicy` struct: `threshold, committeeSize, minValidContributions, lotteryAlphaBps, seedDelay, registrationDeadlineBlock, contributionDeadlineBlock, finalizeNotBeforeBlock`. |
-| `getCollectivePublicKey(epochId)` | `Point {x, y}` — the collective public key `PK = Σ_i a_{i,0}·G`, accumulated incrementally on each accepted `submitContribution`. Returns the identity `(0,1)` before any contribution is accepted. Available from the first accepted contribution onward; does not require waiting for `finalizeEpoch`. |
+| `getCollectivePublicKey(epochId)` | `Point {x, y}` — the collective public key `PK = Σ_i a_{i,0}·G`. Written exactly once at `finalizeEpoch` from `aggregateCommitments[0]`; returns the identity `(0, 1)` before the epoch is finalized. |
 | `getDecryptionPolicy(epochId)` | `DecryptionPolicy` struct: `ownerOnly, maxDecryptions, notBeforeBlock, notBeforeTimestamp, notAfterBlock, notAfterTimestamp`. Set at `createEpoch`; gates the legacy `aid == 0` path only. |
 | `selectedParticipants(epochId)` | `address[]` — ordered committee in claim order. |
 | `getContribution(epochId, contributor)` | `ContributionRecord` (only `contributorIndex`, `commitmentVectorDigest`, `accepted` are persisted; the rest live in `ContributionSubmitted` events). |

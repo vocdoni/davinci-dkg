@@ -45,10 +45,7 @@ func TestContributionRejectsMalformedProof(t *testing.T) {
 		epochID,
 		1,
 		submission.CommitmentsHash,
-		submission.EncryptedSharesHash,
-		submission.Commitment0X,
-		submission.Commitment0Y,
-		submission.Transcript,
+		submission.EncryptedSharesHash,		submission.Transcript,
 		submission.Proof,
 		submission.Input,
 	)
@@ -95,8 +92,7 @@ func TestFinalizeRejectsBeforeFinalizeNotBeforeBlock(t *testing.T) {
 	tx, err := services.Manager.SubmitContribution(
 		auth, epochID, 1,
 		submission.CommitmentsHash, submission.EncryptedSharesHash,
-		submission.Commitment0X, submission.Commitment0Y,
-		submission.Transcript, submission.Proof, submission.Input,
+				submission.Transcript, submission.Proof, submission.Input,
 	)
 	c.Assert(err, qt.IsNil)
 	c.Assert(services.TxManager.WaitTxByHash(tx.Hash(), helpers.DefaultTxTimeout), qt.IsNil)
@@ -278,8 +274,8 @@ func TestRoundCanFinalizeWithMissingContributorWhenPolicyPermits(t *testing.T) {
 	c.Assert(err, qt.IsNil)
 
 	selfActor := &helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager}
-	c.Assert(helpers.SubmitContributionAs(ctx, selfActor, epochID, 1, submission0.CommitmentsHash, submission0.EncryptedSharesHash, submission0.Commitment0X, submission0.Commitment0Y, submission0.Transcript, submission0.Proof, submission0.Input), qt.IsNil)
-	c.Assert(helpers.SubmitContributionAs(ctx, actor1, epochID, 2, submission1.CommitmentsHash, submission1.EncryptedSharesHash, submission1.Commitment0X, submission1.Commitment0Y, submission1.Transcript, submission1.Proof, submission1.Input), qt.IsNil)
+	c.Assert(helpers.SubmitContributionAs(ctx, selfActor, epochID, 1, submission0.CommitmentsHash, submission0.EncryptedSharesHash, submission0.Transcript, submission0.Proof, submission0.Input), qt.IsNil)
+	c.Assert(helpers.SubmitContributionAs(ctx, actor1, epochID, 2, submission1.CommitmentsHash, submission1.EncryptedSharesHash, submission1.Transcript, submission1.Proof, submission1.Input), qt.IsNil)
 
 	output, err := helpers.BuildFinalizeEpochOutput(
 		ctx,
