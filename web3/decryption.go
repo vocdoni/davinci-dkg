@@ -8,13 +8,16 @@ import (
 	"github.com/ethereum/go-ethereum"
 )
 
-// GetCombinedDecryption returns the combined decryption record for one ciphertext.
+// GetCombinedDecryption returns the combined decryption record for one
+// ciphertext under (epochID, aid). For the legacy per-epoch path pass
+// `[32]byte{}` as `aid` (CIRCUITS_AUDIT2 #2).
 func (c *Contracts) GetCombinedDecryption(
 	ctx context.Context,
 	epochID [12]byte,
+	aid [32]byte,
 	ciphertextIndex uint16,
 ) (CombinedDecryptionView, error) {
-	input, err := c.managerABI.Pack("getCombinedDecryption", epochID, ciphertextIndex)
+	input, err := c.managerABI.Pack("getCombinedDecryption", epochID, aid, ciphertextIndex)
 	if err != nil {
 		return CombinedDecryptionView{}, fmt.Errorf("pack getCombinedDecryption: %w", err)
 	}

@@ -99,9 +99,15 @@ contract DKGManager is IDKGManager {
     mapping(bytes12 epochId => address[] participants) internal epochParticipants;
     mapping(bytes12 epochId => mapping(address contributor => DKGTypes.ContributionRecord contribution)) internal
         epochContributions;
-    mapping(bytes12 epochId => mapping(uint16 ciphertextIndex => mapping(address participant => DKGTypes.PartialDecryptionRecord partialDecryption))) internal epochPartialDecryptions;
-    mapping(bytes12 epochId => mapping(uint16 ciphertextIndex => uint16 count)) internal epochPartialDecryptionCounts;
-    mapping(bytes12 epochId => mapping(uint16 ciphertextIndex => DKGTypes.CombinedDecryptionRecord combined)) internal
+    // CIRCUITS_AUDIT2 #2: ciphertexts, committee partials, partial counts, and
+    // combined plaintexts are all keyed by (epochId, aid, ctIdx). The aid
+    // namespace prevents two applications under the same epoch from colliding
+    // on ctIdx (one app blocking another, partials shared/rejected across apps,
+    // a combine for one aid marking the slot completed for all aids). The
+    // legacy per-epoch path (no application registered) uses `aid = bytes32(0)`.
+    mapping(bytes12 epochId => mapping(bytes32 aid => mapping(uint16 ciphertextIndex => mapping(address participant => DKGTypes.PartialDecryptionRecord partialDecryption)))) internal epochPartialDecryptions;
+    mapping(bytes12 epochId => mapping(bytes32 aid => mapping(uint16 ciphertextIndex => uint16 count))) internal epochPartialDecryptionCounts;
+    mapping(bytes12 epochId => mapping(bytes32 aid => mapping(uint16 ciphertextIndex => DKGTypes.CombinedDecryptionRecord combined))) internal
         epochCombinedDecryptions;
     /// @dev Stores keccak256(abi.encode(scX, scY)) for each share commitment, packing
     /// the original (x,y) pair into a single 32-byte slot. Saves one cold SSTORE per
@@ -122,11 +128,11 @@ contract DKGManager is IDKGManager {
     mapping(bytes12 epochId => DKGTypes.Point) internal _collectiveKey;
 
     /// @dev keccak256(abi.encode(c1x, c1y, c2x, c2y)) for each ciphertext submitted to a
-    ///      epoch. Written once per (epochId, ciphertextIndex) by submitCiphertext and
+    ///      epoch. Written once per (epochId, aid, ciphertextIndex) by submitCiphertext and
     ///      verified by combineDecryption to bind the combine proof to the authoritative
     ///      on-chain ciphertext (preventing a combiner from swapping in a different ct).
     ///      The raw coordinates are available via the CiphertextSubmitted event log.
-    mapping(bytes12 epochId => mapping(uint16 ciphertextIndex => bytes32 ciphertextHash)) internal _ciphertexts;
+    mapping(bytes12 epochId => mapping(bytes32 aid => mapping(uint16 ciphertextIndex => bytes32 ciphertextHash))) internal _ciphertexts;
 
     // BabyJubJub curve constants moved to libraries/BabyJubJub.sol — point
     // validation flows through `_requireValidEncryptionPoint` which calls
@@ -141,6 +147,10 @@ contract DKGManager is IDKGManager {
     ///      registerApplication and registerApplicationCoDec write here; the
     ///      mode flag distinguishes the two paths at decryption time.
     mapping(bytes12 epochId => mapping(bytes32 aid => DKGTypes.Application app)) internal applications;
+    /// @dev List of registered aids per epoch (excluding bytes32(0)). Used by
+    ///      _evictRound to enumerate the per-aid storage that needs zeroing
+    ///      out for SSTORE refunds. Append-only; never reordered.
+    mapping(bytes12 epochId => bytes32[] aids) internal epochAidsList;
 
     /// @dev Per-(eid, aid, ciphertextIndex) organizer share submissions for
     ///      mode-1 applications. Written by submitOrganizerShare and read by
@@ -446,30 +456,42 @@ contract DKGManager is IDKGManager {
         if (r.organizer == address(0)) return;
         address[] storage parts = epochParticipants[oldRoundId];
         uint256 n = parts.length;
+        // Build the cleanup aid set: bytes32(0) (legacy per-epoch path) plus
+        // every registered application aid.
+        bytes32[] storage regAids = epochAidsList[oldRoundId];
+        uint256 aidCount = regAids.length + 1;
         for (uint256 i = 0; i < n; i++) {
             address participant = parts[i];
             delete selectedOperators[oldRoundId][participant];
             delete epochShareCommitmentHashes[oldRoundId][uint16(i + 1)];
             delete epochContributions[oldRoundId][participant];
-            // Clear per-ciphertext partial decryption records and counts.
-            for (uint16 ci = 1; ci <= MAX_CIPHERTEXT_INDEX; ci++) {
-                if (epochPartialDecryptions[oldRoundId][ci][participant].accepted) {
-                    delete epochPartialDecryptions[oldRoundId][ci][participant];
+            // Clear per-ciphertext partial decryption records across all aids.
+            for (uint256 a = 0; a < aidCount; a++) {
+                bytes32 aid = a == 0 ? bytes32(0) : regAids[a - 1];
+                for (uint16 ci = 1; ci <= MAX_CIPHERTEXT_INDEX; ci++) {
+                    if (epochPartialDecryptions[oldRoundId][aid][ci][participant].accepted) {
+                        delete epochPartialDecryptions[oldRoundId][aid][ci][participant];
+                    }
                 }
             }
         }
         // Clear per-ciphertext combined decryption records, counts, and ciphertext hashes.
-        for (uint16 ci = 1; ci <= MAX_CIPHERTEXT_INDEX; ci++) {
-            if (epochPartialDecryptionCounts[oldRoundId][ci] > 0) {
-                delete epochPartialDecryptionCounts[oldRoundId][ci];
+        for (uint256 a = 0; a < aidCount; a++) {
+            bytes32 aid = a == 0 ? bytes32(0) : regAids[a - 1];
+            for (uint16 ci = 1; ci <= MAX_CIPHERTEXT_INDEX; ci++) {
+                if (epochPartialDecryptionCounts[oldRoundId][aid][ci] > 0) {
+                    delete epochPartialDecryptionCounts[oldRoundId][aid][ci];
+                }
+                if (epochCombinedDecryptions[oldRoundId][aid][ci].completed) {
+                    delete epochCombinedDecryptions[oldRoundId][aid][ci];
+                }
+                if (_ciphertexts[oldRoundId][aid][ci] != bytes32(0)) {
+                    delete _ciphertexts[oldRoundId][aid][ci];
+                }
             }
-            if (epochCombinedDecryptions[oldRoundId][ci].completed) {
-                delete epochCombinedDecryptions[oldRoundId][ci];
-            }
-            if (_ciphertexts[oldRoundId][ci] != bytes32(0)) {
-                delete _ciphertexts[oldRoundId][ci];
-            }
+            if (a > 0) delete applications[oldRoundId][aid];
         }
+        delete epochAidsList[oldRoundId];
         delete epochParticipants[oldRoundId];
         delete epochContribPrefixHash[oldRoundId];
         delete _collectiveKey[oldRoundId];
@@ -689,6 +711,7 @@ contract DKGManager is IDKGManager {
     /// @dev Verifies the combineDecryption transcript directly from calldata.
     function _verifyCombineTranscript(
         bytes12 epochId,
+        bytes32 aid,
         uint16 ciphertextIndex,
         Epoch storage epoch,
         uint256 shareCount,
@@ -723,7 +746,7 @@ contract DKGManager is IDKGManager {
             seenIndexes |= indexBit;
             address participant = epochParticipants[epochId][participantIndex - 1];
             DKGTypes.PartialDecryptionRecord storage partialRecord =
-                epochPartialDecryptions[epochId][ciphertextIndex][participant];
+                epochPartialDecryptions[epochId][aid][ciphertextIndex][participant];
             if (!partialRecord.accepted || partialRecord.participantIndex != participantIndex) revert InvalidProofInput();
             if (partialRecord.ciphertextIndex != ciphertextIndex) revert InvalidProofInput();
             if (pdX != partialRecord.delta.x || pdY != partialRecord.delta.y) revert InvalidProofInput();
@@ -834,11 +857,13 @@ contract DKGManager is IDKGManager {
         // arbitrary B, and the stored partial decryption is only meaningful
         // relative to that B — combine then aggregates points that aren't
         // decryptions of the submitted ciphertext.
-        bytes32 storedCt = _ciphertexts[epochId][ciphertextIndex];
+        // CIRCUITS_AUDIT2 #2: ciphertext + partial storage are keyed by aid
+        // so two applications under the same epoch don't collide on ctIdx.
+        bytes32 storedCt = _ciphertexts[epochId][aid][ciphertextIndex];
         if (storedCt == bytes32(0)) revert CiphertextNotSubmitted();
         if (keccak256(abi.encode(c1x, c1y, c2x, c2y)) != storedCt) revert InvalidProofInput();
 
-        DKGTypes.PartialDecryptionRecord storage record = epochPartialDecryptions[epochId][ciphertextIndex][msg.sender];
+        DKGTypes.PartialDecryptionRecord storage record = epochPartialDecryptions[epochId][aid][ciphertextIndex][msg.sender];
         if (record.accepted) revert AlreadyPartiallyDecrypted();
 
         IZKVerifier(PARTIAL_DECRYPT_VERIFIER).verifyProof(proof, input);
@@ -867,14 +892,14 @@ contract DKGManager is IDKGManager {
         //   - participantIndex + accepted: identity gate
         //   - delta.x/.y: BRLC verification
         DKGTypes.PartialDecryptionRecord storage prec =
-            epochPartialDecryptions[epochId][ciphertextIndex][msg.sender];
+            epochPartialDecryptions[epochId][aid][ciphertextIndex][msg.sender];
         prec.participantIndex = participantIndex;
         prec.ciphertextIndex = ciphertextIndex; // packed in slot 0 anyway
         prec.accepted = true;
         prec.delta.x = publicInputs[9];
         prec.delta.y = publicInputs[10];
         epoch.partialDecryptionCount++;
-        epochPartialDecryptionCounts[epochId][ciphertextIndex]++;
+        epochPartialDecryptionCounts[epochId][aid][ciphertextIndex]++;
 
         emit PartialDecryptionSubmitted(epochId, msg.sender, participantIndex, ciphertextIndex, deltaHash);
     }
@@ -888,6 +913,7 @@ contract DKGManager is IDKGManager {
     ///         exposed via the `CiphertextSubmitted` event (nodes watch it).
     function submitCiphertext(
         bytes12 epochId,
+        bytes32 aid,
         uint16 ciphertextIndex,
         uint256 c1x,
         uint256 c1y,
@@ -909,20 +935,34 @@ contract DKGManager is IDKGManager {
         _requireValidEncryptionPoint(c1x, c1y);
         _requireValidEncryptionPoint(c2x, c2y);
 
-        DKGTypes.DecryptionPolicy memory p = epoch.decryptionPolicy;
-        if (p.ownerOnly && msg.sender != epoch.organizer) revert NotOwner();
-        if (p.notBeforeBlock     != 0 && uint64(block.number)    < p.notBeforeBlock)     revert DecryptionNotYetAllowed();
-        if (p.notBeforeTimestamp != 0 && uint64(block.timestamp) < p.notBeforeTimestamp) revert DecryptionNotYetAllowed();
-        if (p.notAfterBlock      != 0 && uint64(block.number)    > p.notAfterBlock)      revert DecryptionExpired();
-        if (p.notAfterTimestamp  != 0 && uint64(block.timestamp) > p.notAfterTimestamp)  revert DecryptionExpired();
-        if (p.maxDecryptions     != 0 && epoch.ciphertextCount   >= p.maxDecryptions)    revert DecryptionLimitReached();
+        // Per-epoch DecryptionPolicy gates the legacy aid=0 path; per-application
+        // AppPolicy (CIRCUITS_AUDIT2 #2) gates aid != 0.
+        if (aid == bytes32(0)) {
+            DKGTypes.DecryptionPolicy memory p = epoch.decryptionPolicy;
+            if (p.ownerOnly && msg.sender != epoch.organizer) revert NotOwner();
+            if (p.notBeforeBlock     != 0 && uint64(block.number)    < p.notBeforeBlock)     revert DecryptionNotYetAllowed();
+            if (p.notBeforeTimestamp != 0 && uint64(block.timestamp) < p.notBeforeTimestamp) revert DecryptionNotYetAllowed();
+            if (p.notAfterBlock      != 0 && uint64(block.number)    > p.notAfterBlock)      revert DecryptionExpired();
+            if (p.notAfterTimestamp  != 0 && uint64(block.timestamp) > p.notAfterTimestamp)  revert DecryptionExpired();
+            if (p.maxDecryptions     != 0 && epoch.ciphertextCount   >= p.maxDecryptions)    revert DecryptionLimitReached();
+        } else {
+            DKGTypes.Application storage app = applications[epochId][aid];
+            if (!app.exists) revert InvalidApplication();
+            DKGTypes.AppPolicy memory ap = app.policy;
+            if (ap.authorizedSubmitter != address(0) && msg.sender != ap.authorizedSubmitter) revert NotOwner();
+            if (ap.notBeforeBlock != 0 && uint64(block.number) < ap.notBeforeBlock) revert DecryptionNotYetAllowed();
+            if (ap.notAfterBlock  != 0 && uint64(block.number) > ap.notAfterBlock)  revert DecryptionExpired();
+            // maxCiphertexts is enforced per-app via ciphertextIndex bound:
+            // index in [1, maxCiphertexts] when maxCiphertexts > 0.
+            if (ap.maxCiphertexts != 0 && ciphertextIndex > ap.maxCiphertexts) revert DecryptionLimitReached();
+        }
 
-        if (_ciphertexts[epochId][ciphertextIndex] != bytes32(0)) revert CiphertextAlreadySubmitted();
+        if (_ciphertexts[epochId][aid][ciphertextIndex] != bytes32(0)) revert CiphertextAlreadySubmitted();
 
-        _ciphertexts[epochId][ciphertextIndex] = keccak256(abi.encode(c1x, c1y, c2x, c2y));
+        _ciphertexts[epochId][aid][ciphertextIndex] = keccak256(abi.encode(c1x, c1y, c2x, c2y));
         unchecked { epoch.ciphertextCount += 1; }
 
-        emit CiphertextSubmitted(epochId, ciphertextIndex, msg.sender, c1x, c1y, c2x, c2y);
+        emit CiphertextSubmitted(epochId, aid, ciphertextIndex, msg.sender, c1x, c1y, c2x, c2y);
     }
 
     /// @dev Validate that (x, y) is a canonical, on-curve, non-identity point
@@ -969,17 +1009,44 @@ contract DKGManager is IDKGManager {
         if (epoch.organizer == address(0)) revert InvalidEpoch();
         if (epoch.status != DKGTypes.EpochPhase.Finalized) revert InvalidPhase();
         if (ciphertextIndex == 0 || ciphertextIndex > MAX_CIPHERTEXT_INDEX || combineHash == bytes32(0)) revert InvalidCombinedDecryption();
-        bytes32 storedCtHash = _ciphertexts[epochId][ciphertextIndex];
+        bytes32 storedCtHash = _ciphertexts[epochId][aid][ciphertextIndex];
         if (storedCtHash == bytes32(0)) revert CiphertextNotSubmitted();
-        if (epochPartialDecryptionCounts[epochId][ciphertextIndex] < epoch.policy.threshold) revert InsufficientPartialDecryptions();
+        if (epochPartialDecryptionCounts[epochId][aid][ciphertextIndex] < epoch.policy.threshold) revert InsufficientPartialDecryptions();
 
-        DKGTypes.CombinedDecryptionRecord storage record = epochCombinedDecryptions[epochId][ciphertextIndex];
+        DKGTypes.CombinedDecryptionRecord storage record = epochCombinedDecryptions[epochId][aid][ciphertextIndex];
         if (record.completed) revert AlreadyCombined();
 
-        // Resolve the application's per-app correction. If `aid == 0`, this
-        // is a legacy combine that pre-dates the application surface — fall
-        // back to mode 0 with S = 0 (identity correction), preserving the
-        // semantics of the per-epoch combine path.
+        IZKVerifier(DECRYPT_COMBINE_VERIFIER).verifyProof(proof, input);
+        uint256 shareCount = _validateAndPostCombine(
+            epochId, aid, ciphertextIndex, combineHash, plaintext, epoch, input, transcript, storedCtHash
+        );
+        _verifyCombineTranscript(epochId, aid, ciphertextIndex, epoch, shareCount, transcript);
+
+        record.completed = true;
+        record.plaintext = plaintext;
+
+        emit DecryptionCombined(epochId, aid, ciphertextIndex, combineHash, plaintext);
+    }
+
+    /// @dev Resolves application correction (mode 0 / mode 1), validates the
+    /// public-input layout against eid/aid/ctIdx/mode/S/Δ_org/threshold/
+    /// combineHash/plaintext/challenge, range-checks shareCount, binds the
+    /// transcript's first 128 bytes to the stored ciphertext hash, and verifies
+    /// the BRLC commitment over the full transcript region. Split out of
+    /// combineDecryption to keep the parent's stack within Yul's depth limit.
+    function _validateAndPostCombine(
+        bytes12 epochId,
+        bytes32 aid,
+        uint16 ciphertextIndex,
+        bytes32 combineHash,
+        uint256 plaintext,
+        Epoch storage epoch,
+        bytes calldata input,
+        bytes calldata transcript,
+        bytes32 storedCtHash
+    ) internal view returns (uint256 shareCount) {
+        // Resolve the application's per-app correction. aid == 0 is the
+        // legacy per-epoch combine path: mode = 0, S = 0, Δ_org = identity.
         uint8 mode = uint8(DKGProtocol.MODE_PUBLIC_DERIVATION);
         uint256 derivationS;
         DKGTypes.Point memory deltaOrg = DKGTypes.Point({x: 0, y: 1});
@@ -996,7 +1063,6 @@ contract DKGManager is IDKGManager {
             }
         }
 
-        IZKVerifier(DECRYPT_COMBINE_VERIFIER).verifyProof(proof, input);
         uint256[13] memory publicInputs = abi.decode(input, (uint256[13]));
         if (
             publicInputs[0] != _epochScalar(epochId)
@@ -1010,10 +1076,6 @@ contract DKGManager is IDKGManager {
                 || bytes32(publicInputs[9]) != combineHash
                 || publicInputs[10] != plaintext
         ) revert InvalidProofInput();
-        // CIRCUITS_AUDIT #5: ShareCount must be at least the threshold
-        // (already required) and at most MAX_N — the circuit only has
-        // MAX_N partial-decryption slots, and `_verifyCombineTranscript`
-        // assumes the active region fits inside the fixed transcript.
         if (publicInputs[8] < epoch.policy.threshold) revert InvalidProofInput();
         if (publicInputs[8] > MAX_N) revert InvalidProofInput();
         uint256 challenge = BRLC.deriveChallenge(
@@ -1022,19 +1084,12 @@ contract DKGManager is IDKGManager {
             keccak256(abi.encodePacked(combineHash, bytes32(plaintext)))
         );
         if (publicInputs[11] != challenge) revert InvalidProofInput();
-
         if (transcript.length != COMBINE_TRANSCRIPT_WORDS * 32) revert InvalidProofInput();
         if (keccak256(transcript[0:128]) != storedCtHash) revert InvalidProofInput();
-        _verifyCombineTranscript(epochId, ciphertextIndex, epoch, publicInputs[8], transcript);
-
         uint256 dOff;
         assembly { dOff := transcript.offset }
         if (BRLC.commitCalldata(challenge, dOff, COMBINE_TRANSCRIPT_WORDS) != publicInputs[12]) revert InvalidProofInput();
-
-        record.completed = true;
-        record.plaintext = plaintext;
-
-        emit DecryptionCombined(epochId, ciphertextIndex, combineHash, plaintext);
+        return publicInputs[8];
     }
 
     /// @notice Submit an organizer's Δ_org = sk_org · C_1 share for a
@@ -1077,7 +1132,7 @@ contract DKGManager is IDKGManager {
         // accepting any (PK_org, Δ_org) commitment. Without this the
         // organizer can produce a valid DLEQ for an unrelated base, and
         // the stored Δ_org corrects the wrong discrete log at combine.
-        bytes32 storedCt = _ciphertexts[epochId][ciphertextIndex];
+        bytes32 storedCt = _ciphertexts[epochId][aid][ciphertextIndex];
         if (storedCt == bytes32(0)) revert CiphertextNotSubmitted();
         if (keccak256(abi.encode(c1x, c1y, c2x, c2y)) != storedCt) revert InvalidProofInput();
 
@@ -1167,6 +1222,7 @@ contract DKGManager is IDKGManager {
         existing.policy = policy;
         existing.createdAtBlock = uint64(block.number);
         existing.exists = true;
+        epochAidsList[epochId].push(aid);
 
         emit ApplicationRegistered(
             epochId,
@@ -1228,6 +1284,7 @@ contract DKGManager is IDKGManager {
         existing.policy = policy;
         existing.createdAtBlock = uint64(block.number);
         existing.exists = true;
+        epochAidsList[epochId].push(aid);
 
         emit ApplicationRegistered(
             epochId,
@@ -1338,20 +1395,20 @@ contract DKGManager is IDKGManager {
         return epochContributions[epochId][contributor];
     }
 
-    function getPartialDecryption(bytes12 epochId, address participant, uint16 ciphertextIndex)
+    function getPartialDecryption(bytes12 epochId, bytes32 aid, address participant, uint16 ciphertextIndex)
         external
         view
         returns (DKGTypes.PartialDecryptionRecord memory)
     {
-        return epochPartialDecryptions[epochId][ciphertextIndex][participant];
+        return epochPartialDecryptions[epochId][aid][ciphertextIndex][participant];
     }
 
-    function getCombinedDecryption(bytes12 epochId, uint16 ciphertextIndex)
+    function getCombinedDecryption(bytes12 epochId, bytes32 aid, uint16 ciphertextIndex)
         external
         view
         returns (DKGTypes.CombinedDecryptionRecord memory)
     {
-        return epochCombinedDecryptions[epochId][ciphertextIndex];
+        return epochCombinedDecryptions[epochId][aid][ciphertextIndex];
     }
 
     /// @notice Returns the keccak256(abi.encode(x, y)) commitment hash for a
@@ -1368,16 +1425,16 @@ contract DKGManager is IDKGManager {
     /// @notice keccak256(abi.encode(c1x, c1y, c2x, c2y)) of the ciphertext stored
     ///         at `ciphertextIndex` for `epochId`. Returns bytes32(0) if no
     ///         ciphertext has been submitted at this slot.
-    function getCiphertextHash(bytes12 epochId, uint16 ciphertextIndex) external view returns (bytes32) {
-        return _ciphertexts[epochId][ciphertextIndex];
+    function getCiphertextHash(bytes12 epochId, bytes32 aid, uint16 ciphertextIndex) external view returns (bytes32) {
+        return _ciphertexts[epochId][aid][ciphertextIndex];
     }
 
-    /// @notice Recovered plaintext for (epochId, ciphertextIndex). Returns 0 if
+    /// @notice Recovered plaintext for (epochId, aid, ciphertextIndex). Returns 0 if
     ///         the decryption has not been combined yet; callers should also
     ///         consult `getCombinedDecryption(...)` / `DecryptionCombined`
     ///         events to disambiguate "not yet combined" from "plaintext is 0".
-    function getPlaintext(bytes12 epochId, uint16 ciphertextIndex) external view returns (uint256) {
-        return epochCombinedDecryptions[epochId][ciphertextIndex].plaintext;
+    function getPlaintext(bytes12 epochId, bytes32 aid, uint16 ciphertextIndex) external view returns (uint256) {
+        return epochCombinedDecryptions[epochId][aid][ciphertextIndex].plaintext;
     }
 
     function getDecryptionPolicy(bytes12 epochId) external view returns (DKGTypes.DecryptionPolicy memory) {

@@ -135,8 +135,10 @@ describe('SDK ciphertext end-to-end (encrypt → submit → combine → getPlain
     // 3. Submit to chain. The writer converts TE→RTE internally before sending,
     //    so the contract's `_isOnBabyJubJub` (RTE) check passes.
     const ciphertextIndex = 1;
+    const zeroAid = ('0x' + '0'.repeat(64)) as `0x${string}`;
     const submitTx = await writer.submitCiphertext(
       fixture.epochId,
+      zeroAid,
       ciphertextIndex,
       ciphertext.c1[0], ciphertext.c1[1],
       ciphertext.c2[0], ciphertext.c2[1],
@@ -145,7 +147,7 @@ describe('SDK ciphertext end-to-end (encrypt → submit → combine → getPlain
     await writer.publicClient.waitForTransactionReceipt({ hash: submitTx });
 
     // Sanity: the contract now stores a non-zero ciphertext hash for this index.
-    const ctHash = await client.getCiphertextHash(fixture.epochId, ciphertextIndex);
+    const ctHash = await client.getCiphertextHash(fixture.epochId, zeroAid, ciphertextIndex);
     expect(ctHash).not.toBe('0x' + '0'.repeat(64));
 
     // 4. Drive the on-chain decryption flow via the Go fixture (it builds the
@@ -166,7 +168,7 @@ describe('SDK ciphertext end-to-end (encrypt → submit → combine → getPlain
     expect(decryptParsed?.ok).toBe(true);
 
     // 5. Read the recovered plaintext from chain — must match what we sent.
-    const recovered = await client.getPlaintext(fixture.epochId, ciphertextIndex);
+    const recovered = await client.getPlaintext(fixture.epochId, zeroAid, ciphertextIndex);
     expect(recovered).toBe(plaintext);
   }, 900_000);
 });

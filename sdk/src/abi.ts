@@ -37,6 +37,7 @@ export const dkgManagerAbi = [
     stateMutability: 'nonpayable',
     inputs: [
       { name: 'epochId', type: 'bytes12' },
+      { name: 'aid', type: 'bytes32' },
       { name: 'ciphertextIndex', type: 'uint16' },
       { name: 'c1x', type: 'uint256' },
       { name: 'c1y', type: 'uint256' },
@@ -370,6 +371,7 @@ export const dkgManagerAbi = [
     stateMutability: 'view',
     inputs: [
       { name: 'epochId', type: 'bytes12' },
+      { name: 'aid', type: 'bytes32' },
       { name: 'participant', type: 'address' },
       { name: 'ciphertextIndex', type: 'uint16' },
     ],
@@ -401,6 +403,7 @@ export const dkgManagerAbi = [
     stateMutability: 'view',
     inputs: [
       { name: 'epochId', type: 'bytes12' },
+      { name: 'aid', type: 'bytes32' },
       { name: 'ciphertextIndex', type: 'uint16' },
     ],
     outputs: [
@@ -421,6 +424,7 @@ export const dkgManagerAbi = [
     stateMutability: 'view',
     inputs: [
       { name: 'epochId', type: 'bytes12' },
+      { name: 'aid', type: 'bytes32' },
       { name: 'ciphertextIndex', type: 'uint16' },
     ],
     outputs: [{ name: '', type: 'bytes32' }],
@@ -431,6 +435,7 @@ export const dkgManagerAbi = [
     stateMutability: 'view',
     inputs: [
       { name: 'epochId', type: 'bytes12' },
+      { name: 'aid', type: 'bytes32' },
       { name: 'ciphertextIndex', type: 'uint16' },
     ],
     outputs: [{ name: '', type: 'uint256' }],
@@ -564,8 +569,9 @@ export const dkgManagerAbi = [
     name: 'CiphertextSubmitted',
     inputs: [
       { name: 'epochId', type: 'bytes12', indexed: true },
+      { name: 'aid', type: 'bytes32', indexed: true },
       { name: 'ciphertextIndex', type: 'uint16', indexed: true },
-      { name: 'submitter', type: 'address', indexed: true },
+      { name: 'submitter', type: 'address', indexed: false },
       { name: 'c1x', type: 'uint256', indexed: false },
       { name: 'c1y', type: 'uint256', indexed: false },
       { name: 'c2x', type: 'uint256', indexed: false },
@@ -577,6 +583,7 @@ export const dkgManagerAbi = [
     name: 'DecryptionCombined',
     inputs: [
       { name: 'epochId', type: 'bytes12', indexed: true },
+      { name: 'aid', type: 'bytes32', indexed: true },
       { name: 'ciphertextIndex', type: 'uint16', indexed: true },
       { name: 'combineHash', type: 'bytes32', indexed: false },
       { name: 'plaintext', type: 'uint256', indexed: false },

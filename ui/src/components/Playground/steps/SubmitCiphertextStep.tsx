@@ -30,8 +30,10 @@ export function SubmitCiphertextStep({ status, epochId, ciphertext, onSubmitted,
     setBusy(true)
     try {
       log('Sending submitCiphertext…', 'tx')
+      const ZERO_AID = ('0x' + '00'.repeat(32)) as `0x${string}`
       const hash = await writer.submitCiphertext(
         epochId,
+        ZERO_AID,
         CIPHERTEXT_INDEX,
         ciphertext.c1[0],
         ciphertext.c1[1],

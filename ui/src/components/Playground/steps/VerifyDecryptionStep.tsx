@@ -28,7 +28,8 @@ export function VerifyDecryptionStep({ status, epochId, ciphertextIndex, expecte
     queryKey: epochId && ciphertextIndex ? QueryKeys.decryption(epochId, ciphertextIndex) : ['decryption', 'idle'],
     queryFn: () => {
       if (!epochId || !ciphertextIndex) throw new Error('idle')
-      return dkg.getCombinedDecryption(epochId, ciphertextIndex)
+      const ZERO_AID = ('0x' + '00'.repeat(32)) as `0x${string}`
+      return dkg.getCombinedDecryption(epochId, ZERO_AID, ciphertextIndex)
     },
     enabled: Boolean(epochId && ciphertextIndex),
     refetchInterval: (q) => (q.state.data?.completed ? false : Polling.decryption),

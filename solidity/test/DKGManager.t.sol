@@ -171,7 +171,7 @@ contract DKGManagerTest is Test, TestHelpers {
         // against ciphertextIndex=1, so submit it as part of the
         // canonical "finalized" fixture. Tests that need an unsubmitted
         // ciphertext use a different index.
-        manager.submitCiphertext(epochId, 1, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
+        manager.submitCiphertext(epochId, bytes32(0), 1, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
     }
 
     function test_CreateEpoch_PersistsPolicy() public {
@@ -508,7 +508,7 @@ contract DKGManagerTest is Test, TestHelpers {
             partialDecryptionInput(epochId, 1, partialDecryptionHash(1))
         );
 
-        DKGTypes.PartialDecryptionRecord memory record = manager.getPartialDecryption(epochId, address(this), 1);
+        DKGTypes.PartialDecryptionRecord memory record = manager.getPartialDecryption(epochId, bytes32(0), address(this), 1);
         IDKGManager.Epoch memory epoch = manager.getEpoch(epochId);
 
         // `participant` and `deltaHash` are no longer persisted; off-chain consumers
@@ -581,7 +581,7 @@ contract DKGManagerTest is Test, TestHelpers {
     function test_SubmitPartialDecryption_AllowsDistinctCiphertexts() public {
         bytes12 epochId = createFinalizedRound();
         // CIRCUITS_AUDIT #2: ciphertext 2 must also exist on-chain.
-        manager.submitCiphertext(epochId, 2, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
+        manager.submitCiphertext(epochId, bytes32(0), 2, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
 
         manager.submitPartialDecryption(
             epochId,
@@ -604,8 +604,8 @@ contract DKGManagerTest is Test, TestHelpers {
             partialDecryptionInputCt(epochId, 1, 2, partialDecryptionHash(1))
         );
 
-        DKGTypes.PartialDecryptionRecord memory first = manager.getPartialDecryption(epochId, address(this), 1);
-        DKGTypes.PartialDecryptionRecord memory second = manager.getPartialDecryption(epochId, address(this), 2);
+        DKGTypes.PartialDecryptionRecord memory first = manager.getPartialDecryption(epochId, bytes32(0), address(this), 1);
+        DKGTypes.PartialDecryptionRecord memory second = manager.getPartialDecryption(epochId, bytes32(0), address(this), 2);
 
         assertEq(uint256(first.ciphertextIndex), 1);
         assertEq(uint256(second.ciphertextIndex), 2);
@@ -649,10 +649,10 @@ contract DKGManagerTest is Test, TestHelpers {
             decryptCombineInput(epochId, 2, 2, COMBINED_DECRYPTION_HASH, plaintext)
         );
 
-        DKGTypes.CombinedDecryptionRecord memory record = manager.getCombinedDecryption(epochId, 1);
+        DKGTypes.CombinedDecryptionRecord memory record = manager.getCombinedDecryption(epochId, bytes32(0), 1);
         assertEq(record.completed ? uint256(1) : uint256(0), 1);
         assertEq(record.plaintext, plaintext);
-        assertEq(manager.getPlaintext(epochId, 1), plaintext);
+        assertEq(manager.getPlaintext(epochId, bytes32(0), 1), plaintext);
     }
 
 
@@ -874,9 +874,9 @@ contract DKGManagerTest is Test, TestHelpers {
         // another at index 2 to exercise the storage / counter path.
         bytes32 expected = keccak256(abi.encode(TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y));
 
-        manager.submitCiphertext(epochId, 2, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
+        manager.submitCiphertext(epochId, bytes32(0), 2, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
 
-        assertEq(uint256(manager.getCiphertextHash(epochId, 2)), uint256(expected));
+        assertEq(uint256(manager.getCiphertextHash(epochId, bytes32(0), 2)), uint256(expected));
         assertEq(uint256(manager.getEpoch(epochId).ciphertextCount), 2);
     }
 
@@ -886,14 +886,14 @@ contract DKGManagerTest is Test, TestHelpers {
         // duplicate submission at the same index must be rejected by
         // the write-once guard.
         vm.expectRevert(IDKGManager.CiphertextAlreadySubmitted.selector);
-        manager.submitCiphertext(epochId, 1, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
+        manager.submitCiphertext(epochId, bytes32(0), 1, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
     }
 
     function test_SubmitCiphertext_RejectsBeforeFinalized() public {
         bytes12 epochId = _createLotteryRound();
 
         vm.expectRevert(IDKGManager.InvalidPhase.selector);
-        manager.submitCiphertext(epochId, 1, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
+        manager.submitCiphertext(epochId, bytes32(0), 1, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
     }
 
     function test_SubmitCiphertext_OwnerOnly_BlocksOthers() public {
@@ -908,10 +908,10 @@ contract DKGManagerTest is Test, TestHelpers {
 
         vm.prank(address(0xCAFE));
         vm.expectRevert(IDKGManager.NotOwner.selector);
-        manager.submitCiphertext(epochId, 1, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
+        manager.submitCiphertext(epochId, bytes32(0), 1, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
 
         // Owner can submit.
-        manager.submitCiphertext(epochId, 1, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
+        manager.submitCiphertext(epochId, bytes32(0), 1, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
     }
 
     function test_SubmitCiphertext_NotBeforeBlock_Blocks() public {
@@ -928,10 +928,10 @@ contract DKGManagerTest is Test, TestHelpers {
         );
 
         vm.expectRevert(IDKGManager.DecryptionNotYetAllowed.selector);
-        manager.submitCiphertext(epochId, 1, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
+        manager.submitCiphertext(epochId, bytes32(0), 1, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
 
         vm.roll(uint256(unlockBlock));
-        manager.submitCiphertext(epochId, 1, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
+        manager.submitCiphertext(epochId, bytes32(0), 1, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
     }
 
     // Note: timestamp-based gates (notBeforeTimestamp / notAfterTimestamp) share the
@@ -954,7 +954,7 @@ contract DKGManagerTest is Test, TestHelpers {
 
         vm.roll(uint256(cutoff) + 1);
         vm.expectRevert(IDKGManager.DecryptionExpired.selector);
-        manager.submitCiphertext(epochId, 1, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
+        manager.submitCiphertext(epochId, bytes32(0), 1, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
     }
 
     function test_SubmitCiphertext_MaxDecryptions_Caps() public {
@@ -970,11 +970,11 @@ contract DKGManagerTest is Test, TestHelpers {
         // The cap check doesn't care about distinct coordinates, only the
         // submission count, but the well-formedness check rejects identity
         // since DEEPSEEK §2.2 — use the prime-subgroup test vectors.
-        manager.submitCiphertext(epochId, 1, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
-        manager.submitCiphertext(epochId, 2, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
+        manager.submitCiphertext(epochId, bytes32(0), 1, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
+        manager.submitCiphertext(epochId, bytes32(0), 2, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
 
         vm.expectRevert(IDKGManager.DecryptionLimitReached.selector);
-        manager.submitCiphertext(epochId, 3, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
+        manager.submitCiphertext(epochId, bytes32(0), 3, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
     }
 
     function test_SubmitCiphertext_RejectsOffCurvePoint() public {
@@ -982,20 +982,20 @@ contract DKGManagerTest is Test, TestHelpers {
 
         // (7001, 8001) does NOT satisfy a·x² + y² = 1 + d·x²·y² (mod Q).
         vm.expectRevert(IDKGManager.InvalidCiphertext.selector);
-        manager.submitCiphertext(epochId, 1, 7001, 8001, 0, 1);
+        manager.submitCiphertext(epochId, bytes32(0), 1, 7001, 8001, 0, 1);
 
         // Canonical-range but off-curve: e.g. (1, 1) — 168700 + 1 = 168701; 1 + 168696 = 168697.
         vm.expectRevert(IDKGManager.InvalidCiphertext.selector);
-        manager.submitCiphertext(epochId, 1, 1, 1, 0, 1);
+        manager.submitCiphertext(epochId, bytes32(0), 1, 1, 1, 0, 1);
 
         // Bad c2 with valid c1 also reverts.
         vm.expectRevert(IDKGManager.InvalidCiphertext.selector);
-        manager.submitCiphertext(epochId, 1, 0, 1, 1, 1);
+        manager.submitCiphertext(epochId, bytes32(0), 1, 0, 1, 1, 1);
 
         // Coordinates ≥ Q (non-canonical) rejected even if they'd be on-curve post-reduction.
         uint256 Q = 21888242871839275222246405745257275088548364400416034343698204186575808495617;
         vm.expectRevert(IDKGManager.InvalidCiphertext.selector);
-        manager.submitCiphertext(epochId, 1, Q, 1, 0, 1);
+        manager.submitCiphertext(epochId, bytes32(0), 1, Q, 1, 0, 1);
     }
 
     function test_CreateEpoch_RejectsInvalidDecryptionPolicyWindow() public {

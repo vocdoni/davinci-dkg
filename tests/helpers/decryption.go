@@ -15,7 +15,7 @@ func WaitCombinedDecryption(
 	var record web3.CombinedDecryptionView
 	err := WaitUntilCondition(ctx, DefaultWaitInterval, func() bool {
 		var fetchErr error
-		record, fetchErr = services.Contracts.GetCombinedDecryption(ctx, epochID, ciphertextIndex)
+		record, fetchErr = services.Contracts.GetCombinedDecryption(ctx, epochID, [32]byte{}, ciphertextIndex)
 		return fetchErr == nil && record.Completed
 	})
 	if err != nil {

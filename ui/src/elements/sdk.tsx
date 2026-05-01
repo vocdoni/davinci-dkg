@@ -162,8 +162,9 @@ const writer = new DKGWriter({
   managerAddress: '0x01ee71fdce1705c8823f9f8b2f312100165fdd70',
 })
 
+const ZERO_AID = '0x' + '00'.repeat(32)
 const txHash = await writer.submitCiphertext(
-  epochId, /* ciphertextIndex */ 1,
+  epochId, ZERO_AID, /* ciphertextIndex */ 1,
   ciphertext.c1[0], ciphertext.c1[1],
   ciphertext.c2[0], ciphertext.c2[1],
 )

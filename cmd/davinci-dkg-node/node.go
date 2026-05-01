@@ -997,7 +997,7 @@ func (n *Node) doDecryption(
 	if n.decrypted[epochID][ctIdx] {
 		return nil
 	}
-	rec, err := n.manager.GetPartialDecryption(callOpts, epochID, n.address, ctIdx)
+	rec, err := n.manager.GetPartialDecryption(callOpts, epochID, [32]byte{}, n.address, ctIdx)
 	if err == nil && rec.Accepted {
 		n.decrypted[epochID][ctIdx] = true
 		return nil
@@ -1378,8 +1378,8 @@ func (n *Node) fetchCiphertext(ctx context.Context, epochID [12]byte, ctIdx uint
 	it, err := n.manager.FilterCiphertextSubmitted(
 		&bind.FilterOpts{Context: ctx, Start: fromBlock},
 		[][12]byte{epochID},
+		[][32]byte{{}}, // legacy aid = bytes32(0)
 		[]uint16{ctIdx},
-		nil, // any submitter
 	)
 	if err != nil {
 		return nil, fmt.Errorf("filter CiphertextSubmitted: %w", err)
@@ -1420,7 +1420,7 @@ func (n *Node) doCombineDecryption(
 		return nil
 	}
 	// Check whether already combined on-chain.
-	rec, err := n.contracts.GetCombinedDecryption(ctx, epochID, 1)
+	rec, err := n.contracts.GetCombinedDecryption(ctx, epochID, [32]byte{}, 1)
 	if err == nil && rec.Completed {
 		n.combined[epochID] = true
 		return nil
@@ -1446,7 +1446,7 @@ func (n *Node) doCombineDecryption(
 	var partialIndexes []uint16
 	var partialDeltas []nodetypes.CurvePoint
 	for _, addr := range selected {
-		pd, err := n.manager.GetPartialDecryption(callOpts, epochID, addr, 1)
+		pd, err := n.manager.GetPartialDecryption(callOpts, epochID, [32]byte{}, addr, 1)
 		if err != nil || !pd.Accepted {
 			continue
 		}

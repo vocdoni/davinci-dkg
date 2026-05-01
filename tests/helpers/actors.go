@@ -183,7 +183,9 @@ func CombineDecryptionAs(
 	return actor.TxManager.WaitTxByHash(tx.Hash(), DefaultTxTimeout)
 }
 
-// SubmitCiphertextAs sends a submitCiphertext tx from the given actor.
+// SubmitCiphertextAs sends a submitCiphertext tx from the given actor against
+// the legacy per-epoch path (aid = bytes32(0)). For per-application ciphertexts
+// use SubmitCiphertextAsApp.
 func SubmitCiphertextAs(
 	ctx context.Context,
 	actor *TestActor,
@@ -191,11 +193,23 @@ func SubmitCiphertextAs(
 	ciphertextIndex uint16,
 	c1x, c1y, c2x, c2y *big.Int,
 ) error {
+	return SubmitCiphertextAsApp(ctx, actor, epochID, [32]byte{}, ciphertextIndex, c1x, c1y, c2x, c2y)
+}
+
+// SubmitCiphertextAsApp is the per-application variant of SubmitCiphertextAs.
+func SubmitCiphertextAsApp(
+	ctx context.Context,
+	actor *TestActor,
+	epochID [12]byte,
+	aid [32]byte,
+	ciphertextIndex uint16,
+	c1x, c1y, c2x, c2y *big.Int,
+) error {
 	auth, err := actor.TxManager.NewTransactOpts(ctx)
 	if err != nil {
 		return err
 	}
-	tx, err := actor.Manager.SubmitCiphertext(auth, epochID, ciphertextIndex, c1x, c1y, c2x, c2y)
+	tx, err := actor.Manager.SubmitCiphertext(auth, epochID, aid, ciphertextIndex, c1x, c1y, c2x, c2y)
 	if err != nil {
 		return fmt.Errorf("submit ciphertext: %w", err)
 	}

@@ -228,7 +228,7 @@ func PrepareSingleParticipantCombinePayload(
 	ciphertextIndex uint16,
 	share *big.Int,
 ) (*CombinePayload, error) {
-	ciphertextHash, err := services.Manager.GetCiphertextHash(services.CallOpts(ctx), epochID, ciphertextIndex)
+	ciphertextHash, err := services.Manager.GetCiphertextHash(services.CallOpts(ctx), epochID, [32]byte{}, ciphertextIndex)
 	if err != nil {
 		return nil, fmt.Errorf("get ciphertext hash: %w", err)
 	}
@@ -253,7 +253,7 @@ func PrepareSingleParticipantCombinePayload(
 		return nil, fmt.Errorf("read head: %w", err)
 	}
 	filterOpts := &bind.FilterOpts{Context: ctx, Start: startBlock, End: &latest}
-	it, err := services.Manager.FilterCiphertextSubmitted(filterOpts, [][12]byte{epochID}, []uint16{ciphertextIndex}, nil)
+	it, err := services.Manager.FilterCiphertextSubmitted(filterOpts, [][12]byte{epochID}, [][32]byte{{}}, []uint16{ciphertextIndex})
 	if err != nil {
 		return nil, fmt.Errorf("filter CiphertextSubmitted: %w", err)
 	}

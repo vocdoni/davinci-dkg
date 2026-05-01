@@ -216,6 +216,7 @@ export class DKGWriter extends DKGClient {
    */
   async submitCiphertext(
     epochId: `0x${string}`,
+    aid: `0x${string}`,
     ciphertextIndex: number,
     c1x: bigint,
     c1y: bigint,
@@ -228,7 +229,7 @@ export class DKGWriter extends DKGClient {
       address: this.managerAddress,
       abi: dkgManagerAbi,
       functionName: 'submitCiphertext',
-      args: [epochId as any, ciphertextIndex, c1xR, c1yR, c2xR, c2yR],
+      args: [epochId as any, aid as any, ciphertextIndex, c1xR, c1yR, c2xR, c2yR],
       account: this._writerAccount,
     });
     return this.walletClient.writeContract(request);

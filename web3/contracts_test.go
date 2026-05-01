@@ -116,7 +116,7 @@ func TestGetNodeAndEpochViews(t *testing.T) {
 		common.HexToAddress("0x6000000000000000000000000000000000000006"),
 	})
 
-	combined, err := contracts.GetCombinedDecryption(context.Background(), epochID, 1)
+	combined, err := contracts.GetCombinedDecryption(context.Background(), epochID, [32]byte{}, 1)
 	c.Assert(err, qt.IsNil)
 	c.Assert(combined.CiphertextIndex, qt.Equals, uint16(1))
 	c.Assert(combined.Completed, qt.IsTrue)

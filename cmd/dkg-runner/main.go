@@ -352,7 +352,7 @@ func runScenario(c *cfg) error {
 	if err != nil {
 		return fmt.Errorf("submitCiphertext tx opts: %w", err)
 	}
-	submitTx, err := manager.SubmitCiphertext(submitAuth, epochID, 1, c1enc.X, c1enc.Y, c2enc.X, c2enc.Y)
+	submitTx, err := manager.SubmitCiphertext(submitAuth, epochID, [32]byte{}, 1, c1enc.X, c1enc.Y, c2enc.X, c2enc.Y)
 	if err != nil {
 		return fmt.Errorf("submit ciphertext: %w", err)
 	}
@@ -378,7 +378,7 @@ func runScenario(c *cfg) error {
 	if err := poll(c.WaitDecrypt, "partial decryptions", func() (bool, error) {
 		count := uint16(0)
 		for _, addr := range committee {
-			rec, err := manager.GetPartialDecryption(&bind.CallOpts{Context: ctx}, epochID, addr, 1)
+			rec, err := manager.GetPartialDecryption(&bind.CallOpts{Context: ctx}, epochID, [32]byte{}, addr, 1)
 			if err == nil && rec.Accepted {
 				count++
 			}
@@ -396,7 +396,7 @@ func runScenario(c *cfg) error {
 	}
 
 	// ── 9. verify ─────────────────────────────────────────────────────────────
-	combined, err := contracts.GetCombinedDecryption(ctx, epochID, 1)
+	combined, err := contracts.GetCombinedDecryption(ctx, epochID, [32]byte{}, 1)
 	if err != nil {
 		return fmt.Errorf("get combined: %w", err)
 	}
@@ -572,7 +572,7 @@ func combineDecryptions(
 		if uint16(len(idxs)) >= t {
 			break
 		}
-		rec, err := m.GetPartialDecryption(callOpts, epochID, addr, 1)
+		rec, err := m.GetPartialDecryption(callOpts, epochID, [32]byte{}, addr, 1)
 		if err != nil || !rec.Accepted {
 			continue
 		}

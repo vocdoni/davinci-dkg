@@ -110,7 +110,7 @@ describe('SDK combineDecryption end-to-end (writer drives the on-chain combine)'
     const ct = eg.encrypt(plaintext, [pk.x, pk.y]);
     const ciphertextIndex = 1;
     const submitTx = await writer.submitCiphertext(
-      fixture.epochId, ciphertextIndex, ct.c1[0], ct.c1[1], ct.c2[0], ct.c2[1],
+      fixture.epochId, ZERO_AID, ciphertextIndex, ct.c1[0], ct.c1[1], ct.c2[0], ct.c2[1],
     );
     await writer.publicClient.waitForTransactionReceipt({ hash: submitTx });
 
@@ -146,7 +146,7 @@ describe('SDK combineDecryption end-to-end (writer drives the on-chain combine)'
     );
     await writer.publicClient.waitForTransactionReceipt({ hash: combineTx });
 
-    const recovered = await client.getPlaintext(fixture.epochId, ciphertextIndex);
+    const recovered = await client.getPlaintext(fixture.epochId, ZERO_AID, ciphertextIndex);
     expect(recovered).toBe(plaintext);
   }, 900_000);
 });

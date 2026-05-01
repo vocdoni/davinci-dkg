@@ -27,7 +27,7 @@ const (
 		{"inputs":[],"name":"getDecryptCombineVerifierVKeyHash","outputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"stateMutability":"view","type":"function"},
 		{"inputs":[{"internalType":"bytes12","name":"epochId","type":"bytes12"},{"internalType":"uint16","name":"participantIndex","type":"uint16"}],"name":"getShareCommitment","outputs":[{"name":"x","type":"uint256"},{"name":"y","type":"uint256"}],"stateMutability":"view","type":"function"},
 		{"inputs":[{"internalType":"bytes12","name":"epochId","type":"bytes12"}],"name":"selectedParticipants","outputs":[{"internalType":"address[]","name":"","type":"address[]"}],"stateMutability":"view","type":"function"},
-		{"inputs":[{"internalType":"bytes12","name":"epochId","type":"bytes12"},{"internalType":"uint16","name":"ciphertextIndex","type":"uint16"}],"name":"getCombinedDecryption","outputs":[{"name":"ciphertextIndex","type":"uint16"},{"name":"completed","type":"bool"},{"name":"plaintext","type":"uint256"}],"stateMutability":"view","type":"function"}
+		{"inputs":[{"internalType":"bytes12","name":"epochId","type":"bytes12"},{"internalType":"bytes32","name":"aid","type":"bytes32"},{"internalType":"uint16","name":"ciphertextIndex","type":"uint16"}],"name":"getCombinedDecryption","outputs":[{"name":"ciphertextIndex","type":"uint16"},{"name":"completed","type":"bool"},{"name":"plaintext","type":"uint256"}],"stateMutability":"view","type":"function"}
 	]`
 	dkgRegistryABIJSON = `[
 		{"inputs":[{"internalType":"address","name":"operator","type":"address"}],"name":"getNode","outputs":[{"name":"operator","type":"address"},{"name":"pubX","type":"uint256"},{"name":"pubY","type":"uint256"},{"name":"status","type":"uint8"}],"stateMutability":"view","type":"function"}

@@ -96,10 +96,11 @@ export async function decrypt(
 export async function waitForCombinedDecryption(
   client: DKGClient,
   epochId: `0x${string}`,
+  aid: `0x${string}`,
   ciphertextIndex: number,
   options?: { intervalMs?: number; timeoutMs?: number },
 ) {
-  return waitForDecryption(client, epochId, ciphertextIndex, options);
+  return waitForDecryption(client, epochId, aid, ciphertextIndex, options);
 }
 
 /**
@@ -123,6 +124,7 @@ export async function waitForCombinedDecryption(
 export async function demonstrateEncryptDecryptFlow(
   client: DKGClient,
   epochId: `0x${string}`,
+  aid: `0x${string}`,
   collectivePub: BabyJubPoint,
   plaintext: bigint,
   ciphertextIndex: number,
@@ -134,7 +136,7 @@ export async function demonstrateEncryptDecryptFlow(
   const ciphertext = await encrypt(plaintext, collectivePub);
 
   // 2. Wait for the DKG nodes to decrypt on-chain
-  const record = await waitForCombinedDecryption(client, epochId, ciphertextIndex, {
+  const record = await waitForCombinedDecryption(client, epochId, aid, ciphertextIndex, {
     timeoutMs: 300_000,
   });
 

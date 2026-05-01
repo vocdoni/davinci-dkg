@@ -47,15 +47,16 @@ interface IDKGManager {
     );
     event CiphertextSubmitted(
         bytes12 indexed epochId,
+        bytes32 indexed aid,
         uint16 indexed ciphertextIndex,
-        address indexed submitter,
+        address submitter,
         uint256 c1x,
         uint256 c1y,
         uint256 c2x,
         uint256 c2y
     );
     event DecryptionCombined(
-        bytes12 indexed epochId, uint16 indexed ciphertextIndex, bytes32 combineHash, uint256 plaintext
+        bytes12 indexed epochId, bytes32 indexed aid, uint16 indexed ciphertextIndex, bytes32 combineHash, uint256 plaintext
     );
     event EpochAborted(bytes12 indexed epochId);
     event ApplicationRegistered(
@@ -128,6 +129,7 @@ interface IDKGManager {
     function claimSlot(bytes12 epochId) external;
     function submitCiphertext(
         bytes12 epochId,
+        bytes32 aid,
         uint16 ciphertextIndex,
         uint256 c1x,
         uint256 c1y,
@@ -195,18 +197,18 @@ interface IDKGManager {
     function getEpoch(bytes12 epochId) external view returns (Epoch memory);
     function selectedParticipants(bytes12 epochId) external view returns (address[] memory);
     function getContribution(bytes12 epochId, address contributor) external view returns (DKGTypes.ContributionRecord memory);
-    function getPartialDecryption(bytes12 epochId, address participant, uint16 ciphertextIndex)
+    function getPartialDecryption(bytes12 epochId, bytes32 aid, address participant, uint16 ciphertextIndex)
         external
         view
         returns (DKGTypes.PartialDecryptionRecord memory);
-    function getCombinedDecryption(bytes12 epochId, uint16 ciphertextIndex)
+    function getCombinedDecryption(bytes12 epochId, bytes32 aid, uint16 ciphertextIndex)
         external
         view
         returns (DKGTypes.CombinedDecryptionRecord memory);
     function getShareCommitmentHash(bytes12 epochId, uint16 participantIndex) external view returns (bytes32);
     function getCollectivePublicKey(bytes12 epochId) external view returns (DKGTypes.Point memory);
-    function getCiphertextHash(bytes12 epochId, uint16 ciphertextIndex) external view returns (bytes32);
-    function getPlaintext(bytes12 epochId, uint16 ciphertextIndex) external view returns (uint256);
+    function getCiphertextHash(bytes12 epochId, bytes32 aid, uint16 ciphertextIndex) external view returns (bytes32);
+    function getPlaintext(bytes12 epochId, bytes32 aid, uint16 ciphertextIndex) external view returns (uint256);
     function getDecryptionPolicy(bytes12 epochId) external view returns (DKGTypes.DecryptionPolicy memory);
     function getContributionVerifierVKeyHash() external view returns (bytes32);
     function getPartialDecryptVerifierVKeyHash() external view returns (bytes32);

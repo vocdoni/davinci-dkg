@@ -220,11 +220,13 @@ export class DKGClient {
    */
   async getPartialDecryption(
     epochId: `0x${string}`,
+    aid: `0x${string}`,
     participant: Address,
     ciphertextIndex: number,
   ): Promise<PartialDecryptionRecord> {
     const r = await this._manager.read.getPartialDecryption([
       epochId as any,
+      aid as any,
       participant,
       ciphertextIndex,
     ]) as unknown as PartialDecryptionRecord;
@@ -264,9 +266,10 @@ export class DKGClient {
   /** Fetch the combined decryption record for a ciphertext index. */
   async getCombinedDecryption(
     epochId: `0x${string}`,
+    aid: `0x${string}`,
     ciphertextIndex: number,
   ): Promise<CombinedDecryptionRecord> {
-    const r = await this._manager.read.getCombinedDecryption([epochId as any, ciphertextIndex]);
+    const r = await this._manager.read.getCombinedDecryption([epochId as any, aid as any, ciphertextIndex]);
     return r as unknown as CombinedDecryptionRecord;
   }
 
@@ -278,9 +281,10 @@ export class DKGClient {
    */
   async getPlaintext(
     epochId: `0x${string}`,
+    aid: `0x${string}`,
     ciphertextIndex: number,
   ): Promise<bigint> {
-    return this._manager.read.getPlaintext([epochId as any, ciphertextIndex]) as Promise<bigint>;
+    return this._manager.read.getPlaintext([epochId as any, aid as any, ciphertextIndex]) as Promise<bigint>;
   }
 
   /**
@@ -291,9 +295,10 @@ export class DKGClient {
    */
   async getCiphertextHash(
     epochId: `0x${string}`,
+    aid: `0x${string}`,
     ciphertextIndex: number,
   ): Promise<`0x${string}`> {
-    return this._manager.read.getCiphertextHash([epochId as any, ciphertextIndex]);
+    return this._manager.read.getCiphertextHash([epochId as any, aid as any, ciphertextIndex]);
   }
 
   /** Fetch the decryption policy set at epoch creation. */

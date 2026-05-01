@@ -45,6 +45,7 @@ export async function waitForEpochPhase(
 export async function waitForDecryption(
   client: DKGClient,
   epochId: `0x${string}`,
+  aid: `0x${string}`,
   ciphertextIndex: number,
   options?: PollOptions,
 ) {
@@ -53,7 +54,7 @@ export async function waitForDecryption(
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {
-    const record = await client.getCombinedDecryption(epochId, ciphertextIndex);
+    const record = await client.getCombinedDecryption(epochId, aid, ciphertextIndex);
     if (record.completed) return record;
 
     // Also check if the epoch was aborted so we fail fast.
