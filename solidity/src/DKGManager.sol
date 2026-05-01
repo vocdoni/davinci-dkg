@@ -1347,10 +1347,7 @@ contract DKGManager is IDKGManager {
         uint256 z
     ) internal view returns (bool) {
         uint256 c = _organizerSchnorrChallenge(epochId, aid, pkX, pkY, ax, ay);
-        (uint256 zGx, uint256 zGy) = BabyJubJub.scalarMulBase(z);
-        (uint256 cPKx, uint256 cPKy) = BabyJubJub.scalarMul(c, pkX, pkY);
-        (uint256 rhsX, uint256 rhsY) = BabyJubJub.pointAdd(ax, ay, cPKx, cPKy);
-        return zGx == rhsX && zGy == rhsY;
+        return BabyJubJub.verifySchnorrEquation(z, c, ax, ay, pkX, pkY);
     }
 
     /// @notice Abort a non-terminal epoch. Organizer only.

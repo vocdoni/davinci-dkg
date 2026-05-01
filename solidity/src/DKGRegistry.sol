@@ -202,10 +202,7 @@ contract DKGRegistry is IDKGRegistry {
         uint256 z
     ) internal view returns (bool) {
         uint256 c = _operatorSchnorrChallenge(op, pubX, pubY, ax, ay);
-        (uint256 zGx, uint256 zGy) = BabyJubJub.scalarMulBase(z);
-        (uint256 cPKx, uint256 cPKy) = BabyJubJub.scalarMul(c, pubX, pubY);
-        (uint256 rhsX, uint256 rhsY) = BabyJubJub.pointAdd(ax, ay, cPKx, cPKy);
-        return zGx == rhsX && zGy == rhsY;
+        return BabyJubJub.verifySchnorrEquation(z, c, ax, ay, pubX, pubY);
     }
 
     /// @dev Validate that a BabyJubJub point received as encryption key or

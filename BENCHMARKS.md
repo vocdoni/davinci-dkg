@@ -95,8 +95,8 @@ the production-relevant number.
 
 | Function           |    Min |       Median |          Max |
 |--------------------|-------:|-------------:|-------------:|
-| `registerKey`      | 23,516 |  **3,679,160** |  3,765,959 |
-| `updateKey`        | 27,593 |  **3,574,420** |  3,579,126 |
+| `registerKey`      | 23,513 |  **2,110,279** |  2,141,369 |
+| `updateKey`        | 27,590 |  **2,028,546** |  2,036,629 |
 | `markActive`       | 23,874 |       25,050 |     30,758 |
 | `heartbeat`        | 23,484 |       25,748 |     28,013 |
 | `reactivate`       | 23,719 |       34,642 |     34,642 |
@@ -105,8 +105,14 @@ the production-relevant number.
 `registerKey` and `updateKey` carry the on-chain Schnorr proof of knowledge
 that the caller controls the secret behind the published BabyJubJub public
 key (paper §5.1.1). The cost is dominated by the in-EVM Poseidon hashing
-(`PoseidonT6` + `PoseidonT3`) and the BabyJubJub scalar multiplication that
-verifies `z·G = A + c·PK`. Paid exactly once per node-key lifecycle event.
+(`PoseidonT6` + `PoseidonT3`) and the double scalar multiplication that
+verifies `z·G == A + c·PK`. The verifier uses a width-2 windowed
+Strauss–Shamir double-and-add over the basis `(G, -PK)` with multiples of
+`G` precomputed as Solidity constants, so the per-window cost is two
+doublings plus at most one conditional add against a 16-entry
+`i·G + j·(-PK)` lookup table — roughly 2× cheaper than computing the two
+scalar multiplications independently. Paid exactly once per node-key
+lifecycle event.
 
 ### Read paths
 
