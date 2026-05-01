@@ -773,7 +773,7 @@ the event log.
 | `getDecryptionPolicy(epochId)` | `DecryptionPolicy` struct: `ownerOnly, maxDecryptions, notBeforeBlock, notBeforeTimestamp, notAfterBlock, notAfterTimestamp`. Set at `createEpoch`; gates the legacy `aid == 0` path only. |
 | `selectedParticipants(epochId)` | `address[]` — ordered committee in claim order. |
 | `getContribution(epochId, contributor)` | `ContributionRecord` (only `contributorIndex`, `commitmentVectorDigest`, `accepted` are persisted; the rest live in `ContributionSubmitted` events). |
-| `getPartialDecryption(epochId, aid, participant, ciphertextIndex)` | `PartialDecryptionRecord` (only `participantIndex`, `ciphertextIndex`, `accepted`, `delta` are persisted). |
+| `getPartialDecryption(epochId, aid, participantIndex, ciphertextIndex)` | `PartialDecryptionRecord` — `(participantIndex, ciphertextIndex, deltaHash, accepted)`. The raw δ point is not stored on-chain; subscribers reconstruct it from the `PartialDecryptionSubmitted(epochId, aid, participant, participantIndex, ciphertextIndex, deltaX, deltaY)` event log. |
 | `getCombinedDecryption(epochId, aid, ciphertextIndex)` | `CombinedDecryptionRecord`: `ciphertextIndex`, `completed`, `plaintext`. `combineHash` is only in the `DecryptionCombined` event. |
 | `getPlaintext(epochId, aid, ciphertextIndex)` | `uint256` — recovered plaintext scalar; `0` if the decryption has not been combined yet (check `getCombinedDecryption(...).completed` to disambiguate). |
 | `getCiphertextHash(epochId, aid, ciphertextIndex)` | `bytes32` — `keccak256(abi.encode(c1x, c1y, c2x, c2y))` of the submitted ciphertext; raw coordinates are only in the `CiphertextSubmitted` event. |

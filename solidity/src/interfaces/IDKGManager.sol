@@ -40,10 +40,12 @@ interface IDKGManager {
     );
     event PartialDecryptionSubmitted(
         bytes12 indexed epochId,
+        bytes32 indexed aid,
         address indexed participant,
         uint16 participantIndex,
         uint16 ciphertextIndex,
-        bytes32 deltaHash
+        uint256 deltaX,
+        uint256 deltaY
     );
     event CiphertextSubmitted(
         bytes12 indexed epochId,
@@ -195,7 +197,7 @@ interface IDKGManager {
     function getEpoch(bytes12 epochId) external view returns (Epoch memory);
     function selectedParticipants(bytes12 epochId) external view returns (address[] memory);
     function getContribution(bytes12 epochId, address contributor) external view returns (DKGTypes.ContributionRecord memory);
-    function getPartialDecryption(bytes12 epochId, bytes32 aid, address participant, uint16 ciphertextIndex)
+    function getPartialDecryption(bytes12 epochId, bytes32 aid, uint16 participantIndex, uint16 ciphertextIndex)
         external
         view
         returns (DKGTypes.PartialDecryptionRecord memory);

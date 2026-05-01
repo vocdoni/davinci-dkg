@@ -221,17 +221,16 @@ export class DKGClient {
   async getPartialDecryption(
     epochId: `0x${string}`,
     aid: `0x${string}`,
-    participant: Address,
+    participantIndex: number,
     ciphertextIndex: number,
   ): Promise<PartialDecryptionRecord> {
     const r = await this._manager.read.getPartialDecryption([
       epochId as any,
       aid as any,
-      participant,
+      participantIndex,
       ciphertextIndex,
     ]) as unknown as PartialDecryptionRecord;
-    const [dx, dy] = fromRTEtoTE(r.delta.x, r.delta.y);
-    return { ...r, delta: { x: dx, y: dy } };
+    return r;
   }
 
   /**

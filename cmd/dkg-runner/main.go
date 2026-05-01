@@ -377,8 +377,8 @@ func runScenario(c *cfg) error {
 	log.Infow("waiting for partial decryptions...", "want", t)
 	if err := poll(c.WaitDecrypt, "partial decryptions", func() (bool, error) {
 		count := uint16(0)
-		for _, addr := range committee {
-			rec, err := manager.GetPartialDecryption(&bind.CallOpts{Context: ctx}, epochID, [32]byte{}, addr, 1)
+		for i := uint16(1); i <= uint16(len(committee)); i++ {
+			rec, err := manager.GetPartialDecryption(&bind.CallOpts{Context: ctx}, epochID, [32]byte{}, i, 1)
 			if err == nil && rec.Accepted {
 				count++
 			}
@@ -564,29 +564,43 @@ func combineDecryptions(
 	c1, c2 nodetypes.CurvePoint,
 	plaintext *big.Int,
 ) error {
-	callOpts := &bind.CallOpts{Context: ctx}
 	idxs := make([]uint16, 0, t)
 	deltas := make([]nodetypes.CurvePoint, 0, t)
 
-	for i, addr := range committee {
+	// δ points are no longer stored on-chain; recover them from the
+	// PartialDecryptionSubmitted event log.
+	pdIt, err := m.FilterPartialDecryptionSubmitted(
+		&bind.FilterOpts{Context: ctx, Start: 0},
+		[][12]byte{epochID}, [][32]byte{{}}, nil,
+	)
+	if err != nil {
+		return fmt.Errorf("filter PartialDecryptionSubmitted: %w", err)
+	}
+	defer func() { _ = pdIt.Close() }()
+	seen := make(map[uint16]struct{}, int(t))
+	for pdIt.Next() {
+		e := pdIt.Event
+		if e.CiphertextIndex != 1 {
+			continue
+		}
+		if _, dup := seen[e.ParticipantIndex]; dup {
+			continue
+		}
+		seen[e.ParticipantIndex] = struct{}{}
+		idxs = append(idxs, e.ParticipantIndex)
+		deltas = append(deltas, nodetypes.CurvePoint{X: new(big.Int).Set(e.DeltaX), Y: new(big.Int).Set(e.DeltaY)})
 		if uint16(len(idxs)) >= t {
 			break
 		}
-		rec, err := m.GetPartialDecryption(callOpts, epochID, [32]byte{}, addr, 1)
-		if err != nil || !rec.Accepted {
-			continue
-		}
-		idxs = append(idxs, uint16(i+1))
-		deltas = append(deltas, nodetypes.CurvePoint{X: rec.Delta.X, Y: rec.Delta.Y})
 	}
 	if uint16(len(idxs)) < t {
 		return fmt.Errorf("only %d/%d partial decryptions", len(idxs), t)
 	}
+	_ = committee // peers are recovered from events; the address list is not consulted
 
 	// Lagrange-interpolate Δ = sk*C1 from deltas (for verification inside witness builder).
 	indexes := ccommon.Uint16sToBigInts(idxs)
-	_, err := ccommon.InterpolatePointsAtZeroNative(indexes, deltas)
-	if err != nil {
+	if _, err := ccommon.InterpolatePointsAtZeroNative(indexes, deltas); err != nil {
 		return fmt.Errorf("interpolate check: %w", err)
 	}
 

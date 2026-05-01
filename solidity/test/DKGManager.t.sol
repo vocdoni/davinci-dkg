@@ -486,7 +486,7 @@ contract DKGManagerTest is Test, TestHelpers {
             partialDecryptionInput(epochId, 1, partialDecryptionHash(1))
         );
 
-        DKGTypes.PartialDecryptionRecord memory record = manager.getPartialDecryption(epochId, bytes32(0), address(this), 1);
+        DKGTypes.PartialDecryptionRecord memory record = manager.getPartialDecryption(epochId, bytes32(0), 1, 1);
         IDKGManager.Epoch memory epoch = manager.getEpoch(epochId);
 
         // `participant` and `deltaHash` are no longer persisted; off-chain consumers
@@ -582,8 +582,8 @@ contract DKGManagerTest is Test, TestHelpers {
             partialDecryptionInputCt(epochId, 1, 2, partialDecryptionHash(1))
         );
 
-        DKGTypes.PartialDecryptionRecord memory first = manager.getPartialDecryption(epochId, bytes32(0), address(this), 1);
-        DKGTypes.PartialDecryptionRecord memory second = manager.getPartialDecryption(epochId, bytes32(0), address(this), 2);
+        DKGTypes.PartialDecryptionRecord memory first = manager.getPartialDecryption(epochId, bytes32(0), 1, 1);
+        DKGTypes.PartialDecryptionRecord memory second = manager.getPartialDecryption(epochId, bytes32(0), 1, 2);
 
         assertEq(uint256(first.ciphertextIndex), 1);
         assertEq(uint256(second.ciphertextIndex), 2);

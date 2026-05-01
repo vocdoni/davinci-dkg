@@ -995,7 +995,7 @@ func (n *Node) doDecryption(
 	if n.decrypted[epochID][ctIdx] {
 		return nil
 	}
-	rec, err := n.manager.GetPartialDecryption(callOpts, epochID, [32]byte{}, n.address, ctIdx)
+	rec, err := n.manager.GetPartialDecryption(callOpts, epochID, [32]byte{}, idx, ctIdx)
 	if err == nil && rec.Accepted {
 		n.decrypted[epochID][ctIdx] = true
 		return nil
@@ -1440,23 +1440,57 @@ func (n *Node) doCombineDecryption(
 		return fmt.Errorf("combine: fetch ciphertext: %w", err)
 	}
 
-	// Gather accepted partial decryptions.
-	var partialIndexes []uint16
-	var partialDeltas []nodetypes.CurvePoint
-	for _, addr := range selected {
-		pd, err := n.manager.GetPartialDecryption(callOpts, epochID, [32]byte{}, addr, 1)
-		if err != nil || !pd.Accepted {
+	// Gather accepted partial decryptions from the PartialDecryptionSubmitted
+	// event log. The contract no longer stores raw δ points, only their
+	// keccak hashes; combine reads the points back from the event log.
+	startBlock := uint64(0)
+	if epoch.SeedBlock > 0 {
+		startBlock = uint64(epoch.SeedBlock) - 1
+	}
+	pdIt, err := n.manager.FilterPartialDecryptionSubmitted(
+		&bind.FilterOpts{Context: ctx, Start: startBlock},
+		[][12]byte{epochID}, [][32]byte{{}}, nil,
+	)
+	if err != nil {
+		return fmt.Errorf("filter PartialDecryptionSubmitted: %w", err)
+	}
+	defer func() { _ = pdIt.Close() }()
+	type pdEntry struct {
+		idx   uint16
+		delta nodetypes.CurvePoint
+	}
+	seen := make(map[uint16]struct{}, int(threshold))
+	entries := make([]pdEntry, 0, int(threshold))
+	for pdIt.Next() {
+		e := pdIt.Event
+		if e.CiphertextIndex != 1 {
 			continue
 		}
-		partialIndexes = append(partialIndexes, pd.ParticipantIndex)
-		partialDeltas = append(partialDeltas, nodetypes.CurvePoint{X: pd.Delta.X, Y: pd.Delta.Y})
-		if len(partialIndexes) >= int(threshold) {
+		if _, dup := seen[e.ParticipantIndex]; dup {
+			continue
+		}
+		seen[e.ParticipantIndex] = struct{}{}
+		entries = append(entries, pdEntry{
+			idx:   e.ParticipantIndex,
+			delta: nodetypes.CurvePoint{X: new(big.Int).Set(e.DeltaX), Y: new(big.Int).Set(e.DeltaY)},
+		})
+		if len(entries) >= int(threshold) {
 			break
 		}
 	}
-	if len(partialIndexes) < int(threshold) {
+	if err := pdIt.Error(); err != nil {
+		return fmt.Errorf("iterate PartialDecryptionSubmitted: %w", err)
+	}
+	if len(entries) < int(threshold) {
 		return nil // not enough accepted partial decryptions yet
 	}
+	partialIndexes := make([]uint16, len(entries))
+	partialDeltas := make([]nodetypes.CurvePoint, len(entries))
+	for i, e := range entries {
+		partialIndexes[i] = e.idx
+		partialDeltas[i] = e.delta
+	}
+	_ = selected // kept for the caller signature; combine reads peers from events
 
 	c1X, c1Y := ct.C1X, ct.C1Y
 	c2X, c2Y := ct.C2X, ct.C2Y

@@ -84,8 +84,8 @@ the production-relevant number.
 | `submitContribution`                  |  71,736 |   212,739 |   212,751 |
 | `finalizeEpoch`                       | 317,190 |   747,917 |   747,917 |
 | `submitCiphertext`                    |  27,260 | 2,183,806 | 2,183,976 |
-| `submitPartialDecryption`             |  34,819 |   159,339 |   176,427 |
-| `combineDecryption`                   |  47,228 |   101,258 |   155,289 |
+| `submitPartialDecryption`             |  34,800 |    98,550 |   132,738 |
+| `combineDecryption`                   |  47,206 |    92,643 |   138,080 |
 | `registerApplication` (mode 0)        |  24,846 |    29,424 |   176,103 |
 | `registerApplicationCoDec` (mode 1)   |  27,063 |    28,172 |    29,282 |
 | `extendRegistration`                  |  30,959 |    35,997 |    41,036 |
@@ -129,8 +129,8 @@ park a ciphertext slot the combine circuit could never accept.
 | `getEpoch`                        |  23,336 |
 | `getApplication`                  |  17,141 |
 | `getContribution`                 |  12,409 |
-| `getPartialDecryption`            |  12,652 |
-| `getCombinedDecryption`           |   5,712 |
+| `getPartialDecryption`            |   6,485 |
+| `getCombinedDecryption`           |   5,690 |
 | `getCiphertextHash`               |   2,814 |
 | `getPlaintext`                    |   2,974 |
 | `selectedParticipants` (n = 2)    |   8,026 |
@@ -172,9 +172,9 @@ one threshold decryption:
 | n × `submitContribution`                           |   3,403,824 |   6,807,648 |
 | 1 × `finalizeEpoch`                                |     747,917 |     747,917 |
 | 1 × `submitCiphertext`                             |   2,183,806 |   2,183,806 |
-| t × `submitPartialDecryption` (t = ⌈2n/3⌉)         |   1,752,729 (×11) |   3,505,458 (×22) |
-| 1 × `combineDecryption`                            |     101,258 |     101,258 |
-| **Round total**                                    | **10,975,512** | **18,691,585** |
+| t × `submitPartialDecryption` (t = ⌈2n/3⌉)         |   1,084,050 (×11) |   2,168,100 (×22) |
+| 1 × `combineDecryption`                            |      92,643 |      92,643 |
+| **Round total**                                    | **10,298,218** | **17,345,612** |
 
 These are *epoch-only* costs — application registration is paid once per
 `(eid, aid)` pair (~29 k for mode 0, ~28 k for mode 1).

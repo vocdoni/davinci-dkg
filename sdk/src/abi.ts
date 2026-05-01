@@ -370,7 +370,7 @@ export const dkgManagerAbi = [
     inputs: [
       { name: 'epochId', type: 'bytes12' },
       { name: 'aid', type: 'bytes32' },
-      { name: 'participant', type: 'address' },
+      { name: 'participantIndex', type: 'uint16' },
       { name: 'ciphertextIndex', type: 'uint16' },
     ],
     outputs: [
@@ -378,18 +378,9 @@ export const dkgManagerAbi = [
         name: '',
         type: 'tuple',
         components: [
-          { name: 'participant', type: 'address' },
           { name: 'participantIndex', type: 'uint16' },
           { name: 'ciphertextIndex', type: 'uint16' },
           { name: 'deltaHash', type: 'bytes32' },
-          {
-            name: 'delta',
-            type: 'tuple',
-            components: [
-              { name: 'x', type: 'uint256' },
-              { name: 'y', type: 'uint256' },
-            ],
-          },
           { name: 'accepted', type: 'bool' },
         ],
       },
@@ -556,10 +547,12 @@ export const dkgManagerAbi = [
     name: 'PartialDecryptionSubmitted',
     inputs: [
       { name: 'epochId', type: 'bytes12', indexed: true },
+      { name: 'aid', type: 'bytes32', indexed: true },
       { name: 'participant', type: 'address', indexed: true },
       { name: 'participantIndex', type: 'uint16', indexed: false },
       { name: 'ciphertextIndex', type: 'uint16', indexed: false },
-      { name: 'deltaHash', type: 'bytes32', indexed: false },
+      { name: 'deltaX', type: 'uint256', indexed: false },
+      { name: 'deltaY', type: 'uint256', indexed: false },
     ],
   },
   {

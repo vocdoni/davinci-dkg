@@ -105,7 +105,17 @@ contract DKGManager is IDKGManager {
     // blocking another, partials shared/rejected across apps, a combine for
     // one aid marking the slot completed for all aids). The legacy per-epoch
     // path (no application registered) uses `aid = bytes32(0)`.
-    mapping(bytes12 epochId => mapping(bytes32 aid => mapping(uint16 ciphertextIndex => mapping(address participant => DKGTypes.PartialDecryptionRecord partialDecryption)))) internal epochPartialDecryptions;
+    //
+    // Partial decryptions are stored as `keccak256(δ.x, δ.y)` only — the raw
+    // δ point is read back from the combine transcript at combine time and
+    // re-hashed against the stored value. A per-(epochId, aid, ctIdx) bitmap
+    // tracks which participantIndexes have submitted: bit (1 << pIdx) is set
+    // iff participant pIdx has submitted. Saves two cold SSTOREs per partial
+    // decryption versus storing the full δ point + a bool, and lets the
+    // combine path key by participantIndex directly without an address
+    // lookup.
+    mapping(bytes12 epochId => mapping(bytes32 aid => mapping(uint16 ciphertextIndex => mapping(uint16 participantIndex => bytes32 deltaHash)))) internal epochPartialDeltaHash;
+    mapping(bytes12 epochId => mapping(bytes32 aid => mapping(uint16 ciphertextIndex => uint256 bitmap))) internal epochPartialBitmap;
     mapping(bytes12 epochId => mapping(bytes32 aid => mapping(uint16 ciphertextIndex => uint16 count))) internal epochPartialDecryptionCounts;
     mapping(bytes12 epochId => mapping(bytes32 aid => mapping(uint16 ciphertextIndex => DKGTypes.CombinedDecryptionRecord combined))) internal
         epochCombinedDecryptions;
@@ -465,20 +475,21 @@ contract DKGManager is IDKGManager {
             delete selectedOperators[oldRoundId][participant];
             delete epochShareCommitmentHashes[oldRoundId][uint16(i + 1)];
             delete epochContributions[oldRoundId][participant];
-            // Clear per-ciphertext partial decryption records across all aids.
-            for (uint256 a = 0; a < aidCount; a++) {
-                bytes32 aid = a == 0 ? bytes32(0) : regAids[a - 1];
-                for (uint16 ci = 1; ci <= MAX_CIPHERTEXT_INDEX; ci++) {
-                    if (epochPartialDecryptions[oldRoundId][aid][ci][participant].accepted) {
-                        delete epochPartialDecryptions[oldRoundId][aid][ci][participant];
-                    }
-                }
-            }
         }
-        // Clear per-ciphertext combined decryption records, counts, and ciphertext hashes.
+        // Clear per-ciphertext partial-decryption hashes and bitmaps + combined
+        // decryption records, counts, and ciphertext hashes.
         for (uint256 a = 0; a < aidCount; a++) {
             bytes32 aid = a == 0 ? bytes32(0) : regAids[a - 1];
             for (uint16 ci = 1; ci <= MAX_CIPHERTEXT_INDEX; ci++) {
+                if (epochPartialBitmap[oldRoundId][aid][ci] != 0) {
+                    uint256 bm = epochPartialBitmap[oldRoundId][aid][ci];
+                    for (uint16 pIdx = 1; pIdx <= MAX_N; pIdx++) {
+                        if ((bm >> pIdx) & 1 == 1) {
+                            delete epochPartialDeltaHash[oldRoundId][aid][ci][pIdx];
+                        }
+                    }
+                    delete epochPartialBitmap[oldRoundId][aid][ci];
+                }
                 if (epochPartialDecryptionCounts[oldRoundId][aid][ci] > 0) {
                     delete epochPartialDecryptionCounts[oldRoundId][aid][ci];
                 }
@@ -726,12 +737,17 @@ contract DKGManager is IDKGManager {
             uint256 indexBit = uint256(1) << participantIndex;
             if (seenIndexes & indexBit != 0) revert InvalidProofInput();
             seenIndexes |= indexBit;
-            address participant = epochParticipants[epochId][participantIndex - 1];
-            DKGTypes.PartialDecryptionRecord storage partialRecord =
-                epochPartialDecryptions[epochId][aid][ciphertextIndex][participant];
-            if (!partialRecord.accepted || partialRecord.participantIndex != participantIndex) revert InvalidProofInput();
-            if (partialRecord.ciphertextIndex != ciphertextIndex) revert InvalidProofInput();
-            if (pdX != partialRecord.delta.x || pdY != partialRecord.delta.y) revert InvalidProofInput();
+            // Bitmap bit must be set for this participant — i.e. they
+            // submitted a partial under this (epochId, aid, ctIdx).
+            if (epochPartialBitmap[epochId][aid][ciphertextIndex] & indexBit == 0) {
+                revert InvalidProofInput();
+            }
+            // The transcript-supplied δ must hash to the value we stored at
+            // submitPartialDecryption time.
+            if (
+                keccak256(abi.encodePacked(pdX, pdY))
+                    != epochPartialDeltaHash[epochId][aid][ciphertextIndex][participantIndex]
+            ) revert InvalidProofInput();
         }
         for (uint256 i = shareCount; i < MAX_N; i++) {
             uint256 pIdxRaw;
@@ -844,8 +860,10 @@ contract DKGManager is IDKGManager {
         if (storedCt == bytes32(0)) revert CiphertextNotSubmitted();
         if (keccak256(abi.encode(c1x, c1y, c2x, c2y)) != storedCt) revert InvalidProofInput();
 
-        DKGTypes.PartialDecryptionRecord storage record = epochPartialDecryptions[epochId][aid][ciphertextIndex][msg.sender];
-        if (record.accepted) revert AlreadyPartiallyDecrypted();
+        uint256 indexBit = uint256(1) << participantIndex;
+        if (epochPartialBitmap[epochId][aid][ciphertextIndex] & indexBit != 0) {
+            revert AlreadyPartiallyDecrypted();
+        }
 
         IZKVerifier(PARTIAL_DECRYPT_VERIFIER).verifyProof(proof, input);
         // Layout: [eid, aid, ctIdx, role, i, C1.x, C1.y, D_i.x, D_i.y,
@@ -869,20 +887,18 @@ contract DKGManager is IDKGManager {
         ) revert InvalidProofInput();
         if (deltaHash != keccak256(abi.encodePacked(publicInputs[9], publicInputs[10]))) revert InvalidProofInput();
 
-        // Persist only what combineDecryption actually reads:
-        //   - participantIndex + accepted: identity gate
-        //   - delta.x/.y: BRLC verification
-        DKGTypes.PartialDecryptionRecord storage prec =
-            epochPartialDecryptions[epochId][aid][ciphertextIndex][msg.sender];
-        prec.participantIndex = participantIndex;
-        prec.ciphertextIndex = ciphertextIndex; // packed in slot 0 anyway
-        prec.accepted = true;
-        prec.delta.x = publicInputs[9];
-        prec.delta.y = publicInputs[10];
+        // Persist the δ commitment as a single 32-byte hash plus a bitmap bit.
+        // The combine path reads δ.x/δ.y back from the proof transcript and
+        // re-hashes against the stored value, so we don't store the raw point.
+        epochPartialDeltaHash[epochId][aid][ciphertextIndex][participantIndex] = deltaHash;
+        epochPartialBitmap[epochId][aid][ciphertextIndex] |= indexBit;
         epoch.partialDecryptionCount++;
         epochPartialDecryptionCounts[epochId][aid][ciphertextIndex]++;
 
-        emit PartialDecryptionSubmitted(epochId, msg.sender, participantIndex, ciphertextIndex, deltaHash);
+        emit PartialDecryptionSubmitted(
+            epochId, aid, msg.sender, participantIndex, ciphertextIndex,
+            publicInputs[9], publicInputs[10]
+        );
     }
 
     /// @notice Submit a ciphertext to be threshold-decrypted by the committee.
@@ -1370,12 +1386,21 @@ contract DKGManager is IDKGManager {
         return epochContributions[epochId][contributor];
     }
 
-    function getPartialDecryption(bytes12 epochId, bytes32 aid, address participant, uint16 ciphertextIndex)
+    /// @notice Returns the stored partial-decryption record for a single
+    ///         committee member's submission, keyed by participant index.
+    ///         Returns `accepted = false` if no submission was made.
+    function getPartialDecryption(bytes12 epochId, bytes32 aid, uint16 participantIndex, uint16 ciphertextIndex)
         external
         view
         returns (DKGTypes.PartialDecryptionRecord memory)
     {
-        return epochPartialDecryptions[epochId][aid][ciphertextIndex][participant];
+        bool accepted = (epochPartialBitmap[epochId][aid][ciphertextIndex] >> participantIndex) & 1 == 1;
+        return DKGTypes.PartialDecryptionRecord({
+            participantIndex: accepted ? participantIndex : 0,
+            ciphertextIndex: accepted ? ciphertextIndex : 0,
+            deltaHash: epochPartialDeltaHash[epochId][aid][ciphertextIndex][participantIndex],
+            accepted: accepted
+        });
     }
 
     function getCombinedDecryption(bytes12 epochId, bytes32 aid, uint16 ciphertextIndex)

@@ -114,11 +114,9 @@ export interface ContributionRecord {
 }
 
 export interface PartialDecryptionRecord {
-  participant: Address;
   participantIndex: number;
   ciphertextIndex: number;
   deltaHash: Hex;
-  delta: { x: bigint; y: bigint };
   accepted: boolean;
 }
 

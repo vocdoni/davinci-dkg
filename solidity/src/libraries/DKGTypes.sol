@@ -50,11 +50,9 @@ library DKGTypes {
     }
 
     struct PartialDecryptionRecord {
-        address participant;
         uint16 participantIndex;
         uint16 ciphertextIndex;
         bytes32 deltaHash;
-        Point delta;
         bool accepted;
     }
 
