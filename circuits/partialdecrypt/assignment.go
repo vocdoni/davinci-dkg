@@ -10,7 +10,7 @@ import (
 // Assignment is the native input model used to build a partial decrypt witness.
 //
 // Aid, CtIdx, and Role are the per-application transcript binding fields
-// (paper §4.4 lines 695–704, PLAN §5.3). They default to zero / committee
+// (paper §4.4 lines 695–704). They default to zero / committee
 // when callers don't supply them, preserving backward compatibility with
 // pre-application call sites until those are migrated to per-app workers.
 type Assignment struct {
@@ -34,8 +34,7 @@ const (
 )
 
 // Validate checks that the assignment is complete and that the
-// participant-index policy matches the chosen role
-// (CIRCUITS_AUDIT #6):
+// participant-index policy matches the chosen role:
 //
 //   - Default / role = 1 (COMMITTEE): participantIndex MUST be non-zero
 //     (committee slots are one-based, 1..n).

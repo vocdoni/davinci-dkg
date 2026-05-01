@@ -84,8 +84,6 @@ func buildProtocol() protocolFile {
 			"OperatorRegisterV1":  domainRow(protocol.DomainOperatorRegisterV1Str, protocol.DomainOperatorRegisterV1),
 			"OrganizerRegisterV1": domainRow(protocol.DomainOrganizerRegisterV1Str, protocol.DomainOrganizerRegisterV1),
 			"DLEQV1":              domainRow(protocol.DomainDLEQV1Str, protocol.DomainDLEQV1),
-			// (Removed DerivationV1 — the per-app S derivation has no domain
-			// prefix; see internal/protocol/protocol.go and DEEPSEEK §2.3.)
 			// PartialDecrypt domain is consumed by the in-circuit DLEQ
 			// transcript via SetBytes (no keccak); included here so the SDK
 			// can re-derive it without hardcoding the modular reduction.

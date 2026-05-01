@@ -99,12 +99,12 @@ contract DKGManager is IDKGManager {
     mapping(bytes12 epochId => address[] participants) internal epochParticipants;
     mapping(bytes12 epochId => mapping(address contributor => DKGTypes.ContributionRecord contribution)) internal
         epochContributions;
-    // CIRCUITS_AUDIT2 #2: ciphertexts, committee partials, partial counts, and
-    // combined plaintexts are all keyed by (epochId, aid, ctIdx). The aid
-    // namespace prevents two applications under the same epoch from colliding
-    // on ctIdx (one app blocking another, partials shared/rejected across apps,
-    // a combine for one aid marking the slot completed for all aids). The
-    // legacy per-epoch path (no application registered) uses `aid = bytes32(0)`.
+    // Ciphertexts, committee partials, partial counts, and combined plaintexts
+    // are all keyed by (epochId, aid, ctIdx). The aid namespace prevents two
+    // applications under the same epoch from colliding on ctIdx (one app
+    // blocking another, partials shared/rejected across apps, a combine for
+    // one aid marking the slot completed for all aids). The legacy per-epoch
+    // path (no application registered) uses `aid = bytes32(0)`.
     mapping(bytes12 epochId => mapping(bytes32 aid => mapping(uint16 ciphertextIndex => mapping(address participant => DKGTypes.PartialDecryptionRecord partialDecryption)))) internal epochPartialDecryptions;
     mapping(bytes12 epochId => mapping(bytes32 aid => mapping(uint16 ciphertextIndex => uint16 count))) internal epochPartialDecryptionCounts;
     mapping(bytes12 epochId => mapping(bytes32 aid => mapping(uint16 ciphertextIndex => DKGTypes.CombinedDecryptionRecord combined))) internal
@@ -142,8 +142,8 @@ contract DKGManager is IDKGManager {
     bytes32 internal constant DECRYPT_COMBINE_TRANSCRIPT_DOMAIN = keccak256("davinci-dkg:decrypt-combine:v1");
     bytes32 internal constant FINALIZE_TRANSCRIPT_DOMAIN = keccak256("davinci-dkg:finalize:v1");
 
-    /// @dev Per-application registrations, keyed by `(eid, aid)`. See PLAN §4.3
-    ///      and DKGTypes.Application for the record shape. Both
+    /// @dev Per-application registrations, keyed by `(eid, aid)`. See
+    ///      DKGTypes.Application for the record shape. Both
     ///      registerApplication and registerApplicationCoDec write here; the
     ///      mode flag distinguishes the two paths at decryption time.
     mapping(bytes12 epochId => mapping(bytes32 aid => DKGTypes.Application app)) internal applications;
@@ -664,7 +664,7 @@ contract DKGManager is IDKGManager {
 
         _verifyFinalizeTranscript(epochId, epoch, challenge, publicInputs[8], transcript);
 
-        // CIRCUITS_AUDIT2 #1: defence-in-depth — the proof's aggregateCommitments[0]
+        // Defence-in-depth — the proof's aggregateCommitments[0]
         // must equal the on-chain accumulated `_collectiveKey`. Without this a
         // valid finalize proof over a duplicated/omitted contributor subset
         // (which the duplicate-row bitmap already rejects) would still be
@@ -723,7 +723,7 @@ contract DKGManager is IDKGManager {
         uint256 pdBase = dOff + COMBINE_PARTIALS_BYTES_OFFSET;        // partialDecryptions start
 
         uint256 cs = epoch.policy.committeeSize;
-        // CIRCUITS_AUDIT #4: track which participant indexes have been
+        // Track which participant indexes have been
         // seen so duplicates can't pad the qualifying set with copies of
         // the same partial. Bitmap fits because participantIndex ≤ MAX_N
         // ≤ 32. The contract-side check + the in-circuit `mask =
@@ -784,7 +784,7 @@ contract DKGManager is IDKGManager {
 
         uint256 ccount = epoch.contributionCount;
         uint256 cSize = epoch.policy.committeeSize;
-        // CIRCUITS_AUDIT2 #1: reject duplicate participant indexes in the
+        // Reject duplicate participant indexes in the
         // active prefix. Without this an attacker could repeat one accepted
         // contributor's row and omit another, finalising an aggregate that
         // disagrees with the on-chain accumulated `_collectiveKey`. Bitmap
@@ -820,15 +820,15 @@ contract DKGManager is IDKGManager {
     ///         multiple ciphertexts per epoch. The Groth16 proof is a
     ///         Chaum–Pedersen DLEQ establishing that `δ_i` and the committed
     ///         share `D_i` share a discrete log with respect to `C_1` and `G`.
-    /// @dev `aid` binds the proof transcript to a specific application
-    ///      (P9). Pass `bytes32(0)` for the legacy per-epoch path that
+    /// @dev `aid` binds the proof transcript to a specific application.
+    ///      Pass `bytes32(0)` for the legacy per-epoch path that
     ///      pre-dates the application surface; the circuit witness builder
     ///      defaults Aid/CtIdx/Role to zero/zero/COMMITTEE in that mode.
     /// @dev `c1x/c1y/c2x/c2y` are the raw ciphertext coordinates as
     ///      submitted via submitCiphertext. The contract verifies
     ///      `keccak256(abi.encode(...))` matches the stored ciphertext
     ///      hash and then binds the proof's public-input C1 (pi[5..6])
-    ///      to the authoritative on-chain ciphertext (CIRCUITS_AUDIT #2).
+    ///      to the authoritative on-chain ciphertext.
     function submitPartialDecryption(
         bytes12 epochId,
         bytes32 aid,
@@ -852,13 +852,12 @@ contract DKGManager is IDKGManager {
         ) revert InvalidPartialDecryption();
         if (epochParticipants[epochId][participantIndex - 1] != msg.sender) revert InvalidProofInput();
 
-        // CIRCUITS_AUDIT #2: bind to the authoritative on-chain ciphertext.
-        // Without this the prover can supply Δ_i = sk_i · B for an
-        // arbitrary B, and the stored partial decryption is only meaningful
-        // relative to that B — combine then aggregates points that aren't
-        // decryptions of the submitted ciphertext.
-        // CIRCUITS_AUDIT2 #2: ciphertext + partial storage are keyed by aid
-        // so two applications under the same epoch don't collide on ctIdx.
+        // Bind to the authoritative on-chain ciphertext. Without this the
+        // prover can supply Δ_i = sk_i · B for an arbitrary B, and the stored
+        // partial decryption is only meaningful relative to that B — combine
+        // then aggregates points that aren't decryptions of the submitted
+        // ciphertext. Ciphertext + partial storage are keyed by aid so two
+        // applications under the same epoch don't collide on ctIdx.
         bytes32 storedCt = _ciphertexts[epochId][aid][ciphertextIndex];
         if (storedCt == bytes32(0)) revert CiphertextNotSubmitted();
         if (keccak256(abi.encode(c1x, c1y, c2x, c2y)) != storedCt) revert InvalidProofInput();
@@ -867,7 +866,7 @@ contract DKGManager is IDKGManager {
         if (record.accepted) revert AlreadyPartiallyDecrypted();
 
         IZKVerifier(PARTIAL_DECRYPT_VERIFIER).verifyProof(proof, input);
-        // P5 layout: [eid, aid, ctIdx, role, i, C1.x, C1.y, D_i.x, D_i.y,
+        // Layout: [eid, aid, ctIdx, role, i, C1.x, C1.y, D_i.x, D_i.y,
         // delta.x, delta.y, A1.x, A1.y, A2.x, A2.y, response].
         // Committee partial decryptions always use role = COMMITTEE = 1
         // (organizer shares go through submitOrganizerShare instead).
@@ -880,7 +879,7 @@ contract DKGManager is IDKGManager {
                 || publicInputs[3] != uint256(DKGProtocol.ROLE_COMMITTEE)
                 || publicInputs[4] != participantIndex
                 // pi[5..6] = base point (C_1) — bind to the just-verified
-                // on-chain ciphertext (CIRCUITS_AUDIT #2).
+                // on-chain ciphertext.
                 || publicInputs[5] != c1x
                 || publicInputs[6] != c1y
                 || storedScHash == bytes32(0)
@@ -929,14 +928,14 @@ contract DKGManager is IDKGManager {
         // and in the prime-order subgroup. The first three are cheap (4 mulmods per
         // point); the subgroup check is one full BJJ scalar mul (~60k gas per point)
         // but is required to honor the paper's group-validation policy at every
-        // entry point (paper §4.1, addressing DEEPSEEK §2.2). Without subgroup
+        // entry point (paper §4.1). Without subgroup
         // membership a griefing submitter could pre-claim every index with a small-
         // order point the combine circuit can never accept.
         _requireValidEncryptionPoint(c1x, c1y);
         _requireValidEncryptionPoint(c2x, c2y);
 
         // Per-epoch DecryptionPolicy gates the legacy aid=0 path; per-application
-        // AppPolicy (CIRCUITS_AUDIT2 #2) gates aid != 0.
+        // AppPolicy gates aid != 0.
         if (aid == bytes32(0)) {
             DKGTypes.DecryptionPolicy memory p = epoch.decryptionPolicy;
             if (p.ownerOnly && msg.sender != epoch.organizer) revert NotOwner();
@@ -969,8 +968,7 @@ contract DKGManager is IDKGManager {
     ///      in the prime-order subgroup. Reverts with InvalidCiphertext()
     ///      (rather than the BabyJubJub library's specific errors) so callers
     ///      observe a single failure mode at submitCiphertext time.
-    ///      DEEPSEEK §2.2 hardening: matches the registry's
-    ///      `_requireValidEncryptionPoint` naming + policy.
+    ///      Matches the registry's `_requireValidEncryptionPoint` naming + policy.
     function _requireValidEncryptionPoint(uint256 x, uint256 y) internal view {
         if (!BabyJubJub.isCanonical(x, y)) revert InvalidCiphertext();
         if (BabyJubJub.isIdentity(x, y)) revert InvalidCiphertext();
@@ -1105,8 +1103,7 @@ contract DKGManager is IDKGManager {
     /// @param  dleqInput       Encoded DLEQ public input (uint[16]).
     /// @dev `c1x/c1y/c2x/c2y` are the raw ciphertext coordinates as
     ///      submitted via submitCiphertext. Verified against the stored
-    ///      ciphertext hash and then bound to the proof's pi[5..6]
-    ///      (CIRCUITS_AUDIT #1).
+    ///      ciphertext hash and then bound to the proof's pi[5..6].
     function submitOrganizerShare(
         bytes12 epochId,
         bytes32 aid,
@@ -1128,7 +1125,7 @@ contract DKGManager is IDKGManager {
         if (!app.exists) revert InvalidApplication();
         if (uint8(app.mode) != uint8(DKGProtocol.MODE_ORGANIZER_CODEC)) revert InvalidApplication();
 
-        // CIRCUITS_AUDIT #1: bind C1 to the on-chain ciphertext before
+        // Bind C1 to the on-chain ciphertext before
         // accepting any (PK_org, Δ_org) commitment. Without this the
         // organizer can produce a valid DLEQ for an unrelated base, and
         // the stored Δ_org corrects the wrong discrete log at combine.
@@ -1148,7 +1145,7 @@ contract DKGManager is IDKGManager {
         // on-chain state before invoking the verifier.
         IZKVerifier(PARTIAL_DECRYPT_VERIFIER).verifyProof(dleqProof, dleqInput);
         uint256[16] memory pi = abi.decode(dleqInput, (uint256[16]));
-        // CIRCUITS_AUDIT #1: the public-input layout per
+        // The public-input layout per
         // circuits/partialdecrypt/circuit.go is
         //   [0]=eid, [1]=aid, [2]=ctIdx, [3]=role, [4]=i,
         //   [5..6]=Base/C1, [7..8]=PublicKey/D_i (= PK_org for organizer),
@@ -1184,7 +1181,7 @@ contract DKGManager is IDKGManager {
         emit OrganizerShareSubmitted(epochId, aid, ciphertextIndex, deltaOrgX, deltaOrgY);
     }
 
-    // ─── Application lifecycle (paper §4.3, §6, PLAN.md §4.3) ────────────────
+    // ─── Application lifecycle (paper §4.3, §6) ──────────────────────────────
 
     /// @notice Register an application against a finalized epoch in
     ///         public-derivation mode (paper §4.3). Computes the per-application

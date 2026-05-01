@@ -9,7 +9,7 @@ import (
 // PartialDecryptCircuit proves a BabyJubJub Chaum-Pedersen relation for one
 // partial decryption: Y = xG, Delta = xM, A1 = wG, A2 = wM.
 //
-// Per paper §4.4 lines 695–704 and PLAN §5.3, the Fiat-Shamir challenge
+// Per paper §4.4 lines 695–704, the Fiat-Shamir challenge
 // transcript binds (eid, aid, ctIdx, role, i, G, C_1, D_i, δ_i, A_i, B_i).
 // Role tags committee partial decryptions (1) versus organizer shares (2)
 // per paper §6.3 line 1161; binding it prevents cross-protocol replay.
@@ -52,7 +52,7 @@ func (c *PartialDecryptCircuit) Define(api frontend.API) error {
 	ccommon.AssertPointEqual(api, ccommon.FixedBaseMul(api, c.Nonce), a1)
 	ccommon.AssertPointEqual(api, curve.ScalarMul(base, c.Nonce), a2)
 
-	// CIRCUITS_AUDIT #7: Role must be 1 (COMMITTEE) or 2 (ORGANIZER).
+	// Role must be 1 (COMMITTEE) or 2 (ORGANIZER).
 	// (role - 1) * (role - 2) == 0 ⟺ role ∈ {1, 2}.
 	// The Solidity entry-point gates already enforce this per call site
 	// (submitPartialDecryption requires role=1; submitOrganizerShare
@@ -60,7 +60,7 @@ func (c *PartialDecryptCircuit) Define(api frontend.API) error {
 	// statement itself is now closed under valid roles.
 	api.AssertIsEqual(api.Mul(api.Sub(c.Role, 1), api.Sub(c.Role, 2)), 0)
 
-	// Per paper §4.4 lines 695–704 / PLAN §5.3: bind the Fiat-Shamir
+	// Per paper §4.4 lines 695–704: bind the Fiat-Shamir
 	// challenge to the full transcript
 	//   (eid, aid, ctIdx, role, i, G, C_1, D_i, δ_i, A_i, B_i)
 	// so a proof cannot be replayed across epochs, applications,

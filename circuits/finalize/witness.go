@@ -241,7 +241,7 @@ func BuildWitnessFromCommitmentPoints(a CommitmentPointsAssignment) (*FinalizeCi
 	if len(a.ParticipantIndexes) > int(a.CommitteeSize) {
 		return nil, nil, fmt.Errorf("participant count %d exceeds committee size %d", len(a.ParticipantIndexes), a.CommitteeSize)
 	}
-	// CIRCUITS_AUDIT2 #1: reject duplicate participant indexes — see
+	// Reject duplicate participant indexes — see
 	// finalize.Assignment.Validate.
 	seen := make(map[uint16]struct{}, len(a.ParticipantIndexes))
 	for i, idx := range a.ParticipantIndexes {
@@ -496,13 +496,10 @@ func (p PublicInputs) TranscriptScalars() []*big.Int {
 // one BRLC commitment, matching the circuit's `TranscriptCommitment`
 // public input and the contract's `_verifyFinalizeTranscript` check.
 //
-// CIRCUITS_AUDIT #9: this previously committed to `Scalars()` (the full
-// public-input vector) instead of `TranscriptScalars()` (the
-// participantIndexes ‖ contributionCommitments ‖ aggregateCommitments
-// ‖ shareCommitments slice the on-chain check actually streams). The
-// helper was unused by the active witness builder, but tooling /
-// tests / SDK code that called it produced commitments the contract
-// would reject.
+// The commitment is taken over `TranscriptScalars()` (participantIndexes
+// ‖ contributionCommitments ‖ aggregateCommitments ‖ shareCommitments)
+// — the slice the on-chain check actually streams — not over the full
+// public-input vector.
 func (p PublicInputs) BRLCCommitment(challenge *big.Int) (*big.Int, error) {
 	return ccommon.BRLCNative(challenge, p.TranscriptScalars()...)
 }

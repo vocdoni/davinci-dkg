@@ -2,16 +2,15 @@
 
 Measured on AMD Ryzen 7 7840U with 64 GiB RAM. Single CPU, no GPU, no
 icicle/CUDA acceleration. The numbers below are for the production
-**MaxN = 32** build with the post-rewrite circuit set (Contribution,
-Finalize, PartialDecrypt, DecryptCombine — no disclosure circuits).
+**MaxN = 32** build with the production circuit set: Contribution,
+Finalize, PartialDecrypt, DecryptCombine.
 
-Last refresh: 2026-05-01 (after the CIRCUITS_AUDIT fixes — see commit
-log for details). Re-measure constraint counts with a quick helper that
-calls `<circuit>.Compile()` + `ccs.GetNbConstraints()`, and the gas
-table with `forge test --gas-report` after any circuit / contract change.
+Re-measure constraint counts with a quick helper that calls
+`<circuit>.Compile()` + `ccs.GetNbConstraints()`, and the gas table with
+`forge test --gas-report` after any circuit / contract change.
 
 > **Caveat — dev setup, not production.** All proving / verification
-> figures use a single-party local Groth16 setup. The S2 multi-party
+> figures use a single-party local Groth16 setup. A multi-party
 > trusted-setup ceremony will produce fresh pk/vk values; the
 > *constraint counts and call-shape gas costs* are unchanged by the
 > ceremony, but the verifier deployment cost may shift by a few hundred
@@ -21,26 +20,15 @@ table with `forge test --gas-report` after any circuit / contract change.
 
 ## Circuit Constraint Counts
 
-| Circuit         | Constraints | vs. pre-optimisation |
-|-----------------|------------:|--------------------:|
-| Contribution    |   1,426,592 |  −51 %              |
-| Finalize        |   1,017,389 |  −59 %              |
-| PartialDecrypt  |      20,717 |   —                 |
-| DecryptCombine  |      87,498 |   +0.7 %            |
-| **Total**       | **2,552,196** | **−54 %**         |
+| Circuit         | Constraints |
+|-----------------|------------:|
+| Contribution    |   1,426,592 |
+| Finalize        |   1,017,389 |
+| PartialDecrypt  |      20,717 |
+| DecryptCombine  |      87,498 |
+| **Total**       | **2,552,196** |
 
-The CIRCUITS_AUDIT round added a handful of in-circuit checks: a role
-booleanity constraint on partial-decrypt, an `AssertIsLessOrEqual` on
-combine `ShareCount`, and the looser one-based `≤ MaxN` recipient /
-participant range check (was `≤ MaxN-1`). Net effect ~24 k constraints
-across all four circuits — the big polynomial-eval optimisation
-remains intact.
-
-(Comparison is against the original pre-optimisation figures:
-Contribution 2,900,192 / Finalize 2,490,861 / PartialDecrypt 20,715 /
-DecryptCombine 86,890.)
-
-The big win comes from `CommitmentPolynomialValue`, which evaluates
+`CommitmentPolynomialValue` evaluates
 `Σ_k commitments[k] · x^k` for each recipient (or participant) index
 `x ≤ MaxN-1`. Each in-circuit scalar mul used to go through gnark's
 `scalarMulFakeGLV` over the full ~252-bit BabyJubJub scalar field even
@@ -131,7 +119,7 @@ required to verify `z·G = A + c·PK`. Compared to the pre-P4 path
 (~50 k for `registerKey`), this is **~70× more expensive** but is paid
 exactly once per node-key lifecycle event.
 
-### Read paths (unchanged from pre-rewrite, included for completeness)
+### Read paths
 
 | Function                          |  Gas |
 |-----------------------------------|-----:|

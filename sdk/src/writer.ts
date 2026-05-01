@@ -170,12 +170,12 @@ export class DKGWriter extends DKGClient {
   /**
    * Submit a partial decryption for a ciphertext.
    *
-   * `aid` binds the proof transcript to a specific application (P9).
+   * `aid` binds the proof transcript to a specific application.
    * Pass `0x00…00` for the legacy per-epoch path.
    *
    * `c1`/`c2` are the on-chain ciphertext coords (RTE form). The
    * contract verifies they match the stored ciphertext hash and binds
-   * pi[5..6] to c1 (CIRCUITS_AUDIT #2). Pass them as TE coords; the
+   * pi[5..6] to c1. Pass them as TE coords; the
    * writer converts to RTE before sending, matching the convention used
    * by `submitCiphertext`.
    */
@@ -240,7 +240,7 @@ export class DKGWriter extends DKGClient {
    * `CombinedDecryptionRecord` will hold the recovered `plaintext` and a
    * `DecryptionCombined` event is emitted.
    *
-   * `aid` is the per-application identifier (P9). Pass `0x00…00` for the
+   * `aid` is the per-application identifier. Pass `0x00…00` for the
    * legacy per-epoch path that doesn't use applications.
    */
   async combineDecryption(
@@ -334,7 +334,7 @@ export class DKGWriter extends DKGClient {
    * Submit the organizer's `Δ_org = sk_org · C_1` share (with Chaum-Pedersen
    * DLEQ binding it to `PK_org`). Only used in mode 1 (organizer co-decryption).
    *
-   * Coordinate forms (CIRCUITS_AUDIT #1):
+   * Coordinate forms:
    *   - `c1`/`c2` arrive in TE form; the writer converts to RTE so they
    *     match the on-chain ciphertext hash.
    *   - `deltaOrg` arrives in TE form; the writer converts to RTE.
@@ -394,7 +394,7 @@ export class DKGWriter extends DKGClient {
   /**
    * Register a new BabyJubJub key in the DKG Registry. The caller proves
    * knowledge of the private key via a Schnorr PoK bound to the wallet
-   * address (P4); the SDK builds the proof in-browser from `privateKey`
+   * address; the SDK builds the proof in-browser from `privateKey`
    * and never sends it on the wire. The derived public key + proof are
    * submitted in RTE form, matching the on-chain transcript.
    *

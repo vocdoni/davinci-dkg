@@ -23,8 +23,7 @@ abstract contract TestHelpers is TestInputs {
     /// @dev Canonical on-curve ciphertext used by the ZK-mock tests. Both c1
     /// and c2 must be in the prime-order subgroup of BabyJubJub (gnark RTE
     /// form) — the DKGManager's `_requireValidEncryptionPoint` enforces this
-    /// at submitCiphertext time (DEEPSEEK §2.2 hardening). Identity (0, 1)
-    /// is no longer acceptable.
+    /// at submitCiphertext time. Identity (0, 1) is not acceptable.
     ///   c1 = 1·G  (the gnark RTE generator)
     ///   c2 = 4096·G (the SCHNORR_THIS vector's pubkey, secret = 0x1000)
     uint256 internal constant TEST_CT_C1X = 9671717474070082183213120605117400219616337014328744928644933853176787189663;
@@ -156,7 +155,7 @@ abstract contract TestHelpers is TestInputs {
         return abi.encode([uint256(11), 12, 13, 14, 15, 16, 17, 18]);
     }
 
-    /// P5 partialdecrypt layout (16 public inputs):
+    /// partialdecrypt layout (16 public inputs):
     ///   [0] eid, [1] aid, [2] ctIdx, [3] role, [4] participantIndex,
     ///   [5..6] C1.x/y, [7..8] D_i.x/y, [9..10] delta.x/y,
     ///   [11..12] A1.x/y, [13..14] A2.x/y, [15] response.
@@ -183,7 +182,7 @@ abstract contract TestHelpers is TestInputs {
         inputs[3] = 1;                          // role = COMMITTEE
         inputs[4] = participantIndex;
         // pi[5..6] = C1, must match the test ciphertext fixture so
-        // submitPartialDecryption's CIRCUITS_AUDIT #2 binding accepts.
+        // submitPartialDecryption's ciphertext binding accepts.
         inputs[5] = TEST_CT_C1X;
         inputs[6] = TEST_CT_C1Y;
         inputs[7] = 1000 + participantIndex;    // D_i.x
@@ -244,7 +243,7 @@ abstract contract TestHelpers is TestInputs {
             shareCommitments[i * 2] = 1000 + i + 1;
             shareCommitments[i * 2 + 1] = 2000 + i + 1;
         }
-        // CIRCUITS_AUDIT2 #1: the contract now requires aggregate[0] to equal
+        // The contract requires aggregate[0] to equal
         // the accumulated _collectiveKey. The fixtures all use commitment0 =
         // (0, 1) (identity), so the running sum is identity (0, 1).
         aggregateCommitments[1] = 1;
@@ -276,7 +275,7 @@ abstract contract TestHelpers is TestInputs {
     }
 
     /// @dev Variant of finalizeTranscript used by the duplicate-row regression
-    /// test (CIRCUITS_AUDIT2 #1). Sets participantIndexes = [1, 1] for an
+    /// test. Sets participantIndexes = [1, 1] for an
     /// acceptedCount of 2 instead of [1, 2].
     function finalizeTranscriptWithDuplicateRows() internal pure returns (bytes memory) {
         uint256[32] memory participantIndexes;

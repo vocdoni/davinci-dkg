@@ -11,8 +11,8 @@ import (
 	"github.com/vocdoni/davinci-dkg/types"
 )
 
-// TestDecryptCombineRejectsInvalidModeBit (PLAN.md §9.2 partial /
-// DEEPSEEK §1.4): the combine circuit constrains `mode·(mode-1) == 0`,
+// TestDecryptCombineRejectsInvalidModeBit: the combine circuit
+// constrains `mode·(mode-1) == 0`,
 // so any value outside {0, 1} must be rejected. A future refactor that
 // drops this constraint could let an attacker supply a fractional/
 // blended correction term — this test catches that regression.
@@ -35,8 +35,8 @@ func TestDecryptCombineRejectsInvalidModeBit(t *testing.T) {
 	assert.SolvingFailed(&DecryptCombineCircuit{}, &tampered, test.WithCurves(ecc.BN254))
 }
 
-// TestDecryptCombineModeBitSelectsCorrection (PLAN.md §9.2 / DEEPSEEK
-// §1.4): the circuit's `api.Select(mode, ΔOrg, S·C1)` must only bind
+// TestDecryptCombineModeBitSelectsCorrection: the circuit's
+// `api.Select(mode, ΔOrg, S·C1)` must only bind
 // the active branch into the verifier equation. With mode=0, swapping
 // in a bogus DeltaOrg post-build must NOT break the proof (it's the
 // inactive branch); same in reverse for mode=1 with a bogus S.

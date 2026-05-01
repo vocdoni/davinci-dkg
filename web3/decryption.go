@@ -10,7 +10,7 @@ import (
 
 // GetCombinedDecryption returns the combined decryption record for one
 // ciphertext under (epochID, aid). For the legacy per-epoch path pass
-// `[32]byte{}` as `aid` (CIRCUITS_AUDIT2 #2).
+// `[32]byte{}` as `aid`.
 func (c *Contracts) GetCombinedDecryption(
 	ctx context.Context,
 	epochID [12]byte,

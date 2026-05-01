@@ -51,3 +51,16 @@ Thumbs.db
 data/
 logs/
 .claude/
+
+# ---- Working / draft documents (not for the public repo) ----------------
+/ANALYSIS_*.md
+/CIRCUITS_AUDIT*.md
+/PLAN.md
+/PLAN_PHASES.md
+/REVIEW*.md
+/SECURITY.md
+/ORIGINAL_PAPER.tex
+/paper.tex
+/paper_epochs_v1.tex
+/references_epoch.bib
+/vocdoni-app/

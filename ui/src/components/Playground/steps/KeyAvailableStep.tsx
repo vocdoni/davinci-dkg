@@ -20,9 +20,9 @@ interface Props {
 }
 
 // Reads the on-chain collective public key once the epoch reaches Finalized.
-// Cf. UI_PLAN.md §4 / sdk/src/client.ts:565 — we deliberately do NOT surface
-// this key during the Contribution phase (the on-chain accumulator carries
-// it, but submitCiphertext requires Finalized status).
+// We deliberately do NOT surface this key during the Contribution phase
+// (the on-chain accumulator carries it, but submitCiphertext requires
+// Finalized status).
 export function KeyAvailableStep({ status, epochId, onKeyReady, log }: Props) {
   const { dkg } = useDkgClient()
   const epoch = useEpoch((epochId ?? undefined) as `0x${string}` | undefined)

@@ -18,7 +18,7 @@ import (
 // branch of `DKGManager.registerApplication`: bring an epoch to Finalized,
 // register an application against `(epochId, aid)`, and assert that the
 // cached on-chain record carries the contract-derived `S` and the calling
-// account as creator. Mirrors PLAN §7.2 / paper §4.3.
+// account as creator. Mirrors paper §4.3.
 //
 // The test runs against the live anvil + 7-node fixture; gated on
 // RUN_INTEGRATION_TESTS=true so unit-test runs stay fast.

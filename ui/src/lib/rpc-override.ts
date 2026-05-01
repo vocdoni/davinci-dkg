@@ -1,5 +1,5 @@
-// localStorage-backed RPC override. Same key as the legacy webapp so users
-// who set an override there carry it over after the cutover.
+// localStorage-backed RPC override. Lets users override the bundled RPC
+// endpoint without rebuilding the image.
 
 const KEY = 'dkg-explorer:rpc-url'
 

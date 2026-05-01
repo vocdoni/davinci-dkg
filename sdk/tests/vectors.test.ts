@@ -59,7 +59,6 @@ describe('vectors / protocol.json', () => {
     expect(DomainOperatorRegisterV1).toBe(f.domains.OperatorRegisterV1.keccak256);
     expect(DomainOrganizerRegisterV1).toBe(f.domains.OrganizerRegisterV1.keccak256);
     expect(DomainDLEQV1).toBe(f.domains.DLEQV1.keccak256);
-    // (DerivationV1 removed — DEEPSEEK §2.3.)
   });
 
   it('PartialDecrypt domain reduction matches', () => {

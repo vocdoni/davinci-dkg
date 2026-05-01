@@ -54,7 +54,7 @@ type PartialDecryptionSubmission struct {
 	RoundHash *big.Int
 	// C1, C2 are the on-chain ciphertext coords the proof binds to,
 	// captured here so SubmitPartialDecryption callers can pass them
-	// straight through (CIRCUITS_AUDIT #2). Set by
+	// straight through. Set by
 	// BuildPartialDecryptionSubmissionFromBase from the caller's `base`.
 	C1 types.CurvePoint
 	C2 types.CurvePoint
@@ -275,7 +275,7 @@ func BuildPartialDecryptionSubmission(
 // succeeds. Pass `[32]byte{}` aid for the legacy per-epoch path.
 //
 // `c2` is just stashed on the returned struct so the caller can pass it
-// through to SubmitPartialDecryption (CIRCUITS_AUDIT #2). Callers that
+// through to SubmitPartialDecryption. Callers that
 // don't have c2 (legacy single-CT-test paths) can pass the identity
 // point and use the FromBase variant whose API knows the full ct.
 func BuildPartialDecryptionSubmissionFromBase(

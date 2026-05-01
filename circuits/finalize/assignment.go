@@ -14,7 +14,7 @@ const (
 	MaxParticipants = ccommon.MaxN
 	// xMaxBits = ⌈log₂(MaxParticipants)⌉. See contribution circuit and
 	// CommitmentPolynomialValue for the +1 boundary explanation
-	// (CIRCUITS_AUDIT #3 — one-based indexes go from 1 to MaxN inclusive).
+	// (one-based indexes go from 1 to MaxN inclusive).
 	xMaxBits = 5 // covers MaxParticipants up to 32 (one-based 1..32)
 )
 
@@ -54,7 +54,7 @@ func (a Assignment) Validate() error {
 			len(a.ParticipantIndexes),
 		)
 	}
-	// CIRCUITS_AUDIT2 #1: reject duplicate participant indexes so local
+	// Reject duplicate participant indexes so local
 	// tooling cannot accidentally produce a finalize set that the contract
 	// would reject (and that a malicious prover could otherwise exploit to
 	// finalize an aggregate disjoint from the on-chain accumulated key).

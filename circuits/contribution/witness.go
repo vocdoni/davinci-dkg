@@ -332,10 +332,10 @@ func (p PublicInputs) Scalars() []*big.Int {
 
 // TranscriptScalars returns the ordered transcript compressed by the verifier path.
 //
-// CIRCUITS_AUDIT #10: PadBigInts can fail when the caller passes more
-// indexes than `MaxRecipients`. The active witness builder validates
-// the assignment first, but a manually-constructed PublicInputs would
-// previously silently emit a malformed transcript.
+// PadBigInts can fail when the caller passes more indexes than
+// `MaxRecipients`. The active witness builder validates the assignment
+// first, but a manually-constructed PublicInputs would otherwise
+// silently emit a malformed transcript.
 func (p PublicInputs) TranscriptScalars() ([]*big.Int, error) {
 	transcript := make([]*big.Int, 0, 64)
 	for _, commitment := range publicCommitmentPoints(p.Commitments) {

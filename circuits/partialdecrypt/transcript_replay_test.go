@@ -18,12 +18,11 @@ const (
 	roleOrganizer = 2
 )
 
-// TestPartialDecryptRejectsCrossEpochReplay (PLAN.md §9.2 / DEEPSEEK §1.3):
+// TestPartialDecryptRejectsCrossEpochReplay:
 // A valid (δ_i, A_i, B_i, z_i) for one (eid, aid, ctIdx) must NOT satisfy
-// the circuit when re-bound to a different (eid', aid', ctIdx'). This is
-// the load-bearing regression test for the H-1 vulnerability (the
-// pre-rewrite circuit didn't bind RoundHash into the Fiat-Shamir
-// transcript, allowing cross-round replay).
+// the circuit when re-bound to a different (eid', aid', ctIdx'). The
+// circuit binds RoundHash, Aid, and CtIdx into the Fiat-Shamir transcript
+// to prevent cross-round replay.
 //
 // Strategy: build a valid witness for `(eid_1, aid_1, ctIdx_1)` so
 // Response = w + c1·secret. Then mutate any one of the bound fields
@@ -67,7 +66,7 @@ func TestPartialDecryptRejectsCrossEpochReplay(t *testing.T) {
 	}
 }
 
-// TestPartialDecryptOrganizerRoleConsistency (PLAN.md §9.2 / DEEPSEEK §1.5):
+// TestPartialDecryptOrganizerRoleConsistency:
 // the organizer DLEQ shares a circuit with the committee DLEQ; the role
 // tag is the only thing distinguishing them in-circuit. A witness built
 // for role=ORGANIZER must verify with role=ORGANIZER (sanity check) AND
@@ -79,7 +78,7 @@ func TestPartialDecryptOrganizerRoleConsistency(t *testing.T) {
 
 	asn := testAssignment()
 	asn.Role = big.NewInt(roleOrganizer)
-	asn.ParticipantIndex = 0 // CIRCUITS_AUDIT #6: organizer requires i=0
+	asn.ParticipantIndex = 0 // organizer requires i=0
 	witness, _, err := BuildWitness(asn)
 	c.Assert(err, qt.IsNil)
 
@@ -91,9 +90,9 @@ func TestPartialDecryptOrganizerRoleConsistency(t *testing.T) {
 	})
 
 	// Replay: same proof material relabeled as committee → fails.
-	// (The circuit now also enforces (role-1)*(role-2)=0 — committee is
+	// (The circuit also enforces (role-1)*(role-2)=0 — committee is
 	// a valid role, so this assertion catches the transcript replay,
-	// not the role-value check. CIRCUITS_AUDIT #7.)
+	// not the role-value check.)
 	t.Run("organizer→committee", func(t *testing.T) {
 		tampered := *witness
 		tampered.Role = big.NewInt(roleCommittee)
@@ -102,7 +101,7 @@ func TestPartialDecryptOrganizerRoleConsistency(t *testing.T) {
 }
 
 // TestPartialDecryptRejectsInvalidRoleValue verifies that the circuit
-// itself enforces role ∈ {1, 2} (CIRCUITS_AUDIT #7). The Solidity
+// itself enforces role ∈ {1, 2}. The Solidity
 // entry-point checks already constrain role per call site; this is
 // defence-in-depth for any future verifier path that trusts the
 // circuit alone.

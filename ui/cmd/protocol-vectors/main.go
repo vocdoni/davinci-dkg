@@ -20,7 +20,6 @@ type Vector struct {
 	DomainOrganizerRegisterV1   string `json:"domain_organizer_register_v1"`
 	DomainDLEQV1Str             string `json:"domain_dleq_v1_str"`
 	DomainDLEQV1                string `json:"domain_dleq_v1"`
-	// (DomainDerivationV1 removed — DEEPSEEK §2.3.)
 }
 
 func main() {

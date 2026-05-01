@@ -61,7 +61,7 @@ interface IDKGRegistry {
     // ── registration ──────────────────────────────────────────────────────
     /// @notice Register the caller's BabyJubJub encryption key together
     ///         with a Schnorr proof of knowledge of the secret. Implements
-    ///         paper §5.1.1 (line ~747) and PLAN.md A14.
+    ///         paper §5.1.1 (line ~747).
     /// @param  pubX     X coordinate of the operator's encryption key.
     /// @param  pubY     Y coordinate of the operator's encryption key.
     /// @param  schnorrAx X coordinate of the Schnorr nonce point A = w·G.

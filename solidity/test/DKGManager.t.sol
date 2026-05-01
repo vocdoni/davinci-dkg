@@ -165,8 +165,8 @@ contract DKGManagerTest is Test, TestHelpers {
             )
         );
 
-        // CIRCUITS_AUDIT #2: submitPartialDecryption now requires the
-        // ciphertext to exist on-chain so it can bind C1 into the proof's
+        // submitPartialDecryption requires the ciphertext to exist on-chain
+        // so it can bind C1 into the proof's
         // public inputs. Most test paths drive the partial-decrypt flow
         // against ciphertextIndex=1, so submit it as part of the
         // canonical "finalized" fixture. Tests that need an unsubmitted
@@ -430,8 +430,8 @@ contract DKGManagerTest is Test, TestHelpers {
         assertEq(uint256(after_.status), uint256(DKGTypes.EpochPhase.Finalized));
     }
 
-    /// CIRCUITS_AUDIT2 #1: a finalize transcript with duplicated participant
-    /// indexes ([1, 1] instead of [1, 2]) must be rejected even when both
+    /// A finalize transcript with duplicated participant indexes
+    /// ([1, 1] instead of [1, 2]) must be rejected even when both
     /// contributions are accepted, since otherwise the proof can finalize an
     /// aggregate disjoint from the on-chain accumulated `_collectiveKey`.
     function test_FinalizeEpoch_RejectsDuplicateParticipantRows() public {
@@ -580,7 +580,7 @@ contract DKGManagerTest is Test, TestHelpers {
 
     function test_SubmitPartialDecryption_AllowsDistinctCiphertexts() public {
         bytes12 epochId = createFinalizedRound();
-        // CIRCUITS_AUDIT #2: ciphertext 2 must also exist on-chain.
+        // ciphertext 2 must also exist on-chain.
         manager.submitCiphertext(epochId, bytes32(0), 2, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
 
         manager.submitPartialDecryption(
@@ -969,7 +969,7 @@ contract DKGManagerTest is Test, TestHelpers {
 
         // The cap check doesn't care about distinct coordinates, only the
         // submission count, but the well-formedness check rejects identity
-        // since DEEPSEEK §2.2 — use the prime-subgroup test vectors.
+        // — use the prime-subgroup test vectors.
         manager.submitCiphertext(epochId, bytes32(0), 1, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
         manager.submitCiphertext(epochId, bytes32(0), 2, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
 
@@ -1022,8 +1022,7 @@ contract DKGManagerTest is Test, TestHelpers {
     function test_SubmitPartialDecryption_RejectsWhenCiphertextNotSubmitted() public {
         bytes12 epochId = createFinalizedRound();
 
-        // CIRCUITS_AUDIT #2 raises the gate to submitPartialDecryption
-        // itself (was previously only at combineDecryption time): the
+        // The gate is enforced at submitPartialDecryption itself: the
         // proof can only bind to an existing on-chain ciphertext.
         // createFinalizedRound submits index 1, so use index 2 which
         // was never submitted.

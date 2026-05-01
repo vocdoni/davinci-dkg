@@ -5,15 +5,15 @@ pragma solidity 0.8.28;
 /// @notice Cross-layer protocol constants. Solidity, Go and TypeScript all
 ///         hold copies of the same values; the cross-impl byte-equality is
 ///         covered by `tests/vectors/protocol.json` (driven from the Go side
-///         and asserted by the SDK + Solidity in PR-S1).
+///         and asserted by the SDK + Solidity).
 ///
 ///         Any change here MUST be propagated to:
 ///
 ///           - `internal/protocol/protocol.go`        (Go node)
 ///           - `sdk/src/protocol.ts`                  (TypeScript SDK)
 ///
-/// @dev    Implements PLAN.md §2 principles 2 and 3 ("two modes everywhere",
-///         shared role tags) and §5 opener (transcript domain prefixes).
+/// @dev    Two modes everywhere, shared role tags, and per-transcript
+///         domain prefixes for cross-protocol replay safety.
 library DKGProtocol {
     // ─── Application registration modes ──────────────────────────────────────
     //
@@ -57,7 +57,4 @@ library DKGProtocol {
         keccak256("davinci-dkg:organizer-register:v1");
     bytes32 internal constant DOMAIN_DLEQ_V1 =
         keccak256("davinci-dkg:dleq:v1");
-    // (Removed: DOMAIN_DERIVATION_V1 — DEEPSEEK §2.3. The paper's S
-    // derivation is `keccak256(eid || PK_ep || aid) mod q` with no domain
-    // prefix; the previous constant was dead and could mislead readers.)
 }

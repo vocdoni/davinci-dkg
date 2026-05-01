@@ -64,7 +64,7 @@ library DKGTypes {
         uint256 plaintext;
     }
 
-    // ─── Application surface (paper §4.3, PLAN.md §4.3) ─────────────────────
+    // ─── Application surface (paper §4.3) ───────────────────────────────────
     //
     // An Application is registered against a finalized Epoch and obtains a
     // unique encryption key derived from `PK_ep` plus a per-application

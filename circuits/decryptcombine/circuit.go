@@ -8,8 +8,7 @@ import (
 
 // DecryptCombineCircuit reconstructs the per-application plaintext from a
 // threshold set of partial decryptions, with per-application correction
-// term `T` selected by the `Mode` flag (paper §5.5 lines 1051–1077,
-// PLAN §5.4):
+// term `T` selected by the `Mode` flag (paper §5.5 lines 1051–1077):
 //
 //	mode = 0 (public derivation): T = S · C_1 (computed in-circuit)
 //	mode = 1 (organizer co-decryption): T = Δ_org (consumed as point)
@@ -48,7 +47,7 @@ func (c *DecryptCombineCircuit) Define(api frontend.API) error {
 	if err != nil {
 		return err
 	}
-	// CIRCUITS_AUDIT #5: bound ShareCount to MaxShares so PrefixMask
+	// Bound ShareCount to MaxShares so PrefixMask
 	// truly masks to the circuit's fixed-size slot count. Without this,
 	// a count > MaxShares leaves every slot active and the circuit /
 	// contract disagree on the transcript extent.
@@ -97,7 +96,7 @@ func (c *DecryptCombineCircuit) Define(api frontend.API) error {
 	}
 	api.AssertIsEqual(c.CombineHash, combineHash)
 	api.AssertIsEqual(c.PlaintextHash, c.Plaintext)
-	// CIRCUITS_AUDIT2 #3: Plaintext is interpreted as a BJJ scalar (M = m·G).
+	// Plaintext is interpreted as a BJJ scalar (M = m·G).
 	// Without a canonical-range bound the prover could pick m' ≡ m (mod r_bjj)
 	// outside [0, r_bjj-1]. The recovered plaintext stored on-chain would then
 	// disagree with what an honest verifier expects from the encrypted value.
@@ -116,7 +115,7 @@ func (c *DecryptCombineCircuit) Define(api frontend.API) error {
 		combined = curve.Add(combined, scaled)
 	}
 	messagePoint := ccommon.FixedBaseMul(api, c.Plaintext)
-	// Per-application correction term (paper §5.5 lines 1071–1077, PLAN §5.4):
+	// Per-application correction term (paper §5.5 lines 1071–1077):
 	//   mode = 0 (public derivation):  T = S · C_1 (computed in-circuit)
 	//   mode = 1 (organizer co-decryption): T = Δ_org (consumed as point)
 	// The S·C_1 in-circuit computation is the soundness fix described in

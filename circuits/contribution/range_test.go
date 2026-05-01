@@ -11,12 +11,12 @@ import (
 )
 
 // TestContributionCircuitRejectsOversizedShares is the load-bearing
-// regression test for paper §5.1 / PLAN.md §9.2 ("range-check attack:
-// craft a malicious s_i(j) = honest + k·q and confirm the contribution
-// circuit rejects it"). The original C-1 vulnerability allowed an
-// attacker to submit a polynomial share that wraps around the BabyJubJub
-// subgroup order; the in-circuit `AssertIsLessOrEqual(c.Shares[i],
-// subgroupOrderMinusOne)` constraint is the fix.
+// regression test for paper §5.1 ("range-check attack: craft a malicious
+// s_i(j) = honest + k·q and confirm the contribution circuit rejects
+// it"). Without the range check an attacker could submit a polynomial
+// share that wraps around the BabyJubJub subgroup order; the in-circuit
+// `AssertIsLessOrEqual(c.Shares[i], subgroupOrderMinusOne)` constraint
+// is the fix.
 //
 // We craft `tampered = honest + 7·r_bjj` (which still fits in the BN254
 // scalar field but exceeds the subgroup order) and assert the circuit

@@ -186,9 +186,9 @@ func submitPartialDecryptForGasProfile(t *testing.T, ctx context.Context, epochI
 	t.Helper()
 	c := qt.New(t)
 
-	// CIRCUITS_AUDIT2 #5: submitPartialDecryption requires the
-	// ciphertext to exist on-chain so it can bind C1 into the proof.
-	// Submit a small canonical ciphertext at index 1 first.
+	// submitPartialDecryption requires the ciphertext to exist on-chain
+	// so it can bind C1 into the proof. Submit a small canonical
+	// ciphertext at index 1 first.
 	c1 := group.Generator()
 	c1.ScalarBaseMult(big.NewInt(9))
 	c2 := group.Generator()

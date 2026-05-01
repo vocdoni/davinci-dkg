@@ -11,7 +11,7 @@ import (
 // Assignment is the native input model used to build a decrypt-combine witness.
 //
 // Aid, CtIdx, Mode, S, and DeltaOrg are the per-application correction fields
-// (paper §5.5 lines 1051–1077, PLAN §5.4). They default to zero/identity when
+// (paper §5.5 lines 1051–1077). They default to zero/identity when
 // callers don't supply them — preserving backward compatibility with the
 // pre-application combine path. With Mode=0 and S=0, the in-circuit
 // computation `T = S·C_1 = O` reduces to the legacy `M = C_2 - Σλ_k·δ_xk`.
@@ -66,7 +66,7 @@ func (a Assignment) Validate() error {
 	if a.Plaintext == nil {
 		return fmt.Errorf("plaintext is required")
 	}
-	// CIRCUITS_AUDIT2 #3: mirror the in-circuit canonical-range bound so the
+	// Mirror the in-circuit canonical-range bound so the
 	// prover fails fast at witness build instead of inside the SNARK.
 	if a.Plaintext.Sign() < 0 || a.Plaintext.Cmp(ccommon.SubgroupOrderMinusOne()) > 0 {
 		return fmt.Errorf("plaintext is not canonical: must be in [0, r_bjj-1]")

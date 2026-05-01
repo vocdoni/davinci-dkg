@@ -10,11 +10,11 @@
 //   - sdk/src/protocol.ts
 //
 // The cross-impl byte equality is covered by tests/vectors/protocol.json
-// (PR-S1) which is generated from this file and asserted byte-for-byte
+// which is generated from this file and asserted byte-for-byte
 // by the SDK and a Foundry test.
 //
-// Implements PLAN.md §2 principles 2 and 3 ("two modes everywhere",
-// shared role tags) and §5 opener (transcript domain prefixes).
+// Two modes everywhere, shared role tags, and per-transcript domain
+// prefixes for cross-protocol replay safety.
 package protocol
 
 import (
@@ -56,11 +56,8 @@ const (
 	DomainOperatorRegisterV1Str  = "davinci-dkg:operator-register:v1"
 	DomainOrganizerRegisterV1Str = "davinci-dkg:organizer-register:v1"
 	DomainDLEQV1Str              = "davinci-dkg:dleq:v1"
-	// DomainDerivationV1Str is intentionally absent — the per-application
-	// `S = keccak256(eid || PK_ep || aid) mod q` derivation has NO domain
-	// prefix (paper §4.3 / DEEPSEEK §2.3). A previous draft contemplated
-	// one; removing the dead constant prevents readers from assuming the
-	// transcript carries it.
+	// The per-application `S = keccak256(eid || PK_ep || aid) mod q`
+	// derivation deliberately has NO domain prefix (paper §4.3).
 )
 
 // Domain-prefix digests (keccak256 of the strings above). These are the

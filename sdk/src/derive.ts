@@ -1,4 +1,4 @@
-// Per-application key derivation helpers (PLAN.md §7.2 / paper §4.3).
+// Per-application key derivation helpers (paper §4.3).
 //
 // These mirror the on-chain derivation in DKGManager.registerApplication
 // and the off-chain derivation in internal/protocol/protocol.go. Cross-impl
@@ -21,7 +21,7 @@ export const SUBGROUP_ORDER =
  *   S = keccak256(eid || PK_ep.x || PK_ep.y || aid) mod L
  *
  * where L is the BabyJubJub subgroup order. Matches the on-chain derivation
- * in DKGManager.registerApplication (P8). Both inputs are encoded packed
+ * in DKGManager.registerApplication. Both inputs are encoded packed
  * with EIP-191 / abi.encodePacked semantics — `eid` is bytes12, `PK_ep`'s
  * coordinates are uint256, `aid` is bytes32.
  *

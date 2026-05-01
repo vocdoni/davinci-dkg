@@ -14,8 +14,8 @@ const (
 	MaxRecipients   = ccommon.MaxN
 	// xMaxBits is ⌈log₂(MaxRecipients)⌉ — the per-step bit growth of
 	// `power_k = x^k` when x is range-checked to ≤ MaxRecipients (one-
-	// based committee indexes go from 1 to MaxRecipients inclusive,
-	// CIRCUITS_AUDIT #3).  CommitmentPolynomialValue passes nbBits =
+	// based committee indexes go from 1 to MaxRecipients inclusive).
+	// CommitmentPolynomialValue passes nbBits =
 	// xMaxBits·k + 1 per iteration; the +1 covers the boundary case
 	// `x = MaxRecipients = 2^xMaxBits` where x^k = 2^(xMaxBits·k) needs
 	// one extra bit beyond the xMaxBits·k bits used for x ∈ [0, MaxN-1].
@@ -65,8 +65,8 @@ func (c *ContributionCircuit) Define(api frontend.API) error {
 	api.AssertIsEqual(c.CommitmentX0, c.Commitments[0].X)
 	api.AssertIsEqual(c.CommitmentY0, c.Commitments[0].Y)
 
-	// CIRCUITS_AUDIT2 #4: bound the public count inputs to their fixed
-	// array sizes. PrefixMask returns all-active when count > size, so
+	// Bound the public count inputs to their fixed array sizes.
+	// PrefixMask returns all-active when count > size, so
 	// without these the statement could prove a partial set while
 	// claiming a larger one.
 	api.AssertIsLessOrEqual(c.Threshold, MaxCoefficients)
@@ -95,7 +95,7 @@ func (c *ContributionCircuit) Define(api frontend.API) error {
 		}
 		// Range-check the coefficient witness to its canonical [0, r) form.
 		// FixedBaseMul itself wraps mod r, so the constraint is defence in
-		// depth against future composition (see SECURITY.md M-1).
+		// depth against future composition.
 		api.AssertIsLessOrEqual(c.Coefficients[i], subgroupOrderMinusOne)
 		expectedCommitment := ccommon.FixedBaseMul(api, c.Coefficients[i])
 		// Conditional equality: when coeffMask[i] == 1 the witness commitment
@@ -128,7 +128,7 @@ func (c *ContributionCircuit) Define(api frontend.API) error {
 
 	shareInputs := []frontend.Variable{c.RoundHash, c.ContributorIndex, c.CommitteeSize}
 	for i := range MaxRecipients {
-		// SECURITY (C-1): Shares[i] must lie in [0, r). Without this check
+		// Shares[i] must lie in [0, r). Without this check
 		// the prover can pick s' = honest_share + 7·r (still <p when
 		// honest_share<δ) and have AddModSubgroupOrder publish a
 		// MaskedShare that decrypts to honest_share+(r−δ)≠honest_share.
@@ -146,8 +146,8 @@ func (c *ContributionCircuit) Define(api frontend.API) error {
 		// masked out of the share-hash and transcript and the sharedSecret
 		// scalar mul on RecipientPubKeys[i] is the only consumer left.
 
-		// Range-check the recipient index to ≤ MaxRecipients (one-based,
-		// CIRCUITS_AUDIT #3). The contract enforces non-zero, so the
+		// Range-check the recipient index to ≤ MaxRecipients (one-based).
+		// The contract enforces non-zero, so the
 		// honest range is [1, MaxRecipients]. This bound is what lets
 		// CommitmentPolynomialValue use the small-scalar variant for the
 		// scaled commitments below: for k ≥ 1, power_k = x^k fits in

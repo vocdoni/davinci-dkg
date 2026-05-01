@@ -88,8 +88,8 @@ contract DKGRegistrySchnorrTest is Test {
         registry.registerKey(BEEF_PUBX, BEEF_PUBY, BEEF_AX, BEEF_AY, BEEF_Z);
     }
 
-    /// DEEPSEEK §4.4 hardening: a Schnorr PoK built for the organizer
-    /// transcript (poseidon4(domain_org, eid, pkX, pkY) → poseidon4(...))
+    /// A Schnorr PoK built for the organizer transcript
+    /// (poseidon4(domain_org, eid, pkX, pkY) → poseidon4(...))
     /// must NOT verify against the operator transcript
     /// (poseidon5(domain_op, addr, pkX, pkY, ax) → poseidon2(inner, ay)).
     /// The two domain digests are distinct, so the recomputed challenge

@@ -76,7 +76,7 @@ contract DKGRegistry is IDKGRegistry {
 
     /// @notice Register the caller's BabyJubJub encryption key together
     ///         with a Schnorr proof of knowledge of the secret. Implements
-    ///         paper §5.1.1 (line ~747) and PLAN.md A14.
+    ///         paper §5.1.1 (line ~747).
     /// @dev    Validates the key is a canonical, on-curve, non-identity
     ///         point. Then verifies the Schnorr PoK natively in BabyJubJub
     ///         arithmetic (no SNARK). Initialises liveness and increments
@@ -166,7 +166,7 @@ contract DKGRegistry is IDKGRegistry {
     ///
     ///      The shared `DOMAIN_OPERATOR_REGISTER_V1` digest namespaces the
     ///      proof so it cannot be replayed as an organizer Schnorr proof
-    ///      (cross-protocol replay safety, PLAN §2.8).
+    ///      (cross-protocol replay safety).
     function _operatorSchnorrChallenge(
         address op,
         uint256 pubX,

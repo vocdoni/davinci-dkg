@@ -41,8 +41,4 @@ contract DKGProtocolTest is Test {
             uint256(0x48fabea26e7a072780483852e403ea60b2f51a07c735c3e4b852ac6bb99b5a91)
         );
     }
-
-    // (Removed test_DomainDerivationV1_MatchesGoVector — DEEPSEEK §2.3.
-    // The constant is gone because the actual S derivation uses no
-    // domain prefix.)
 }

@@ -23,7 +23,7 @@ import { HashCell } from '~components/ui/HashCell'
 import { DetailDisclosure } from '~components/Debug/DetailDisclosure'
 
 // AppRegistrationForm — register a per-application correction key against a
-// finalized epoch (paper §4.3 / PLAN §7.2).
+// finalized epoch (paper §4.3).
 //
 //   Mode 0 (public derivation):    PK_aid = PK_ep + S·G,  S = H(eid||PK_ep||aid).
 //   Mode 1 (organizer co-decryption): PK_aid = PK_ep + PK_org. Caller supplies

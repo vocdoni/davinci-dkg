@@ -41,7 +41,4 @@ describe('protocol constants', () => {
       '0x48fabea26e7a072780483852e403ea60b2f51a07c735c3e4b852ac6bb99b5a91',
     );
   });
-
-  // (Removed DOMAIN_DERIVATION_V1 — DEEPSEEK §2.3. The actual S
-  // derivation has no domain prefix.)
 });

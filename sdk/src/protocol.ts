@@ -9,11 +9,11 @@
 //   - internal/protocol/protocol.go
 //
 // The cross-impl byte equality is covered by tests/vectors/protocol.json
-// (PR-S1) which is generated from `internal/protocol/protocol.go` and
-// asserted byte-for-byte by the SDK and a Foundry test.
+// which is generated from `internal/protocol/protocol.go` and asserted
+// byte-for-byte by the SDK and a Foundry test.
 //
-// Implements PLAN.md §2 principles 2 and 3 ("two modes everywhere",
-// shared role tags) and §5 opener (transcript domain prefixes).
+// Two modes everywhere, shared role tags, and per-transcript domain
+// prefixes for cross-protocol replay safety.
 
 import { keccak256, toHex } from 'viem';
 
@@ -58,9 +58,9 @@ export type RoleValue = (typeof Role)[keyof typeof Role];
 // ─── Fiat-Shamir / Schnorr / DLEQ transcript domain prefixes ─────────────────
 
 /** Canonical UTF-8 strings hashed to derive the domain digests below.
- * `DomainDerivationV1Str` was deliberately removed (DEEPSEEK §2.3): the
- * per-application `S = keccak256(eid || PK_ep || aid) mod q` derivation
- * has NO domain prefix in the on-chain or paper definitions. */
+ * Note: the per-application `S = keccak256(eid || PK_ep || aid) mod q`
+ * derivation deliberately has NO domain prefix in the on-chain or paper
+ * definitions. */
 export const DomainOperatorRegisterV1Str = 'davinci-dkg:operator-register:v1';
 export const DomainOrganizerRegisterV1Str = 'davinci-dkg:organizer-register:v1';
 export const DomainDLEQV1Str = 'davinci-dkg:dleq:v1';
