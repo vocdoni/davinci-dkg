@@ -119,7 +119,7 @@ contract DKGManager is IDKGManager {
     mapping(bytes12 epochId => mapping(bytes32 aid => mapping(uint16 ciphertextIndex => uint16 count))) internal epochPartialDecryptionCounts;
     mapping(bytes12 epochId => mapping(bytes32 aid => mapping(uint16 ciphertextIndex => DKGTypes.CombinedDecryptionRecord combined))) internal
         epochCombinedDecryptions;
-    /// @dev Stores keccak256(abi.encode(scX, scY)) for each share commitment, packing
+    /// @dev Stores _hash2(scX, scY) for each share commitment, packing
     /// the original (x,y) pair into a single 32-byte slot. Saves one cold SSTORE per
     /// committee member at finalize time. The pre-image (x,y) is exposed in the
     /// EpochFinalized event for off-chain consumers.
@@ -137,7 +137,7 @@ contract DKGManager is IDKGManager {
     ///      is finalized the value equals sum_i(a_{i,0}·G) = the collective public key.
     mapping(bytes12 epochId => DKGTypes.Point) internal _collectiveKey;
 
-    /// @dev keccak256(abi.encode(c1x, c1y, c2x, c2y)) for each ciphertext submitted to a
+    /// @dev _hash4(c1x, c1y, c2x, c2y) for each ciphertext submitted to a
     ///      epoch. Written once per (epochId, aid, ciphertextIndex) by submitCiphertext and
     ///      verified by combineDecryption to bind the combine proof to the authoritative
     ///      on-chain ciphertext (preventing a combiner from swapping in a different ct).
@@ -535,7 +535,8 @@ contract DKGManager is IDKGManager {
         DKGTypes.ContributionRecord storage record = epochContributions[epochId][msg.sender];
         if (record.accepted) revert AlreadyContributed();
 
-        IZKVerifier(CONTRIBUTION_VERIFIER).verifyProof(proof, input);
+        // Cheap public-input checks first; only invoke the expensive verifier
+        // once we've confirmed the proof targets the right epoch + contributor.
         uint256[8] memory publicInputs = abi.decode(input, (uint256[8]));
         if (
             publicInputs[0] != _epochScalar(epochId) || publicInputs[1] != epoch.policy.threshold
@@ -549,6 +550,7 @@ contract DKGManager is IDKGManager {
         );
         if (publicInputs[6] != challenge) revert InvalidProofInput();
         // publicInputs[7] = TranscriptCommitment (verified below via BRLC)
+        IZKVerifier(CONTRIBUTION_VERIFIER).verifyProof(proof, input);
 
         // Transcript layout (8N words = 256 N=32, 128 N=16):
         //   words [0..2N)     commitmentPoints  (N points × 2 coords)
@@ -630,7 +632,8 @@ contract DKGManager is IDKGManager {
                 || shareCommitmentHash == bytes32(0)
         ) revert InvalidFinalization();
 
-        IZKVerifier(FINALIZE_VERIFIER).verifyProof(proof, input);
+        // Cheap public-input checks first; only invoke the verifier when the
+        // proof targets the right epoch / aggregate.
         uint256[9] memory publicInputs = abi.decode(input, (uint256[9]));
         if (
             publicInputs[0] != _epochScalar(epochId) || publicInputs[1] != epoch.policy.threshold
@@ -646,6 +649,7 @@ contract DKGManager is IDKGManager {
             keccak256(abi.encodePacked(aggregateCommitmentsHash, collectivePublicKeyHash, shareCommitmentHash))
         );
         if (publicInputs[7] != challenge) revert InvalidProofInput();
+        IZKVerifier(FINALIZE_VERIFIER).verifyProof(proof, input);
 
         // Transcript layout (2N² + 5N words):
         //   words [0..N)              participantIndexes
@@ -695,7 +699,7 @@ contract DKGManager is IDKGManager {
                 scX := calldataload(add(scBase, mul(i, 0x40)))
                 scY := calldataload(add(scBase, add(mul(i, 0x40), 0x20)))
             }
-            epochShareCommitmentHashes[epochId][uint16(pIdx)] = keccak256(abi.encode(scX, scY));
+            epochShareCommitmentHashes[epochId][uint16(pIdx)] = _hash2(scX, scY);
         }
 
         emit EpochFinalized(epochId, aggregateCommitmentsHash, collectivePublicKeyHash, shareCommitmentHash);
@@ -858,18 +862,18 @@ contract DKGManager is IDKGManager {
         // applications under the same epoch don't collide on ctIdx.
         bytes32 storedCt = _ciphertexts[epochId][aid][ciphertextIndex];
         if (storedCt == bytes32(0)) revert CiphertextNotSubmitted();
-        if (keccak256(abi.encode(c1x, c1y, c2x, c2y)) != storedCt) revert InvalidProofInput();
+        if (_hash4(c1x, c1y, c2x, c2y) != storedCt) revert InvalidProofInput();
 
         uint256 indexBit = uint256(1) << participantIndex;
         if (epochPartialBitmap[epochId][aid][ciphertextIndex] & indexBit != 0) {
             revert AlreadyPartiallyDecrypted();
         }
 
-        IZKVerifier(PARTIAL_DECRYPT_VERIFIER).verifyProof(proof, input);
         // Layout: [eid, aid, ctIdx, role, i, C1.x, C1.y, D_i.x, D_i.y,
         // delta.x, delta.y, A1.x, A1.y, A2.x, A2.y, response].
         // Committee partial decryptions always use role = COMMITTEE = 1
         // (organizer shares go through submitOrganizerShare instead).
+        // Cheap public-input checks fail before the expensive verifier call.
         uint256[16] memory publicInputs = abi.decode(input, (uint256[16]));
         bytes32 storedScHash = epochShareCommitmentHashes[epochId][participantIndex];
         if (
@@ -883,9 +887,10 @@ contract DKGManager is IDKGManager {
                 || publicInputs[5] != c1x
                 || publicInputs[6] != c1y
                 || storedScHash == bytes32(0)
-                || keccak256(abi.encode(publicInputs[7], publicInputs[8])) != storedScHash
+                || _hash2(publicInputs[7], publicInputs[8]) != storedScHash
         ) revert InvalidProofInput();
         if (deltaHash != keccak256(abi.encodePacked(publicInputs[9], publicInputs[10]))) revert InvalidProofInput();
+        IZKVerifier(PARTIAL_DECRYPT_VERIFIER).verifyProof(proof, input);
 
         // Persist the δ commitment as a single 32-byte hash plus a bitmap bit.
         // The combine path reads δ.x/δ.y back from the proof transcript and
@@ -956,7 +961,7 @@ contract DKGManager is IDKGManager {
 
         if (_ciphertexts[epochId][aid][ciphertextIndex] != bytes32(0)) revert CiphertextAlreadySubmitted();
 
-        _ciphertexts[epochId][aid][ciphertextIndex] = keccak256(abi.encode(c1x, c1y, c2x, c2y));
+        _ciphertexts[epochId][aid][ciphertextIndex] = _hash4(c1x, c1y, c2x, c2y);
         unchecked { epoch.ciphertextCount += 1; }
 
         emit CiphertextSubmitted(epochId, aid, ciphertextIndex, msg.sender, c1x, c1y, c2x, c2y);
@@ -1012,10 +1017,13 @@ contract DKGManager is IDKGManager {
         DKGTypes.CombinedDecryptionRecord storage record = epochCombinedDecryptions[epochId][aid][ciphertextIndex];
         if (record.completed) revert AlreadyCombined();
 
-        IZKVerifier(DECRYPT_COMBINE_VERIFIER).verifyProof(proof, input);
+        // Validate cheap public-input bindings before invoking the verifier
+        // so a mismatched (eid, aid, ctIdx, ...) submission fails before the
+        // ~280 k pairing check.
         uint256 shareCount = _validateAndPostCombine(
             epochId, aid, ciphertextIndex, combineHash, plaintext, epoch, input, transcript, storedCtHash
         );
+        IZKVerifier(DECRYPT_COMBINE_VERIFIER).verifyProof(proof, input);
         _verifyCombineTranscript(epochId, aid, ciphertextIndex, epoch, shareCount, transcript);
 
         record.completed = true;
@@ -1129,7 +1137,7 @@ contract DKGManager is IDKGManager {
         // the stored Δ_org corrects the wrong discrete log at combine.
         bytes32 storedCt = _ciphertexts[epochId][aid][ciphertextIndex];
         if (storedCt == bytes32(0)) revert CiphertextNotSubmitted();
-        if (keccak256(abi.encode(c1x, c1y, c2x, c2y)) != storedCt) revert InvalidProofInput();
+        if (_hash4(c1x, c1y, c2x, c2y) != storedCt) revert InvalidProofInput();
 
         if (organizerShares[epochId][aid][ciphertextIndex].accepted) revert AlreadyPartiallyDecrypted();
 
@@ -1212,7 +1220,10 @@ contract DKGManager is IDKGManager {
         existing.creator = msg.sender;
         existing.mode = DKGTypes.AppMode.PublicDerivation;
         existing.derivationS = s;
-        existing.organizerPK = DKGTypes.Point({x: 0, y: 1}); // identity
+        // organizerPK is only consumed in mode 1 (organizer co-decryption);
+        // for mode 0 apps it is conceptually the identity (0, 1). Leaving the
+        // storage slot zero saves the one cold SSTORE per registration; the
+        // getter normalizes a zero slot to identity for consumers.
         existing.policy = policy;
         existing.createdAtBlock = uint64(block.number);
         existing.exists = true;
@@ -1295,9 +1306,14 @@ contract DKGManager is IDKGManager {
     function getApplication(bytes12 epochId, bytes32 aid)
         external
         view
-        returns (DKGTypes.Application memory)
+        returns (DKGTypes.Application memory app)
     {
-        return applications[epochId][aid];
+        app = applications[epochId][aid];
+        // Mode-0 apps don't store organizerPK (they leave it zeroed); normalize
+        // to the BabyJubJub identity (0, 1) for off-chain consumers.
+        if (app.organizerPK.y == 0) {
+            app.organizerPK = DKGTypes.Point({x: 0, y: 1});
+        }
     }
 
     /// @dev Two-pass Poseidon (T5+T5) Fiat-Shamir transcript for the organizer
@@ -1422,7 +1438,7 @@ contract DKGManager is IDKGManager {
         return epochShareCommitmentHashes[epochId][participantIndex];
     }
 
-    /// @notice keccak256(abi.encode(c1x, c1y, c2x, c2y)) of the ciphertext stored
+    /// @notice _hash4(c1x, c1y, c2x, c2y) of the ciphertext stored
     ///         at `ciphertextIndex` for `epochId`. Returns bytes32(0) if no
     ///         ciphertext has been submitted at this slot.
     function getCiphertextHash(bytes12 epochId, bytes32 aid, uint16 ciphertextIndex) external view returns (bytes32) {
@@ -1459,5 +1475,28 @@ contract DKGManager is IDKGManager {
 
     function _epochScalar(bytes12 epochId) internal pure returns (uint256) {
         return uint256(uint96(epochId));
+    }
+
+    /// @dev keccak256 of two 32-byte words written into scratch memory.
+    ///      Skips the abi.encode allocation/length-prefix overhead.
+    function _hash2(uint256 a, uint256 b) internal pure returns (bytes32 h) {
+        assembly ("memory-safe") {
+            let p := mload(0x40)
+            mstore(p, a)
+            mstore(add(p, 0x20), b)
+            h := keccak256(p, 0x40)
+        }
+    }
+
+    /// @dev keccak256 of four 32-byte words written into scratch memory.
+    function _hash4(uint256 a, uint256 b, uint256 c, uint256 d) internal pure returns (bytes32 h) {
+        assembly ("memory-safe") {
+            let p := mload(0x40)
+            mstore(p, a)
+            mstore(add(p, 0x20), b)
+            mstore(add(p, 0x40), c)
+            mstore(add(p, 0x60), d)
+            h := keccak256(p, 0x80)
+        }
     }
 }

@@ -284,7 +284,10 @@ contract DKGManagerTest is Test, TestHelpers {
     function test_SubmitContribution_RejectsBadProofInput() public {
         bytes12 epochId = createSelectedRound();
 
-        vm.expectRevert(MockContributionVerifier.InvalidProofInput.selector);
+        // The manager validates cheap public-input bindings before invoking
+        // the verifier, so a tampered input vector reverts with the manager's
+        // own InvalidProofInput rather than the verifier's.
+        vm.expectRevert(IDKGManager.InvalidProofInput.selector);
         manager.submitContribution(
             epochId,
             1,
@@ -500,7 +503,7 @@ contract DKGManagerTest is Test, TestHelpers {
     function test_SubmitPartialDecryption_RejectsBadProofInput() public {
         bytes12 epochId = createFinalizedRound();
 
-        vm.expectRevert(MockPartialDecryptVerifier.InvalidProofInput.selector);
+        vm.expectRevert(IDKGManager.InvalidProofInput.selector);
         manager.submitPartialDecryption(
             epochId,
             bytes32(0),

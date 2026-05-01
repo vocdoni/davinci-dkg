@@ -84,27 +84,39 @@ library BabyJubJub {
     }
 
     /// @notice Whether `(x, y)` lies in the prime-order subgroup.
-    /// @dev    Implemented as `[L]P == identity`. Uses a non-reducing scalar
-    ///         multiplication: `scalarMul` reduces its scalar mod `L` first,
-    ///         which would short-circuit `[L]P` to `[0]P = identity` and
-    ///         render the check vacuous. The loop below intentionally walks
-    ///         the bits of `L` as-is. Costs one full scalar multiplication
-    ///         (~252 doubles + ~125 adds). Use only at entry points where
-    ///         prime-subgroup membership is not otherwise enforced.
+    /// @dev    Implemented as `[L]P == identity` via a width-2 windowed
+    ///         double-and-add (MSB-first) over the bits of `L`. We walk
+    ///         `L` directly — `scalarMul` reduces its scalar mod `L`
+    ///         first, which would short-circuit `[L]P` to `[0]P` and
+    ///         render the check vacuous. The window precomputes `2P` and
+    ///         `3P` once and consumes 2 bits per iteration, halving the
+    ///         number of conditional adds compared to bit-by-bit
+    ///         double-and-add. Use only at entry points where prime-
+    ///         subgroup membership is not otherwise enforced.
     function isInPrimeSubgroup(uint256 x, uint256 y) internal view returns (bool) {
         if (x == 0 && y == 1) return true; // identity is in every subgroup
+        // Precompute 2P, 3P once.
+        (uint256 p2x, uint256 p2y) = pointAdd(x, y, x, y);
+        (uint256 p3x, uint256 p3y) = pointAdd(p2x, p2y, x, y);
+
         uint256 k = SUBGROUP_ORDER;
         uint256 rx = 0;
         uint256 ry = 1;
-        uint256 px = x;
-        uint256 py = y;
-        while (k != 0) {
-            if (k & 1 == 1) {
-                (rx, ry) = pointAdd(rx, ry, px, py);
+        // L is ~252 bits; 126 windows of 2 bits each. MSB-first.
+        uint256 w = 126;
+        while (w > 0) {
+            unchecked { w--; }
+            uint256 bits = (k >> (w * 2)) & 3;
+            if (rx != 0 || ry != 1) {
+                (rx, ry) = pointAdd(rx, ry, rx, ry);
+                (rx, ry) = pointAdd(rx, ry, rx, ry);
             }
-            k >>= 1;
-            if (k != 0) {
-                (px, py) = pointAdd(px, py, px, py);
+            if (bits == 1) {
+                (rx, ry) = pointAdd(rx, ry, x, y);
+            } else if (bits == 2) {
+                (rx, ry) = pointAdd(rx, ry, p2x, p2y);
+            } else if (bits == 3) {
+                (rx, ry) = pointAdd(rx, ry, p3x, p3y);
             }
         }
         return rx == 0 && ry == 1;

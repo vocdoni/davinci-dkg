@@ -94,10 +94,6 @@ contract Verifier {
     uint256 constant PUB_6_Y = 21230085606900974708842113094844496822898684877744540799671713854417749799238;
     uint256 constant PUB_7_X = 11919621261028496813143327213195204471557942371867964979937116909026298242008;
     uint256 constant PUB_7_Y = 14255764826787789983498646273770738274277797311493986287383607847242162660599;
-    uint256 constant PUB_8_X = 18559312516232400018419052977037810016650470813567515172800770121269217048880;
-    uint256 constant PUB_8_Y = 11412031280138557589840171555216774793033296619466739138292321078444285005348;
-    uint256 constant PUB_9_X = 11913274035687672637759983639318987679663462780354364565235097416586157476732;
-    uint256 constant PUB_9_Y = 9894746541715134185472463388101907155033738683599676819776458108709909731560;
 
     /// Negation in Fp.
     /// @notice Returns a number x such that a + x = 0 in Fp.
@@ -374,7 +370,7 @@ contract Verifier {
     /// @param input The public inputs. These are elements of the scalar field Fr.
     /// @return x The X coordinate of the resulting G1 point.
     /// @return y The Y coordinate of the resulting G1 point.
-    function publicInputMSM(uint256[10] calldata input)
+    function publicInputMSM(uint256[8] calldata input)
     internal view returns (uint256 x, uint256 y) {
         // Note: The ECMUL precompile does not reject unreduced values, so we check this.
         // Note: Unrolling this loop does not cost much extra in code-size, the bulk of the
@@ -447,20 +443,6 @@ contract Verifier {
             success := and(success, lt(s, R))
             success := and(success, staticcall(gas(), PRECOMPILE_MUL, g, 0x60, g, 0x40))
             success := and(success, staticcall(gas(), PRECOMPILE_ADD, f, 0x80, f, 0x40))
-            mstore(g, PUB_8_X)
-            mstore(add(g, 0x20), PUB_8_Y)
-            s :=  calldataload(add(input, 256))
-            mstore(add(g, 0x40), s)
-            success := and(success, lt(s, R))
-            success := and(success, staticcall(gas(), PRECOMPILE_MUL, g, 0x60, g, 0x40))
-            success := and(success, staticcall(gas(), PRECOMPILE_ADD, f, 0x80, f, 0x40))
-            mstore(g, PUB_9_X)
-            mstore(add(g, 0x20), PUB_9_Y)
-            s :=  calldataload(add(input, 288))
-            mstore(add(g, 0x40), s)
-            success := and(success, lt(s, R))
-            success := and(success, staticcall(gas(), PRECOMPILE_MUL, g, 0x60, g, 0x40))
-            success := and(success, staticcall(gas(), PRECOMPILE_ADD, f, 0x80, f, 0x40))
 
             x := mload(f)
             y := mload(add(f, 0x20))
@@ -497,7 +479,7 @@ contract Verifier {
     /// Elements must be reduced.
     function verifyCompressedProof(
         uint256[4] calldata compressedProof,
-        uint256[10] calldata input
+        uint256[8] calldata input
     ) public view {
         uint256[24] memory pairings;
 
@@ -564,7 +546,7 @@ contract Verifier {
     /// Elements must be reduced.
     function verifyProof(
         uint256[8] calldata proof,
-        uint256[10] calldata input
+        uint256[8] calldata input
     ) public view {
         (uint256 x, uint256 y) = publicInputMSM(input);
 
