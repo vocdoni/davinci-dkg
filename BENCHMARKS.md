@@ -5,8 +5,8 @@ icicle/CUDA acceleration. The numbers below are for the production
 **MaxN = 32** build with the post-rewrite circuit set (Contribution,
 Finalize, PartialDecrypt, DecryptCombine — no disclosure circuits).
 
-Last refresh: 2026-05-01 (after the small-scalar `CommitmentPolynomialValue`
-optimisation). Re-measure constraint counts with a quick helper that
+Last refresh: 2026-05-01 (after the CIRCUITS_AUDIT fixes — see commit
+log for details). Re-measure constraint counts with a quick helper that
 calls `<circuit>.Compile()` + `ccs.GetNbConstraints()`, and the gas
 table with `forge test --gas-report` after any circuit / contract change.
 
@@ -21,16 +21,24 @@ table with `forge test --gas-report` after any circuit / contract change.
 
 ## Circuit Constraint Counts
 
-| Circuit         | Constraints | vs. previous |
-|-----------------|------------:|-------------:|
-| Contribution    |   1,414,912 |  −51 %       |
-| Finalize        |   1,005,709 |  −60 %       |
-| PartialDecrypt  |      20,715 |   —          |
-| DecryptCombine  |      86,890 |   —          |
-| **Total**       | **2,528,226** | **−54 %** |
+| Circuit         | Constraints | vs. pre-optimisation |
+|-----------------|------------:|--------------------:|
+| Contribution    |   1,426,592 |  −51 %              |
+| Finalize        |   1,017,389 |  −59 %              |
+| PartialDecrypt  |      20,717 |   —                 |
+| DecryptCombine  |      87,498 |   +0.7 %            |
+| **Total**       | **2,552,196** | **−54 %**         |
 
-(Comparison is against the pre-2026-05-01 figures: Contribution 2,900,192 /
-Finalize 2,490,861 / PartialDecrypt 20,715 / DecryptCombine 86,890.)
+The CIRCUITS_AUDIT round added a handful of in-circuit checks: a role
+booleanity constraint on partial-decrypt, an `AssertIsLessOrEqual` on
+combine `ShareCount`, and the looser one-based `≤ MaxN` recipient /
+participant range check (was `≤ MaxN-1`). Net effect ~24 k constraints
+across all four circuits — the big polynomial-eval optimisation
+remains intact.
+
+(Comparison is against the original pre-optimisation figures:
+Contribution 2,900,192 / Finalize 2,490,861 / PartialDecrypt 20,715 /
+DecryptCombine 86,890.)
 
 The big win comes from `CommitmentPolynomialValue`, which evaluates
 `Σ_k commitments[k] · x^k` for each recipient (or participant) index

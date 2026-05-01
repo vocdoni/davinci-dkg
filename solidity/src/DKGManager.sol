@@ -679,6 +679,13 @@ contract DKGManager is IDKGManager {
         uint256 pdBase = dOff + COMBINE_PARTIALS_BYTES_OFFSET;        // partialDecryptions start
 
         uint256 cs = epoch.policy.committeeSize;
+        // CIRCUITS_AUDIT #4: track which participant indexes have been
+        // seen so duplicates can't pad the qualifying set with copies of
+        // the same partial. Bitmap fits because participantIndex ≤ MAX_N
+        // ≤ 32. The contract-side check + the in-circuit `mask =
+        // PrefixMask(ShareCount, MaxShares)` together enforce a proper
+        // qualifying set without needing in-circuit pairwise inequality.
+        uint256 seenIndexes;
         for (uint256 i = 0; i < shareCount; i++) {
             uint256 pIdxRaw;
             uint256 pdX;
@@ -690,6 +697,9 @@ contract DKGManager is IDKGManager {
             }
             uint16 participantIndex = uint16(pIdxRaw);
             if (participantIndex == 0 || participantIndex > cs) revert InvalidProofInput();
+            uint256 indexBit = uint256(1) << participantIndex;
+            if (seenIndexes & indexBit != 0) revert InvalidProofInput();
+            seenIndexes |= indexBit;
             address participant = epochParticipants[epochId][participantIndex - 1];
             DKGTypes.PartialDecryptionRecord storage partialRecord =
                 epochPartialDecryptions[epochId][ciphertextIndex][participant];
@@ -761,11 +771,20 @@ contract DKGManager is IDKGManager {
     ///      (P9). Pass `bytes32(0)` for the legacy per-epoch path that
     ///      pre-dates the application surface; the circuit witness builder
     ///      defaults Aid/CtIdx/Role to zero/zero/COMMITTEE in that mode.
+    /// @dev `c1x/c1y/c2x/c2y` are the raw ciphertext coordinates as
+    ///      submitted via submitCiphertext. The contract verifies
+    ///      `keccak256(abi.encode(...))` matches the stored ciphertext
+    ///      hash and then binds the proof's public-input C1 (pi[5..6])
+    ///      to the authoritative on-chain ciphertext (CIRCUITS_AUDIT #2).
     function submitPartialDecryption(
         bytes12 epochId,
         bytes32 aid,
         uint16 participantIndex,
         uint16 ciphertextIndex,
+        uint256 c1x,
+        uint256 c1y,
+        uint256 c2x,
+        uint256 c2y,
         bytes32 deltaHash,
         bytes calldata proof,
         bytes calldata input
@@ -779,6 +798,15 @@ contract DKGManager is IDKGManager {
                 || ciphertextIndex > MAX_CIPHERTEXT_INDEX || deltaHash == bytes32(0)
         ) revert InvalidPartialDecryption();
         if (epochParticipants[epochId][participantIndex - 1] != msg.sender) revert InvalidProofInput();
+
+        // CIRCUITS_AUDIT #2: bind to the authoritative on-chain ciphertext.
+        // Without this the prover can supply Δ_i = sk_i · B for an
+        // arbitrary B, and the stored partial decryption is only meaningful
+        // relative to that B — combine then aggregates points that aren't
+        // decryptions of the submitted ciphertext.
+        bytes32 storedCt = _ciphertexts[epochId][ciphertextIndex];
+        if (storedCt == bytes32(0)) revert CiphertextNotSubmitted();
+        if (keccak256(abi.encode(c1x, c1y, c2x, c2y)) != storedCt) revert InvalidProofInput();
 
         DKGTypes.PartialDecryptionRecord storage record = epochPartialDecryptions[epochId][ciphertextIndex][msg.sender];
         if (record.accepted) revert AlreadyPartiallyDecrypted();
@@ -796,6 +824,10 @@ contract DKGManager is IDKGManager {
                 || publicInputs[2] != ciphertextIndex
                 || publicInputs[3] != uint256(DKGProtocol.ROLE_COMMITTEE)
                 || publicInputs[4] != participantIndex
+                // pi[5..6] = base point (C_1) — bind to the just-verified
+                // on-chain ciphertext (CIRCUITS_AUDIT #2).
+                || publicInputs[5] != c1x
+                || publicInputs[6] != c1y
                 || storedScHash == bytes32(0)
                 || keccak256(abi.encode(publicInputs[7], publicInputs[8])) != storedScHash
         ) revert InvalidProofInput();
@@ -948,7 +980,12 @@ contract DKGManager is IDKGManager {
                 || bytes32(publicInputs[9]) != combineHash
                 || publicInputs[10] != plaintext
         ) revert InvalidProofInput();
+        // CIRCUITS_AUDIT #5: ShareCount must be at least the threshold
+        // (already required) and at most MAX_N — the circuit only has
+        // MAX_N partial-decryption slots, and `_verifyCombineTranscript`
+        // assumes the active region fits inside the fixed transcript.
         if (publicInputs[8] < epoch.policy.threshold) revert InvalidProofInput();
+        if (publicInputs[8] > MAX_N) revert InvalidProofInput();
         uint256 challenge = BRLC.deriveChallenge(
             epochId,
             DECRYPT_COMBINE_TRANSCRIPT_DOMAIN,
@@ -981,10 +1018,18 @@ contract DKGManager is IDKGManager {
     /// @param  deltaOrgY       Y coordinate of Δ_org.
     /// @param  dleqProof       Encoded DLEQ proof bytes (ABI-encoded uint[8] / uint[4]).
     /// @param  dleqInput       Encoded DLEQ public input (uint[16]).
+    /// @dev `c1x/c1y/c2x/c2y` are the raw ciphertext coordinates as
+    ///      submitted via submitCiphertext. Verified against the stored
+    ///      ciphertext hash and then bound to the proof's pi[5..6]
+    ///      (CIRCUITS_AUDIT #1).
     function submitOrganizerShare(
         bytes12 epochId,
         bytes32 aid,
         uint16 ciphertextIndex,
+        uint256 c1x,
+        uint256 c1y,
+        uint256 c2x,
+        uint256 c2y,
         uint256 deltaOrgX,
         uint256 deltaOrgY,
         bytes calldata dleqProof,
@@ -997,7 +1042,15 @@ contract DKGManager is IDKGManager {
         DKGTypes.Application storage app = applications[epochId][aid];
         if (!app.exists) revert InvalidApplication();
         if (uint8(app.mode) != uint8(DKGProtocol.MODE_ORGANIZER_CODEC)) revert InvalidApplication();
-        if (_ciphertexts[epochId][ciphertextIndex] == bytes32(0)) revert CiphertextNotSubmitted();
+
+        // CIRCUITS_AUDIT #1: bind C1 to the on-chain ciphertext before
+        // accepting any (PK_org, Δ_org) commitment. Without this the
+        // organizer can produce a valid DLEQ for an unrelated base, and
+        // the stored Δ_org corrects the wrong discrete log at combine.
+        bytes32 storedCt = _ciphertexts[epochId][ciphertextIndex];
+        if (storedCt == bytes32(0)) revert CiphertextNotSubmitted();
+        if (keccak256(abi.encode(c1x, c1y, c2x, c2y)) != storedCt) revert InvalidProofInput();
+
         if (organizerShares[epochId][aid][ciphertextIndex].accepted) revert AlreadyPartiallyDecrypted();
 
         BabyJubJub.requireValidPoint(deltaOrgX, deltaOrgY);
@@ -1006,10 +1059,19 @@ contract DKGManager is IDKGManager {
         // The verifier checks that (PK_org, Δ_org) have the same discrete log
         // wrt (G, C_1), with role=ORGANIZER bound into the Fiat-Shamir
         // transcript. The contract is responsible for binding the public
-        // inputs (eid, aid, ctIdx, role, PK_org, Δ_org) to authoritative
+        // inputs (eid, aid, ctIdx, role, C_1, PK_org, Δ_org) to authoritative
         // on-chain state before invoking the verifier.
         IZKVerifier(PARTIAL_DECRYPT_VERIFIER).verifyProof(dleqProof, dleqInput);
         uint256[16] memory pi = abi.decode(dleqInput, (uint256[16]));
+        // CIRCUITS_AUDIT #1: the public-input layout per
+        // circuits/partialdecrypt/circuit.go is
+        //   [0]=eid, [1]=aid, [2]=ctIdx, [3]=role, [4]=i,
+        //   [5..6]=Base/C1, [7..8]=PublicKey/D_i (= PK_org for organizer),
+        //   [9..10]=Delta (= Δ_org for organizer),
+        //   [11..12]=A1, [13..14]=A2, [15]=Response.
+        // The previous code checked PK_org against pi[9..10] and
+        // Δ_org against pi[11..12]; both were off by two slots, so a
+        // malicious caller could supply an arbitrary point as Δ_org.
         if (
             pi[0] != _epochScalar(epochId)
                 || pi[1] != uint256(aid)
@@ -1017,11 +1079,15 @@ contract DKGManager is IDKGManager {
                 || pi[3] != uint256(DKGProtocol.ROLE_ORGANIZER)
                 // pi[4] = participant index — must be 0 for organizer (per paper §6.3)
                 || pi[4] != 0
-                // pi[5..6] = base point (C_1); pi[7..8] = pubKey (PK_org); pi[9..10] = delta (Δ_org)
-                || pi[9] != app.organizerPK.x
-                || pi[10] != app.organizerPK.y
-                || pi[11] != deltaOrgX
-                || pi[12] != deltaOrgY
+                // pi[5..6] = base point — bound to the stored ciphertext.
+                || pi[5] != c1x
+                || pi[6] != c1y
+                // pi[7..8] = D_i — for organizer, this is PK_org.
+                || pi[7] != app.organizerPK.x
+                || pi[8] != app.organizerPK.y
+                // pi[9..10] = Δ_org.
+                || pi[9] != deltaOrgX
+                || pi[10] != deltaOrgY
         ) revert InvalidProofInput();
 
         organizerShares[epochId][aid][ciphertextIndex] = DKGTypes.OrganizerShareRecord({

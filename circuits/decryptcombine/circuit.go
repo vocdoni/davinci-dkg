@@ -48,6 +48,11 @@ func (c *DecryptCombineCircuit) Define(api frontend.API) error {
 	if err != nil {
 		return err
 	}
+	// CIRCUITS_AUDIT #5: bound ShareCount to MaxShares so PrefixMask
+	// truly masks to the circuit's fixed-size slot count. Without this,
+	// a count > MaxShares leaves every slot active and the circuit /
+	// contract disagree on the transcript extent.
+	api.AssertIsLessOrEqual(c.ShareCount, MaxShares)
 	mask := ccommon.PrefixMask(api, c.ShareCount, MaxShares)
 	for _, point := range []twistededwards.Point{c.CiphertextC1, c.CiphertextC2, c.DeltaOrg} {
 		if err := ccommon.AssertPointOnCurve(api, point); err != nil {

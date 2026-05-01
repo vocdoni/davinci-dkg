@@ -184,12 +184,16 @@ func ScalarMulSmallScalar(
 // the curve identity point), which lets the inner loop skip the per-iteration
 // Select on the running sum and saves ~2 constraints per coefficient per call.
 //
-// `xMaxBits` is the caller's bound on `log2(x)`. When >0, each scalar mul
-// uses the small-scalar variant with bit width `k * xMaxBits` (the natural
-// ceiling on x^k). This is the dominant saving in the contribution circuit:
-// for `xMaxBits = 5` (x ≤ MaxN-1 = 31) at MaxN=32, the scalar muls drop
-// from 32×~2400 ≈ 77k constraints per recipient to roughly half that.
-// `xMaxBits = 0` falls back to the original full-width scalar mul.
+// `xMaxBits` is the caller's `⌈log₂(MaxN)⌉` bound on the recipient /
+// participant index — i.e. the per-step bit growth of `power_k = x^k`
+// when x is range-checked to ≤ MaxN. For one-based indexes the boundary
+// case is `x = MaxN = 2^xMaxBits` where `x^k = 2^(xMaxBits·k)` needs
+// `xMaxBits·k + 1` bits to encode (the leading bit is set).  We pass
+// that bound to ScalarMulSmallScalar; it via api.ToBinary uses gnark's
+// internal bit-decomposition hint and emits the matching range-check.
+// Saves ~1.3M constraints in the contribution circuit at MaxN = 32 vs
+// the full-width scalar mul. `xMaxBits = 0` falls back to the original
+// full-width path.
 func CommitmentPolynomialValue(
 	api frontend.API,
 	commitments []twistededwards.Point,
@@ -210,8 +214,9 @@ func CommitmentPolynomialValue(
 			// power = 1, scaled = commitment[0]. No mul, no doublings.
 			scaled = commitment
 		case xMaxBits > 0:
-			// power < x^i ≤ 2^(xMaxBits·i). Use the small-scalar variant.
-			scaled = ScalarMulSmallScalar(api, commitment, power, xMaxBits*i)
+			// power < x^i ≤ MaxN^i = 2^(xMaxBits·i). Worst case x = MaxN
+			// gives power = 2^(xMaxBits·i), needing xMaxBits·i + 1 bits.
+			scaled = ScalarMulSmallScalar(api, commitment, power, xMaxBits*i+1)
 		default:
 			scaled = curve.ScalarMul(commitment, power)
 		}

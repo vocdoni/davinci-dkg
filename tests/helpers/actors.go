@@ -9,6 +9,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/vocdoni/davinci-dkg/crypto/schnorr"
 	"github.com/vocdoni/davinci-dkg/solidity/golang-types"
+	"github.com/vocdoni/davinci-dkg/types"
 	"github.com/vocdoni/davinci-dkg/web3"
 	"github.com/vocdoni/davinci-dkg/web3/txmanager"
 )
@@ -103,6 +104,7 @@ func SubmitPartialDecryptionAs(
 	epochID [12]byte,
 	participantIndex uint16,
 	ciphertextIndex uint16,
+	c1, c2 types.CurvePoint,
 	deltaHash [32]byte,
 	proof []byte,
 	input []byte,
@@ -117,6 +119,7 @@ func SubmitPartialDecryptionAs(
 		[32]byte{}, // legacy per-epoch path: zero aid
 		participantIndex,
 		ciphertextIndex,
+		c1.X, c1.Y, c2.X, c2.Y,
 		deltaHash,
 		proof,
 		input,
@@ -325,6 +328,7 @@ func SubmitPartialDecryptionMeasured(
 		[32]byte{}, // legacy per-epoch path: zero aid
 		participantIndex,
 		ciphertextIndex,
+		partial.C1.X, partial.C1.Y, partial.C2.X, partial.C2.Y,
 		partial.DeltaHash,
 		partial.Proof,
 		partial.Input,

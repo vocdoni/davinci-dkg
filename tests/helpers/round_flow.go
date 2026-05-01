@@ -273,7 +273,7 @@ func PrepareSingleParticipantCombinePayload(
 	// share itself), but we still go through both txs so this exercises the
 	// full on-chain decryption path the SDK consumers depend on.
 	const partialNonce = 1
-	partial, err := BuildPartialDecryptionSubmissionFromBase(ctx, epochID, [32]byte{}, ciphertextIndex, 1, c1, share, big.NewInt(partialNonce))
+	partial, err := BuildPartialDecryptionSubmissionFromBase(ctx, epochID, [32]byte{}, ciphertextIndex, 1, c1, c2, share, big.NewInt(partialNonce))
 	if err != nil {
 		return nil, fmt.Errorf("build partial decryption: %w", err)
 	}
@@ -286,7 +286,8 @@ func PrepareSingleParticipantCombinePayload(
 	if err != nil {
 		return nil, err
 	}
-	tx, err := services.Manager.SubmitPartialDecryption(auth, epochID, [32]byte{}, 1, ciphertextIndex, partial.DeltaHash, partial.Proof, partial.Input)
+	tx, err := services.Manager.SubmitPartialDecryption(auth, epochID, [32]byte{}, 1, ciphertextIndex,
+		c1.X, c1.Y, c2.X, c2.Y, partial.DeltaHash, partial.Proof, partial.Input)
 	if err != nil {
 		return nil, fmt.Errorf("submit partial decryption: %w", err)
 	}

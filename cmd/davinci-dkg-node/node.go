@@ -821,7 +821,11 @@ func (n *Node) doContribution(
 	if err != nil {
 		return fmt.Errorf("encode contribution public witness: %w", err)
 	}
-	transcriptBytes, err := encodeWords(pi.TranscriptScalars()...)
+	transcriptScalars, err := pi.TranscriptScalars()
+	if err != nil {
+		return fmt.Errorf("contribution transcript scalars: %w", err)
+	}
+	transcriptBytes, err := encodeWords(transcriptScalars...)
 	if err != nil {
 		return fmt.Errorf("encode contribution transcript: %w", err)
 	}
@@ -1060,7 +1064,8 @@ func (n *Node) doDecryption(
 	if err != nil {
 		return fmt.Errorf("tx opts for partial decryption: %w", err)
 	}
-	tx, err := n.manager.SubmitPartialDecryption(auth, epochID, [32]byte{}, idx, ctIdx, dHash, proofBytes, inputBytes)
+	tx, err := n.manager.SubmitPartialDecryption(auth, epochID, [32]byte{}, idx, ctIdx,
+		ct.C1X, ct.C1Y, ct.C2X, ct.C2Y, dHash, proofBytes, inputBytes)
 	if err != nil {
 		if strings.Contains(decodeContractError(err), "AlreadyPartiallyDecrypted") {
 			log.Infow("partial decryption already on-chain (benign race) — skipping",

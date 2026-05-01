@@ -79,7 +79,7 @@ func TestPartialDecryptOrganizerRoleConsistency(t *testing.T) {
 
 	asn := testAssignment()
 	asn.Role = big.NewInt(roleOrganizer)
-	asn.ParticipantIndex = 1 // organizer slot — circuit doesn't care about value, only that it's bound
+	asn.ParticipantIndex = 0 // CIRCUITS_AUDIT #6: organizer requires i=0
 	witness, _, err := BuildWitness(asn)
 	c.Assert(err, qt.IsNil)
 
@@ -91,11 +91,36 @@ func TestPartialDecryptOrganizerRoleConsistency(t *testing.T) {
 	})
 
 	// Replay: same proof material relabeled as committee → fails.
+	// (The circuit now also enforces (role-1)*(role-2)=0 — committee is
+	// a valid role, so this assertion catches the transcript replay,
+	// not the role-value check. CIRCUITS_AUDIT #7.)
 	t.Run("organizer→committee", func(t *testing.T) {
 		tampered := *witness
 		tampered.Role = big.NewInt(roleCommittee)
 		assert.SolvingFailed(&PartialDecryptCircuit{}, &tampered, test.WithCurves(ecc.BN254))
 	})
+}
+
+// TestPartialDecryptRejectsInvalidRoleValue verifies that the circuit
+// itself enforces role ∈ {1, 2} (CIRCUITS_AUDIT #7). The Solidity
+// entry-point checks already constrain role per call site; this is
+// defence-in-depth for any future verifier path that trusts the
+// circuit alone.
+func TestPartialDecryptRejectsInvalidRoleValue(t *testing.T) {
+	c := qt.New(t)
+
+	asn := testAssignment() // committee defaults
+	witness, _, err := BuildWitness(asn)
+	c.Assert(err, qt.IsNil)
+
+	assert := test.NewAssert(t)
+	for _, badRole := range []int64{0, 3, 7, 1 << 32} {
+		t.Run("role=invalid", func(t *testing.T) {
+			tampered := *witness
+			tampered.Role = big.NewInt(badRole)
+			assert.SolvingFailed(&PartialDecryptCircuit{}, &tampered, test.WithCurves(ecc.BN254))
+		})
+	}
 }
 
 // touch group import in case future test additions need it.

@@ -12,11 +12,14 @@ import (
 const (
 	MaxCoefficients = ccommon.MaxN
 	MaxRecipients   = ccommon.MaxN
-	// recipientIndexBits is ceil(log2(MaxRecipients)) — the bit width that
-	// covers any in-range recipient index. Used by the small-scalar
-	// CommitmentPolynomialValue path (see circuits/common/points.go).
-	// Must be wide enough to contain MaxRecipients-1 unsigned.
-	recipientIndexBits = 5 // covers MaxRecipients up to 32
+	// xMaxBits is ⌈log₂(MaxRecipients)⌉ — the per-step bit growth of
+	// `power_k = x^k` when x is range-checked to ≤ MaxRecipients (one-
+	// based committee indexes go from 1 to MaxRecipients inclusive,
+	// CIRCUITS_AUDIT #3).  CommitmentPolynomialValue passes nbBits =
+	// xMaxBits·k + 1 per iteration; the +1 covers the boundary case
+	// `x = MaxRecipients = 2^xMaxBits` where x^k = 2^(xMaxBits·k) needs
+	// one extra bit beyond the xMaxBits·k bits used for x ∈ [0, MaxN-1].
+	xMaxBits = 5 // covers MaxRecipients up to 32 (one-based indexes 1..32)
 )
 
 // ContributionCircuit proves the full DKG phase-4 statement from the paper:
@@ -131,16 +134,17 @@ func (c *ContributionCircuit) Define(api frontend.API) error {
 		// masked out of the share-hash and transcript and the sharedSecret
 		// scalar mul on RecipientPubKeys[i] is the only consumer left.
 
-		// Range-check the recipient index to log2(MaxN) bits. This is what
-		// lets CommitmentPolynomialValue use the small-scalar variant for
-		// the scaled commitments below: for k ≥ 1, power_k = x^k fits in
-		// `recipientIndexBits·k` bits, and the per-iteration scalar mul
-		// shrinks from ~2.4k constraints to ~14·(bit count) constraints.
-		// Saves ~1.3M constraints in the full circuit at MaxN = 32.
-		api.AssertIsLessOrEqual(c.RecipientIndexes[i], MaxRecipients-1)
+		// Range-check the recipient index to ≤ MaxRecipients (one-based,
+		// CIRCUITS_AUDIT #3). The contract enforces non-zero, so the
+		// honest range is [1, MaxRecipients]. This bound is what lets
+		// CommitmentPolynomialValue use the small-scalar variant for the
+		// scaled commitments below: for k ≥ 1, power_k = x^k fits in
+		// xMaxBits·k + 1 bits, and the per-iteration scalar mul shrinks
+		// from ~2.4k constraints to ~14·(bit count) constraints.
+		api.AssertIsLessOrEqual(c.RecipientIndexes[i], MaxRecipients)
 
 		feldmanPoint, err := ccommon.CommitmentPolynomialValue(
-			api, maskedCommitments, nil, c.RecipientIndexes[i], recipientIndexBits,
+			api, maskedCommitments, nil, c.RecipientIndexes[i], xMaxBits,
 		)
 		if err != nil {
 			return err

@@ -12,10 +12,10 @@ import (
 const (
 	MaxCoefficients = ccommon.MaxN
 	MaxParticipants = ccommon.MaxN
-	// participantIndexBits = ceil(log2(MaxParticipants)). Used by the
-	// small-scalar CommitmentPolynomialValue path to keep per-recipient
-	// scalar muls cheap (see circuits/common/points.go).
-	participantIndexBits = 5 // covers MaxParticipants up to 32
+	// xMaxBits = ⌈log₂(MaxParticipants)⌉. See contribution circuit and
+	// CommitmentPolynomialValue for the +1 boundary explanation
+	// (CIRCUITS_AUDIT #3 — one-based indexes go from 1 to MaxN inclusive).
+	xMaxBits = 5 // covers MaxParticipants up to 32 (one-based 1..32)
 )
 
 // Assignment is the native input model used to build a finalize witness.

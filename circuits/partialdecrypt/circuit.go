@@ -52,6 +52,14 @@ func (c *PartialDecryptCircuit) Define(api frontend.API) error {
 	ccommon.AssertPointEqual(api, ccommon.FixedBaseMul(api, c.Nonce), a1)
 	ccommon.AssertPointEqual(api, curve.ScalarMul(base, c.Nonce), a2)
 
+	// CIRCUITS_AUDIT #7: Role must be 1 (COMMITTEE) or 2 (ORGANIZER).
+	// (role - 1) * (role - 2) == 0 ⟺ role ∈ {1, 2}.
+	// The Solidity entry-point gates already enforce this per call site
+	// (submitPartialDecryption requires role=1; submitOrganizerShare
+	// requires role=2), so this is defence-in-depth: the circuit
+	// statement itself is now closed under valid roles.
+	api.AssertIsEqual(api.Mul(api.Sub(c.Role, 1), api.Sub(c.Role, 2)), 0)
+
 	// Per paper §4.4 lines 695–704 / PLAN §5.3: bind the Fiat-Shamir
 	// challenge to the full transcript
 	//   (eid, aid, ctIdx, role, i, G, C_1, D_i, δ_i, A_i, B_i)

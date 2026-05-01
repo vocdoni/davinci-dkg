@@ -331,7 +331,12 @@ func (p PublicInputs) Scalars() []*big.Int {
 }
 
 // TranscriptScalars returns the ordered transcript compressed by the verifier path.
-func (p PublicInputs) TranscriptScalars() []*big.Int {
+//
+// CIRCUITS_AUDIT #10: PadBigInts can fail when the caller passes more
+// indexes than `MaxRecipients`. The active witness builder validates
+// the assignment first, but a manually-constructed PublicInputs would
+// previously silently emit a malformed transcript.
+func (p PublicInputs) TranscriptScalars() ([]*big.Int, error) {
 	transcript := make([]*big.Int, 0, 64)
 	for _, commitment := range publicCommitmentPoints(p.Commitments) {
 		transcript = append(
@@ -340,7 +345,10 @@ func (p PublicInputs) TranscriptScalars() []*big.Int {
 			ephemeralCoordinate([]twistededwards.Point{commitment}, 0, false),
 		)
 	}
-	indexes, _ := ccommon.PadBigInts(p.RecipientIndexes, MaxRecipients)
+	indexes, err := ccommon.PadBigInts(p.RecipientIndexes, MaxRecipients)
+	if err != nil {
+		return nil, fmt.Errorf("contribution transcript: pad recipient indexes: %w", err)
+	}
 	transcript = append(transcript, indexes...)
 	for _, recipient := range publicRecipientPoints(p.RecipientKeys) {
 		transcript = append(
@@ -363,12 +371,16 @@ func (p PublicInputs) TranscriptScalars() []*big.Int {
 		}
 		transcript = append(transcript, value)
 	}
-	return transcript
+	return transcript, nil
 }
 
 // BRLCCommitment compresses the contribution transcript into one scalar commitment.
 func (p PublicInputs) BRLCCommitment(challenge *big.Int) (*big.Int, error) {
-	return ccommon.BRLCNative(challenge, p.TranscriptScalars()...)
+	scalars, err := p.TranscriptScalars()
+	if err != nil {
+		return nil, err
+	}
+	return ccommon.BRLCNative(challenge, scalars...)
 }
 
 func toWitnessScalars(values []*big.Int) [MaxRecipients]frontend.Variable {

@@ -172,21 +172,31 @@ export class DKGWriter extends DKGClient {
    *
    * `aid` binds the proof transcript to a specific application (P9).
    * Pass `0x00…00` for the legacy per-epoch path.
+   *
+   * `c1`/`c2` are the on-chain ciphertext coords (RTE form). The
+   * contract verifies they match the stored ciphertext hash and binds
+   * pi[5..6] to c1 (CIRCUITS_AUDIT #2). Pass them as TE coords; the
+   * writer converts to RTE before sending, matching the convention used
+   * by `submitCiphertext`.
    */
   async submitPartialDecryption(
     epochId: `0x${string}`,
     aid: `0x${string}`,
     participantIndex: number,
     ciphertextIndex: number,
+    c1x: bigint, c1y: bigint, c2x: bigint, c2y: bigint,
     deltaHash: `0x${string}`,
     proof: `0x${string}`,
     input: `0x${string}`,
   ): Promise<Hash> {
+    const [c1xR, c1yR] = fromTEtoRTE(c1x, c1y);
+    const [c2xR, c2yR] = fromTEtoRTE(c2x, c2y);
     const { request } = await this.publicClient.simulateContract({
       address: this.managerAddress,
       abi: dkgManagerAbi,
       functionName: 'submitPartialDecryption',
-      args: [epochId as any, aid as any, participantIndex, ciphertextIndex, deltaHash, proof, input],
+      args: [epochId as any, aid as any, participantIndex, ciphertextIndex,
+        c1xR, c1yR, c2xR, c2yR, deltaHash, proof, input],
       account: this._writerAccount,
     });
     return this.walletClient.writeContract(request);
@@ -322,17 +332,27 @@ export class DKGWriter extends DKGClient {
   /**
    * Submit the organizer's `Δ_org = sk_org · C_1` share (with Chaum-Pedersen
    * DLEQ binding it to `PK_org`). Only used in mode 1 (organizer co-decryption).
-   * `deltaOrgX`/`deltaOrgY` arrive in TE form; the writer converts to RTE.
+   *
+   * Coordinate forms (CIRCUITS_AUDIT #1):
+   *   - `c1`/`c2` arrive in TE form; the writer converts to RTE so they
+   *     match the on-chain ciphertext hash.
+   *   - `deltaOrg` arrives in TE form; the writer converts to RTE.
+   *
+   * The contract checks the converted (c1, c2) against the stored
+   * ciphertext hash and binds pi[5..6] to c1.
    */
   async submitOrganizerShare(
     epochId: `0x${string}`,
     aid: `0x${string}`,
     ciphertextIndex: number,
+    c1x: bigint, c1y: bigint, c2x: bigint, c2y: bigint,
     deltaOrgX: bigint,
     deltaOrgY: bigint,
     dleqProof: `0x${string}`,
     dleqInput: `0x${string}`,
   ): Promise<Hash> {
+    const [c1xR, c1yR] = fromTEtoRTE(c1x, c1y);
+    const [c2xR, c2yR] = fromTEtoRTE(c2x, c2y);
     const [dxR, dyR] = fromTEtoRTE(deltaOrgX, deltaOrgY);
     const { request } = await this.publicClient.simulateContract({
       address: this.managerAddress,
@@ -342,6 +362,7 @@ export class DKGWriter extends DKGClient {
         epochId as any,
         aid as any,
         ciphertextIndex,
+        c1xR, c1yR, c2xR, c2yR,
         dxR,
         dyR,
         dleqProof,

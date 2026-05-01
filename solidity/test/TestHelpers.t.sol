@@ -182,6 +182,10 @@ abstract contract TestHelpers is TestInputs {
         inputs[2] = ciphertextIndex;
         inputs[3] = 1;                          // role = COMMITTEE
         inputs[4] = participantIndex;
+        // pi[5..6] = C1, must match the test ciphertext fixture so
+        // submitPartialDecryption's CIRCUITS_AUDIT #2 binding accepts.
+        inputs[5] = TEST_CT_C1X;
+        inputs[6] = TEST_CT_C1Y;
         inputs[7] = 1000 + participantIndex;    // D_i.x
         inputs[8] = 2000 + participantIndex;    // D_i.y
         inputs[9] = 7000 + participantIndex;    // delta.x

@@ -164,6 +164,14 @@ contract DKGManagerTest is Test, TestHelpers {
                 FINALIZED_SHARE_COMMITMENT_HASH
             )
         );
+
+        // CIRCUITS_AUDIT #2: submitPartialDecryption now requires the
+        // ciphertext to exist on-chain so it can bind C1 into the proof's
+        // public inputs. Most test paths drive the partial-decrypt flow
+        // against ciphertextIndex=1, so submit it as part of the
+        // canonical "finalized" fixture. Tests that need an unsubmitted
+        // ciphertext use a different index.
+        manager.submitCiphertext(epochId, 1, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
     }
 
     function test_CreateEpoch_PersistsPolicy() public {
@@ -449,6 +457,7 @@ contract DKGManagerTest is Test, TestHelpers {
             bytes32(0),
             1,
             1,
+            TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y,
             partialDecryptionHash(1),
             partialDecryptionProof(),
             partialDecryptionInput(epochId, 1, partialDecryptionHash(1))
@@ -474,6 +483,7 @@ contract DKGManagerTest is Test, TestHelpers {
             bytes32(0),
             1,
             1,
+            TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y,
             partialDecryptionHash(1),
             partialDecryptionProof(),
             PARTIAL_DECRYPTION_INPUT_BAD
@@ -489,6 +499,7 @@ contract DKGManagerTest is Test, TestHelpers {
             bytes32(0),
             1,
             1,
+            TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y,
             partialDecryptionHash(1),
             partialDecryptionProof(),
             partialDecryptionInput(epochId, 1, partialDecryptionHash(1))
@@ -503,6 +514,7 @@ contract DKGManagerTest is Test, TestHelpers {
             bytes32(0),
             1,
             1,
+            TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y,
             partialDecryptionHash(1),
             partialDecryptionProof(),
             partialDecryptionInput(epochId, 1, partialDecryptionHash(1))
@@ -514,6 +526,7 @@ contract DKGManagerTest is Test, TestHelpers {
             bytes32(0),
             1,
             1,
+            TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y,
             partialDecryptionHash(1),
             partialDecryptionProof(),
             partialDecryptionInput(epochId, 1, partialDecryptionHash(1))
@@ -522,12 +535,15 @@ contract DKGManagerTest is Test, TestHelpers {
 
     function test_SubmitPartialDecryption_AllowsDistinctCiphertexts() public {
         bytes12 epochId = createFinalizedRound();
+        // CIRCUITS_AUDIT #2: ciphertext 2 must also exist on-chain.
+        manager.submitCiphertext(epochId, 2, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
 
         manager.submitPartialDecryption(
             epochId,
             bytes32(0),
             1,
             1,
+            TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y,
             partialDecryptionHash(1),
             partialDecryptionProof(),
             partialDecryptionInput(epochId, 1, partialDecryptionHash(1))
@@ -537,6 +553,7 @@ contract DKGManagerTest is Test, TestHelpers {
             bytes32(0),
             1,
             2,
+            TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y,
             partialDecryptionHash(1),
             partialDecryptionProof(),
             partialDecryptionInputCt(epochId, 1, 2, partialDecryptionHash(1))
@@ -551,13 +568,14 @@ contract DKGManagerTest is Test, TestHelpers {
 
     function test_CombineDecryption_PersistsRecord() public {
         bytes12 epochId = createFinalizedRound();
-        manager.submitCiphertext(epochId, 1, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
+        // ciphertext index 1 already submitted by createFinalizedRound
 
         manager.submitPartialDecryption(
             epochId,
             bytes32(0),
             1,
             1,
+            TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y,
             partialDecryptionHash(1),
             partialDecryptionProof(),
             partialDecryptionInput(epochId, 1, partialDecryptionHash(1))
@@ -568,6 +586,7 @@ contract DKGManagerTest is Test, TestHelpers {
             bytes32(0),
             2,
             1,
+            TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y,
             partialDecryptionHash(2),
             partialDecryptionProof(),
             partialDecryptionInput(epochId, 2, partialDecryptionHash(2))
@@ -778,6 +797,7 @@ contract DKGManagerTest is Test, TestHelpers {
             bytes32(0),
             1,
             257, // > MAX_CIPHERTEXT_INDEX (256)
+            TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y,
             partialDecryptionHash(1),
             partialDecryptionProof(),
             partialDecryptionInput(epochId, 1, partialDecryptionHash(1))
@@ -805,21 +825,21 @@ contract DKGManagerTest is Test, TestHelpers {
 
     function test_SubmitCiphertext_StoresHashAndIncrementsCount() public {
         bytes12 epochId = createFinalizedRound();
+        // index 1 already submitted by createFinalizedRound; submit
+        // another at index 2 to exercise the storage / counter path.
         bytes32 expected = keccak256(abi.encode(TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y));
 
-        manager.submitCiphertext(epochId, 1, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
+        manager.submitCiphertext(epochId, 2, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
 
-        assertEq(uint256(manager.getCiphertextHash(epochId, 1)), uint256(expected));
-        assertEq(uint256(manager.getEpoch(epochId).ciphertextCount), 1);
+        assertEq(uint256(manager.getCiphertextHash(epochId, 2)), uint256(expected));
+        assertEq(uint256(manager.getEpoch(epochId).ciphertextCount), 2);
     }
 
     function test_SubmitCiphertext_RejectsDuplicateIndex() public {
         bytes12 epochId = createFinalizedRound();
-        manager.submitCiphertext(epochId, 1, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
-
-        // Second submission uses prime-subgroup coords (DEEPSEEK §2.2 hardening
-        // forbids identity at submitCiphertext) so it passes the well-formedness
-        // check and reaches the write-once guard.
+        // ciphertext 1 already submitted by createFinalizedRound. The
+        // duplicate submission at the same index must be rejected by
+        // the write-once guard.
         vm.expectRevert(IDKGManager.CiphertextAlreadySubmitted.selector);
         manager.submitCiphertext(epochId, 1, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
     }
@@ -954,27 +974,21 @@ contract DKGManagerTest is Test, TestHelpers {
         );
     }
 
-    function test_CombineDecryption_RejectsWhenCiphertextNotSubmitted() public {
+    function test_SubmitPartialDecryption_RejectsWhenCiphertextNotSubmitted() public {
         bytes12 epochId = createFinalizedRound();
 
-        manager.submitPartialDecryption(
-            epochId,
-            bytes32(0), 1, 1, partialDecryptionHash(1),
-            partialDecryptionProof(), partialDecryptionInput(epochId, 1, partialDecryptionHash(1))
-        );
-        vm.prank(address(0xBEEF));
-        manager.submitPartialDecryption(
-            epochId,
-            bytes32(0), 2, 1, partialDecryptionHash(2),
-            partialDecryptionProof(), partialDecryptionInput(epochId, 2, partialDecryptionHash(2))
-        );
-
-        uint256 plaintext = uint256(COMBINED_PLAINTEXT_HASH);
+        // CIRCUITS_AUDIT #2 raises the gate to submitPartialDecryption
+        // itself (was previously only at combineDecryption time): the
+        // proof can only bind to an existing on-chain ciphertext.
+        // createFinalizedRound submits index 1, so use index 2 which
+        // was never submitted.
         vm.expectRevert(IDKGManager.CiphertextNotSubmitted.selector);
-        manager.combineDecryption(
-            epochId, bytes32(0), 1, COMBINED_DECRYPTION_HASH, plaintext,
-            decryptCombineTranscript(2), decryptCombineProof(),
-            decryptCombineInput(epochId, 2, 2, COMBINED_DECRYPTION_HASH, plaintext)
+        manager.submitPartialDecryption(
+            epochId,
+            bytes32(0), 1, 2,
+            TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y,
+            partialDecryptionHash(1),
+            partialDecryptionProof(), partialDecryptionInputCt(epochId, 1, 2, partialDecryptionHash(1))
         );
     }
 

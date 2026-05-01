@@ -474,7 +474,17 @@ func (p PublicInputs) TranscriptScalars() []*big.Int {
 	return values
 }
 
-// BRLCCommitment compresses the public input vector into one scalar commitment.
+// BRLCCommitment compresses the finalize transcript scalar vector into
+// one BRLC commitment, matching the circuit's `TranscriptCommitment`
+// public input and the contract's `_verifyFinalizeTranscript` check.
+//
+// CIRCUITS_AUDIT #9: this previously committed to `Scalars()` (the full
+// public-input vector) instead of `TranscriptScalars()` (the
+// participantIndexes ‖ contributionCommitments ‖ aggregateCommitments
+// ‖ shareCommitments slice the on-chain check actually streams). The
+// helper was unused by the active witness builder, but tooling /
+// tests / SDK code that called it produced commitments the contract
+// would reject.
 func (p PublicInputs) BRLCCommitment(challenge *big.Int) (*big.Int, error) {
-	return ccommon.BRLCNative(challenge, p.Scalars()...)
+	return ccommon.BRLCNative(challenge, p.TranscriptScalars()...)
 }
