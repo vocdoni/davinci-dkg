@@ -5,9 +5,10 @@ icicle/CUDA acceleration. The numbers below are for the production
 **MaxN = 32** build with the post-rewrite circuit set (Contribution,
 Finalize, PartialDecrypt, DecryptCombine — no disclosure circuits).
 
-Last refresh: 2026-04-30 (after the per-Application rewrite + DEEPSEEK
-hardening). Re-measure with `go run /tmp/circuit_stats.go` and `forge
-test --gas-report` after any circuit / contract change.
+Last refresh: 2026-05-01 (after the small-scalar `CommitmentPolynomialValue`
+optimisation). Re-measure constraint counts with a quick helper that
+calls `<circuit>.Compile()` + `ccs.GetNbConstraints()`, and the gas
+table with `forge test --gas-report` after any circuit / contract change.
 
 > **Caveat — dev setup, not production.** All proving / verification
 > figures use a single-party local Groth16 setup. The S2 multi-party
@@ -20,29 +21,36 @@ test --gas-report` after any circuit / contract change.
 
 ## Circuit Constraint Counts
 
-| Circuit         | Constraints | Public wires | Secret wires | Scaling |
-|-----------------|------------:|-------------:|-------------:|---------|
-| Contribution    |   2,900,192 |    2,827,483 |          448 | O(N²)   |
-| Finalize        |   2,490,861 |    2,489,577 |        2,208 | O(N²)   |
-| PartialDecrypt  |      20,715 |       19,471 |            2 | O(1)    |
-| DecryptCombine  |      86,890 |       86,407 |          133 | O(N)    |
-| **Total**       | **5,498,648** |          —   |            — |         |
+| Circuit         | Constraints | vs. previous |
+|-----------------|------------:|-------------:|
+| Contribution    |   1,414,912 |  −51 %       |
+| Finalize        |   1,005,709 |  −60 %       |
+| PartialDecrypt  |      20,715 |   —          |
+| DecryptCombine  |      86,890 |   —          |
+| **Total**       | **2,528,226** | **−54 %** |
 
-Notable since the last benchmark:
+(Comparison is against the pre-2026-05-01 figures: Contribution 2,900,192 /
+Finalize 2,490,861 / PartialDecrypt 20,715 / DecryptCombine 86,890.)
 
-- **Contribution** +2.3 %: in-circuit range checks on coefficients and
-  per-recipient shares (paper §5.1, fix for the C-1 unbounded-share
-  vulnerability).
-- **PartialDecrypt** +1.7 %: three new public inputs (`aid`, `ctIdx`,
-  `role`) bound into the Fiat-Shamir transcript for cross-application
-  / cross-epoch replay defence (paper §4.4 / DEEPSEEK §1.3).
-- **DecryptCombine** +3.1 %: mode-bit booleanity check, mode-conditional
-  `Select` for the per-application correction term `T = mode==0 ? S·C₁ :
-  Δ_org`, plus the per-app fields in the transcript (`aid`, `ctIdx`,
-  `mode`, `S`, `DeltaOrg`).
-- **Total** is down vs. the pre-rewrite total because the
-  `RevealShare` (~3,342) and `RevealSubmit` (~2,346) circuits were
-  removed in P1 (paper §3 — disclosure path retired).
+The big win comes from `CommitmentPolynomialValue`, which evaluates
+`Σ_k commitments[k] · x^k` for each recipient (or participant) index
+`x ≤ MaxN-1`. Each in-circuit scalar mul used to go through gnark's
+`scalarMulFakeGLV` over the full ~252-bit BabyJubJub scalar field even
+though `power_k = x^k` fits in `k · log₂(MaxN)` ≈ `5k` bits at MaxN=32.
+
+Replaced with `ScalarMulSmallScalar(api, point, scalar, nbBits)`:
+caller-bounded bit-width, 2-bit-windowed left-to-right double-and-add
+over `api.ToBinary(scalar, nbBits)`. `api.ToBinary` is itself a gnark
+hint — it provides the bits as a witness and emits the booleanity +
+recomposition constraints — so an oversized scalar fails the proof
+rather than producing a silently-wrong result. The `i = 0` (`power = 1`)
+case is special-cased to a direct point add. Range-check on the
+recipient / participant index makes the bit-width bound sound.
+
+The same helper drives both Contribution and Finalize (they call the
+same `CommitmentPolynomialValue`), so a single change captured both
+circuits' wins. Disclosure circuits (`RevealShare`, `RevealSubmit`)
+were already removed in P1.
 
 ---
 
@@ -53,19 +61,23 @@ gnark constraint-system solver (witness solving) **and** the Groth16
 prover, but not the per-process pk/vk load (~hundreds of ms, amortised
 across many proofs in the production node).
 
-| Circuit         | Prove + verify (one shot) |
-|-----------------|--------------------------:|
-| Contribution    |                    1.91 s |
-| Finalize        |                    1.88 s |
-| PartialDecrypt  |                      69 ms |
-| DecryptCombine  |                     137 ms |
+| Circuit         | Prove + verify (one shot) | vs. previous |
+|-----------------|--------------------------:|-------------:|
+| Contribution    |                    1.01 s |  −47 %       |
+| Finalize        |                    0.65 s |  −65 %       |
+| PartialDecrypt  |                      47 ms |  −32 %       |
+| DecryptCombine  |                     107 ms |  −22 %       |
 
-A full DKG epoch at n = 16 takes roughly **16 × 1.9 s ≈ 30 s** of
+A full DKG epoch at n = 16 now takes roughly **16 × 1.0 s ≈ 16 s** of
 contribution-circuit proving (one proof per node, embarrassingly
-parallel) + 1.9 s of finalize-circuit proving (single party, the
-caller of `finalizeEpoch`) ≈ 32 s of proving wall-clock if all nodes
+parallel) + 0.65 s of finalize-circuit proving (single party, the
+caller of `finalizeEpoch`) ≈ 17 s of proving wall-clock if all nodes
 run on one CPU core. With nodes on separate hosts, the critical path
-is one contribution proof (1.9 s) + one finalize proof (1.9 s) ≈ 4 s.
+is one contribution proof (1.0 s) + one finalize proof (0.65 s) ≈ 1.7 s.
+
+(PartialDecrypt and DecryptCombine speedups reflect a warmer system
+state on the second run rather than a circuit change; their constraint
+counts are unchanged.)
 
 ---
 

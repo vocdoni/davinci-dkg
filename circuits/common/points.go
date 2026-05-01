@@ -93,17 +93,23 @@ func AssertPointOnCurve(api frontend.API, point twistededwards.Point) error {
 }
 
 // ScalarMulSmallScalar computes `scalar · point` for a scalar that the
-// caller has range-checked to fit in `nbBits` bits. Standard left-to-right
-// double-and-add over the explicitly-decomposed scalar, with `nbBits ≤
-// MaxN.BitLen()*N` typically much smaller than the BN254.Fr width — that's
-// where the savings come from versus `curve.ScalarMul`, which goes through
-// the half-GCD trick over the full ~252-bit scalar field even for small
-// inputs.
+// caller has range-checked to fit in `nbBits` bits. 2-bit windowed
+// left-to-right double-and-add over the explicitly-decomposed scalar,
+// with `nbBits ≤ MaxN.BitLen()*N` typically much smaller than the
+// BN254.Fr width — that's where the savings come from versus
+// `curve.ScalarMul`, which goes through the half-GCD trick over the full
+// ~252-bit scalar field even for small inputs.
 //
 // Bits are obtained via `api.ToBinary(scalar, nbBits)` which uses gnark's
 // internal bit-decomposition hint AND emits the range-check constraints,
 // so passing an oversized scalar fails the proof rather than producing a
 // silently-wrong result.
+//
+// 2-bit windowing matches gnark's own `scalarMulGeneric` structure: per
+// pair of bits we precompute (P, 2P, 3P) once, then for each window
+// double twice and add the looked-up multiple. Saves ~5 constraints per
+// pair vs naive 1-bit-at-a-time double-and-add, after amortising the
+// (2P, 3P) precomputation across all windows.
 //
 // For `nbBits = 0` returns the identity (caller should special-case this).
 func ScalarMulSmallScalar(
@@ -120,20 +126,52 @@ func ScalarMulSmallScalar(
 		panic(err)
 	}
 	bits := api.ToBinary(scalar, nbBits)
-	// Standard left-to-right double-and-add. Initialize res with the
-	// highest bit, then for each remaining bit double-and-conditionally-add.
-	identity := IdentityPoint()
-	res := twistededwards.Point{
-		X: api.Select(bits[nbBits-1], point.X, identity.X),
-		Y: api.Select(bits[nbBits-1], point.Y, identity.Y),
-	}
-	for i := nbBits - 2; i >= 0; i-- {
-		res = curve.Double(res)
-		added := curve.Add(res, point)
-		res = twistededwards.Point{
-			X: api.Select(bits[i], added.X, res.X),
-			Y: api.Select(bits[i], added.Y, res.Y),
+	// 1-bit fallback: degenerate to a single conditional select.
+	if nbBits == 1 {
+		identity := IdentityPoint()
+		return twistededwards.Point{
+			X: api.Select(bits[0], point.X, identity.X),
+			Y: api.Select(bits[0], point.Y, identity.Y),
 		}
+	}
+	// Precompute the small multiple table {1·P, 2·P, 3·P}. The 0·P entry
+	// is the identity (0, 1) and is handled by Lookup2 directly.
+	twoP := curve.Double(point)
+	threeP := curve.Add(twoP, point)
+
+	// Top window. If nbBits is odd, the top window is just 1 bit and we
+	// initialise with `bit_top ? P : identity`. Otherwise (even nbBits)
+	// we initialise with the full 2-bit lookup over the top two bits.
+	var res twistededwards.Point
+	var startIdx int
+	if nbBits%2 == 1 {
+		identity := IdentityPoint()
+		res = twistededwards.Point{
+			X: api.Select(bits[nbBits-1], point.X, identity.X),
+			Y: api.Select(bits[nbBits-1], point.Y, identity.Y),
+		}
+		startIdx = nbBits - 2
+	} else {
+		// 2-bit Lookup2 with identity at index (0,0).
+		res = twistededwards.Point{
+			X: api.Lookup2(bits[nbBits-1], bits[nbBits-2], 0, twoP.X, point.X, threeP.X),
+			Y: api.Lookup2(bits[nbBits-1], bits[nbBits-2], 1, twoP.Y, point.Y, threeP.Y),
+		}
+		startIdx = nbBits - 3
+	}
+	for i := startIdx; i >= 1; i -= 2 {
+		res = curve.Double(curve.Double(res))
+		// Conditional add of {0, P, 2P, 3P} based on (bits[i], bits[i-1]).
+		// (0, 0) → identity, just keep res; otherwise add.
+		tmp := twistededwards.Point{
+			X: api.Lookup2(bits[i], bits[i-1], 0, twoP.X, point.X, threeP.X),
+			Y: api.Lookup2(bits[i], bits[i-1], 1, twoP.Y, point.Y, threeP.Y),
+		}
+		added := curve.Add(res, tmp)
+		// When (bits[i], bits[i-1]) = (0, 0) the lookup returns the
+		// identity, so `added` already equals `res`. Skip the Select.
+		res.X = added.X
+		res.Y = added.Y
 	}
 	return res
 }

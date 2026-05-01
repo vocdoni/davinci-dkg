@@ -124,9 +124,12 @@ func (c *ContributionCircuit) Define(api frontend.API) error {
 		if err := ccommon.AssertPointOnCurve(api, c.RecipientPubKeys[i]); err != nil {
 			return err
 		}
-		if err := ccommon.AssertPointOnCurve(api, c.Ephemerals[i]); err != nil {
-			return err
-		}
+		// Ephemerals[i] doesn't need an explicit on-curve check: when
+		// recipientMask[i] == 1 the conditional equality below forces it
+		// to equal `expectedEphemeral = FixedBaseMul(EncryptionNonces[i])`
+		// which is on-curve by construction. When inactive the value is
+		// masked out of the share-hash and transcript and the sharedSecret
+		// scalar mul on RecipientPubKeys[i] is the only consumer left.
 
 		// Range-check the recipient index to log2(MaxN) bits. This is what
 		// lets CommitmentPolynomialValue use the small-scalar variant for
