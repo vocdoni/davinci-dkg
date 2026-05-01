@@ -12,7 +12,7 @@ func TestPartialDecryptionValidate(t *testing.T) {
 	c := qt.New(t)
 
 	decryption := PartialDecryption{
-		EpochID:          "epoch-1",
+		EpochID:          testEpochID,
 		Participant:      common.HexToAddress("0x3000000000000000000000000000000000000003"),
 		ParticipantIndex: 2,
 		CiphertextIndex:  1,

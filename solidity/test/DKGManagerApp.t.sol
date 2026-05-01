@@ -80,7 +80,8 @@ contract DKGManagerAppTest is Test, TestHelpers {
             address(new MockContributionVerifier()),
             partialDecryptVerifier,
             address(new MockFinalizeVerifier()),
-            address(new MockDecryptCombineVerifier())
+            address(new MockDecryptCombineVerifier()),
+            0
         );
         registry.setManager(address(manager));
         appManager = new DKGAppManager(address(manager), partialDecryptVerifier);
@@ -93,13 +94,9 @@ contract DKGManagerAppTest is Test, TestHelpers {
     // resulting `_collectiveKey[eid]` to be non-identity. The mocks accept
     // anything proof-shaped, so this shortcuts neatly.
     function _finalizedEpoch() internal returns (bytes12 epochId) {
-        epochId = manager.createEpoch(
-            2, 2, 2, 10000, 1,
-            uint64(block.number + 5),
-            uint64(block.number + 20),
-            uint64(block.number + 21),
-            _emptyDecryptionPolicy()
-        );
+        uint64 next = manager.nextEpochStartBlock();
+        if (block.number < uint256(next)) vm.roll(uint256(next));
+        epochId = manager.createEpoch(2, 2, 2, 10000, _emptyDecryptionPolicy());
         vm.roll(block.number + 2);
         manager.claimSlot(epochId);
         vm.prank(address(0xBEEF));
@@ -222,13 +219,9 @@ contract DKGManagerAppTest is Test, TestHelpers {
     }
 
     function test_RegisterApplicationCoDec_RejectsBeforeFinalization() public {
-        bytes12 epochId = manager.createEpoch(
-            2, 2, 2, 10000, 1,
-            uint64(block.number + 5),
-            uint64(block.number + 20),
-            uint64(block.number + 21),
-            _emptyDecryptionPolicy()
-        );
+        uint64 next = manager.nextEpochStartBlock();
+        if (block.number < uint256(next)) vm.roll(uint256(next));
+        bytes12 epochId = manager.createEpoch(2, 2, 2, 10000, _emptyDecryptionPolicy());
         vm.expectRevert(IDKGManager.InvalidPhase.selector);
         appManager.registerApplicationCoDec(
             epochId,

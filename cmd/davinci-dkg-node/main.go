@@ -46,7 +46,7 @@ func main() {
 	// lastActiveBlock).
 	node.LogStartupSnapshot(ctx, cfg)
 
-	go node.Run(ctx, cfg.PollInterval)
+	go node.Run(ctx, cfg)
 	waitForSignal()
 }
 

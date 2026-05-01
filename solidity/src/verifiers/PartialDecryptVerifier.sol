@@ -6,7 +6,7 @@ import {Verifier as BasePartialDecryptVerifier} from "./partialdecrypt_vkey.sol"
 
 contract PartialDecryptVerifier is BasePartialDecryptVerifier, IZKVerifier {
     bytes32 internal constant PROVING_KEY_HASH =
-        hex"e36767c950be07ed840c6f59c9a3c3cd54f08594a256d18eceb07997a9ff5245";
+        hex"fabc38153fad944fbc64c51867e8df0f0c3e8a73721f8ce449a0c99134129d64";
 
     error InvalidProofEncoding();
 

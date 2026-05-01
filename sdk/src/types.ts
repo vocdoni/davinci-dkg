@@ -39,22 +39,29 @@ export type NodeStatusValue = (typeof NodeStatus)[keyof typeof NodeStatus];
 
 // ── Contract types ────────────────────────────────────────────────────────────
 
+/**
+ * Per-epoch DKG policy. Phase deadline blocks are derived ON-CHAIN at
+ * `createEpoch` time from the contract's immutable `EPOCH_DURATION_BLOCKS`
+ * plus the per-phase BPS constants (registration / contribution /
+ * finalize gap). Callers no longer supply them: `writer.createEpoch` only
+ * takes the policy fields below. The on-chain Epoch struct continues to
+ * surface the resolved deadline blocks (populated by createEpoch from the
+ * derived offsets) for downstream phase-check reads.
+ */
 export interface EpochPolicy {
   threshold: number;
   committeeSize: number;
   minValidContributions: number;
   /** Over-subscription factor in basis points (min 10000 = 1.0×). Default 15000 = 1.5×. */
   lotteryAlphaBps: number;
-  /** Number of blocks between createEpoch and seed availability (1–256). */
-  seedDelay: number;
+  /**
+   * On-chain-derived deadline blocks. Populated by the contract from
+   * `EPOCH_DURATION_BLOCKS`, surfaced via `getEpoch` for phase checks.
+   * Callers constructing a fresh policy for `createEpoch` may leave them
+   * at 0 — they are not transmitted by the writer.
+   */
   registrationDeadlineBlock: bigint;
   contributionDeadlineBlock: bigint;
-  /**
-   * Earliest block at which `finalizeEpoch` can succeed. Must be strictly
-   * greater than `contributionDeadlineBlock`; gives selected participants a
-   * window to submit before the contribution set is frozen. The contract
-   * reverts with `FinalizeTooEarly` if `block.number < finalizeNotBeforeBlock`.
-   */
   finalizeNotBeforeBlock: bigint;
 }
 
@@ -95,6 +102,8 @@ export interface Epoch {
   decryptionPolicy: DecryptionPolicy;
   status: EpochPhaseValue;
   nonce: bigint;
+  /** Block in which this epoch was created (anchor for nextEpochStartBlock). */
+  startBlock: bigint;
   seedBlock: bigint;
   seed: Hex;
   lotteryThreshold: bigint;

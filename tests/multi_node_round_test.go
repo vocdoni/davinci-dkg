@@ -33,7 +33,6 @@ func TestCommitteeRoundHappyPath(t *testing.T) {
 		CommitteeSize:             3,
 		MinValidContributions:     2,
 		LotteryAlphaBps:           helpers.DefaultLotteryAlphaBps,
-		SeedDelay:                 helpers.DefaultSeedDelay,
 		RegistrationDeadlineBlock: head + 25,
 		ContributionDeadlineBlock: head + 50,
 		FinalizeNotBeforeBlock:    head + 51,
@@ -45,7 +44,7 @@ func TestCommitteeRoundHappyPath(t *testing.T) {
 	// Lottery flow: advance past seedBlock so blockhash is available, then have
 	// each registered actor self-claim a slot. The committee fills first-come
 	// first-served; there is no organizer-driven SelectParticipants step.
-	c.Assert(helpers.MineBlocks(ctx, services, uint64(policy.SeedDelay)+1), qt.IsNil)
+	c.Assert(helpers.MineBlocks(ctx, services, helpers.DefaultSeedDelay+1), qt.IsNil)
 	c.Assert(helpers.ClaimSlot(ctx, services, epochID), qt.IsNil)
 	c.Assert(helpers.ClaimSlotAs(ctx, actor1, epochID), qt.IsNil)
 	c.Assert(helpers.ClaimSlotAs(ctx, actor2, epochID), qt.IsNil)
@@ -154,5 +153,4 @@ func TestCommitteeRoundHappyPath(t *testing.T) {
 	)
 	c.Assert(err, qt.IsNil)
 	c.Assert(services.TxManager.WaitTxByHash(tx.Hash(), helpers.DefaultTxTimeout), qt.IsNil)
-
 }

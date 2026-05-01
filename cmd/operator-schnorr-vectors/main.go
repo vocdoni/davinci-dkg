@@ -81,7 +81,8 @@ type vector struct {
 }
 
 func emit(curve twistededwards.CurveParams, G *twistededwards.PointAffine, L big.Int,
-	addrHex string, secret, witness *big.Int) vector {
+	addrHex string, secret, witness *big.Int,
+) vector {
 	_ = curve
 	// pubKey = secret · G
 	var pub twistededwards.PointAffine

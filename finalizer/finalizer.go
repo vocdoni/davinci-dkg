@@ -2,7 +2,7 @@
 // DKG epoch. It collects accepted contributions from on-chain calldata,
 // generates the finalize ZK proof off-chain, and broadcasts the tx.
 //
-// Used by both the dkg-runner orchestrator and the davinci-dkg-node daemon
+// Used by the davinci-dkg-node daemon
 // (the latter via its auto-finalize stagger).
 package finalizer
 

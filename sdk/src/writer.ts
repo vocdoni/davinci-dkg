@@ -59,10 +59,6 @@ export class DKGWriter extends DKGClient {
         policy.committeeSize,
         policy.minValidContributions,
         policy.lotteryAlphaBps,
-        policy.seedDelay,
-        policy.registrationDeadlineBlock,
-        policy.contributionDeadlineBlock,
-        policy.finalizeNotBeforeBlock,
         decryptionPolicy,
       ],
       account: this._writerAccount,
@@ -86,20 +82,11 @@ export class DKGWriter extends DKGClient {
     return this.walletClient.writeContract(request);
   }
 
-  /**
-   * Extend the registration deadline of a epoch.
-   * Only callable by the epoch organizer.
-   */
-  async extendRegistration(epochId: `0x${string}`): Promise<Hash> {
-    const { request } = await this.publicClient.simulateContract({
-      address: this.managerAddress,
-      abi: dkgManagerAbi,
-      functionName: 'extendRegistration',
-      args: [epochId as any],
-      account: this._writerAccount,
-    });
-    return this.walletClient.writeContract(request);
-  }
+  // `extendRegistration` was removed in SDK 0.2.0 alongside the Solidity
+  // auto-cadence refactor. With `EPOCH_DURATION_BLOCKS` driving the
+  // schedule, a stalled registration just gets aborted (`abortEpoch`) and
+  // the next scheduled epoch picks up automatically.
+
 
   /**
    * Submit a contribution (ZK proof + encrypted shares) for a epoch.

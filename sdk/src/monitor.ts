@@ -75,9 +75,9 @@ export async function waitForDecryption(
  * Calls `onRound` for each EpochCreated event.
  * Returns an unsubscribe function.
  */
-export function watchNewRounds(
+export function watchNewEpochs(
   client: DKGClient,
-  onRound: (epochId: `0x${string}`, organizer: Address) => void,
+  onEpoch: (epochId: `0x${string}`, organizer: Address) => void,
   fromBlock?: bigint,
 ): () => void {
   return client.publicClient.watchContractEvent({
@@ -89,6 +89,7 @@ export function watchNewRounds(
         inputs: [
           { name: 'epochId', type: 'bytes12', indexed: true },
           { name: 'organizer', type: 'address', indexed: true },
+          { name: 'startBlock', type: 'uint64', indexed: false },
           { name: 'seedBlock', type: 'uint64', indexed: false },
           { name: 'lotteryThreshold', type: 'uint256', indexed: false },
         ],
@@ -99,11 +100,14 @@ export function watchNewRounds(
     onLogs: (logs) => {
       for (const log of logs) {
         const { epochId, organizer } = log.args as any;
-        if (epochId && organizer) onRound(epochId as `0x${string}`, organizer as Address);
+        if (epochId && organizer) onEpoch(epochId as `0x${string}`, organizer as Address);
       }
     },
   });
 }
+
+/** @deprecated Use {@link watchNewEpochs}. Kept for SDK 0.1.x compatibility. */
+export const watchNewRounds = watchNewEpochs;
 
 /**
  * Watch for a epoch being finalized.

@@ -10,12 +10,14 @@ import (
 	"github.com/vocdoni/davinci-dkg/types"
 )
 
+const testEpochID = "epoch-1"
+
 func TestSaveAndGetEpoch(t *testing.T) {
 	c := qt.New(t)
 
 	st := New()
 	epoch := types.Epoch{
-		ID:        "epoch-1",
+		ID:        testEpochID,
 		Organizer: common.HexToAddress("0x1000000000000000000000000000000000000001"),
 		Policy: types.EpochPolicy{
 			Threshold:                 3,
@@ -43,7 +45,7 @@ func TestMarkReadyTracksDistinctParticipants(t *testing.T) {
 
 	st := New()
 	epoch := types.Epoch{
-		ID:        "epoch-1",
+		ID:        testEpochID,
 		Organizer: common.HexToAddress("0x1000000000000000000000000000000000000001"),
 		Policy: types.EpochPolicy{
 			Threshold:                 3,
@@ -72,7 +74,7 @@ func TestSetSelectedParticipants(t *testing.T) {
 
 	st := New()
 	epoch := types.Epoch{
-		ID:        "epoch-1",
+		ID:        testEpochID,
 		Organizer: common.HexToAddress("0x1000000000000000000000000000000000000001"),
 		Policy: types.EpochPolicy{
 			Threshold:                 2,
@@ -105,7 +107,7 @@ func TestSaveContribution(t *testing.T) {
 
 	st := New()
 	epoch := types.Epoch{
-		ID:        "epoch-1",
+		ID:        testEpochID,
 		Organizer: common.HexToAddress("0x1000000000000000000000000000000000000001"),
 		Policy: types.EpochPolicy{
 			Threshold:                 2,
@@ -189,7 +191,7 @@ func TestPebbleBackedStorageRoundAndContribution(t *testing.T) {
 	st := NewWithDB(database)
 
 	epoch := types.Epoch{
-		ID:        "epoch-1",
+		ID:        testEpochID,
 		Organizer: common.HexToAddress("0x1000000000000000000000000000000000000001"),
 		Policy: types.EpochPolicy{
 			Threshold:                 2,

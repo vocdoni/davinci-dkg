@@ -16,12 +16,16 @@ library DKGTypes {
         Completed
     }
 
+    /// @notice Per-epoch DKG policy. The phase deadline blocks are derived at
+    ///         `createEpoch` time from `DKGManager.EPOCH_DURATION_BLOCKS` and
+    ///         the BPS constants in `Sizes.sol` — they are stored on the struct
+    ///         so downstream phase checks remain a single SLOAD. Layout: 4 ×
+    ///         uint16 + 3 × uint64 = 256 bits = exactly 1 storage slot.
     struct EpochPolicy {
         uint16 threshold;
         uint16 committeeSize;
         uint16 minValidContributions;
         uint16 lotteryAlphaBps;            // candidate-pool size = α × committeeSize, α expressed in basis points (10000 = 1.0)
-        uint16 seedDelay;                  // blocks between createEpoch and the block whose hash becomes the seed
         uint64 registrationDeadlineBlock;  // last block in which claimSlot is accepted
         uint64 contributionDeadlineBlock;  // last block in which submitContribution is accepted
         uint64 finalizeNotBeforeBlock;     // earliest block at which finalizeEpoch can succeed; must be > contributionDeadlineBlock

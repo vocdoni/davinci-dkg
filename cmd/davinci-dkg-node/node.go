@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	mrand "math/rand"
 	"os"
 	"strings"
 	"time"
@@ -74,6 +75,12 @@ type Node struct {
 	terminal      map[[12]byte]bool // epochs where no further work is possible
 	privateShares map[[12]byte]*big.Int
 	ownContribs   map[[12]byte]*savedContrib
+
+	// auto-create-epoch state. autoCreateNextStart is the
+	// nextEpochStartBlock() value the most recent attempt was scheduled
+	// against; we skip re-scheduling for the same threshold so a single
+	// jitter-delayed goroutine fires per cadence window.
+	autoCreateNextStart uint64
 }
 
 // newNode constructs a Node from the daemon config.
@@ -470,13 +477,17 @@ func (n *Node) sendReactivate(ctx context.Context) error {
 }
 
 // Run is the main participation loop; blocks until ctx is done.
-func (n *Node) Run(ctx context.Context, pollInterval time.Duration) {
-	ticker := time.NewTicker(pollInterval)
+func (n *Node) Run(ctx context.Context, cfg *Config) {
+	ticker := time.NewTicker(cfg.PollInterval)
 	defer ticker.Stop()
 	// Emit balance and gas-spent info every 10 minutes regardless of poll interval.
 	fundsTicker := time.NewTicker(10 * time.Minute)
 	defer fundsTicker.Stop()
-	log.Infow("node running", "address", n.address, "poll", pollInterval)
+	log.Infow("node running",
+		"address", n.address,
+		"poll", cfg.PollInterval,
+		"auto-create", cfg.AutoCreateEpochs,
+	)
 	for {
 		select {
 		case <-ctx.Done():
@@ -488,11 +499,104 @@ func (n *Node) Run(ctx context.Context, pollInterval time.Duration) {
 			// This guarantees heartbeat()/reactivate() fire even when there
 			// are no active epochs to participate in.
 			n.maintainLiveness(ctx)
+			if cfg.AutoCreateEpochs {
+				n.maybeScheduleAutoCreate(ctx, cfg)
+			}
 			if err := n.tick(ctx); err != nil {
 				log.Errorw(err, "participation tick")
 			}
 		}
 	}
+}
+
+// maybeScheduleAutoCreate races other nodes to fire `createEpoch` once the
+// contract's `nextEpochStartBlock()` cadence threshold has been reached.
+// Each candidate sleeps a uniform-random delay in [0, AutoCreateJitter)
+// before firing, so the population spreads out and most loser txs revert
+// cheaply at the contract's `block.number < nextEpochStartBlock()` guard.
+//
+// Idempotent within a cadence window: we cache the nextEpochStartBlock()
+// value the most-recent attempt was scheduled against, and skip
+// re-scheduling for the same threshold.
+func (n *Node) maybeScheduleAutoCreate(ctx context.Context, cfg *Config) {
+	callOpts := &bind.CallOpts{Context: ctx}
+	next, err := n.manager.NextEpochStartBlock(callOpts)
+	if err != nil {
+		log.Warnw("auto-create: read nextEpochStartBlock failed", "err", err)
+		return
+	}
+	currentBlock, err := n.contracts.Pool().Current().BlockNumber(ctx)
+	if err != nil {
+		log.Warnw("auto-create: read block number failed", "err", err)
+		return
+	}
+	if currentBlock < next {
+		return // not due yet
+	}
+	if n.autoCreateNextStart == next {
+		return // already scheduled / fired for this window
+	}
+	n.autoCreateNextStart = next
+
+	jitter := time.Duration(0)
+	if cfg.AutoCreateJitter > 0 {
+		jitter = time.Duration(mrand.Int63n(int64(cfg.AutoCreateJitter)))
+	}
+	log.Infow("auto-create: scheduling createEpoch attempt",
+		"nextStart", next,
+		"currentBlock", currentBlock,
+		"jitter", jitter,
+	)
+	go func() {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(jitter):
+		}
+		// Re-check: another node may have won the race during our sleep.
+		check, err := n.manager.NextEpochStartBlock(&bind.CallOpts{Context: ctx})
+		if err != nil {
+			log.Warnw("auto-create: re-read nextEpochStartBlock failed", "err", err)
+			return
+		}
+		if check != next {
+			log.Debugw("auto-create: another node won the race",
+				"originalNext", next, "currentNext", check)
+			return
+		}
+		if err := n.fireCreateEpoch(ctx, cfg); err != nil {
+			log.Warnw("auto-create: createEpoch failed (likely lost race)", "err", err)
+			return
+		}
+		log.Infow("auto-create: createEpoch landed", "nextStart", next)
+	}()
+}
+
+// fireCreateEpoch sends the createEpoch transaction with the policy
+// configured in cfg.EpochPolicy. The decryption policy is left empty
+// (no owner-only restriction, no time locks) — operators wanting tighter
+// gating should configure it via per-application AppPolicy at
+// registerApplication time.
+func (n *Node) fireCreateEpoch(ctx context.Context, cfg *Config) error {
+	auth, err := n.txm.NewTransactOpts(ctx)
+	if err != nil {
+		return fmt.Errorf("tx opts: %w", err)
+	}
+	tx, err := n.manager.CreateEpoch(
+		auth,
+		cfg.EpochPolicy.Threshold,
+		cfg.EpochPolicy.CommitteeSize,
+		cfg.EpochPolicy.MinValidContributions,
+		cfg.EpochPolicy.LotteryAlphaBps,
+		gtypes.DKGTypesDecryptionPolicy{},
+	)
+	if err != nil {
+		return fmt.Errorf("create epoch: %w", err)
+	}
+	if err := n.txm.WaitTxByHash(tx.Hash(), 30*time.Second); err != nil {
+		return fmt.Errorf("wait tx: %w", err)
+	}
+	return nil
 }
 
 func (n *Node) tick(ctx context.Context) error {
@@ -1018,6 +1122,45 @@ func (n *Node) doDecryption(
 			return nil // ciphertext not submitted yet — wait
 		}
 		return fmt.Errorf("fetch ciphertext: %w", err)
+	}
+
+	// Defensive validation of (c1, c2) before computing δ_i = sk_i · c1.
+	//
+	// THREAT MODEL — why this off-chain check is load-bearing.
+	// `submitCiphertext` on the manager contract enforces only the cheap
+	// checks (canonical, on-curve, non-identity) and deliberately skips the
+	// ~2 M-gas prime-order subgroup test. A submitter with `submit` permission
+	// (or a future contract upgrade that loosened the on-chain checks) could
+	// therefore park a ciphertext whose c1 lies in the 8-element cofactor
+	// subgroup. If we naively computed δ_i = sk_i · c1 and posted it on-chain,
+	// the map sk_i ↦ δ_i would factor through `sk_i mod h` (h | 8) and leak
+	// log₂(h) ≤ 3 bits of this node's Shamir share — a permanent on-chain
+	// side channel an adversary could chain across many crafted ciphertexts.
+	// By refusing here we guarantee no such partial ever leaves this node,
+	// so no leakage occurs even if the on-chain gate is weakened.
+	//
+	// We re-run all four checks (canonical / on-curve / non-identity /
+	// prime-subgroup) even though the first three are also enforced
+	// on-chain — they are essentially free off-chain and defend against any
+	// future divergence between the contract and the node software.
+	if err := group.ValidateCiphertext(
+		nodetypes.CurvePoint{X: ct.C1X, Y: ct.C1Y},
+		nodetypes.CurvePoint{X: ct.C2X, Y: ct.C2Y},
+	); err != nil {
+		log.Warnw("decryption: rejecting toxic ciphertext — refusing partial decryption",
+			"epoch", roundHex(epochID), "ctIdx", ctIdx, "err", err)
+		// Treat as already-decrypted so we don't keep retrying every poll.
+		// The slot is permanently dead; combine cannot complete without a
+		// quorum of partials, so the on-chain state stays in
+		// AwaitingPartials forever — that is the intended outcome for an
+		// invalid ciphertext (no plaintext leaks, no node burns proving CPU
+		// in a loop). Operators can grep `rejecting toxic ciphertext` to
+		// audit the rejection reason.
+		if n.decrypted[epochID] == nil {
+			n.decrypted[epochID] = make(map[uint16]bool)
+		}
+		n.decrypted[epochID][ctIdx] = true
+		return nil
 	}
 
 	dShare, err := n.buildPrivateShare(ctx, epochID, idx, selected, epoch, callOpts)

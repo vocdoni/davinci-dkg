@@ -18,9 +18,9 @@ import (
 	"github.com/vocdoni/davinci-dkg/circuits/contribution"
 	"github.com/vocdoni/davinci-dkg/circuits/decryptcombine"
 	"github.com/vocdoni/davinci-dkg/circuits/finalize"
-	"github.com/vocdoni/davinci-dkg/internal/protocol"
 	"github.com/vocdoni/davinci-dkg/circuits/partialdecrypt"
 	"github.com/vocdoni/davinci-dkg/crypto/group"
+	"github.com/vocdoni/davinci-dkg/internal/protocol"
 	"github.com/vocdoni/davinci-dkg/types"
 )
 
@@ -387,7 +387,7 @@ func BuildDecryptCombineOutputFromCiphertext(
 	plaintext *big.Int,
 ) (*DecryptCombineOutput, error) {
 	return BuildDecryptCombineOutputForApp(
-		ctx, epochID, [32]byte{}, 1, 0 /* mode */, big.NewInt(0) /* S */,
+		ctx, epochID, [32]byte{}, 1, 0 /* mode */, big.NewInt(0), /* S */
 		identityPoint(), threshold, ciphertextC1, ciphertextC2,
 		participantIndexes, partialDecryptions, plaintext,
 	)

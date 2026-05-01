@@ -68,7 +68,7 @@ func (c *PartialDecryptCircuit) Define(api frontend.API) error {
 	state, err := ccommon.HashFieldElements(
 		api,
 		ccommon.PartialDecryptDomain(),
-		c.RoundHash,        // eid
+		c.RoundHash, // eid
 		c.Aid,
 		c.CtIdx,
 		c.Role,

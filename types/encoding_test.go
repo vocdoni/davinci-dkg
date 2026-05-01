@@ -13,7 +13,7 @@ func TestContributionJSONRoundTrip(t *testing.T) {
 	c := qt.New(t)
 
 	original := Contribution{
-		EpochID:          "epoch-1",
+		EpochID:          testEpochID,
 		Contributor:      common.HexToAddress("0x1000000000000000000000000000000000000001"),
 		ContributorIndex: 1,
 		Commitments: []CurvePoint{

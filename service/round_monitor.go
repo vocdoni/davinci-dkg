@@ -48,7 +48,6 @@ func (m *EpochMonitor) SyncRound(ctx context.Context, epochID [12]byte) error {
 			CommitteeSize:             roundView.Policy.CommitteeSize,
 			MinValidContributions:     roundView.Policy.MinValidContributions,
 			LotteryAlphaBps:           roundView.Policy.LotteryAlphaBps,
-			SeedDelay:                 roundView.Policy.SeedDelay,
 			RegistrationDeadlineBlock: roundView.Policy.RegistrationDeadlineBlock,
 			ContributionDeadlineBlock: roundView.Policy.ContributionDeadlineBlock,
 			FinalizeNotBeforeBlock:    roundView.Policy.FinalizeNotBeforeBlock,

@@ -41,7 +41,7 @@ func TestPartialDecryptRejectsCrossEpochReplay(t *testing.T) {
 	c.Assert(err, qt.IsNil)
 
 	cases := []struct {
-		name  string
+		name   string
 		mutate func(w *PartialDecryptCircuit)
 	}{
 		{"different-eid", func(w *PartialDecryptCircuit) { w.RoundHash = big.NewInt(2222) }},

@@ -11,6 +11,14 @@ import {BRLC} from "./libraries/BRLC.sol";
 import {DKGTypes} from "./libraries/DKGTypes.sol";
 import {DKGProtocol} from "./libraries/DKGProtocol.sol";
 import {PhaseLib} from "./libraries/PhaseLib.sol";
+import {
+    MAX_N,
+    DEFAULT_EPOCH_DURATION_BLOCKS,
+    REGISTRATION_BPS,
+    CONTRIBUTION_BPS,
+    FINALIZE_GAP_BPS,
+    SEED_DELAY_BLOCKS
+} from "./libraries/Sizes.sol";
 
 /// @title  DKGManager
 /// @notice On-chain orchestrator for every phase of a davinci-dkg epoch.
@@ -36,13 +44,14 @@ contract DKGManager is IDKGManager {
     // ──────────────────────────────────────────────────────────────────────
     // Single source of truth for the per-circuit array bound.
     //
-    // MAX_N is the only number to edit when changing the maximum committee
-    // size. It must agree with `circuits/common.MaxN` (Go side); the test
-    // `TestSolidityMaxNMatchesGoMaxN` enforces the equality at CI time.
-    // Changing this requires recompiling every circuit, regenerating the
-    // proving keys, and redeploying the verifier wrappers.
+    // MAX_N is imported from `libraries/Sizes.sol` — the single source of
+    // truth on the on-chain side. It must agree with `circuits/common.MaxN`
+    // on the Go side. Changing it requires recompiling every circuit,
+    // regenerating the proving keys, and redeploying the verifier wrappers.
+    // The Foundry test helpers in `test/TestHelpers.t.sol` also import the
+    // same constant so the per-N gas tables can be regenerated without code
+    // edits beyond the single line in `Sizes.sol`.
     // ──────────────────────────────────────────────────────────────────────
-    uint256 internal constant MAX_N            = 32;
     uint256 internal constant MAX_COEFFICIENTS = MAX_N;
     uint256 internal constant MAX_RECIPIENTS   = MAX_N;
     uint256 internal constant MAX_PARTICIPANTS = MAX_N;
@@ -93,7 +102,20 @@ contract DKGManager is IDKGManager {
     address public immutable PARTIAL_DECRYPT_VERIFIER;
     address public immutable FINALIZE_VERIFIER;
     address public immutable DECRYPT_COMBINE_VERIFIER;
+    /// @notice Total epoch length in blocks. Set per-deploy by the constructor.
+    ///         Defaults to `DEFAULT_EPOCH_DURATION_BLOCKS` (Sizes.sol) when the
+    ///         constructor argument is 0. Wall-clock duration depends on the
+    ///         deployment chain's block time and is estimated off-chain.
+    uint256 public immutable EPOCH_DURATION_BLOCKS;
+    /// @dev Phase deadline offsets, derived from EPOCH_DURATION_BLOCKS at
+    ///      construction so we don't pay the BPS division on every createEpoch.
+    uint64 internal immutable REG_DEADLINE_OFFSET;
+    uint64 internal immutable CONTRIB_DEADLINE_OFFSET;
+    uint64 internal immutable FINALIZE_NOT_BEFORE_OFFSET;
     uint64 public epochNonce;
+    /// @notice Block at which the most recent epoch was created. Anchor for
+    ///         `nextEpochStartBlock()`.
+    uint64 public lastEpochStartBlock;
 
     /// @notice The sibling DKGAppManager that owns the per-application
     ///         registration / organizer-share storage and verification logic.
@@ -178,7 +200,8 @@ contract DKGManager is IDKGManager {
         address _contributionVerifier,
         address _partialDecryptVerifier,
         address _finalizeVerifier,
-        address _decryptCombineVerifier
+        address _decryptCombineVerifier,
+        uint256 _epochDurationBlocks
     ) {
         if (uint32(block.chainid) != _chainId) revert InvalidChainId();
         if (_registry == address(0)) revert InvalidAddress();
@@ -193,7 +216,39 @@ contract DKGManager is IDKGManager {
         PARTIAL_DECRYPT_VERIFIER = _partialDecryptVerifier;
         FINALIZE_VERIFIER = _finalizeVerifier;
         DECRYPT_COMBINE_VERIFIER = _decryptCombineVerifier;
+
+        uint256 dur = _epochDurationBlocks == 0 ? DEFAULT_EPOCH_DURATION_BLOCKS : _epochDurationBlocks;
+        // Sanity: each phase needs at least 1 block, and the seed-revelation
+        // block (startBlock + SEED_DELAY_BLOCKS) must land strictly inside the
+        // registration window so claimers have at least one block to call.
+        uint64 reg     = uint64(dur * REGISTRATION_BPS / 10000);
+        uint64 contrib = uint64(dur * CONTRIBUTION_BPS / 10000);
+        uint64 finGap  = uint64(dur * FINALIZE_GAP_BPS  / 10000);
+        if (reg <= SEED_DELAY_BLOCKS || contrib == 0 || finGap == 0 || dur > type(uint64).max) {
+            revert InvalidPolicy();
+        }
+        EPOCH_DURATION_BLOCKS      = dur;
+        REG_DEADLINE_OFFSET        = reg;
+        CONTRIB_DEADLINE_OFFSET    = reg + contrib;
+        FINALIZE_NOT_BEFORE_OFFSET = reg + contrib + finGap;
+
         _deployer = msg.sender;
+    }
+
+    /// @inheritdoc IDKGManager
+    function epochDurationBlocks() external view returns (uint256) {
+        return EPOCH_DURATION_BLOCKS;
+    }
+
+    /// @inheritdoc IDKGManager
+    /// @dev Returns the earliest block at which `createEpoch` will succeed.
+    ///      For the very first epoch (nothing scheduled yet) this is the
+    ///      current block, so the call goes through immediately. Otherwise
+    ///      `lastEpochStartBlock + EPOCH_DURATION_BLOCKS` — the cadence
+    ///      anchor.
+    function nextEpochStartBlock() public view returns (uint64) {
+        if (lastEpochStartBlock == 0) return uint64(block.number);
+        return lastEpochStartBlock + uint64(EPOCH_DURATION_BLOCKS);
     }
 
     /// @notice Pin the sibling DKGAppManager address. May only be called once
@@ -208,63 +263,43 @@ contract DKGManager is IDKGManager {
         _appManagerSet = true;
     }
 
-    /// @notice Create a new DKG epoch.
-    /// @dev    Snapshots `REGISTRY.nodeCount()` to derive the per-epoch
-    ///         lottery threshold and pins the seed block at
-    ///         `block.number + seedDelay`. The caller becomes the epoch
-    ///         organizer but does not select committee members — every
-    ///         registered node that passes the lottery can self-claim a slot.
-    /// @param  threshold                  Shamir reconstruction threshold `t`.
-    /// @param  committeeSize              Target committee size `n`. Must
-    ///                                    be in [1, MAX_N]; values above
-    ///                                    MAX_N revert with `InvalidPolicy`.
-    /// @param  minValidContributions      Minimum accepted contributions
-    ///                                    required to allow `finalizeEpoch`.
-    ///                                    Must be ≥ `threshold` (otherwise
-    ///                                    the epoch could finalize with
-    ///                                    fewer share holders than needed
-    ///                                    to decrypt — `InvalidPolicy`).
-    /// @param  lotteryAlphaBps            Oversubscription factor α encoded as
-    ///                                    basis points (10000 = α=1.0). The
-    ///                                    expected eligible set size is
-    ///                                    `α · committeeSize`.
-    /// @param  seedDelay                  Number of blocks after `createEpoch`
-    ///                                    that must elapse before the seed
-    ///                                    block is valid. Must be ≥ 1.
-    /// @param  registrationDeadlineBlock  Block height after which the
-    ///                                    registration window is considered
-    ///                                    stalled and `extendRegistration`
-    ///                                    may reroll the seed.
-    /// @param  contributionDeadlineBlock  Block height after which the epoch
-    ///                                    may be aborted for inactivity.
-    /// @param  finalizeNotBeforeBlock     Earliest block at which finalizeEpoch
-    ///                                    can succeed. Must be strictly greater
-    ///                                    than contributionDeadlineBlock so all
-    ///                                    selected participants have a window
-    ///                                    to submit contributions before the
-    ///                                    finalize set is closed.
-    /// @return                            The 12-byte epoch identifier
-    ///                                    `uint32 prefix || uint64 nonce`.
+    /// @notice Create a new DKG epoch. Permissionless: any caller may fire it
+    ///         once `block.number >= nextEpochStartBlock()`. All phase
+    ///         deadlines are derived from `EPOCH_DURATION_BLOCKS` and the BPS
+    ///         constants in `Sizes.sol`.
+    /// @dev    The caller becomes the epoch organizer (recorded for
+    ///         organizational accounting; the protocol does not grant the
+    ///         organizer any special privileges over committee selection,
+    ///         which is trustlessly drawn by the lottery).
+    /// @param  threshold              Shamir reconstruction threshold `t`.
+    /// @param  committeeSize          Target committee size `n` ∈ [1, MAX_N].
+    /// @param  minValidContributions  Minimum accepted contributions required
+    ///                                for `finalizeEpoch`. Must be ≥ threshold.
+    /// @param  lotteryAlphaBps        Oversubscription factor α in basis points
+    ///                                (10000 = 1.0). Expected eligible set
+    ///                                size is `α · committeeSize`.
+    /// @param  decryptionPolicy       Per-epoch ciphertext-submission policy
+    ///                                (gates the legacy aid=0 path).
+    /// @return                        The 12-byte epoch identifier
+    ///                                `uint32 prefix || uint64 nonce`.
     function createEpoch(
         uint16 threshold,
         uint16 committeeSize,
         uint16 minValidContributions,
         uint16 lotteryAlphaBps,
-        uint16 seedDelay,
-        uint64 registrationDeadlineBlock,
-        uint64 contributionDeadlineBlock,
-        uint64 finalizeNotBeforeBlock,
         DKGTypes.DecryptionPolicy calldata decryptionPolicy
     ) external returns (bytes12) {
+        // Permissionless cadence guard. The first epoch (lastEpochStartBlock
+        // == 0) goes through immediately; subsequent epochs require one full
+        // EPOCH_DURATION_BLOCKS to have elapsed since the previous start.
+        if (block.number < nextEpochStartBlock()) revert InvalidPhase();
+
         if (
             threshold == 0 || committeeSize == 0 || threshold > committeeSize
                 || committeeSize > MAX_N
                 || minValidContributions == 0 || minValidContributions > committeeSize
                 || minValidContributions < threshold
-                || lotteryAlphaBps < 10000 || seedDelay == 0 || seedDelay > 256
-                || registrationDeadlineBlock <= uint64(block.number) + uint64(seedDelay)
-                || contributionDeadlineBlock <= registrationDeadlineBlock
-                || finalizeNotBeforeBlock <= contributionDeadlineBlock
+                || lotteryAlphaBps < 10000
         ) revert InvalidPolicy();
         // Two invariants worth calling out:
         //   - minValidContributions < threshold would let the epoch finalize
@@ -330,6 +365,8 @@ contract DKGManager is IDKGManager {
         recentEpochs[writeSlot] = epochId;
         unchecked { recentEpochsCount += 1; }
 
+        uint64 startBlock = uint64(block.number);
+        uint64 seedBlock  = startBlock + uint64(SEED_DELAY_BLOCKS);
         epochs[epochId] = Epoch({
             organizer: msg.sender,
             policy: DKGTypes.EpochPolicy({
@@ -337,15 +374,15 @@ contract DKGManager is IDKGManager {
                 committeeSize: committeeSize,
                 minValidContributions: minValidContributions,
                 lotteryAlphaBps: lotteryAlphaBps,
-                seedDelay: seedDelay,
-                registrationDeadlineBlock: registrationDeadlineBlock,
-                contributionDeadlineBlock: contributionDeadlineBlock,
-                finalizeNotBeforeBlock: finalizeNotBeforeBlock
+                registrationDeadlineBlock: startBlock + REG_DEADLINE_OFFSET,
+                contributionDeadlineBlock: startBlock + CONTRIB_DEADLINE_OFFSET,
+                finalizeNotBeforeBlock:    startBlock + FINALIZE_NOT_BEFORE_OFFSET
             }),
             decryptionPolicy: decryptionPolicy,
             status: DKGTypes.EpochPhase.Registration,
             nonce: epochNonce,
-            seedBlock: uint64(block.number) + uint64(seedDelay),
+            startBlock: startBlock,
+            seedBlock: seedBlock,
             seed: bytes32(0),
             lotteryThreshold: lotteryThreshold,
             claimedCount: 0,
@@ -354,7 +391,8 @@ contract DKGManager is IDKGManager {
             ciphertextCount: 0
         });
 
-        emit EpochCreated(epochId, msg.sender, uint64(block.number) + uint64(seedDelay), lotteryThreshold);
+        lastEpochStartBlock = startBlock;
+        emit EpochCreated(epochId, msg.sender, startBlock, seedBlock, lotteryThreshold);
         return epochId;
     }
 
@@ -417,42 +455,12 @@ contract DKGManager is IDKGManager {
         }
     }
 
-    /// @notice Re-roll the lottery seed if the epoch failed to fill within the
-    /// registration window. Anyone may call once the original deadline has passed; the
-    /// new seed is derived from the current block.
-    /// @notice Reroll the lottery seed for a stalled registration window.
-    /// @dev    Callable by anyone after `registrationDeadlineBlock` if the
-    ///         committee has not filled. Captures a fresh `blockhash` as the
-    ///         new seed, resets the claimed count, and pushes the deadline
-    ///         forward by one `seedDelay` window.
-    /// @param  epochId The epoch identifier.
-    function extendRegistration(bytes12 epochId) external {
-        Epoch storage epoch = epochs[epochId];
-        if (epoch.organizer == address(0)) revert InvalidEpoch();
-        if (epoch.status != DKGTypes.EpochPhase.Registration) revert InvalidPhase();
-        if (epoch.claimedCount == epoch.policy.committeeSize) revert InvalidPhase();
-        if (block.number <= uint256(epoch.policy.registrationDeadlineBlock)) revert InvalidPhase();
+    // `extendRegistration` was removed in the auto-cadence refactor. With a
+    // fixed `EPOCH_DURATION_BLOCKS`-derived schedule, a stalled registration
+    // simply gets aborted (`abortEpoch`) and the next scheduled epoch picks
+    // up automatically once the cadence threshold passes.
 
-        // Capture the original window length BEFORE we mutate seedBlock.
-        uint64 oldDeadline = epoch.policy.registrationDeadlineBlock;
-        uint64 oldSeedBlock = epoch.seedBlock;
-        uint64 window = oldDeadline - (oldSeedBlock - uint64(epoch.policy.seedDelay));
-
-        uint64 newSeedBlock = uint64(block.number) + uint64(epoch.policy.seedDelay);
-        uint64 newRegistrationDeadline = uint64(block.number) + window;
-
-        // Guard: the extended registration window must close before the contribution
-        // deadline; otherwise the epoch would become permanently stuck with no way to
-        // advance to the Contribution phase.
-        if (newRegistrationDeadline >= epoch.policy.contributionDeadlineBlock) revert InvalidPolicy();
-
-        epoch.seed = bytes32(0);
-        epoch.seedBlock = newSeedBlock;
-        epoch.policy.registrationDeadlineBlock = newRegistrationDeadline;
-        emit RegistrationExtended(epochId, newSeedBlock, newRegistrationDeadline);
-    }
-
-    /// @dev Internal helper: build the canonical (recipientIndexes ‖ pubKeys) layout
+/// @dev Internal helper: build the canonical (recipientIndexes ‖ pubKeys) layout
     /// for the committee that's just been filled and store its keccak256. Drives the
     /// O(1) committee verification in submitContribution.
     function _snapshotCommittee(bytes12 epochId, uint16 committeeSize) internal {
@@ -983,15 +991,29 @@ contract DKGManager is IDKGManager {
     }
 
     /// @dev Validate that (x, y) is a canonical, on-curve, non-identity point
-    ///      in the prime-order subgroup. Reverts with InvalidCiphertext()
-    ///      (rather than the BabyJubJub library's specific errors) so callers
-    ///      observe a single failure mode at submitCiphertext time.
-    ///      Matches the registry's `_requireValidEncryptionPoint` naming + policy.
-    function _requireValidEncryptionPoint(uint256 x, uint256 y) internal view {
+    ///      on BabyJubJub. Reverts with InvalidCiphertext() so callers observe
+    ///      a single failure mode at submitCiphertext time.
+    ///
+    ///      The prime-subgroup membership check (`[L]·P == identity`) is
+    ///      intentionally NOT performed here. A small-order ciphertext point
+    ///      cannot be combined into a valid plaintext (the combine SNARK's
+    ///      `M = m·G` constraint would have no solution), so the worst an
+    ///      attacker can do is occupy a ciphertext slot that no committee
+    ///      member will ever decrypt — and committee node software is
+    ///      required to subgroup-check before computing a partial decryption,
+    ///      so no `δ_i = sk_i · c1` ever lands on-chain to leak `sk_i mod h`.
+    ///      The off-chain enforcement layer is the canonical defence against
+    ///      small-order ciphertext submissions.
+    ///
+    ///      Skipping the on-chain check saves ~2 M gas per submission (one
+    ///      full BJJ scalar multiplication per coordinate); the residual
+    ///      defence relies on (i) the off-chain committee node policy and
+    ///      (ii) the application's `authorizedSubmitter` / `maxCiphertexts`
+    ///      policy gating the slot count.
+    function _requireValidEncryptionPoint(uint256 x, uint256 y) internal pure {
         if (!BabyJubJub.isCanonical(x, y)) revert InvalidCiphertext();
         if (BabyJubJub.isIdentity(x, y)) revert InvalidCiphertext();
         if (!BabyJubJub.isOnCurve(x, y)) revert InvalidCiphertext();
-        if (!BabyJubJub.isInPrimeSubgroup(x, y)) revert InvalidCiphertext();
     }
 
     /// @notice Combine `t` partial decryptions via Lagrange interpolation and

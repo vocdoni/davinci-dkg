@@ -63,7 +63,8 @@ contract DKGManagerTest is Test, TestHelpers {
             address(verifier),
             address(partialVerifier),
             address(finalizeVerifier),
-            address(decryptCombineVerifier)
+            address(decryptCombineVerifier),
+            0  // epochDurationBlocks=0 → contract picks DEFAULT_EPOCH_DURATION_BLOCKS (100)
         );
         // Wire the liveness callback so submitContribution can refresh
         // the contributor's lastActiveBlock on the registry.
@@ -77,18 +78,20 @@ contract DKGManagerTest is Test, TestHelpers {
 
     /// @dev Creates a epoch with a lottery threshold of "everyone passes" so the two
     /// registered test nodes (address(this) and 0xBEEF) are both eligible.
+    /// All phase deadlines are derived from the contract's
+    /// `EPOCH_DURATION_BLOCKS` (100 in the default-deploy test fixture):
+    /// regDeadline=+5, contribDeadline=+20, finalizeNotBefore=+25.
     function _createLotteryRound() internal returns (bytes12 epochId) {
+        // Permissionless cadence: roll forward to nextEpochStartBlock if
+        // a previous epoch was just created in this same test.
+        uint64 next = manager.nextEpochStartBlock();
+        if (block.number < uint256(next)) vm.roll(uint256(next));
         // α = 1.0 (10000 bps), committeeSize = 2, registered = 2 → all pass.
-        // seedDelay = 1, registrationDeadline = +5, contributionDeadline = +20.
         epochId = manager.createEpoch(
             2,                         // threshold
             2,                         // committeeSize
             2,                         // minValidContributions
             10000,                     // lotteryAlphaBps (α = 1.0)
-            1,                          // seedDelay
-            uint64(block.number + 5),  // registrationDeadlineBlock
-            uint64(block.number + 20), // contributionDeadlineBlock
-            uint64(block.number + 21), // finalizeNotBeforeBlock
             _emptyDecryptionPolicy()
         );
         // Advance past seedBlock so blockhash is available.
@@ -168,7 +171,7 @@ contract DKGManagerTest is Test, TestHelpers {
 
     function test_CreateEpoch_PersistsPolicy() public {
         // committeeSize=2, registered=2, α=1.0 → all eligible
-        bytes12 epochId = manager.createEpoch(2, 2, 2, 10000, 1, uint64(block.number + 5), uint64(block.number + 10), uint64(block.number + 11), _emptyDecryptionPolicy());
+        bytes12 epochId = manager.createEpoch(2, 2, 2, 10000, _emptyDecryptionPolicy());
 
         IDKGManager.Epoch memory epoch = manager.getEpoch(epochId);
 
@@ -180,7 +183,7 @@ contract DKGManagerTest is Test, TestHelpers {
 
     function test_ClaimSlot_RejectsBeforeSeedReady() public {
         bytes12 epochId =
-            manager.createEpoch(2, 2, 2, 10000, 1, uint64(block.number + 5), uint64(block.number + 10), uint64(block.number + 11), _emptyDecryptionPolicy());
+            manager.createEpoch(2, 2, 2, 10000, _emptyDecryptionPolicy());
         // Don't roll forward — seed block has not been mined yet.
         vm.expectRevert(IDKGManager.SeedNotReady.selector);
         manager.claimSlot(epochId);
@@ -456,22 +459,32 @@ contract DKGManagerTest is Test, TestHelpers {
         );
     }
 
-    function test_CreateEpoch_RejectsFinalizeNotBeforeAtOrBelowContribution() public {
-        // finalizeNotBeforeBlock == contributionDeadlineBlock → revert
-        vm.expectRevert(IDKGManager.InvalidPolicy.selector);
-        manager.createEpoch(
-            2, 2, 2, 10000, 1,
-            uint64(block.number + 5),
-            uint64(block.number + 10),
-            uint64(block.number + 10), _emptyDecryptionPolicy()
-        );
-        // finalizeNotBeforeBlock < contributionDeadlineBlock → revert
-        vm.expectRevert(IDKGManager.InvalidPolicy.selector);
-        manager.createEpoch(
-            2, 2, 2, 10000, 1,
-            uint64(block.number + 5),
-            uint64(block.number + 10),
-            uint64(block.number + 9), _emptyDecryptionPolicy()
+    // `test_CreateEpoch_RejectsFinalizeNotBeforeAtOrBelowContribution` was
+    // removed when phase deadlines moved from caller-supplied params to
+    // contract-derived offsets. The constructor enforces that all per-phase
+    // offsets are strictly positive, so the inversion the old test guarded
+    // against is now structurally impossible.
+
+    function test_CreateEpoch_RejectsBeforeNextEpochStartBlock() public {
+        // First epoch goes through (cadence guard satisfied — no prior
+        // epoch). Second call before nextEpochStartBlock() reverts.
+        manager.createEpoch(2, 2, 2, 10000, _emptyDecryptionPolicy());
+        // We are far before lastEpochStartBlock + EPOCH_DURATION_BLOCKS now.
+        vm.expectRevert(IDKGManager.InvalidPhase.selector);
+        manager.createEpoch(2, 2, 2, 10000, _emptyDecryptionPolicy());
+        // Roll past the cadence threshold and try again — must succeed.
+        vm.roll(uint256(manager.nextEpochStartBlock()));
+        manager.createEpoch(2, 2, 2, 10000, _emptyDecryptionPolicy());
+    }
+
+    function test_NextEpochStartBlock_AdvancesByDuration() public {
+        uint64 dur = uint64(manager.EPOCH_DURATION_BLOCKS());
+        // Before any epoch: nextEpochStartBlock() == current block.
+        assertEq(uint256(manager.nextEpochStartBlock()), block.number);
+        manager.createEpoch(2, 2, 2, 10000, _emptyDecryptionPolicy());
+        assertEq(
+            uint256(manager.nextEpochStartBlock()),
+            uint256(manager.lastEpochStartBlock()) + uint256(dur)
         );
     }
 
@@ -675,15 +688,15 @@ contract DKGManagerTest is Test, TestHelpers {
         registry.reap(address(0xBEEF));
 
         // Start a fresh epoch with activeCount = 1.
+        // Need to wait for nextEpochStartBlock if a previous epoch was just created.
+        uint64 next = manager.nextEpochStartBlock();
+        if (block.number < uint256(next)) vm.roll(uint256(next));
         bytes12 epochId = manager.createEpoch(
             1,
             1,
             1,
             10000,
-            1,
-            uint64(block.number + 5),
-            uint64(block.number + 20),
-            uint64(block.number + 21), _emptyDecryptionPolicy()
+            _emptyDecryptionPolicy()
         );
         vm.roll(block.number + 2);
 
@@ -721,7 +734,7 @@ contract DKGManagerTest is Test, TestHelpers {
     }
 
     function test_AbortEpoch_PersistsAbortedStatus() public {
-        bytes12 epochId = manager.createEpoch(2, 2, 2, 10000, 1, uint64(block.number + 5), uint64(block.number + 10), uint64(block.number + 11), _emptyDecryptionPolicy());
+        bytes12 epochId = manager.createEpoch(2, 2, 2, 10000, _emptyDecryptionPolicy());
 
         manager.abortEpoch(epochId);
 
@@ -738,52 +751,10 @@ contract DKGManagerTest is Test, TestHelpers {
         manager.abortEpoch(epochId);
     }
 
-    // ── M-02: extendRegistration deadline validation ───────────────────────
-
-    function test_ExtendRegistration_UpdatesSeedBlockAndDeadline() public {
-        bytes12 epochId = manager.createEpoch(
-            2, 2, 2, 10000, 1,
-            uint64(block.number + 3),   // registrationDeadline
-            uint64(block.number + 100), // contributionDeadline
-            uint64(block.number + 101), // finalizeNotBeforeBlock
-            _emptyDecryptionPolicy()
-        );
-        IDKGManager.Epoch memory before = manager.getEpoch(epochId);
-
-        // Advance past the registration deadline without filling all slots.
-        vm.roll(block.number + 4);
-        manager.extendRegistration(epochId);
-
-        IDKGManager.Epoch memory afterRound = manager.getEpoch(epochId);
-        // Seed block and registration deadline must have advanced.
-        assertTrue(afterRound.seedBlock > before.seedBlock);
-        assertTrue(afterRound.policy.registrationDeadlineBlock > before.policy.registrationDeadlineBlock);
-        // Seed must be reset.
-        assertEq(uint256(afterRound.seed), 0);
-    }
-
-    function test_ExtendRegistration_RejectsWhenNewDeadlineExceedsContribution() public {
-        // registrationDeadlineBlock = block.number + 3
-        // contributionDeadlineBlock = block.number + 4  (very tight)
-        // window = (block.number+3) - ((block.number+1) - 1) = 3
-        // After rolling to block.number+10: newDeadline = 10+3 = 13 > 4 → should revert.
-        uint64 base = uint64(block.number);
-        bytes12 epochId = manager.createEpoch(
-            2, 2, 2, 10000, 1,
-            base + 3,  // registrationDeadline
-            base + 4,  // contributionDeadline — very tight
-            base + 5,  // finalizeNotBeforeBlock
-            _emptyDecryptionPolicy()
-        );
-
-        // Advance well past the registration deadline.
-        vm.roll(block.number + 10);
-
-        vm.expectRevert(IDKGManager.InvalidPolicy.selector);
-        manager.extendRegistration(epochId);
-    }
-
     // ── M-03/M-04: constructor validation ─────────────────────────────────
+    // (extendRegistration tests removed — function no longer exists in the
+    // auto-cadence model.)
+
 
     function test_Constructor_RejectsZeroRegistry() public {
         vm.expectRevert(IDKGManager.InvalidAddress.selector);
@@ -793,7 +764,8 @@ contract DKGManagerTest is Test, TestHelpers {
             address(verifier),
             address(partialVerifier),
             address(finalizeVerifier),
-            address(decryptCombineVerifier)
+            address(decryptCombineVerifier),
+            0
         );
     }
 
@@ -805,7 +777,8 @@ contract DKGManagerTest is Test, TestHelpers {
             address(verifier),
             address(partialVerifier),
             address(finalizeVerifier),
-            address(decryptCombineVerifier)
+            address(decryptCombineVerifier),
+            0
         );
     }
 
@@ -988,13 +961,7 @@ contract DKGManagerTest is Test, TestHelpers {
         });
 
         vm.expectRevert(IDKGManager.InvalidDecryptionPolicy.selector);
-        manager.createEpoch(
-            2, 2, 2, 10000, 1,
-            uint64(block.number + 5),
-            uint64(block.number + 20),
-            uint64(block.number + 21),
-                        bad
-        );
+        manager.createEpoch(2, 2, 2, 10000, bad);
     }
 
     function test_SubmitPartialDecryption_RejectsWhenCiphertextNotSubmitted() public {
@@ -1019,13 +986,9 @@ contract DKGManagerTest is Test, TestHelpers {
         internal
         returns (bytes12 epochId)
     {
-        epochId = manager.createEpoch(
-            2, 2, 2, 10000, 1,
-            uint64(block.number + 5),
-            uint64(block.number + 20),
-            uint64(block.number + 21),
-                        dp
-        );
+        uint64 next = manager.nextEpochStartBlock();
+        if (block.number < uint256(next)) vm.roll(uint256(next));
+        epochId = manager.createEpoch(2, 2, 2, 10000, dp);
         vm.roll(block.number + 2);
         _claimAllSlots(epochId);
 

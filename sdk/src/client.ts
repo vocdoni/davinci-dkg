@@ -237,6 +237,30 @@ export class DKGClient {
     return this._manager.read.epochNonce();
   }
 
+  /**
+   * The contract's compile-time epoch length in blocks. Set per-deploy via
+   * the constructor; read once and cache. Pair with
+   * {@link getNextEpochStartBlock} and a block-time estimate to render the
+   * "next epoch in" countdown in the UI.
+   */
+  async getEpochDurationBlocks(): Promise<bigint> {
+    return this._manager.read.epochDurationBlocks() as Promise<bigint>;
+  }
+
+  /**
+   * Earliest block at which the next `createEpoch` call may succeed.
+   * Equals `lastEpochStartBlock + EPOCH_DURATION_BLOCKS`, or `block.number`
+   * before any epoch has been created.
+   */
+  async getNextEpochStartBlock(): Promise<bigint> {
+    return BigInt(await this._manager.read.nextEpochStartBlock() as bigint);
+  }
+
+  /** Block in which the most recent epoch was created. */
+  async getLastEpochStartBlock(): Promise<bigint> {
+    return BigInt(await this._manager.read.lastEpochStartBlock() as bigint);
+  }
+
   // ── Epoch queries ──────────────────────────────────────────────────────────
 
   /** Fetch full epoch state. */
@@ -434,6 +458,7 @@ export class DKGClient {
     Array<{
       epochId: `0x${string}`;
       organizer: Address;
+      startBlock: bigint;
       seedBlock: bigint;
       lotteryThreshold: bigint;
       blockNumber: bigint;
@@ -449,6 +474,7 @@ export class DKGClient {
           inputs: [
             { name: 'epochId', type: 'bytes12', indexed: true },
             { name: 'organizer', type: 'address', indexed: true },
+            { name: 'startBlock', type: 'uint64', indexed: false },
             { name: 'seedBlock', type: 'uint64', indexed: false },
             { name: 'lotteryThreshold', type: 'uint256', indexed: false },
           ],
@@ -461,6 +487,7 @@ export class DKGClient {
     return logs.map((l) => ({
       epochId: (l.args as any).epochId as `0x${string}`,
       organizer: (l.args as any).organizer as Address,
+      startBlock: BigInt((l.args as any).startBlock ?? 0),
       seedBlock: BigInt((l.args as any).seedBlock ?? 0),
       lotteryThreshold: BigInt((l.args as any).lotteryThreshold ?? 0),
       blockNumber: l.blockNumber ?? 0n,
@@ -801,12 +828,12 @@ export class DKGClient {
   /**
    * Fetch the most recent `limit` epochs in descending nonce order.
    *
-   * Rounds with status 0 (None) are omitted — they indicate an evicted slot
+   * Epochs with status 0 (None) are omitted — they indicate an evicted slot
    * in the ring buffer.
    *
    * @param limit  Maximum number of epochs to return (default: 20)
    */
-  async getRecentRounds(limit = 20): Promise<EpochEntry[]> {
+  async getRecentEpochs(limit = 20): Promise<EpochEntry[]> {
     const [nonce, prefix] = await Promise.all([
       this.epochNonce(),
       this.roundPrefix(),
@@ -835,6 +862,11 @@ export class DKGClient {
     return entries.filter(
       (e): e is EpochEntry => e !== null && Number(e.epoch.status) !== 0,
     );
+  }
+
+  /** @deprecated Use {@link getRecentEpochs}. Kept for SDK 0.1.x compatibility. */
+  async getRecentRounds(limit = 20): Promise<EpochEntry[]> {
+    return this.getRecentEpochs(limit);
   }
 
   // ── Internal access for DKGWriter ──────────────────────────────────────────

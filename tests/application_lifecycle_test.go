@@ -158,7 +158,6 @@ func finalizedEpochForApps(ctx context.Context, c *qt.C) *helpers.FinalizedRound
 		CommitteeSize:             1,
 		MinValidContributions:     1,
 		LotteryAlphaBps:           helpers.DefaultLotteryAlphaBps,
-		SeedDelay:                 helpers.DefaultSeedDelay,
 		RegistrationDeadlineBlock: head + 25,
 		ContributionDeadlineBlock: head + 50,
 		FinalizeNotBeforeBlock:    head + 51,

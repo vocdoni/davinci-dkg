@@ -129,10 +129,10 @@ func buildDerivation() derivationFile {
 	L := curve.Order
 
 	cases := []struct {
-		label   string
-		eidHex  string
-		secret  int64
-		aidHex  string
+		label  string
+		eidHex string
+		secret int64
+		aidHex string
 	}{
 		{"basic", "0x000000000000000000000001", 1, "0x" + hexN(31, 0x00) + "07"},
 		{"second-aid", "0x000000000000000000000001", 1, "0x" + hexN(31, 0x00) + "08"},
@@ -183,11 +183,11 @@ func computeSDeriv(eidHex string, pkEpX, pkEpY *big.Int, aidHex string, L *big.I
 // ─── schnorr.json ───────────────────────────────────────────────────────────
 
 type schnorrFile struct {
-	Description string             `json:"description"`
-	BN254Q      string             `json:"bn254Q"`
-	SubgroupL   string             `json:"subgroupOrderL"`
-	Operator    []operatorVector   `json:"operator"`
-	Organizer   []organizerVector  `json:"organizer"`
+	Description string            `json:"description"`
+	BN254Q      string            `json:"bn254Q"`
+	SubgroupL   string            `json:"subgroupOrderL"`
+	Operator    []operatorVector  `json:"operator"`
+	Organizer   []organizerVector `json:"organizer"`
 }
 
 type operatorVector struct {
@@ -371,10 +371,10 @@ func emitOrganizer(G twistededwards.PointAffine, L, domain *big.Int, label, eidH
 // ─── dleq.json ──────────────────────────────────────────────────────────────
 
 type dleqFile struct {
-	Description     string       `json:"description"`
-	SubgroupL       string       `json:"subgroupOrderL"`
-	PartialDomain   string       `json:"partialDecryptDomainBn254"`
-	Vectors         []dleqVector `json:"vectors"`
+	Description   string       `json:"description"`
+	SubgroupL     string       `json:"subgroupOrderL"`
+	PartialDomain string       `json:"partialDecryptDomainBn254"`
+	Vectors       []dleqVector `json:"vectors"`
 }
 
 type dleqVector struct {
@@ -384,21 +384,21 @@ type dleqVector struct {
 	CtIdx            uint16 `json:"ctIdx"`
 	Role             uint8  `json:"role"`
 	ParticipantIndex uint16 `json:"participantIndex"`
-	Secret           string `json:"secret"`        // d_i (or sk_org)
-	Ephemeral        string `json:"ephemeral"`     // sk producing C_1 = sk·G
-	Witness          string `json:"witness"`       // w
-	BaseX            string `json:"baseX"`         // C_1.x
+	Secret           string `json:"secret"`    // d_i (or sk_org)
+	Ephemeral        string `json:"ephemeral"` // sk producing C_1 = sk·G
+	Witness          string `json:"witness"`   // w
+	BaseX            string `json:"baseX"`     // C_1.x
 	BaseY            string `json:"baseY"`
-	PubX             string `json:"pubX"`          // D_i.x (or PK_org.x)
+	PubX             string `json:"pubX"` // D_i.x (or PK_org.x)
 	PubY             string `json:"pubY"`
-	DeltaX           string `json:"deltaX"`        // δ_i.x
+	DeltaX           string `json:"deltaX"` // δ_i.x
 	DeltaY           string `json:"deltaY"`
 	A1X              string `json:"a1x"`
 	A1Y              string `json:"a1y"`
 	A2X              string `json:"a2x"`
 	A2Y              string `json:"a2y"`
-	Challenge        string `json:"challenge"`     // c
-	Response         string `json:"response"`      // z = w + c·secret mod L
+	Challenge        string `json:"challenge"` // c
+	Response         string `json:"response"`  // z = w + c·secret mod L
 }
 
 func buildDLEQ() dleqFile {
@@ -485,12 +485,12 @@ func emitDLEQ(G *twistededwards.PointAffine, L, domain *big.Int, label, eidHex, 
 		Ephemeral:        ephem.String(),
 		Witness:          witness.String(),
 		BaseX:            bx[0].String(), BaseY: bx[1].String(),
-		PubX:             pkx[0].String(), PubY: pkx[1].String(),
-		DeltaX:           dx[0].String(), DeltaY: dx[1].String(),
-		A1X:              a1[0].String(), A1Y: a1[1].String(),
-		A2X:              a2[0].String(), A2Y: a2[1].String(),
-		Challenge:        state.String(),
-		Response:         z.String(),
+		PubX: pkx[0].String(), PubY: pkx[1].String(),
+		DeltaX: dx[0].String(), DeltaY: dx[1].String(),
+		A1X: a1[0].String(), A1Y: a1[1].String(),
+		A2X: a2[0].String(), A2Y: a2[1].String(),
+		Challenge: state.String(),
+		Response:  z.String(),
 	}
 }
 

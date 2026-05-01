@@ -173,8 +173,8 @@ DAVINCI_DKG_TAG=local docker compose --profile node up -d
 
 ### Option B — Download a release binary
 
-Every tagged release publishes fully-static `davinci-dkg-node` and
-`dkg-runner` binaries for Linux (amd64 + arm64) on the
+Every tagged release publishes fully-static `davinci-dkg-node` binaries
+for Linux (amd64 + arm64) on the
 [**GitHub Releases**](https://github.com/vocdoni/davinci-dkg/releases) page.
 
 ```bash
@@ -207,9 +207,9 @@ cd davinci-dkg
 
 make build
 
-# The binaries are produced at the repo root:
+# The binary is produced at the repo root:
 ./davinci-dkg-node --version
-./dkg-runner --help
+./davinci-dkg-node --help
 ```
 
 To also build the UI bundle locally (for `make ui-dev`, the standalone
@@ -396,21 +396,27 @@ s_i(j) = σ_i(j) − H_share(eid, i, j, sk_j · R_i(j))   (mod q)
 
 The full DKG proceeds in 4 phases, all block-number delimited:
 
-**Phase 1 — Initiation**: The organizer creates an epoch specifying `(t, n)` and policy
-parameters. A unique 12-byte `epochId` is generated on-chain. The contract snapshots
-`registry.activeCount()`, derives a per-epoch **lottery threshold** so that on average
-`α × n` nodes are eligible, and pins a `seedBlock = block.number + seedDelay` whose
-future blockhash will become the epoch seed. The organizer's only job is calling
-`createEpoch`; they do not pick the committee.
+**Phase 1 — Initiation**: Any caller (typically a participating dkg-node, racing
+others on a random jitter) creates an epoch specifying `(t, n)` and policy
+parameters. A unique 12-byte `epochId` is generated on-chain. The contract
+snapshots `registry.activeCount()`, derives a per-epoch **lottery threshold** so
+that on average `α × n` nodes are eligible, and pins a `seedBlock = block.number
++ SEED_DELAY_BLOCKS` whose future blockhash will become the epoch seed. Phase
+deadline blocks (`registrationDeadlineBlock`, `contributionDeadlineBlock`,
+`finalizeNotBeforeBlock`) are derived from the contract's immutable
+`EPOCH_DURATION_BLOCKS` and the per-phase BPS constants in
+`solidity/src/libraries/Sizes.sol`. `createEpoch` is permissionless and reverts
+unless `block.number >= nextEpochStartBlock()` so the cadence is enforced
+trustlessly.
 
 **Phase 2 — Trustless committee selection (lottery)**: Once `block.number ≥ seedBlock`,
 any registered node calls `claimSlot(epochId)`. The first such call lazily resolves
 `seed = blockhash(seedBlock)`. A node is eligible iff
 `keccak256(seed ‖ msg.sender) < lotteryThreshold`. Eligible nodes race
 **first-come-first-served** until `committeeSize` slots are filled, at which point the
-contract snapshots the committee key hash and transitions to Contribution. If the
-epoch stalls past `registrationDeadlineBlock`, anyone can call
-`extendRegistration(epochId)` to reroll the seed and reopen the lottery.
+contract snapshots the committee key hash and transitions to Contribution. An
+epoch that fails to fill within the registration window is aborted; the next
+scheduled epoch then opens automatically once the cadence threshold elapses.
 
 **Phase 3 — Main DKG (contribution)**: Each participant `i` samples random polynomial coefficients
 `{a_{i,k}}` and encryption nonces `{r_{i,j}}`, then publishes:
@@ -449,19 +455,19 @@ This is the **eligibility threshold**: a pseudo-random 256-bit value uniformly
 derived from the future seed and the node's address must fall below
 `lotteryThreshold` for that node to claim a slot. By construction, the
 expected number of eligible nodes is `E[|eligible|] = α · n`. With `α = 1.0`
-(the testnet default) the expectation equals the committee size; with `α > 1.0`
-(not currently supported — the contract clamps to 10 000 bps) one would
-oversubscribe to absorb liveness failures. In the current build an epoch that
-fails to fill reopens the lottery via `extendRegistration`, which captures a
-fresh blockhash and resets the deadline.
+the expectation equals the committee size; with `α > 1.0` one oversubscribes
+to absorb liveness failures (the testnet default is α = 1.5, configured via
+`--epoch-policy.lottery-alpha-bps` on the dkg-node binary). An epoch that
+fails to fill its committee within the registration window simply gets
+aborted; the next scheduled epoch opens automatically once the cadence
+threshold elapses.
 
-**Seeding.** At `createEpoch(seedDelay)` the contract pins `seedBlock =
-block.number + seedDelay` but does **not** yet know the seed. Once
-`block.number ≥ seedBlock`, the first call to `claimSlot` reads
-`blockhash(seedBlock)` and stores it as `seed`. Binding the seed to a future
-blockhash (`seedDelay ≥ 1`) prevents the organizer from tuning the eligibility
-set by picking a favourable `createEpoch` block — they cannot predict the
-future blockhash.
+**Seeding.** At `createEpoch` the contract pins `seedBlock = block.number +
+SEED_DELAY_BLOCKS` but does **not** yet know the seed. Once `block.number ≥
+seedBlock`, the first call to `claimSlot` reads `blockhash(seedBlock)` and
+stores it as `seed`. Binding the seed to a future blockhash (`SEED_DELAY_BLOCKS
+≥ 1`) prevents the proposer from tuning the eligibility set by picking a
+favourable `createEpoch` block — they cannot predict the future blockhash.
 
 **Eligibility check.** For each registered node calling `claimSlot`:
 
@@ -499,8 +505,10 @@ of storage.
   slots by `k · α · n / R`. The registry is append-only and nodes must
   publish a valid BabyJubJub key, which is the designed registration cost.
 - *Liveness under node failure.* If fewer than `committeeSize` eligible nodes
-  claim before `registrationDeadlineBlock`, `extendRegistration` reseeds and
-  reopens — no epoch is stuck waiting for a node that went offline.
+  claim before `registrationDeadlineBlock`, the epoch is aborted and the next
+  scheduled epoch opens automatically once `block.number >=
+  nextEpochStartBlock()`. No epoch is stuck waiting for a node that went
+  offline.
 
 **Keeping the registry honest.** `DKGRegistry` is append-only at the storage
 level, but it tracks an `activeCount` alongside `nodeCount` and a
@@ -764,9 +772,8 @@ the event log.
 
 | Function | Phase | Access | Description |
 |---|---|---|---|
-| `createEpoch(threshold, committeeSize, minValidContributions, lotteryAlphaBps, seedDelay, registrationDeadlineBlock, contributionDeadlineBlock, finalizeNotBeforeBlock, decryptionPolicy)` | Any | Open | Create a new DKG epoch. Snapshots `activeCount` from the registry and derives the per-epoch lottery threshold. Pins `seedBlock = block.number + seedDelay`. `finalizeNotBeforeBlock` is the earliest block at which `finalizeEpoch` can succeed (must be `> contributionDeadlineBlock`); the gap gives selected participants a window to submit before the contribution set is frozen. `decryptionPolicy` gates the legacy per-epoch `submitCiphertext` path (owner-only, not-before/not-after block and timestamp, max submissions) — all-zero = no constraint. Returns `bytes12 epochId`. |
+| `createEpoch(threshold, committeeSize, minValidContributions, lotteryAlphaBps, decryptionPolicy)` | Any block ≥ `nextEpochStartBlock()` | Open (permissionless) | Create a new DKG epoch. Snapshots `activeCount` from the registry and derives the per-epoch lottery threshold. Phase deadline blocks (`registrationDeadlineBlock`, `contributionDeadlineBlock`, `finalizeNotBeforeBlock`) and `seedBlock` are derived on-chain from the immutable `EPOCH_DURATION_BLOCKS` plus the per-phase BPS constants in `Sizes.sol`. The cadence guard `block.number >= nextEpochStartBlock()` enforces one full `EPOCH_DURATION_BLOCKS` between epoch starts. `decryptionPolicy` gates the legacy per-epoch `submitCiphertext` path (owner-only, not-before/not-after block and timestamp, max submissions) — all-zero = no constraint. Returns `bytes12 epochId`. |
 | `claimSlot(epochId)` | Registration | Any registered eligible node | First-come-first-served self-claim. The first call after `block.number ≥ seedBlock` lazily resolves `seed = blockhash(seedBlock)`. The caller is admitted iff `keccak256(seed ‖ msg.sender) < lotteryThreshold`. The contract stops accepting claims once `committeeSize` slots are filled and immediately advances to Contribution. |
-| `extendRegistration(epochId)` | Registration, after deadline | Open | Reroll the seed if the epoch failed to fill in its registration window. Captures a fresh `blockhash` and pushes the deadline forward. |
 | `submitContribution(epochId, contributorIndex, commitmentsHash, encryptedSharesHash, transcript, proof, input)` | Contribution | Selected participant | Submit polynomial commitments and encrypted shares with a Groth16 proof. The committee membership / pubkey list is verified against a single keccak snapshot taken when the lottery filled (no per-recipient registry calls). The collective public key is captured later by `finalizeEpoch` from `aggregateCommitments[0]`, so contributions don't pay for an on-chain BabyJubJub addition. |
 | `finalizeEpoch(epochId, aggregateCommitmentsHash, collectivePublicKeyHash, shareCommitmentHash, transcript, proof, input)` | After min contributions, on/after `finalizeNotBeforeBlock` | Open | Aggregate commitments, publish collective public key and share commitments. Advances to Finalized. Reverts with `FinalizeTooEarly` if `block.number < policy.finalizeNotBeforeBlock`. The transcript is read directly from calldata; share commitments are stored as `keccak256(x,y)` (1 slot each). In production, `davinci-dkg-node` instances finalize automatically after their contribution lands, using a deterministic per-epoch stagger derived from the lottery seed so only one node submits at a time (the rest see `AlreadyFinalized` and stop). |
 | `submitCiphertext(epochId, aid, ciphertextIndex, c1x, c1y, c2x, c2y)` | Finalized | `aid == bytes32(0)` is the legacy per-epoch path gated by the epoch `DecryptionPolicy`; non-zero `aid` is gated by the application's own `AppPolicy`. Write-once per `(epochId, aid, ciphertextIndex)`. | Publish a ciphertext to be threshold-decrypted under either the epoch key (`aid = 0`) or the application-specific key. Stores `keccak256(c1,c2)` and emits `CiphertextSubmitted` carrying the raw coordinates so nodes (and consumers) can read them from the event log. |
@@ -783,7 +790,10 @@ the event log.
 
 | Function | Returns |
 |---|---|
-| `getEpoch(epochId)` | `Epoch` struct: `organizer, policy, decryptionPolicy, status, nonce, seedBlock, seed, lotteryThreshold, claimedCount, contributionCount, partialDecryptionCount, ciphertextCount`. The `policy` field is an `EpochPolicy` struct: `threshold, committeeSize, minValidContributions, lotteryAlphaBps, seedDelay, registrationDeadlineBlock, contributionDeadlineBlock, finalizeNotBeforeBlock`. |
+| `getEpoch(epochId)` | `Epoch` struct: `organizer, policy, decryptionPolicy, status, nonce, startBlock, seedBlock, seed, lotteryThreshold, claimedCount, contributionCount, partialDecryptionCount, ciphertextCount`. The `policy` field is an `EpochPolicy` struct: `threshold, committeeSize, minValidContributions, lotteryAlphaBps, registrationDeadlineBlock, contributionDeadlineBlock, finalizeNotBeforeBlock` — the deadline blocks are populated by `createEpoch` from the contract's immutable per-phase offsets. |
+| `nextEpochStartBlock()` | Earliest block at which the next `createEpoch` may succeed (`lastEpochStartBlock + EPOCH_DURATION_BLOCKS`, or current block before any epoch). |
+| `epochDurationBlocks()` | The deploy-time `EPOCH_DURATION_BLOCKS` immutable. |
+| `lastEpochStartBlock()` | Block in which the most recent epoch was created. |
 | `getCollectivePublicKey(epochId)` | `Point {x, y}` — the collective public key `PK = Σ_i a_{i,0}·G`. Written exactly once at `finalizeEpoch` from `aggregateCommitments[0]`; returns the identity `(0, 1)` before the epoch is finalized. |
 | `getDecryptionPolicy(epochId)` | `DecryptionPolicy` struct: `ownerOnly, maxDecryptions, notBeforeBlock, notBeforeTimestamp, notAfterBlock, notAfterTimestamp`. Set at `createEpoch`; gates the legacy `aid == 0` path only. |
 | `selectedParticipants(epochId)` | `address[]` — ordered committee in claim order. |
@@ -1017,27 +1027,28 @@ DKG_NODE_COUNT=3 DKG_THRESHOLD=2 \
 
 ### Run the scenario
 
-In a second terminal:
+Each `davinci-dkg-node` instance auto-creates new epochs by default
+(`--auto-create-epochs=true`, env `DAVINCI_DKG_AUTO_CREATE_EPOCHS`),
+racing other nodes on a uniform-random jitter and reverting cheaply when
+another node wins. Bring up the fleet and the schedule drives itself:
 
 ```bash
-make testnet-run                                         # defaults: 3 nodes, t=2
-make testnet-run DKG_NODE_COUNT=8 DKG_THRESHOLD=5        # custom sizing
+make testnet-up                                          # defaults: 3 nodes
+make testnet-up DKG_NODE_COUNT=8                         # custom sizing
 
-# or bypass the Makefile:
-cd testnet && docker compose run --rm dkg-runner
+# Watch the cadence + per-phase progress:
+make testnet-logs
 ```
 
-The runner will:
-1. Create a DKG epoch with `--nodes` committee size and `--threshold` decryption threshold
-2. Wait until the lottery committee fills (each node self-claims via `claimSlot` once
-   it sees the epoch and verifies it's eligible — no organizer participation needed)
-3. Wait until ≥ threshold nodes submit their contributions
-4. Submit the finalize proof (aggregates Feldman commitments, publishes the collective public key)
-5. Encrypt a random test message `m` as `(C1, C2) = (r·G, m·G + r·PK)`
-6. Write the ciphertext to the shared volume so nodes can compute partial decryptions
-7. Wait until ≥ threshold nodes submit partial decryptions with DLEQ proofs
-8. Combine the partial decryptions via Lagrange interpolation and submit the combine proof
-9. Verify that the on-chain recovered `m` matches the original
+Each scheduled epoch then runs through:
+1. Any node fires `createEpoch` once `block.number >= nextEpochStartBlock()`
+2. Lottery: every active node calls `claimSlot` and self-checks eligibility
+3. Contribution: each selected participant submits their DKG contribution proof
+4. Finalize: one node (deterministic per-epoch stagger) submits the finalize proof
+5. The collective public key is now live on-chain; the UI / SDK can read it
+6. Anyone can submit a ciphertext to be threshold-decrypted (mode-0 derivation)
+7. Each selected participant submits a partial decryption with DLEQ proof
+8. Anyone calls `combineDecryption` to recover the plaintext on-chain
 
 
 ### Configuration
@@ -1046,8 +1057,6 @@ The runner will:
 |---|---|---|
 | `DKG_NODE_COUNT` | `3` | Number of DKG node replicas to start |
 | `DKG_THRESHOLD` | `2` | Decryption threshold (`t`-of-`n`) |
-| `DKG_RUNNER_NODES` | `3` | Committee size seen by the runner (same as `DKG_NODE_COUNT`) |
-| `DKG_RUNNER_THRESHOLD` | `2` | Decryption threshold seen by the runner |
 | `ANVIL_PORT` | `8545` | Host port for the Anvil RPC (bound on `0.0.0.0`) |
 | `DEPLOYER_PORT` | `8888` | Host port for the deployer HTTP server |
 | `UI_PORT` | `8081` | Host port the DKG explorer listens on (bound on `0.0.0.0`) |
@@ -1157,7 +1166,7 @@ deployment at a different chain.
 # 1. Build the dist with the chain config you want.
 make ui-build \
   RPC_URL=https://eth-sepolia.public.blastapi.io \
-  MANAGER_ADDRESS=0x01ee71fdce1705c8823f9f8b2f312100165fdd70 \
+  MANAGER_ADDRESS=0x6683f889ce518945053f7d01abef7da842283078 \
   CHAIN_ID=11155111 CHAIN_NAME=sepolia
 
 # 2. Serve it via stock nginx:alpine, bind-mounted from ui/dist.
@@ -1170,7 +1179,7 @@ docker compose --profile node --profile ui up        # node + UI together
 ```bash
 docker build -f ui/Dockerfile \
   --build-arg RPC_URL=https://eth-sepolia.public.blastapi.io \
-  --build-arg MANAGER_ADDRESS=0x01ee71fdce1705c8823f9f8b2f312100165fdd70 \
+  --build-arg MANAGER_ADDRESS=0x6683f889ce518945053f7d01abef7da842283078 \
   --build-arg CHAIN_ID=11155111 \
   --build-arg CHAIN_NAME=sepolia \
   -t my-davinci-dkg-ui .

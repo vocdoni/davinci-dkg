@@ -31,7 +31,6 @@ func TestGasProfiles(t *testing.T) {
 		CommitteeSize:             1,
 		MinValidContributions:     1,
 		LotteryAlphaBps:           helpers.DefaultLotteryAlphaBps,
-		SeedDelay:                 helpers.DefaultSeedDelay,
 		RegistrationDeadlineBlock: head + 25,
 		ContributionDeadlineBlock: head + 50,
 		FinalizeNotBeforeBlock:    head + 51,
@@ -87,10 +86,6 @@ func createEpochForGasProfile(t *testing.T, ctx context.Context, policy types.Ep
 		policy.CommitteeSize,
 		policy.MinValidContributions,
 		policy.LotteryAlphaBps,
-		policy.SeedDelay,
-		policy.RegistrationDeadlineBlock,
-		policy.ContributionDeadlineBlock,
-		policy.FinalizeNotBeforeBlock,
 		helpers.ZeroDecryptionPolicy(),
 	)
 	c.Assert(err, qt.IsNil)
@@ -111,7 +106,7 @@ func claimSlotForGasProfile(t *testing.T, ctx context.Context, epochID [12]byte,
 	c := qt.New(t)
 
 	// Advance past the seed block so the lottery blockhash is available.
-	c.Assert(helpers.MineBlocks(ctx, services, uint64(policy.SeedDelay)+1), qt.IsNil)
+	c.Assert(helpers.MineBlocks(ctx, services, helpers.DefaultSeedDelay+1), qt.IsNil)
 
 	auth, err := services.TxManager.NewTransactOpts(ctx)
 	c.Assert(err, qt.IsNil)
@@ -138,7 +133,7 @@ func submitContributionForGasProfile(t *testing.T, ctx context.Context, epochID 
 		epochID,
 		1,
 		submission.CommitmentsHash,
-		submission.EncryptedSharesHash,		submission.Transcript,
+		submission.EncryptedSharesHash, submission.Transcript,
 		submission.Proof,
 		submission.Input,
 	)
@@ -258,4 +253,3 @@ func combineDecryptionForGasProfile(t *testing.T, ctx context.Context, epochID [
 
 	return receipt.GasUsed
 }
-

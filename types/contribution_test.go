@@ -8,11 +8,13 @@ import (
 	qt "github.com/frankban/quicktest"
 )
 
+const testEpochID = "epoch-1"
+
 func TestContributionValidate(t *testing.T) {
 	c := qt.New(t)
 
 	contribution := Contribution{
-		EpochID:          "epoch-1",
+		EpochID:          testEpochID,
 		Contributor:      common.HexToAddress("0x1000000000000000000000000000000000000001"),
 		ContributorIndex: 1,
 		Commitments: []CurvePoint{
@@ -36,7 +38,7 @@ func TestContributionValidateRejectsMissingEncryptedShares(t *testing.T) {
 	c := qt.New(t)
 
 	contribution := Contribution{
-		EpochID:          "epoch-1",
+		EpochID:          testEpochID,
 		Contributor:      common.HexToAddress("0x1000000000000000000000000000000000000001"),
 		ContributorIndex: 1,
 		Commitments: []CurvePoint{
@@ -54,7 +56,7 @@ func TestFinalizedOutputValidate(t *testing.T) {
 	c := qt.New(t)
 
 	output := FinalizedOutput{
-		EpochID:             "epoch-1",
+		EpochID:             testEpochID,
 		CollectivePublicKey: CurvePoint{X: big.NewInt(1), Y: big.NewInt(2)},
 		AggregateCommitments: []CurvePoint{
 			{X: big.NewInt(3), Y: big.NewInt(4)},

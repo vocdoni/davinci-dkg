@@ -43,25 +43,18 @@ export function CreateEpochStep({ status, epochId, setRoundId, log }: Props) {
     setBusy(true)
     setError(null)
     try {
-      const currentBlock = await writer.blockNumber()
-      const regOffset = BigInt(form.regDeadlineOffset || '10')
-      const contribOffset = BigInt(form.contribDeadlineOffset || '20')
-      // Contract requires finalizeNotBefore > contribDeadline; clamp to ≥1
-      // so a "0" or empty input produces a valid (just barely) policy.
-      const finalizeDelay = (() => {
-        const v = BigInt(form.finalizeDelayBlocks || '1')
-        return v < 1n ? 1n : v
-      })()
-
+      // Phase deadline blocks are derived ON-CHAIN from the contract's
+      // immutable EPOCH_DURATION_BLOCKS plus per-phase BPS constants. The
+      // form fields below are unused by the writer but stay on PolicyFormState
+      // for backward UI-test compatibility — leave them at 0n.
       const policy: EpochPolicy = {
         threshold: Number(form.threshold),
         committeeSize: Number(form.committeeSize),
         minValidContributions: Number(form.minValidContributions),
         lotteryAlphaBps: Number(form.lotteryAlphaBps),
-        seedDelay: Number(form.seedDelay),
-        registrationDeadlineBlock: currentBlock + regOffset,
-        contributionDeadlineBlock: currentBlock + contribOffset,
-        finalizeNotBeforeBlock: currentBlock + contribOffset + finalizeDelay,
+        registrationDeadlineBlock: 0n,
+        contributionDeadlineBlock: 0n,
+        finalizeNotBeforeBlock: 0n,
       }
       const dp: DecryptionPolicy = {
         ownerOnly: dpForm.ownerOnly,
@@ -72,6 +65,7 @@ export function CreateEpochStep({ status, epochId, setRoundId, log }: Props) {
         notAfterTimestamp: BigInt(dpForm.notAfterTimestamp || '0'),
       }
 
+      const currentBlock = await writer.blockNumber()
       log(`Creating epoch at block #${currentBlock} (t=${policy.threshold} of n=${policy.committeeSize})`, 'info')
       const hash = await writer.createEpoch(policy, dp)
       setTxHash(hash)

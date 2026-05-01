@@ -4,6 +4,7 @@ pragma solidity 0.8.28;
 import {IZKVerifier} from "../src/interfaces/IZKVerifier.sol";
 import {BRLC} from "../src/libraries/BRLC.sol";
 import {DKGTypes} from "../src/libraries/DKGTypes.sol";
+import {MAX_N} from "../src/libraries/Sizes.sol";
 import {TestInputs} from "./TestInputs.t.sol";
 
 abstract contract TestHelpers is TestInputs {
@@ -66,17 +67,18 @@ abstract contract TestHelpers is TestInputs {
         );
     }
 
-    // The test fixtures below mirror the on-chain transcript layouts at N=32:
-    //   contribution: 8N = 256 words = (2N + N + 2N + 2N + N) layout.
-    //   finalize:     2N²+5N = 2208 words.
-    //   combine:      4 + 3N = 100 words.
-    //   reconstruct:  2N = 64 words.
+    // The test fixtures below mirror the on-chain transcript layouts,
+    // parameterized in `MAX_N` (imported from src/libraries/Sizes.sol):
+    //   contribution: 8N words = (2N + N + 2N + 2N + N) layout.
+    //   finalize:     2N²+5N words.
+    //   combine:      4 + 3N words.
+    //   reconstruct:  2N words.
     /// @dev The first two committee slots use real on-curve BabyJubJub keys
     ///      (THIS and BEEF Schnorr vectors from cmd/operator-schnorr-vectors).
     ///      Slots 3+ stay at zero and are padded with the identity (0,1) below.
     ///      This matches what the DKGManager test fixtures register at setUp,
     ///      so the committee snapshot hash and the contribution transcript
-    ///      stay byte-identical.
+    ///      stay byte-identical. All tests fix committeeSize = 2.
     function _slotPubKey(uint256 i) internal pure returns (uint256 x, uint256 y) {
         if (i == 0) {
             return (
@@ -94,12 +96,12 @@ abstract contract TestHelpers is TestInputs {
     }
 
     function contributionTranscript(uint16 committeeSize) internal pure returns (bytes memory) {
-        uint256[64] memory commitments;       // 2N
-        uint256[32] memory recipientIndexes;  // N
-        uint256[64] memory recipientPubKeys;  // 2N
-        uint256[64] memory ephemerals;        // 2N
-        uint256[32] memory maskedShares;      // N
-        for (uint256 i = 0; i < 32; i++) {
+        uint256[2 * MAX_N] memory commitments;
+        uint256[MAX_N] memory recipientIndexes;
+        uint256[2 * MAX_N] memory recipientPubKeys;
+        uint256[2 * MAX_N] memory ephemerals;
+        uint256[MAX_N] memory maskedShares;
+        for (uint256 i = 0; i < MAX_N; i++) {
             commitments[i * 2 + 1] = 1;
             recipientPubKeys[i * 2 + 1] = 1;
             ephemerals[i * 2 + 1] = 1;
@@ -118,29 +120,29 @@ abstract contract TestHelpers is TestInputs {
     }
 
     function contributionTranscriptCommitment(uint256 challenge, uint16 committeeSize) internal pure returns (uint256) {
-        uint256[] memory values = new uint256[](256); // 8N
-        for (uint256 i = 0; i < 32; i++) {
-            values[i * 2 + 1] = 1;         // commitments y pad
-            values[96 + i * 2 + 1] = 1;    // recipientPubKeys y pad (offset 2N+N=96)
-            values[160 + i * 2 + 1] = 1;   // ephemerals y pad (offset 2N+N+2N=160)
+        uint256[] memory values = new uint256[](8 * MAX_N);
+        for (uint256 i = 0; i < MAX_N; i++) {
+            values[i * 2 + 1] = 1;                       // commitments y pad
+            values[3 * MAX_N + i * 2 + 1] = 1;           // recipientPubKeys y pad (offset 2N+N)
+            values[5 * MAX_N + i * 2 + 1] = 1;           // ephemerals y pad (offset 2N+N+2N)
         }
-        uint256 cursor = 64; // recipientIndexes start (after 2N commitments)
+        uint256 cursor = 2 * MAX_N; // recipientIndexes start (after 2N commitments)
         for (uint256 i = 0; i < committeeSize; i++) {
             values[i * 2 + 1] = 0;
             values[cursor++] = i + 1;
         }
-        cursor = 96; // recipientPubKeys start (2N+N)
+        cursor = 3 * MAX_N; // recipientPubKeys start (2N+N)
         for (uint256 i = 0; i < committeeSize; i++) {
             (uint256 px, uint256 py) = _slotPubKey(i);
             values[cursor++] = px;
             values[cursor++] = py;
         }
-        cursor = 160; // ephemerals start (2N+N+2N)
+        cursor = 5 * MAX_N; // ephemerals start (2N+N+2N)
         for (uint256 i = 0; i < committeeSize; i++) {
             values[cursor++] = 300 + i + 1;
             values[cursor++] = 400 + i + 1;
         }
-        cursor = 224; // maskedShares start (2N+N+2N+2N)
+        cursor = 7 * MAX_N; // maskedShares start (2N+N+2N+2N)
         for (uint256 i = 0; i < committeeSize; i++) {
             values[cursor++] = 500 + i + 1;
         }
@@ -224,17 +226,17 @@ abstract contract TestHelpers is TestInputs {
     }
 
     function finalizeTranscript(uint16 acceptedCount) internal pure returns (bytes memory) {
-        uint256[32] memory participantIndexes;         // N
-        uint256[2048] memory contributionCommitments;  // 2N²
-        uint256[64] memory aggregateCommitments;       // 2N
-        uint256[64] memory shareCommitments;           // 2N
+        uint256[MAX_N] memory participantIndexes;
+        uint256[2 * MAX_N * MAX_N] memory contributionCommitments;
+        uint256[2 * MAX_N] memory aggregateCommitments;
+        uint256[2 * MAX_N] memory shareCommitments;
         // Per participant, mirror contributionTranscript(committeeSize=2):
-        // pt[0]=pt[1]=(0,0); pt[2..31]=(0,1) → odd indices 5,7,...,63 = 1
-        // (each participant's commitments occupy 2N=64 words).
+        // pt[0]=pt[1]=(0,0); pt[2..N-1]=(0,1) → odd indices 5,7,...,2N-1 = 1
+        // (each participant's commitments occupy 2N words).
         for (uint256 i = 0; i < acceptedCount; i++) {
             participantIndexes[i] = i + 1;
-            for (uint256 k = 5; k < 64; k += 2) {
-                contributionCommitments[i * 64 + k] = 1;
+            for (uint256 k = 5; k < 2 * MAX_N; k += 2) {
+                contributionCommitments[i * (2 * MAX_N) + k] = 1;
             }
             shareCommitments[i * 2] = 1000 + i + 1;
             shareCommitments[i * 2 + 1] = 2000 + i + 1;
@@ -251,22 +253,24 @@ abstract contract TestHelpers is TestInputs {
         //                        [N..N+2N²) contributionCommitments,
         //                        [N+2N²..N+2N²+2N) aggregateCommitments,
         //                        [N+2N²+2N..2N²+5N) shareCommitments.
-        uint256[] memory values = new uint256[](2208); // 2*32*32 + 5*32 = 2208
+        uint256[] memory values = new uint256[](2 * MAX_N * MAX_N + 5 * MAX_N);
         for (uint256 i = 0; i < acceptedCount; i++) {
             values[i] = i + 1;
-            uint256 offset = 32 + i * 64; // N + i*2N
-            for (uint256 k = 5; k < 64; k += 2) {
+            uint256 offset = MAX_N + i * (2 * MAX_N); // N + i*2N
+            for (uint256 k = 5; k < 2 * MAX_N; k += 2) {
                 values[offset + k] = 1;
             }
         }
+        // shareCommitments start: N + 2N² + 2N
+        uint256 shareOffsetBase = MAX_N + 2 * MAX_N * MAX_N + 2 * MAX_N;
         for (uint256 i = 0; i < acceptedCount; i++) {
-            uint256 offset = 2144 + i * 2; // N + 2N² + 2N = 2144 (shareCommitments start)
+            uint256 offset = shareOffsetBase + i * 2;
             values[offset] = 1000 + i + 1;
             values[offset + 1] = 2000 + i + 1;
         }
         // aggregateCommitments[0] = identity (0, 1) — see finalizeTranscript.
-        // Slot offset is N + 2N² = 2080; aggregate[0].y is at 2081.
-        values[2081] = 1;
+        // Slot offset is N + 2N²; aggregate[0].y is at offset+1.
+        values[MAX_N + 2 * MAX_N * MAX_N + 1] = 1;
         return BRLC.commit(challenge, values);
     }
 
@@ -274,15 +278,15 @@ abstract contract TestHelpers is TestInputs {
     /// test. Sets participantIndexes = [1, 1] for an
     /// acceptedCount of 2 instead of [1, 2].
     function finalizeTranscriptWithDuplicateRows() internal pure returns (bytes memory) {
-        uint256[32] memory participantIndexes;
-        uint256[2048] memory contributionCommitments;
-        uint256[64] memory aggregateCommitments;
-        uint256[64] memory shareCommitments;
+        uint256[MAX_N] memory participantIndexes;
+        uint256[2 * MAX_N * MAX_N] memory contributionCommitments;
+        uint256[2 * MAX_N] memory aggregateCommitments;
+        uint256[2 * MAX_N] memory shareCommitments;
         participantIndexes[0] = 1;
         participantIndexes[1] = 1;
         for (uint256 i = 0; i < 2; i++) {
-            for (uint256 k = 5; k < 64; k += 2) {
-                contributionCommitments[i * 64 + k] = 1;
+            for (uint256 k = 5; k < 2 * MAX_N; k += 2) {
+                contributionCommitments[i * (2 * MAX_N) + k] = 1;
             }
             shareCommitments[i * 2] = 1000 + i + 1;
             shareCommitments[i * 2 + 1] = 2000 + i + 1;
@@ -316,21 +320,22 @@ abstract contract TestHelpers is TestInputs {
     }
 
     function _finalizeTranscriptCommitmentWithDuplicateRows(uint256 challenge) private pure returns (uint256) {
-        uint256[] memory values = new uint256[](2208);
+        uint256[] memory values = new uint256[](2 * MAX_N * MAX_N + 5 * MAX_N);
         values[0] = 1;
         values[1] = 1;
         for (uint256 i = 0; i < 2; i++) {
-            uint256 offset = 32 + i * 64;
-            for (uint256 k = 5; k < 64; k += 2) {
+            uint256 offset = MAX_N + i * (2 * MAX_N);
+            for (uint256 k = 5; k < 2 * MAX_N; k += 2) {
                 values[offset + k] = 1;
             }
         }
+        uint256 shareOffsetBase = MAX_N + 2 * MAX_N * MAX_N + 2 * MAX_N;
         for (uint256 i = 0; i < 2; i++) {
-            uint256 offset = 2144 + i * 2;
+            uint256 offset = shareOffsetBase + i * 2;
             values[offset] = 1000 + i + 1;
             values[offset + 1] = 2000 + i + 1;
         }
-        values[2081] = 1;
+        values[MAX_N + 2 * MAX_N * MAX_N + 1] = 1;
         return BRLC.commit(challenge, values);
     }
 
@@ -397,13 +402,13 @@ abstract contract TestHelpers is TestInputs {
 
     function decryptCombineTranscript(uint16 shareCount) internal pure returns (bytes memory) {
         uint256[4] memory ciphertext;
-        uint256[32] memory participantIndexes;     // N
-        uint256[64] memory partialDecryptions;     // 2N
+        uint256[MAX_N] memory participantIndexes;
+        uint256[2 * MAX_N] memory partialDecryptions;
         ciphertext[0] = TEST_CT_C1X;
         ciphertext[1] = TEST_CT_C1Y;
         ciphertext[2] = TEST_CT_C2X;
         ciphertext[3] = TEST_CT_C2Y;
-        for (uint256 i = 0; i < 32; i++) {
+        for (uint256 i = 0; i < MAX_N; i++) {
             partialDecryptions[i * 2 + 1] = 1;
         }
         for (uint256 i = 0; i < shareCount; i++) {
@@ -417,19 +422,20 @@ abstract contract TestHelpers is TestInputs {
     function decryptCombineTranscriptCommitment(uint256 challenge, uint16 shareCount) internal pure returns (uint256) {
         // Layout (4+3N words): [0..4) ciphertext, [4..4+N) participantIndexes,
         //                      [4+N..4+3N) partialDecryptions.
-        uint256[] memory values = new uint256[](100); // 4 + 3*32
+        uint256[] memory values = new uint256[](4 + 3 * MAX_N);
         values[0] = TEST_CT_C1X;
         values[1] = TEST_CT_C1Y;
         values[2] = TEST_CT_C2X;
         values[3] = TEST_CT_C2Y;
-        for (uint256 i = 0; i < 32; i++) {
-            values[36 + i * 2 + 1] = 1; // partialDecryptions y pad (offset 4+N=36)
+        uint256 partialBase = 4 + MAX_N; // partialDecryptions start
+        for (uint256 i = 0; i < MAX_N; i++) {
+            values[partialBase + i * 2 + 1] = 1; // y pad
         }
         uint256 cursor = 4;
         for (uint256 i = 0; i < shareCount; i++) {
             values[cursor++] = i + 1;
         }
-        cursor = 36; // partialDecryptions start (4+N)
+        cursor = partialBase;
         for (uint256 i = 0; i < shareCount; i++) {
             values[cursor++] = 7000 + i + 1;
             values[cursor++] = 8000 + i + 1;

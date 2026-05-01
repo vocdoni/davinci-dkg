@@ -55,4 +55,3 @@ func (d PartialDecryption) Validate() error {
 	}
 	return nil
 }
-

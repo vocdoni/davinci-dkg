@@ -45,7 +45,7 @@ func TestContributionRejectsMalformedProof(t *testing.T) {
 		epochID,
 		1,
 		submission.CommitmentsHash,
-		submission.EncryptedSharesHash,		submission.Transcript,
+		submission.EncryptedSharesHash, submission.Transcript,
 		submission.Proof,
 		submission.Input,
 	)
@@ -92,7 +92,7 @@ func TestFinalizeRejectsBeforeFinalizeNotBeforeBlock(t *testing.T) {
 	tx, err := services.Manager.SubmitContribution(
 		auth, epochID, 1,
 		submission.CommitmentsHash, submission.EncryptedSharesHash,
-				submission.Transcript, submission.Proof, submission.Input,
+		submission.Transcript, submission.Proof, submission.Input,
 	)
 	c.Assert(err, qt.IsNil)
 	c.Assert(services.TxManager.WaitTxByHash(tx.Hash(), helpers.DefaultTxTimeout), qt.IsNil)
@@ -255,7 +255,6 @@ func TestRoundCanFinalizeWithMissingContributorWhenPolicyPermits(t *testing.T) {
 		CommitteeSize:             3,
 		MinValidContributions:     2,
 		LotteryAlphaBps:           helpers.DefaultLotteryAlphaBps,
-		SeedDelay:                 helpers.DefaultSeedDelay,
 		RegistrationDeadlineBlock: head + 25,
 		ContributionDeadlineBlock: head + 50,
 		FinalizeNotBeforeBlock:    head + 51,
@@ -263,7 +262,7 @@ func TestRoundCanFinalizeWithMissingContributorWhenPolicyPermits(t *testing.T) {
 
 	epochID, err := helpers.CreateEpoch(ctx, services, policy)
 	c.Assert(err, qt.IsNil)
-	c.Assert(helpers.MineBlocks(ctx, services, uint64(policy.SeedDelay)+1), qt.IsNil)
+	c.Assert(helpers.MineBlocks(ctx, services, helpers.DefaultSeedDelay+1), qt.IsNil)
 	c.Assert(helpers.ClaimSlot(ctx, services, epochID), qt.IsNil)
 	c.Assert(helpers.ClaimSlotAs(ctx, actor1, epochID), qt.IsNil)
 	c.Assert(helpers.ClaimSlotAs(ctx, actor2, epochID), qt.IsNil)

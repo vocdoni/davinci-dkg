@@ -174,13 +174,11 @@ testnet-up: ## Start the testnet with N nodes
 	DKG_NODE_COUNT=$(DKG_NODE_COUNT) \
 	docker compose up -d --scale dkg-node=$(DKG_NODE_COUNT) --build
 
-testnet-run: ## Run the DKG orchestration scenario
-	@echo "Running DKG scenario (nodes=$(DKG_NODE_COUNT), threshold=$(DKG_THRESHOLD), disclosure=$(DKG_DISCLOSURE_ALLOWED))..."
-	@cd testnet && \
-	DKG_RUNNER_NODES=$(DKG_NODE_COUNT) \
-	DKG_RUNNER_THRESHOLD=$(DKG_THRESHOLD) \
-	DKG_RUNNER_DISCLOSURE_ALLOWED=$(DKG_DISCLOSURE_ALLOWED) \
-	docker compose run --rm dkg-runner
+testnet-run: ## (Deprecated alias) Wait for the running dkg-node fleet to auto-create + drive an epoch
+	@echo "The dkg-runner orchestrator was removed; davinci-dkg-node now"
+	@echo "auto-creates epochs by default (--auto-create-epochs=true)."
+	@echo "Bring the fleet up with 'make testnet-up' and tail logs with"
+	@echo "'make testnet-logs' to watch the schedule."
 
 testnet-logs: ## Tail logs for the DKG nodes
 	@cd testnet && docker compose logs -f dkg-node

@@ -6,7 +6,7 @@ import {Verifier as BaseFinalizeVerifier} from "./finalize_vkey.sol";
 
 contract FinalizeVerifier is BaseFinalizeVerifier, IZKVerifier {
     bytes32 internal constant PROVING_KEY_HASH =
-        hex"b7d50091bbf5d4629605846b345d0113903db148242238c55d039eb0c88e51d9";
+        hex"0cf61bd16ef3d481b31b40d655f1e901429f88911b1abdc675cf23dadcf86a09";
 
     function provingKeyHash() external pure returns (bytes32) {
         return PROVING_KEY_HASH;

@@ -15,18 +15,18 @@ import (
 //
 //	M = C_2 - Σ λ_k · δ_{x_k} - T
 type DecryptCombineCircuit struct {
-	RoundHash            frontend.Variable `gnark:",public"` // semantically: eid
-	Aid                  frontend.Variable `gnark:",public"` // application identifier
-	CtIdx                frontend.Variable `gnark:",public"` // per-app ciphertext index
-	Mode                 frontend.Variable `gnark:",public"` // 0 = public derivation, 1 = co-decryption
-	S                    frontend.Variable `gnark:",public"` // derivation tag scalar; ignored if Mode=1
+	RoundHash            frontend.Variable    `gnark:",public"` // semantically: eid
+	Aid                  frontend.Variable    `gnark:",public"` // application identifier
+	CtIdx                frontend.Variable    `gnark:",public"` // per-app ciphertext index
+	Mode                 frontend.Variable    `gnark:",public"` // 0 = public derivation, 1 = co-decryption
+	S                    frontend.Variable    `gnark:",public"` // derivation tag scalar; ignored if Mode=1
 	DeltaOrg             twistededwards.Point `gnark:",public"` // organizer Δ_org; ignored if Mode=0
-	Threshold            frontend.Variable `gnark:",public"`
-	ShareCount           frontend.Variable `gnark:",public"`
-	CombineHash          frontend.Variable `gnark:",public"`
-	PlaintextHash        frontend.Variable `gnark:",public"`
-	Challenge            frontend.Variable `gnark:",public"`
-	TranscriptCommitment frontend.Variable `gnark:",public"`
+	Threshold            frontend.Variable    `gnark:",public"`
+	ShareCount           frontend.Variable    `gnark:",public"`
+	CombineHash          frontend.Variable    `gnark:",public"`
+	PlaintextHash        frontend.Variable    `gnark:",public"`
+	Challenge            frontend.Variable    `gnark:",public"`
+	TranscriptCommitment frontend.Variable    `gnark:",public"`
 
 	CiphertextC1       twistededwards.Point
 	CiphertextC2       twistededwards.Point

@@ -1,6 +1,6 @@
 {
   "name": "@vocdoni/davinci-dkg-sdk",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "TypeScript SDK for Davinci DKG smart contract interaction",
   "type": "module",
   "main": "./dist/index.js",

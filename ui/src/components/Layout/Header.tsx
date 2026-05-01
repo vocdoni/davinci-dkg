@@ -5,6 +5,7 @@ import { ChainPill } from './ChainPill'
 import { ConnectButton } from './ConnectButton'
 import { DebugModeToggle } from './DebugModeToggle'
 import { MobileNav } from './MobileNav'
+import { NextEpochCountdown } from './NextEpochCountdown'
 
 interface NavItem {
   to: string
@@ -23,7 +24,7 @@ interface NavItem {
 //   Until then, the hamburger drawer carries them.
 const navItems: NavItem[] = [
   { to: Routes.home, label: 'Overview', hint: 'Protocol summary', inlineFrom: 'md' },
-  { to: Routes.epochs, label: 'Rounds', hint: 'On-chain ring buffer', inlineFrom: 'md' },
+  { to: Routes.epochs, label: 'Epochs', hint: 'On-chain ring buffer', inlineFrom: 'md' },
   { to: Routes.registry, label: 'Registry', hint: 'Operator nodes', inlineFrom: 'md' },
   { to: Routes.playground, label: 'Playground', hint: 'Interactive walkthrough', inlineFrom: 'md' },
   { to: Routes.runNode, label: 'Run a node', hint: 'Operator handbook', inlineFrom: 'xl' },
@@ -80,6 +81,12 @@ export function Header() {
               Debug toggle appears at lg+. The hamburger drops away only
               at xl, where every nav item can fit inline. */}
           <HStack gap={2} flexShrink={0} ml='auto'>
+            <Box display={{ base: 'none', xl: 'block' }}>
+              <NextEpochCountdown />
+            </Box>
+            <Box display={{ base: 'none', lg: 'block', xl: 'none' }}>
+              <NextEpochCountdown compact />
+            </Box>
             <Box display={{ base: 'none', xl: 'block' }}>
               <ChainPill />
             </Box>

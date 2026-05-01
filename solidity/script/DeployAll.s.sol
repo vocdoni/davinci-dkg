@@ -17,11 +17,20 @@ contract DeployAllScript is Script {
     /// which is usually fine — override with the env var when it matters.
     uint256 internal constant DEFAULT_INACTIVITY_WINDOW = 50_400;
 
+    /// Default epoch duration if `EPOCH_DURATION_BLOCKS` is not set in the
+    /// environment: 100 blocks ≈ 20 minutes at 12-second block time. Pass 0
+    /// to fall back to the contract's compiled-in default (also 100). For
+    /// faster chains (e.g. Polygon zkEVM at ~2s) bump this to ≈600 to
+    /// preserve the 20-minute target.
+    uint256 internal constant DEFAULT_EPOCH_DURATION_BLOCKS = 100;
+
     function run() public {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
         uint32 chainId = uint32(vm.envUint("CHAIN_ID"));
         uint64 inactivityWindow =
             uint64(vm.envOr("INACTIVITY_WINDOW", DEFAULT_INACTIVITY_WINDOW));
+        uint256 epochDurationBlocks =
+            vm.envOr("EPOCH_DURATION_BLOCKS", DEFAULT_EPOCH_DURATION_BLOCKS);
 
         vm.startBroadcast(deployerPrivateKey);
 
@@ -47,9 +56,11 @@ contract DeployAllScript is Script {
             address(contributionVerifier),
             address(partialDecryptVerifier),
             address(finalizeVerifier),
-            address(decryptCombineVerifier)
+            address(decryptCombineVerifier),
+            epochDurationBlocks
         );
         console.log("DKGManager deployed at:", address(manager));
+        console.log("DKGManager epochDurationBlocks:", manager.EPOCH_DURATION_BLOCKS());
 
         // Wire the one-shot link from registry → manager so the latter can
         // call registry.markActive(...) from submitContribution.

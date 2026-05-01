@@ -10,6 +10,7 @@ interface IDKGManager {
         DKGTypes.DecryptionPolicy decryptionPolicy;
         DKGTypes.EpochPhase status;
         uint64 nonce;
+        uint64 startBlock;           // block.number at createEpoch — anchor for nextEpochStartBlock
         uint64 seedBlock;            // block whose blockhash becomes the lottery seed
         bytes32 seed;                // captured lazily on the first claimSlot
         uint256 lotteryThreshold;    // node-eligibility threshold (snapshotted at createEpoch)
@@ -19,8 +20,7 @@ interface IDKGManager {
         uint16 ciphertextCount;      // number of submitCiphertext calls accepted for this epoch
     }
 
-    event EpochCreated(bytes12 indexed epochId, address indexed organizer, uint64 seedBlock, uint256 lotteryThreshold);
-    event RegistrationExtended(bytes12 indexed epochId, uint64 newSeedBlock, uint64 newRegistrationDeadline);
+    event EpochCreated(bytes12 indexed epochId, address indexed organizer, uint64 startBlock, uint64 seedBlock, uint256 lotteryThreshold);
     event SeedResolved(bytes12 indexed epochId, bytes32 seed);
     event SlotClaimed(bytes12 indexed epochId, address indexed claimer, uint16 slot);
     event RegistrationClosed(bytes12 indexed epochId);
@@ -97,17 +97,25 @@ interface IDKGManager {
     error CiphertextNotSubmitted();
     error InvalidCiphertext();
 
+    /// @notice Create a new epoch. All phase deadlines are derived from
+    ///         `EPOCH_DURATION_BLOCKS` (immutable, set at deploy) and the
+    ///         per-phase BPS constants in `libraries/Sizes.sol`. Permissionless:
+    ///         any caller can fire it once `block.number >= nextEpochStartBlock()`.
     function createEpoch(
         uint16 threshold,
         uint16 committeeSize,
         uint16 minValidContributions,
         uint16 lotteryAlphaBps,
-        uint16 seedDelay,
-        uint64 registrationDeadlineBlock,
-        uint64 contributionDeadlineBlock,
-        uint64 finalizeNotBeforeBlock,
         DKGTypes.DecryptionPolicy calldata decryptionPolicy
     ) external returns (bytes12);
+
+    /// @notice Earliest block at which the next `createEpoch` may succeed.
+    ///         Equals `lastEpochStartBlock + EPOCH_DURATION_BLOCKS` (or 0
+    ///         before the first epoch, meaning "any block").
+    function nextEpochStartBlock() external view returns (uint64);
+
+    /// @notice The deploy-time epoch length in blocks.
+    function epochDurationBlocks() external view returns (uint256);
 
     function claimSlot(bytes12 epochId) external;
     function submitCiphertext(
@@ -119,7 +127,6 @@ interface IDKGManager {
         uint256 c2x,
         uint256 c2y
     ) external;
-    function extendRegistration(bytes12 epochId) external;
     function submitContribution(
         bytes12 epochId,
         uint16 contributorIndex,

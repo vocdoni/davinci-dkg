@@ -130,7 +130,6 @@ func benchmarkGasForN(t *testing.T, n, threshold int) gasProfileResult {
 		CommitteeSize:             uint16(n),
 		MinValidContributions:     uint16(threshold),
 		LotteryAlphaBps:           helpers.DefaultLotteryAlphaBps,
-		SeedDelay:                 helpers.DefaultSeedDelay,
 		RegistrationDeadlineBlock: head + 50,
 		ContributionDeadlineBlock: head + 200,
 		FinalizeNotBeforeBlock:    head + 201,
@@ -138,7 +137,7 @@ func benchmarkGasForN(t *testing.T, n, threshold int) gasProfileResult {
 	epochID, createGas := createRoundMeasured(t, ctx, policy)
 
 	// ── 2. claimSlot for all n actors ───────────────────────────────────────
-	c.Assert(helpers.MineBlocks(ctx, services, uint64(policy.SeedDelay)+1), qt.IsNil)
+	c.Assert(helpers.MineBlocks(ctx, services, helpers.DefaultSeedDelay+1), qt.IsNil)
 	var totalClaimGas uint64
 	for _, actor := range actors {
 		gas, err := helpers.ClaimSlotMeasured(ctx, services, actor, epochID)
@@ -258,9 +257,7 @@ func createRoundMeasured(t *testing.T, ctx context.Context, policy types.EpochPo
 	c.Assert(err, qt.IsNil)
 	tx, err := services.Manager.CreateEpoch(auth,
 		policy.Threshold, policy.CommitteeSize, policy.MinValidContributions,
-		policy.LotteryAlphaBps, policy.SeedDelay,
-		policy.RegistrationDeadlineBlock, policy.ContributionDeadlineBlock,
-		policy.FinalizeNotBeforeBlock,
+		policy.LotteryAlphaBps,
 		helpers.ZeroDecryptionPolicy(),
 	)
 	c.Assert(err, qt.IsNil)

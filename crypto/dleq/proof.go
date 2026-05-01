@@ -2,7 +2,9 @@
 //
 // The active partial-decrypt path in `circuits/partialdecrypt/witness.go`
 // derives the Fiat-Shamir challenge directly over the full
-//   (eid, aid, ctIdx, role, i, G, C_1, D_i, δ_i, A_i, B_i)
+//
+//	(eid, aid, ctIdx, role, i, G, C_1, D_i, δ_i, A_i, B_i)
+//
 // transcript that the in-circuit verifier expects. The `Proof` struct
 // here is the bundle the witness builder hands to the prover.
 package dleq

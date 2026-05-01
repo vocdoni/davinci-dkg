@@ -45,7 +45,6 @@ func TestFinalizerEventLogPath(t *testing.T) {
 		CommitteeSize:             3,
 		MinValidContributions:     2,
 		LotteryAlphaBps:           helpers.DefaultLotteryAlphaBps,
-		SeedDelay:                 helpers.DefaultSeedDelay,
 		RegistrationDeadlineBlock: head + 25,
 		ContributionDeadlineBlock: head + 50,
 		FinalizeNotBeforeBlock:    head + 51,
@@ -54,7 +53,7 @@ func TestFinalizerEventLogPath(t *testing.T) {
 	epochID, err := helpers.CreateEpoch(ctx, services, policy)
 	c.Assert(err, qt.IsNil)
 
-	c.Assert(helpers.MineBlocks(ctx, services, uint64(policy.SeedDelay)+1), qt.IsNil)
+	c.Assert(helpers.MineBlocks(ctx, services, helpers.DefaultSeedDelay+1), qt.IsNil)
 	c.Assert(helpers.ClaimSlot(ctx, services, epochID), qt.IsNil)
 	c.Assert(helpers.ClaimSlotAs(ctx, actor1, epochID), qt.IsNil)
 	c.Assert(helpers.ClaimSlotAs(ctx, actor2, epochID), qt.IsNil)

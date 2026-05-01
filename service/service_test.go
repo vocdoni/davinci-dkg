@@ -10,6 +10,8 @@ import (
 	"github.com/vocdoni/davinci-dkg/types"
 )
 
+const testEpochID = "epoch-1"
+
 func TestContributionPlannerPendingContribution(t *testing.T) {
 	c := qt.New(t)
 
@@ -17,7 +19,7 @@ func TestContributionPlannerPendingContribution(t *testing.T) {
 	other := common.HexToAddress("0x2000000000000000000000000000000000000002")
 	st := storage.New()
 	c.Assert(st.SaveEpoch(types.Epoch{
-		ID:        "epoch-1",
+		ID:        testEpochID,
 		Organizer: operator,
 		Policy: types.EpochPolicy{
 			Threshold:                 2,
@@ -32,11 +34,11 @@ func TestContributionPlannerPendingContribution(t *testing.T) {
 	}), qt.IsNil)
 
 	planner := NewContributor(operator, st)
-	task, err := planner.PendingContribution("epoch-1")
+	task, err := planner.PendingContribution(testEpochID)
 
 	c.Assert(err, qt.IsNil)
 	c.Assert(task, qt.Not(qt.IsNil))
-	c.Assert(task.EpochID, qt.Equals, "epoch-1")
+	c.Assert(task.EpochID, qt.Equals, testEpochID)
 	c.Assert(task.ContributorIndex, qt.Equals, uint16(1))
 }
 
@@ -46,7 +48,7 @@ func TestContributionPlannerSkipsWhenAlreadyContributed(t *testing.T) {
 	operator := common.HexToAddress("0x1000000000000000000000000000000000000001")
 	st := seededContributionRound(c, operator)
 	c.Assert(st.SaveContribution(types.Contribution{
-		EpochID:          "epoch-1",
+		EpochID:          testEpochID,
 		Contributor:      operator,
 		ContributorIndex: 1,
 		Commitments:      []types.CurvePoint{{X: one(), Y: one()}},
@@ -59,7 +61,7 @@ func TestContributionPlannerSkipsWhenAlreadyContributed(t *testing.T) {
 		Proof: []byte{1},
 	}), qt.IsNil)
 
-	task, err := NewContributor(operator, st).PendingContribution("epoch-1")
+	task, err := NewContributor(operator, st).PendingContribution(testEpochID)
 	c.Assert(err, qt.IsNil)
 	c.Assert(task, qt.IsNil)
 }
@@ -69,13 +71,13 @@ func TestFinalizerPendingFinalize(t *testing.T) {
 
 	operator := common.HexToAddress("0x1000000000000000000000000000000000000001")
 	st := seededContributionRound(c, operator)
-	saveContributionFor(c, st, "epoch-1", operator, 1)
-	saveContributionFor(c, st, "epoch-1", common.HexToAddress("0x2000000000000000000000000000000000000002"), 2)
+	saveContributionFor(c, st, testEpochID, operator, 1)
+	saveContributionFor(c, st, testEpochID, common.HexToAddress("0x2000000000000000000000000000000000000002"), 2)
 
-	task, err := NewFinalizer(st).PendingFinalize("epoch-1")
+	task, err := NewFinalizer(st).PendingFinalize(testEpochID)
 	c.Assert(err, qt.IsNil)
 	c.Assert(task, qt.Not(qt.IsNil))
-	c.Assert(task.EpochID, qt.Equals, "epoch-1")
+	c.Assert(task.EpochID, qt.Equals, testEpochID)
 	c.Assert(task.ContributionCount, qt.Equals, 2)
 }
 
@@ -86,7 +88,7 @@ func TestDecryptorPendingPartialDecryption(t *testing.T) {
 	other := common.HexToAddress("0x2000000000000000000000000000000000000002")
 	st := storage.New()
 	c.Assert(st.SaveEpoch(types.Epoch{
-		ID:        "epoch-1",
+		ID:        testEpochID,
 		Organizer: operator,
 		Policy: types.EpochPolicy{
 			Threshold:                 2,
@@ -100,7 +102,7 @@ func TestDecryptorPendingPartialDecryption(t *testing.T) {
 		SelectedParticipants: []common.Address{operator, other},
 	}), qt.IsNil)
 
-	task, err := NewDecryptor(operator, st).PendingPartialDecryption("epoch-1", 1)
+	task, err := NewDecryptor(operator, st).PendingPartialDecryption(testEpochID, 1)
 	c.Assert(err, qt.IsNil)
 	c.Assert(task, qt.Not(qt.IsNil))
 	c.Assert(task.ParticipantIndex, qt.Equals, uint16(1))
@@ -124,7 +126,7 @@ func TestDecryptorSkipsWhenRoundIsAborted(t *testing.T) {
 	operator := common.HexToAddress("0x1000000000000000000000000000000000000001")
 	st := storage.New()
 	c.Assert(st.SaveEpoch(types.Epoch{
-		ID:        "epoch-1",
+		ID:        testEpochID,
 		Organizer: operator,
 		Policy: types.EpochPolicy{
 			Threshold:                 2,
@@ -138,7 +140,7 @@ func TestDecryptorSkipsWhenRoundIsAborted(t *testing.T) {
 		SelectedParticipants: []common.Address{operator},
 	}), qt.IsNil)
 
-	task, err := NewDecryptor(operator, st).PendingPartialDecryption("epoch-1", 1)
+	task, err := NewDecryptor(operator, st).PendingPartialDecryption(testEpochID, 1)
 	c.Assert(err, qt.IsNil)
 	c.Assert(task, qt.IsNil)
 }
@@ -146,7 +148,7 @@ func TestDecryptorSkipsWhenRoundIsAborted(t *testing.T) {
 func seededContributionRound(c *qt.C, operator common.Address) *storage.Storage {
 	st := storage.New()
 	c.Assert(st.SaveEpoch(types.Epoch{
-		ID:        "epoch-1",
+		ID:        testEpochID,
 		Organizer: operator,
 		Policy: types.EpochPolicy{
 			Threshold:                 2,

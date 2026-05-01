@@ -25,7 +25,6 @@ type OperatorProof struct {
 	Z  *big.Int
 }
 
-
 // ProveOperatorRegister builds a Schnorr proof of knowledge of `privateKey`
 // such that `pubKey = privateKey · G` on BabyJubJub, bound to the
 // operator's blockchain address. The returned `(pubX, pubY)` is the

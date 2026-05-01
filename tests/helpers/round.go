@@ -58,10 +58,6 @@ func CreateEpoch(ctx context.Context, services *TestServices, policy types.Epoch
 		policy.CommitteeSize,
 		policy.MinValidContributions,
 		policy.LotteryAlphaBps,
-		policy.SeedDelay,
-		policy.RegistrationDeadlineBlock,
-		policy.ContributionDeadlineBlock,
-		policy.FinalizeNotBeforeBlock,
 		golangtypes.DKGTypesDecryptionPolicy{
 			OwnerOnly:          policy.DecryptionPolicy.OwnerOnly,
 			MaxDecryptions:     policy.DecryptionPolicy.MaxDecryptions,
