@@ -29,6 +29,7 @@ import (
 
 	"github.com/consensys/gnark-crypto/ecc/bn254/twistededwards"
 	"github.com/ethereum/go-ethereum/common"
+	ethcrypto "github.com/ethereum/go-ethereum/crypto"
 	"github.com/iden3/go-iden3-crypto/poseidon"
 
 	"github.com/vocdoni/davinci-dkg/crypto/hash"
@@ -272,15 +273,16 @@ func emitOperator(G twistededwards.PointAffine, L, domain *big.Int, label, addrH
 	aX := A.X.BigInt(new(big.Int))
 	aY := A.Y.BigInt(new(big.Int))
 
-	addrInt, _ := new(big.Int).SetString(addrHex[2:], 16)
-	inner, err := poseidon.Hash([]*big.Int{domain, addrInt, pubX, pubY, aX})
-	if err != nil {
-		fail("operator inner poseidon: %v", err)
-	}
-	c, err := poseidon.Hash([]*big.Int{inner, aY})
-	if err != nil {
-		fail("operator outer poseidon: %v", err)
-	}
+	addr := common.HexToAddress(addrHex)
+	buf := make([]byte, 0, 32+20+32*4)
+	buf = append(buf, protocol.DomainOperatorRegisterV1.Bytes()...)
+	buf = append(buf, addr.Bytes()...)
+	buf = append(buf, padTo32(pubX)...)
+	buf = append(buf, padTo32(pubY)...)
+	buf = append(buf, padTo32(aX)...)
+	buf = append(buf, padTo32(aY)...)
+	c := new(big.Int).SetBytes(ethcrypto.Keccak256(buf))
+	c.Mod(c, L)
 	z := new(big.Int).Mul(c, secret)
 	z.Add(z, witness)
 	z.Mod(z, L)
@@ -321,17 +323,17 @@ func emitOrganizer(G twistededwards.PointAffine, L, domain *big.Int, label, eidH
 	if len(aidBytes) != 32 {
 		fail("organizer: aid must be 32 bytes")
 	}
-	eidField := new(big.Int).SetBytes(eidBytes)
-	aidField := new(big.Int).Mod(new(big.Int).SetBytes(aidBytes), bn254Q)
 
-	inner, err := poseidon.Hash([]*big.Int{domain, eidField, pubX, pubY})
-	if err != nil {
-		fail("organizer inner poseidon: %v", err)
-	}
-	c, err := poseidon.Hash([]*big.Int{inner, aidField, aX, aY})
-	if err != nil {
-		fail("organizer outer poseidon: %v", err)
-	}
+	buf := make([]byte, 0, 32+12+32*5)
+	buf = append(buf, protocol.DomainOrganizerRegisterV1.Bytes()...)
+	buf = append(buf, eidBytes...)
+	buf = append(buf, aidBytes...)
+	buf = append(buf, padTo32(pubX)...)
+	buf = append(buf, padTo32(pubY)...)
+	buf = append(buf, padTo32(aX)...)
+	buf = append(buf, padTo32(aY)...)
+	c := new(big.Int).SetBytes(ethcrypto.Keccak256(buf))
+	c.Mod(c, L)
 	z := new(big.Int).Mul(c, secret)
 	z.Add(z, _witness)
 	z.Mod(z, L)

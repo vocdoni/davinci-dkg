@@ -4,8 +4,6 @@ pragma solidity 0.8.28;
 import {IDKGRegistry} from "./interfaces/IDKGRegistry.sol";
 import {BabyJubJub} from "./libraries/BabyJubJub.sol";
 import {DKGProtocol} from "./libraries/DKGProtocol.sol";
-import {PoseidonT3} from "poseidon-solidity/PoseidonT3.sol";
-import {PoseidonT6} from "poseidon-solidity/PoseidonT6.sol";
 
 /// @title DKGRegistry
 /// @notice Append-only registry of operator BabyJubJub encryption keys used
@@ -159,14 +157,15 @@ contract DKGRegistry is IDKGRegistry {
     ///      Transcript layout (paper §6.2 with operator identifiers
     ///      substituted for organizer identifiers, per paper line 747):
     ///
-    ///        challenge = Poseidon(
-    ///          inner = T6(domain, operator, pubX, pubY, A_x),
-    ///          A_y
-    ///        )
+    ///        challenge = keccak256(domain || operator || pubX || pubY || A_x || A_y) mod L
     ///
     ///      The shared `DOMAIN_OPERATOR_REGISTER_V1` digest namespaces the
     ///      proof so it cannot be replayed as an organizer Schnorr proof
-    ///      (cross-protocol replay safety).
+    ///      (cross-protocol replay safety). keccak256 is used instead of
+    ///      Poseidon because the challenge is only verified on-chain (no
+    ///      circuit-native consumer) and saves ~300 k of in-EVM Poseidon
+    ///      hashing plus the deployment of the (mainnet-too-large)
+    ///      PoseidonT5/T6 helper contracts.
     function _operatorSchnorrChallenge(
         address op,
         uint256 pubX,
@@ -174,20 +173,14 @@ contract DKGRegistry is IDKGRegistry {
         uint256 ax,
         uint256 ay
     ) internal pure returns (uint256) {
-        // Reduce the bytes32 domain digest into BN254 scalar field so it is
-        // a valid Poseidon input.
-        uint256 domainField = uint256(DKGProtocol.DOMAIN_OPERATOR_REGISTER_V1) % BabyJubJub.Q;
-        uint256[5] memory in1;
-        in1[0] = domainField;
-        in1[1] = uint256(uint160(op));
-        in1[2] = pubX;
-        in1[3] = pubY;
-        in1[4] = ax;
-        uint256 inner = PoseidonT6.hash(in1);
-        uint256[2] memory in2;
-        in2[0] = inner;
-        in2[1] = ay;
-        return PoseidonT3.hash(in2);
+        return uint256(keccak256(abi.encodePacked(
+            DKGProtocol.DOMAIN_OPERATOR_REGISTER_V1,
+            op,
+            pubX,
+            pubY,
+            ax,
+            ay
+        ))) % BabyJubJub.SUBGROUP_ORDER;
     }
 
     /// @dev Verify the Schnorr PoK: `z·G == A + c·PK_op` on BabyJubJub.

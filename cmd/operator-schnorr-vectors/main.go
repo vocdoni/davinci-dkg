@@ -30,7 +30,8 @@ import (
 	"math/big"
 
 	"github.com/consensys/gnark-crypto/ecc/bn254/twistededwards"
-	"github.com/iden3/go-iden3-crypto/poseidon"
+	"github.com/ethereum/go-ethereum/common"
+	ethcrypto "github.com/ethereum/go-ethereum/crypto"
 	"github.com/vocdoni/davinci-dkg/internal/protocol"
 )
 
@@ -38,18 +39,6 @@ func main() {
 	curve := twistededwards.GetEdwardsCurve()
 	G := curve.Base
 	L := curve.Order
-
-	// BN254 scalar field prime Q (matches BabyJubJub.Q in Solidity).
-	Q := new(big.Int).Set(curve.Base.X.BigInt(new(big.Int)))
-	_ = Q
-	// Compute Q from the field — easier: use the constant directly.
-	bn254Q, _ := new(big.Int).SetString(
-		"21888242871839275222246405745257275088548364400416034343698204186575808495617", 10)
-
-	domainField := new(big.Int).Mod(
-		new(big.Int).SetBytes(protocol.DomainOperatorRegisterV1.Bytes()),
-		bn254Q,
-	)
 
 	// Test triples: (label, address-hex, secret-int, witness-int).
 	// The address values come from the existing solidity tests: address(this)
@@ -71,7 +60,7 @@ func main() {
 	for i, a := range addresses {
 		secret := big.NewInt(int64(0x1000 + 17*i))
 		witness := big.NewInt(int64(0x2000 + 23*i))
-		vec := emit(curve, &G, L, domainField, bn254Q, a.addr, secret, witness)
+		vec := emit(curve, &G, L, a.addr, secret, witness)
 		fmt.Printf(
 			"// %s = %s, secret=%s, witness=%s\n"+
 				"OperatorVector internal constant SCHNORR_%s = OperatorVector({\n"+
@@ -92,7 +81,8 @@ type vector struct {
 }
 
 func emit(curve twistededwards.CurveParams, G *twistededwards.PointAffine, L big.Int,
-	domainField *big.Int, _ *big.Int, addrHex string, secret, witness *big.Int) vector {
+	addrHex string, secret, witness *big.Int) vector {
+	_ = curve
 	// pubKey = secret · G
 	var pub twistededwards.PointAffine
 	pub.ScalarMultiplication(G, secret)
@@ -105,22 +95,18 @@ func emit(curve twistededwards.CurveParams, G *twistededwards.PointAffine, L big
 	aX := A.X.BigInt(new(big.Int))
 	aY := A.Y.BigInt(new(big.Int))
 
-	// Parse address as integer.
-	addrInt, ok := new(big.Int).SetString(addrHex[2:], 16)
-	if !ok {
-		panic("bad addr")
-	}
+	addr := common.HexToAddress(addrHex)
 
-	// inner = T6(domain, addrInt, pubX, pubY, aX)
-	inner, err := poseidon.Hash([]*big.Int{domainField, addrInt, pubX, pubY, aX})
-	if err != nil {
-		panic(err)
-	}
-	// c = T3(inner, aY)
-	c, err := poseidon.Hash([]*big.Int{inner, aY})
-	if err != nil {
-		panic(err)
-	}
+	// c = keccak256(domain || op || pubX || pubY || aX || aY) mod L
+	buf := make([]byte, 0, 32+20+32*4)
+	buf = append(buf, protocol.DomainOperatorRegisterV1.Bytes()...)
+	buf = append(buf, addr.Bytes()...)
+	buf = append(buf, padTo32(pubX)...)
+	buf = append(buf, padTo32(pubY)...)
+	buf = append(buf, padTo32(aX)...)
+	buf = append(buf, padTo32(aY)...)
+	c := new(big.Int).SetBytes(ethcrypto.Keccak256(buf))
+	c.Mod(c, &L)
 
 	// z = witness + c · secret (mod L)
 	cd := new(big.Int).Mul(c, secret)
@@ -134,4 +120,14 @@ func emit(curve twistededwards.CurveParams, G *twistededwards.PointAffine, L big
 		aY:   aY.String(),
 		z:    z.String(),
 	}
+}
+
+func padTo32(v *big.Int) []byte {
+	b := v.Bytes()
+	if len(b) > 32 {
+		return b[len(b)-32:]
+	}
+	out := make([]byte, 32)
+	copy(out[32-len(b):], b)
+	return out
 }

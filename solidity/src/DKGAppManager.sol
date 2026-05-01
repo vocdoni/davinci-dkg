@@ -7,7 +7,6 @@ import {IZKVerifier} from "./interfaces/IZKVerifier.sol";
 import {BabyJubJub} from "./libraries/BabyJubJub.sol";
 import {DKGTypes} from "./libraries/DKGTypes.sol";
 import {DKGProtocol} from "./libraries/DKGProtocol.sol";
-import {PoseidonT5} from "poseidon-solidity/PoseidonT5.sol";
 
 /// @title  DKGAppManager
 /// @notice Per-application surface (registration + organizer Schnorr verification +
@@ -279,8 +278,10 @@ contract DKGAppManager is IDKGAppManager {
 
     // ─── Internals ────────────────────────────────────────────────────────────
 
-    /// @dev Two-pass Poseidon (T5+T5) Fiat-Shamir transcript for the organizer
-    ///      Schnorr proof.
+    /// @dev Fiat-Shamir transcript for the organizer Schnorr proof:
+    ///        challenge = keccak256(domain || eid || aid || PK_org || A) mod L
+    ///      keccak256 instead of Poseidon — see the matching note on
+    ///      DKGRegistry._operatorSchnorrChallenge.
     function _organizerSchnorrChallenge(
         bytes12 epochId,
         bytes32 aid,
@@ -289,19 +290,15 @@ contract DKGAppManager is IDKGAppManager {
         uint256 ax,
         uint256 ay
     ) internal pure returns (uint256) {
-        uint256 domainField = uint256(DKGProtocol.DOMAIN_ORGANIZER_REGISTER_V1) % BabyJubJub.Q;
-        uint256[4] memory in1;
-        in1[0] = domainField;
-        in1[1] = uint256(uint96(epochId));
-        in1[2] = pkX;
-        in1[3] = pkY;
-        uint256 inner = PoseidonT5.hash(in1);
-        uint256[4] memory in2;
-        in2[0] = inner;
-        in2[1] = uint256(aid) % BabyJubJub.Q;
-        in2[2] = ax;
-        in2[3] = ay;
-        return PoseidonT5.hash(in2);
+        return uint256(keccak256(abi.encodePacked(
+            DKGProtocol.DOMAIN_ORGANIZER_REGISTER_V1,
+            epochId,
+            aid,
+            pkX,
+            pkY,
+            ax,
+            ay
+        ))) % BabyJubJub.SUBGROUP_ORDER;
     }
 
     /// @dev Verify the organizer Schnorr PoK: `z·G == A + c·PK_org`.

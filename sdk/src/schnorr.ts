@@ -101,8 +101,10 @@ export interface OperatorSchnorrProof {
 /**
  * Re-derive the operator Schnorr challenge. Mirrors
  * `_operatorSchnorrChallenge` in DKGRegistry.sol:
- *   inner = poseidon5(domainField, op, pubX, pubY, ax)
- *   c     = poseidon2(inner, ay)
+ *   c = keccak256(domain || operator || pubX || pubY || ax || ay) mod L
+ *
+ * keccak256 is used in place of Poseidon — the challenge is only verified
+ * on-chain, so SNARK-native compatibility is unnecessary.
  */
 export function operatorSchnorrChallenge(
   operator: Hex,
@@ -111,10 +113,44 @@ export function operatorSchnorrChallenge(
   ax: bigint,
   ay: bigint,
 ): bigint {
-  const domainField = reduceHexToBn254(DomainOperatorRegisterV1);
-  const opField = BigInt(operator);
-  const inner = poseidon5([domainField, opField, pubX, pubY, ax]);
-  return poseidon2([inner, ay]);
+  const buf = new Uint8Array(32 + 20 + 32 * 4);
+  // domain (bytes32)
+  buf.set(hexToBytes(DomainOperatorRegisterV1, 32), 0);
+  // operator (address, 20 bytes)
+  buf.set(hexToBytes(operator, 20), 32);
+  // pubX, pubY, ax, ay (each uint256 big-endian)
+  let off = 32 + 20;
+  for (const v of [pubX, pubY, ax, ay]) {
+    buf.set(uint256ToBytes32(v), off);
+    off += 32;
+  }
+  const h = BigInt(keccak256(buf));
+  return h % subOrder;
+}
+
+/** big-endian 32-byte encoding of a uint256. */
+function uint256ToBytes32(v: bigint): Uint8Array {
+  const out = new Uint8Array(32);
+  let x = v;
+  for (let i = 31; i >= 0; i--) {
+    out[i] = Number(x & 0xffn);
+    x >>= 8n;
+  }
+  return out;
+}
+
+/** Strict-length hex → bytes (left-padded if shorter than the requested width). */
+function hexToBytes(h: Hex, expectedLen: number): Uint8Array {
+  let s = h.startsWith('0x') ? h.slice(2) : h;
+  if (s.length > expectedLen * 2) {
+    throw new Error(`hexToBytes: input ${h} longer than ${expectedLen} bytes`);
+  }
+  if (s.length < expectedLen * 2) s = s.padStart(expectedLen * 2, '0');
+  const out = new Uint8Array(expectedLen);
+  for (let i = 0; i < expectedLen; i++) {
+    out[i] = parseInt(s.slice(i * 2, i * 2 + 2), 16);
+  }
+  return out;
 }
 
 /**
@@ -191,13 +227,10 @@ export interface OrganizerSchnorrProof {
 
 /**
  * Re-derive the organizer Schnorr challenge. Mirrors
- * `_organizerSchnorrChallenge` in DKGManager.sol:
- *   inner = poseidon4(domainField, eidField, pkOrgX, pkOrgY)
- *   c     = poseidon4(inner, aidField, ax, ay)
+ * `_organizerSchnorrChallenge` in DKGAppManager.sol:
+ *   c = keccak256(domain || epochId || aid || pkOrgX || pkOrgY || ax || ay) mod L
  *
- * `eidField` is the bytes12 epoch id read as an unsigned integer (no
- * mod reduction — bytes12 always fits in bn254). `aidField` is the
- * bytes32 application id reduced mod bn254.
+ * keccak256 instead of Poseidon — see operatorSchnorrChallenge for rationale.
  */
 export function organizerSchnorrChallenge(
   epochId: Hex,
@@ -207,11 +240,18 @@ export function organizerSchnorrChallenge(
   ax: bigint,
   ay: bigint,
 ): bigint {
-  const domainField = reduceHexToBn254(DomainOrganizerRegisterV1);
-  const eidField = BigInt(epochId);
-  const aidField = reduceHexToBn254(aid);
-  const inner = poseidon4([domainField, eidField, pkOrgX, pkOrgY]);
-  return poseidon4([inner, aidField, ax, ay]);
+  const buf = new Uint8Array(32 + 12 + 32 * 5);
+  buf.set(hexToBytes(DomainOrganizerRegisterV1, 32), 0);
+  buf.set(hexToBytes(epochId, 12), 32);
+  let off = 32 + 12;
+  buf.set(hexToBytes(aid, 32), off);
+  off += 32;
+  for (const v of [pkOrgX, pkOrgY, ax, ay]) {
+    buf.set(uint256ToBytes32(v), off);
+    off += 32;
+  }
+  const h = BigInt(keccak256(buf));
+  return h % subOrder;
 }
 
 export function verifyOrganizerSchnorr(

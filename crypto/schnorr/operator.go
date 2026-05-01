@@ -12,7 +12,7 @@ import (
 
 	"github.com/consensys/gnark-crypto/ecc/bn254/twistededwards"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/iden3/go-iden3-crypto/poseidon"
+	ethcrypto "github.com/ethereum/go-ethereum/crypto"
 
 	"github.com/vocdoni/davinci-dkg/internal/protocol"
 )
@@ -25,11 +25,6 @@ type OperatorProof struct {
 	Z  *big.Int
 }
 
-// bn254Q is the BN254 scalar field prime — matches `BabyJubJub.Q` in the
-// Solidity library and is the modulus the on-chain `_operatorSchnorrChallenge`
-// reduces the domain digest into.
-var bn254Q, _ = new(big.Int).SetString(
-	"21888242871839275222246405745257275088548364400416034343698204186575808495617", 10)
 
 // ProveOperatorRegister builds a Schnorr proof of knowledge of `privateKey`
 // such that `pubKey = privateKey · G` on BabyJubJub, bound to the
@@ -78,29 +73,33 @@ func ProveOperatorRegister(privateKey *big.Int, operator common.Address) (
 	return pubX, pubY, OperatorProof{Ax: ax, Ay: ay, Z: z}, nil
 }
 
-// operatorSchnorrChallenge implements the same two-pass Poseidon transcript
-// as `_operatorSchnorrChallenge` in DKGRegistry.sol:
+// operatorSchnorrChallenge mirrors `_operatorSchnorrChallenge` in
+// DKGRegistry.sol:
 //
-//	inner = T6(domainField, op, pubX, pubY, ax)
-//	c     = T3(inner, ay)
-//
-// where `domainField = uint256(DOMAIN_OPERATOR_REGISTER_V1) % bn254Q`.
+//	c = keccak256(domain || op || pubX || pubY || ax || ay) mod L
 func operatorSchnorrChallenge(op common.Address, pubX, pubY, ax, ay *big.Int) (*big.Int, error) {
-	domainField := new(big.Int).Mod(
-		new(big.Int).SetBytes(protocol.DomainOperatorRegisterV1.Bytes()),
-		bn254Q,
-	)
-	inner, err := poseidon.Hash([]*big.Int{
-		domainField,
-		new(big.Int).SetBytes(op.Bytes()),
-		pubX, pubY, ax,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("inner poseidon: %w", err)
-	}
-	c, err := poseidon.Hash([]*big.Int{inner, ay})
-	if err != nil {
-		return nil, fmt.Errorf("outer poseidon: %w", err)
-	}
+	curve := twistededwards.GetEdwardsCurve()
+	L := curve.Order
+	buf := make([]byte, 0, 32+20+32*4)
+	buf = append(buf, protocol.DomainOperatorRegisterV1.Bytes()...)
+	buf = append(buf, op.Bytes()...)
+	buf = append(buf, padTo32(pubX)...)
+	buf = append(buf, padTo32(pubY)...)
+	buf = append(buf, padTo32(ax)...)
+	buf = append(buf, padTo32(ay)...)
+	h := ethcrypto.Keccak256(buf)
+	c := new(big.Int).SetBytes(h)
+	c.Mod(c, &L)
 	return c, nil
+}
+
+// padTo32 returns a 32-byte big-endian encoding of the integer.
+func padTo32(v *big.Int) []byte {
+	b := v.Bytes()
+	if len(b) > 32 {
+		return b[len(b)-32:]
+	}
+	out := make([]byte, 32)
+	copy(out[32-len(b):], b)
+	return out
 }

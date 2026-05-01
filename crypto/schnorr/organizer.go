@@ -6,7 +6,7 @@ import (
 	"math/big"
 
 	"github.com/consensys/gnark-crypto/ecc/bn254/twistededwards"
-	"github.com/iden3/go-iden3-crypto/poseidon"
+	ethcrypto "github.com/ethereum/go-ethereum/crypto"
 
 	"github.com/vocdoni/davinci-dkg/internal/protocol"
 )
@@ -24,14 +24,10 @@ type OrganizerProof struct {
 // the application is being registered for. Returns the derived public key
 // and the proof.
 //
-// Transcript layout (paper §6.2 line 1138, mirrored by
-// `_organizerSchnorrChallenge` in DKGManager.sol):
+// Transcript layout (mirrored by `_organizerSchnorrChallenge` in
+// DKGAppManager.sol):
 //
-//	inner = Poseidon([domain, eid, PK_org.x, PK_org.y])  (T5)
-//	c     = Poseidon([inner, aid_field, A.x, A.y])        (T5)
-//
-// `aid_field = uint256(aid) % bn254Q` to keep the input in the BN254
-// scalar field.
+//	c = keccak256(domain || epochId || aid || PK_org || A) mod L
 func ProveOrganizerRegister(
 	skOrg *big.Int,
 	epochID [12]byte,
@@ -80,20 +76,21 @@ func organizerSchnorrChallenge(
 	epochID [12]byte, aid [32]byte,
 	pkX, pkY, ax, ay *big.Int,
 ) (*big.Int, error) {
-	domainField := new(big.Int).Mod(
-		new(big.Int).SetBytes(protocol.DomainOrganizerRegisterV1.Bytes()),
-		bn254Q,
-	)
-	eidField := new(big.Int).SetBytes(epochID[:])
-	aidField := new(big.Int).Mod(new(big.Int).SetBytes(aid[:]), bn254Q)
-
-	inner, err := poseidon.Hash([]*big.Int{domainField, eidField, pkX, pkY})
-	if err != nil {
-		return nil, fmt.Errorf("inner poseidon: %w", err)
-	}
-	c, err := poseidon.Hash([]*big.Int{inner, aidField, ax, ay})
-	if err != nil {
-		return nil, fmt.Errorf("outer poseidon: %w", err)
-	}
+	curve := twistededwards.GetEdwardsCurve()
+	L := curve.Order
+	buf := make([]byte, 0, 32+12+32*5)
+	buf = append(buf, protocol.DomainOrganizerRegisterV1.Bytes()...)
+	buf = append(buf, epochID[:]...)
+	buf = append(buf, aid[:]...)
+	buf = append(buf, padTo32(pkX)...)
+	buf = append(buf, padTo32(pkY)...)
+	buf = append(buf, padTo32(ax)...)
+	buf = append(buf, padTo32(ay)...)
+	h := ethcrypto.Keccak256(buf)
+	c := new(big.Int).SetBytes(h)
+	c.Mod(c, &L)
 	return c, nil
 }
+
+// fmt is only used for error wrapping below.
+var _ = fmt.Errorf
