@@ -166,4 +166,16 @@ contract BabyJubJubTest is Test {
         (uint256 x, uint256 y) = BabyJubJub.scalarMulBase(123456789);
         assertTrue(BabyJubJub.isInPrimeSubgroup(x, y));
     }
+
+    /// @dev (0, Q-1) is the order-2 point on this twisted-Edwards curve
+    ///      (a=-1, identity = (0, 1)). It satisfies the curve equation
+    ///      but lies outside the prime-order subgroup, so a correct
+    ///      `isInPrimeSubgroup` must reject it.
+    function test_IsInPrimeSubgroup_RejectsOrderTwoPoint() public view {
+        uint256 q = 21888242871839275222246405745257275088548364400416034343698204186575808495617;
+        uint256 x = 0;
+        uint256 y = q - 1;
+        assertTrue(BabyJubJub.isOnCurve(x, y));
+        assertTrue(!BabyJubJub.isInPrimeSubgroup(x, y));
+    }
 }

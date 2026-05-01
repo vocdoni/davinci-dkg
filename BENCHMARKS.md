@@ -83,7 +83,7 @@ the production-relevant number.
 | `claimSlot`                           |  28,831 |   159,970 |   207,824 |
 | `submitContribution`                  |  72,438 |   238,286 |   238,286 |
 | `finalizeEpoch`                       | 317,193 |   727,896 |   727,896 |
-| `submitCiphertext`                    |  27,257 |    66,800 |    66,970 |
+| `submitCiphertext`                    |  27,260 | 2,183,806 | 2,183,976 |
 | `submitPartialDecryption`             |  34,819 |   159,339 |   176,427 |
 | `combineDecryption`                   |  47,228 |   101,258 |   155,289 |
 | `registerApplication` (mode 0)        |  24,846 |    29,424 |   176,103 |
@@ -95,8 +95,8 @@ the production-relevant number.
 
 | Function           |    Min |       Median |          Max |
 |--------------------|-------:|-------------:|-------------:|
-| `registerKey`      | 23,513 |  **2,110,279** |  2,141,369 |
-| `updateKey`        | 27,590 |  **2,028,546** |  2,036,629 |
+| `registerKey`      | 23,513 |  **1,555,996** |  1,576,656 |
+| `updateKey`        | 27,590 |  **1,463,833** |  1,471,916 |
 | `markActive`       | 23,874 |       25,050 |     30,758 |
 | `heartbeat`        | 23,484 |       25,748 |     28,013 |
 | `reactivate`       | 23,719 |       34,642 |     34,642 |
@@ -110,9 +110,17 @@ verifies `z·G == A + c·PK`. The verifier uses a width-2 windowed
 Strauss–Shamir double-and-add over the basis `(G, -PK)` with multiples of
 `G` precomputed as Solidity constants, so the per-window cost is two
 doublings plus at most one conditional add against a 16-entry
-`i·G + j·(-PK)` lookup table — roughly 2× cheaper than computing the two
-scalar multiplications independently. Paid exactly once per node-key
-lifecycle event.
+`i·G + j·(-PK)` lookup table. Twisted-Edwards `pointAdd` uses the
+single-inverse trick: both denominators are inverted via one
+`bigModExp` precompile call instead of two. Paid exactly once per
+node-key lifecycle event.
+
+`submitCiphertext` runs a full prime-subgroup membership check on both
+ciphertext points (`isInPrimeSubgroup` = `[L]·P == identity`). This costs
+~1 M gas per point and ~2 M gas total — one full BabyJubJub scalar
+multiplication each, dominated by `bigModExp` calls inside `pointAdd`.
+Without this check a small-order point would let a permitted submitter
+park a ciphertext slot the combine circuit could never accept.
 
 ### Read paths
 
@@ -163,10 +171,10 @@ one threshold decryption:
 | n × `claimSlot`                                    |   2,559,520 |   5,119,040 |
 | n × `submitContribution`                           |   3,812,576 |   7,625,152 |
 | 1 × `finalizeEpoch`                                |     727,896 |     727,896 |
-| 1 × `submitCiphertext`                             |      66,800 |      66,800 |
+| 1 × `submitCiphertext`                             |   2,183,806 |   2,183,806 |
 | t × `submitPartialDecryption` (t = ⌈2n/3⌉)         |   1,752,729 (×11) |   3,505,458 (×22) |
 | 1 × `combineDecryption`                            |     101,258 |     101,258 |
-| **Round total**                                    | **9,247,237** | **17,372,062** |
+| **Round total**                                    | **11,364,243** | **19,489,068** |
 
 These are *epoch-only* costs — application registration is paid once per
 `(eid, aid)` pair (~29 k for mode 0, ~28 k for mode 1).

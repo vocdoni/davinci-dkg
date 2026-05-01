@@ -1174,7 +1174,6 @@ contract DKGManager is IDKGManager {
 
         organizerShares[epochId][aid][ciphertextIndex] = DKGTypes.OrganizerShareRecord({
             deltaOrg: DKGTypes.Point({x: deltaOrgX, y: deltaOrgY}),
-            dleqHash: keccak256(dleqInput),
             accepted: true
         });
 

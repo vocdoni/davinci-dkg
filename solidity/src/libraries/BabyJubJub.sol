@@ -84,18 +84,30 @@ library BabyJubJub {
     }
 
     /// @notice Whether `(x, y)` lies in the prime-order subgroup.
-    /// @dev    Implemented as `[L]P == identity`. This costs one full scalar
-    ///         multiplication (~250 doubles + ~125 adds) and is intended only
-    ///         for entry points where prime-subgroup membership is otherwise
-    ///         not enforced. Most call sites in this codebase derive their
-    ///         points from a Schnorr proof of knowledge of a discrete log
-    ///         relative to the prime-subgroup generator, which implicitly
-    ///         constrains the result to the prime subgroup; in those cases an
-    ///         explicit subgroup check is redundant and `requireValidPoint`
-    ///         (without the subgroup check) is sufficient.
+    /// @dev    Implemented as `[L]P == identity`. Uses a non-reducing scalar
+    ///         multiplication: `scalarMul` reduces its scalar mod `L` first,
+    ///         which would short-circuit `[L]P` to `[0]P = identity` and
+    ///         render the check vacuous. The loop below intentionally walks
+    ///         the bits of `L` as-is. Costs one full scalar multiplication
+    ///         (~252 doubles + ~125 adds). Use only at entry points where
+    ///         prime-subgroup membership is not otherwise enforced.
     function isInPrimeSubgroup(uint256 x, uint256 y) internal view returns (bool) {
-        (uint256 lpx, uint256 lpy) = scalarMul(SUBGROUP_ORDER, x, y);
-        return lpx == 0 && lpy == 1;
+        if (x == 0 && y == 1) return true; // identity is in every subgroup
+        uint256 k = SUBGROUP_ORDER;
+        uint256 rx = 0;
+        uint256 ry = 1;
+        uint256 px = x;
+        uint256 py = y;
+        while (k != 0) {
+            if (k & 1 == 1) {
+                (rx, ry) = pointAdd(rx, ry, px, py);
+            }
+            k >>= 1;
+            if (k != 0) {
+                (px, py) = pointAdd(px, py, px, py);
+            }
+        }
+        return rx == 0 && ry == 1;
     }
 
     /// @notice Validate that `(x, y)` is a canonical, on-curve, non-identity
@@ -145,8 +157,17 @@ library BabyJubJub {
         uint256 x3Num = addmod(mulmod(_x1, _y2, Q), mulmod(_y1, _x2, Q), Q);
         uint256 y3Num = _submod(y1y2, mulmod(A, x1x2, Q));
 
-        x3 = mulmod(x3Num, _inverse(addmod(1, dx1x2y1y2, Q)), Q);
-        y3 = mulmod(y3Num, _inverse(_submod(1, dx1x2y1y2)), Q);
+        // Single-inverse trick (Montgomery): inv(a) and inv(b) from one
+        // modular inversion via inv(a*b). Saves one bigModExp precompile call
+        // per addition compared to inverting denX and denY independently.
+        uint256 denX = addmod(1, dx1x2y1y2, Q);
+        uint256 denY = _submod(1, dx1x2y1y2);
+        uint256 invProduct = _inverse(mulmod(denX, denY, Q));
+        uint256 invDenX = mulmod(denY, invProduct, Q);
+        uint256 invDenY = mulmod(denX, invProduct, Q);
+
+        x3 = mulmod(x3Num, invDenX, Q);
+        y3 = mulmod(y3Num, invDenY, Q);
     }
 
     /// @notice Point doubling: P + P. Implemented via `pointAdd`; the

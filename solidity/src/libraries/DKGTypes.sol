@@ -126,7 +126,6 @@ library DKGTypes {
     ///         combineDecryption as the correction point.
     struct OrganizerShareRecord {
         Point   deltaOrg;
-        bytes32 dleqHash;       // commitment to (A, B, z)
         bool    accepted;
     }
 }
