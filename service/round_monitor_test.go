@@ -11,7 +11,7 @@ import (
 	"github.com/vocdoni/davinci-dkg/web3"
 )
 
-func TestEpochMonitorSyncRound(t *testing.T) {
+func TestEpochMonitorSyncEpoch(t *testing.T) {
 	c := qt.New(t)
 
 	contracts := &mockContracts{
@@ -38,7 +38,7 @@ func TestEpochMonitorSyncRound(t *testing.T) {
 	var epochID [12]byte
 	copy(epochID[:], []byte("epoch-1"))
 
-	err := monitor.SyncRound(context.Background(), epochID)
+	err := monitor.SyncEpoch(context.Background(), epochID)
 	c.Assert(err, qt.IsNil)
 
 	epoch, err := st.Epoch("epoch-1")
@@ -48,7 +48,7 @@ func TestEpochMonitorSyncRound(t *testing.T) {
 	c.Assert(epoch.SelectedParticipants, qt.DeepEquals, contracts.selected)
 }
 
-func TestEpochMonitorSyncRoundUpdatesExistingSnapshot(t *testing.T) {
+func TestEpochMonitorSyncEpochUpdatesExistingSnapshot(t *testing.T) {
 	c := qt.New(t)
 
 	contracts := &mockContracts{
@@ -74,7 +74,7 @@ func TestEpochMonitorSyncRoundUpdatesExistingSnapshot(t *testing.T) {
 	var epochID [12]byte
 	copy(epochID[:], []byte("epoch-1"))
 
-	c.Assert(monitor.SyncRound(context.Background(), epochID), qt.IsNil)
+	c.Assert(monitor.SyncEpoch(context.Background(), epochID), qt.IsNil)
 
 	contracts.epoch.Status = 3
 	contracts.selected = []common.Address{
@@ -82,7 +82,7 @@ func TestEpochMonitorSyncRoundUpdatesExistingSnapshot(t *testing.T) {
 		common.HexToAddress("0x3000000000000000000000000000000000000003"),
 	}
 
-	c.Assert(monitor.SyncRound(context.Background(), epochID), qt.IsNil)
+	c.Assert(monitor.SyncEpoch(context.Background(), epochID), qt.IsNil)
 
 	epoch, err := st.Epoch("epoch-1")
 	c.Assert(err, qt.IsNil)

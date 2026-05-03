@@ -35,7 +35,7 @@ func (s *Storage) SaveEpoch(epoch types.Epoch) error {
 	s.epochs[epoch.ID] = epoch
 	s.ready[epoch.ID] = make(map[common.Address]struct{})
 	s.contributions[epoch.ID] = make(map[common.Address]types.Contribution)
-	s.decryptions[epoch.ID] = make(map[common.Address]map[uint16]types.PartialDecryption)
+	s.decryptions[epoch.ID] = make(map[partialMemKey]types.PartialDecryption)
 	return nil
 }
 
@@ -59,7 +59,7 @@ func (s *Storage) UpsertEpoch(epoch types.Epoch) error {
 	if _, exists := s.epochs[epoch.ID]; !exists {
 		s.ready[epoch.ID] = make(map[common.Address]struct{})
 		s.contributions[epoch.ID] = make(map[common.Address]types.Contribution)
-		s.decryptions[epoch.ID] = make(map[common.Address]map[uint16]types.PartialDecryption)
+		s.decryptions[epoch.ID] = make(map[partialMemKey]types.PartialDecryption)
 	}
 	s.epochs[epoch.ID] = epoch
 	return nil

@@ -7,7 +7,7 @@
 export const Polling = {
   /** Default React Query refetchInterval for read-only views. */
   default: 4000,
-  /** Faster cadence for the playground while a epoch is in flight. */
+  /** Faster cadence for the playground while an epoch is in flight. */
   playgroundRound: 2000,
   /** Cadence for watching a ciphertext's combined-decryption record. */
   decryption: 3000,

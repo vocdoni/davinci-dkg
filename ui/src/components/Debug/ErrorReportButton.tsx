@@ -8,7 +8,7 @@ import { buildErrorReport } from '~lib/error-report'
 
 interface Props {
   error: unknown
-  /** Extra context (e.g. epochId on a epoch detail page). */
+  /** Extra context (e.g. epochId on an epoch detail page). */
   extra?: { epochId?: string; blockNumber?: bigint | number }
 }
 

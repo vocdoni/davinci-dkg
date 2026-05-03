@@ -13,7 +13,7 @@ export function ConnectStep({ status }: { status: StepStatus }) {
       n={1}
       title='Connect a wallet'
       status={status}
-      description='You need a wallet to create a epoch and submit a ciphertext. Browsing the explorer works without one.'
+      description='You need a wallet to create an epoch and submit a ciphertext. Browsing the explorer works without one.'
     >
       <Stack gap={4}>
         {!isConnected ? (

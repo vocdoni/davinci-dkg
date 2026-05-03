@@ -30,7 +30,7 @@ func NewEpochMonitor(contracts RoundReader, st *storage.Storage) *EpochMonitor {
 	}
 }
 
-func (m *EpochMonitor) SyncRound(ctx context.Context, epochID [12]byte) error {
+func (m *EpochMonitor) SyncEpoch(ctx context.Context, epochID [12]byte) error {
 	roundView, err := m.contracts.GetEpoch(ctx, epochID)
 	if err != nil {
 		return err

@@ -3,7 +3,7 @@
 //
 // Each phase of the DKG protocol — registration, contribution, finalization,
 // partial decryption, decryption combination — is handled by a dedicated
-// worker type. A epoch monitor
+// worker type. An epoch monitor
 // watches on-chain state and routes each active epoch to the workers whose
 // phase capabilities match the epoch's current status.
 //

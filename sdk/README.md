@@ -23,7 +23,7 @@ import {
   buildElGamal,
   waitForEpochPhase,
   EpochPhase,
-  buildRoundId,
+  buildEpochId,
 } from '@vocdoni/davinci-dkg-sdk';
 
 const chain = defineChain({ id: 1337, name: 'Anvil', nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 }, rpcUrls: { default: { http: ['http://localhost:8545'] } } });

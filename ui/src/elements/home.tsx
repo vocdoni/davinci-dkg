@@ -129,7 +129,7 @@ export function Home() {
       >
         <SimpleGrid columns={{ base: 2, md: 4 }} gap={{ base: 3, md: 4 }} mt={1}>
           <StatCard
-            label='Rounds'
+            label='Epochs'
             value={epochNonce != null ? epochNonce.toString() : '—'}
             hint='total ever created'
           />

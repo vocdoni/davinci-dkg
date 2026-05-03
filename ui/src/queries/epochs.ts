@@ -6,7 +6,7 @@ import { Polling } from '~constants/polling'
 export function useRecentEpochs(limit = 20) {
   const { dkg } = useDkgClient()
   return useQuery({
-    queryKey: QueryKeys.roundsRecent(limit),
+    queryKey: QueryKeys.epochsRecent(limit),
     queryFn: () => dkg.getRecentRounds(limit),
     refetchInterval: Polling.default,
   })
@@ -29,7 +29,7 @@ export function useEpoch(id: `0x${string}` | undefined) {
 export function useEpochEvents(id: `0x${string}` | undefined, fromBlock?: bigint) {
   const { dkg } = useDkgClient()
   return useQuery({
-    queryKey: id ? QueryKeys.roundEvents(id, fromBlock) : ['epochs', 'events', 'idle'],
+    queryKey: id ? QueryKeys.epochEvents(id, fromBlock) : ['epochs', 'events', 'idle'],
     queryFn: () => {
       if (!id) throw new Error('epoch id required')
       return dkg.getAllEpochEvents(id, fromBlock ?? 0n)

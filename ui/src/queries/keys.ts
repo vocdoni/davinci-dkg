@@ -8,9 +8,9 @@ export const QueryKeys = {
   chain: ['chain'] as const,
   blockNumber: ['chain', 'blockNumber'] as const,
 
-  roundsRecent: (limit: number) => ['epochs', 'recent', limit] as const,
+  epochsRecent: (limit: number) => ['epochs', 'recent', limit] as const,
   epoch: (id: `0x${string}`) => ['epochs', id] as const,
-  roundEvents: (id: `0x${string}`, fromBlock?: bigint) =>
+  epochEvents: (id: `0x${string}`, fromBlock?: bigint) =>
     ['epochs', id, 'events', fromBlock?.toString() ?? 'all'] as const,
 
   registryNodes: ['registry', 'nodes'] as const,

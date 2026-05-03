@@ -5,8 +5,10 @@ import { useDkgClient } from './use-dkg-client'
 // smoother estimate but more RPC traffic. Six is a reasonable default for
 // a chain with stable cadence.
 const SAMPLE_BLOCKS = 6n
-// Refetch the estimate every 5 minutes — block time on a given chain is
-// effectively constant so we don't need to re-sample frequently.
+// Treat the estimate as fresh for 5 minutes — block time on a given chain
+// is effectively constant so we don't need to re-sample frequently. We only
+// set staleTime (no refetchInterval), so the value is recomputed on the
+// next mount or query invalidation after the window elapses.
 const STALE_TIME_MS = 5 * 60_000
 
 const FALLBACK_BLOCK_TIME_S = 12
