@@ -7,7 +7,7 @@ export function useRecentEpochs(limit = 20) {
   const { dkg } = useDkgClient()
   return useQuery({
     queryKey: QueryKeys.epochsRecent(limit),
-    queryFn: () => dkg.getRecentRounds(limit),
+    queryFn: () => dkg.getRecentEpochs(limit),
     refetchInterval: Polling.default,
   })
 }

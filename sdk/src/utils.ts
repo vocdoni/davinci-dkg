@@ -4,10 +4,11 @@ import type { Hex } from 'viem';
  * Build a bytes12 epoch ID from its two parts.
  *
  * Layout (big-endian on chain):
- *   [0..3]  uint32 EPOCH_PREFIX (= chain ID)
+ *   [0..3]  uint32 EPOCH_PREFIX = uint32(keccak256(chainId, manager))
+ *           (see solidity/src/libraries/DKGIdLib.sol::getPrefix)
  *   [4..11] uint64 nonce
  *
- * @param prefix  The EPOCH_PREFIX constant from the DKGManager contract
+ * @param prefix  The EPOCH_PREFIX value read from DKGManager (NOT the chain ID)
  * @param nonce   The nonce returned by epochNonce() at epoch creation time
  */
 export function buildEpochId(prefix: number | bigint, nonce: bigint): Hex {

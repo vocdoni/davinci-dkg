@@ -61,7 +61,7 @@ func (m *EpochMonitor) SyncEpoch(ctx context.Context, epochID [12]byte) error {
 // mapEpochPhase converts an on-chain DKGTypes.EpochPhase uint8 to the
 // Go-side EpochPhase constant. The on-chain enum is:
 //
-//	None=0, Readiness=1, Contribution=2, Finalized=3, Aborted=4, Completed=5
+//	None=0, Registration=1, Contribution=2, Finalized=3, Aborted=4, Completed=5
 //
 // Note: EpochPhaseDecryption is a Go-side phase used for local state
 // tracking; it is never mapped from chain status (the chain keeps the
