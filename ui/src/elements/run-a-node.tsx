@@ -129,7 +129,7 @@ DAVINCI_DKG_NETWORK=sepolia
           {`# 1. Build the bundle with the chain config you want.
 make ui-build \\
   RPC_URL=https://eth-sepolia.public.blastapi.io \\
-  MANAGER_ADDRESS=0x6683f889ce518945053f7d01abef7da842283078 \\
+  MANAGER_ADDRESS=0x15A12949a8c5aC7ca9E4e89dD1C66eC8B4b4363c \\
   CHAIN_ID=11155111 CHAIN_NAME=sepolia
 
 # 2. Run nginx alongside the node.

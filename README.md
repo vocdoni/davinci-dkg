@@ -115,13 +115,13 @@ keccak256(seed ‖ msg.sender) < (α · n · 2²⁵⁶) / R
 ```
 
 Eligible nodes race first-come-first-served until `n` slots are filled, at which point the epoch
-auto-advances to Contribution. Anyone can recompute eligibility by replaying the keccak — no ZK
-proof, no trusted coordinator. If the committee fails to fill within Registration, the epoch is
-aborted and the next scheduled one opens automatically.
+auto-advances to `KeyAssembly`. Anyone can recompute eligibility by replaying the keccak — no ZK
+proof, no trusted coordinator. If the committee fails to fill within `CommitteeSelection`, the
+epoch is aborted and the next scheduled one opens automatically.
 
 ### Threshold decryption
 
-After Finalization, the collective public key `PK_ep` is live on-chain. To decrypt an ElGamal
+Once the epoch is `Live`, the collective public key `PK_ep` is on-chain. To decrypt an ElGamal
 ciphertext `(C₁, C₂)` published via `submitCiphertext`:
 
 1. Each selected node `i` publishes its partial `δ_i = d_i · C₁` plus a Chaum–Pedersen DLEQ proof
@@ -136,7 +136,7 @@ Submitting a plaintext above the relevant cap is unrecoverable.
 
 ### Per-application keys
 
-A finalized epoch can host many independent encryption contexts — one per **application**, keyed
+A `Live` epoch can host many independent encryption contexts — one per **application**, keyed
 by a 32-byte `aid` chosen by the integrator. `DKGAppManager` exposes two registration modes:
 
 - **Mode 0 — public derivation** (`registerApplication`). The contract derives
@@ -259,7 +259,7 @@ ciphertext before the combine can land.
 
 | Network | DKGManager                                 | Notes |
 |---------|--------------------------------------------|-------|
-| Sepolia | `0x6683f889ce518945053f7d01abef7da842283078` | Built into the node + SDK; just pass `--network sepolia` |
+| Sepolia | `0x15A12949a8c5aC7ca9E4e89dD1C66eC8B4b4363c` | Built into the node + SDK; just pass `--network sepolia` |
 
 `DKGRegistry` and `DKGAppManager` are auto-resolved from `DKGManager` on-chain — only the manager
 address needs to be configured.
