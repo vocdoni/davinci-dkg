@@ -5,7 +5,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { inject } from 'vitest';
 import { DKGWriter, EpochPhase, buildElGamal, buildEpochId, parseEpochId } from '../src/index.js';
 import { makePublicClient, makeWalletClient } from './helpers/accounts.js';
-import { mineUntilSeedAvailable } from './helpers/chain.js';
+import { mineUntilEpochAllowed, mineUntilSeedAvailable } from './helpers/chain.js';
 
 function useHarness() {
   return {
@@ -66,6 +66,7 @@ describe('DKGWriter', () => {
     const { enabled } = useHarness();
     if (!enabled) return;
 
+    await mineUntilEpochAllowed(writer.publicClient, writer.managerAddress);
     const currentBlock = await writer.blockNumber();
     const nonceBefore  = await writer.epochNonce();
 
@@ -122,6 +123,7 @@ describe('DKGWriter', () => {
       await writer.waitForTransaction(regHash);
     }
 
+    await mineUntilEpochAllowed(writer.publicClient, writer.managerAddress);
     const currentBlock = await writer.blockNumber();
     const seedDelay    = 1;
 

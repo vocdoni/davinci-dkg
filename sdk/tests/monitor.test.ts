@@ -14,7 +14,7 @@ import {
   networkSummary,
 } from '../src/index.js';
 import { makePublicClient, makeWalletClient } from './helpers/accounts.js';
-import { mineUntilSeedAvailable } from './helpers/chain.js';
+import { mineUntilEpochAllowed, mineUntilSeedAvailable } from './helpers/chain.js';
 
 function useHarness() {
   return {
@@ -71,6 +71,7 @@ describe('Monitor utilities', () => {
       await writer.waitForTransaction(regHash);
     }
 
+    await mineUntilEpochAllowed(writer.publicClient, writer.managerAddress);
     const currentBlock = await client.blockNumber();
     const hash = await writer.createEpoch({
       threshold:                 1,
@@ -106,6 +107,7 @@ describe('Monitor utilities', () => {
       await writer.waitForTransaction(regHash);
     }
 
+    await mineUntilEpochAllowed(writer.publicClient, writer.managerAddress);
     const currentBlock = await client.blockNumber();
     const createHash   = await writer.createEpoch({
       threshold:                 1,
