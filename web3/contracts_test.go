@@ -196,7 +196,6 @@ func testRPCServer() *httptest.Server {
 					CommitteeSize             uint16 `json:"committeeSize"`
 					MinValidContributions     uint16 `json:"minValidContributions"`
 					LotteryAlphaBps           uint16 `json:"lotteryAlphaBps"`
-					SeedDelay                 uint16 `json:"seedDelay"`
 					RegistrationDeadlineBlock uint64 `json:"registrationDeadlineBlock"`
 					ContributionDeadlineBlock uint64 `json:"contributionDeadlineBlock"`
 					FinalizeNotBeforeBlock    uint64 `json:"finalizeNotBeforeBlock"`
@@ -216,7 +215,6 @@ func testRPCServer() *httptest.Server {
 						CommitteeSize:             2,
 						MinValidContributions:     2,
 						LotteryAlphaBps:           20000,
-						SeedDelay:                 4,
 						RegistrationDeadlineBlock: 10,
 						ContributionDeadlineBlock: 20,
 						FinalizeNotBeforeBlock:    21,
@@ -224,6 +222,7 @@ func testRPCServer() *httptest.Server {
 					dpTuple{},                  // decryptionPolicy — all zero (no gate)
 					uint8(3),                   // status
 					uint64(1),                  // nonce
+					uint64(7),                  // startBlock
 					uint64(8),                  // seedBlock
 					common.HexToHash("0x5555"), // seed
 					big.NewInt(1234567890),     // lotteryThreshold

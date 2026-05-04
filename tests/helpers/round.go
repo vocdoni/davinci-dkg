@@ -48,6 +48,25 @@ func CreateEpoch(ctx context.Context, services *TestServices, policy types.Epoch
 		return zero, fmt.Errorf("get epoch nonce: %w", err)
 	}
 
+	// Honor the on-chain cadence guard: createEpoch reverts unless
+	// block.number >= nextEpochStartBlock(). Tests run sequentially against a
+	// single anvil instance, so without this advance the second epoch in a
+	// suite would silently revert and the helper would hang waiting for the
+	// epoch to reach Contribution.
+	nextStart, err := services.Manager.NextEpochStartBlock(services.CallOpts(ctx))
+	if err != nil {
+		return zero, fmt.Errorf("get next epoch start block: %w", err)
+	}
+	head, err := services.Contracts.Client().BlockNumber(ctx)
+	if err != nil {
+		return zero, fmt.Errorf("get block number: %w", err)
+	}
+	if head < nextStart {
+		if err := MineBlocks(ctx, services, nextStart-head); err != nil {
+			return zero, fmt.Errorf("mine to next epoch start: %w", err)
+		}
+	}
+
 	auth, err := services.TxManager.NewTransactOpts(ctx)
 	if err != nil {
 		return zero, err

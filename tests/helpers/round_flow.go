@@ -302,7 +302,7 @@ func PrepareSingleParticipantCombinePayload(
 	}
 
 	combineOutput, err := BuildDecryptCombineOutputFromCiphertext(
-		ctx, epochID, 1, c1, c2, []uint16{1}, []types.CurvePoint{partial.Delta}, plaintext,
+		ctx, epochID, ciphertextIndex, 1, c1, c2, []uint16{1}, []types.CurvePoint{partial.Delta}, plaintext,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("build combine output: %w", err)

@@ -204,7 +204,7 @@ func TestPartialDecryptRejectsMalformedProof(t *testing.T) {
 	result, err := helpers.CreateFinalizedSingleParticipantRound(ctx, services, policy, coefficients)
 	c.Assert(err, qt.IsNil)
 
-	partial, err := helpers.BuildPartialDecryptionSubmission(ctx, result.EpochID, 1, big.NewInt(3), coefficients[0], big.NewInt(4))
+	partial, err := helpers.BuildPartialDecryptionSubmission(ctx, result.EpochID, 1, 1, big.NewInt(3), coefficients[0], big.NewInt(4))
 	c.Assert(err, qt.IsNil)
 	partial.Input = partial.Input[:len(partial.Input)-32]
 

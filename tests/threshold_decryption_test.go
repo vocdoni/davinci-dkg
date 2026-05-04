@@ -35,10 +35,10 @@ func TestThresholdDecryptionHappyPath(t *testing.T) {
 	result, err := helpers.CreateFinalizedSingleParticipantRound(ctx, services, policy, coefficients)
 	c.Assert(err, qt.IsNil)
 
-	partial, err := helpers.BuildPartialDecryptionSubmission(ctx, result.EpochID, 1, big.NewInt(9), coefficients[0], big.NewInt(5))
+	partial, err := helpers.BuildPartialDecryptionSubmission(ctx, result.EpochID, 1, 1, big.NewInt(9), coefficients[0], big.NewInt(5))
 	c.Assert(err, qt.IsNil)
 
-	combine, err := helpers.BuildDecryptCombineOutput(ctx, result.EpochID, 1, big.NewInt(9), []uint16{1}, []types.CurvePoint{partial.Delta}, big.NewInt(3))
+	combine, err := helpers.BuildDecryptCombineOutput(ctx, result.EpochID, 1, 1, big.NewInt(9), []uint16{1}, []types.CurvePoint{partial.Delta}, big.NewInt(3))
 	c.Assert(err, qt.IsNil)
 
 	// submitCiphertext must precede submitPartialDecryption: the
@@ -124,6 +124,7 @@ func TestThresholdDecryptionSupportsMultipleCiphertextsPerRound(t *testing.T) {
 		partial, err := helpers.BuildPartialDecryptionSubmission(
 			ctx,
 			result.EpochID,
+			ciphertextIndex,
 			1,
 			baseValues[i],
 			coefficients[0],
@@ -134,6 +135,7 @@ func TestThresholdDecryptionSupportsMultipleCiphertextsPerRound(t *testing.T) {
 		combine, err := helpers.BuildDecryptCombineOutput(
 			ctx,
 			result.EpochID,
+			ciphertextIndex,
 			1,
 			baseValues[i],
 			[]uint16{1},

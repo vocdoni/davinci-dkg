@@ -235,14 +235,13 @@ func BuildFinalizeEpochOutput(
 }
 
 // BuildPartialDecryptionSubmission for the legacy per-epoch path —
-// defaults aid/ctIdx/role to (0, 1, COMMITTEE), which matches what
-// `submitPartialDecryption` enforces when the caller passes aid=0 and
-// ciphertextIndex=1. Callers needing a different ciphertextIndex (the
-// SDK ciphertext-e2e flow) must use the FromBase variant directly with
-// the matching ctIdx.
+// defaults aid/role to (0, COMMITTEE) and lets the caller pick the
+// ciphertextIndex so multi-ciphertext tests can produce proofs that
+// match the on-chain (publicInputs[2]==ctIdx) check.
 func BuildPartialDecryptionSubmission(
 	ctx context.Context,
 	epochID [12]byte,
+	ciphertextIndex uint16,
 	participantIndex uint16,
 	base *big.Int,
 	secret *big.Int,
@@ -256,7 +255,7 @@ func BuildPartialDecryptionSubmission(
 	// unrealistic in real flows but works for the few unit-test paths
 	// that still go through this entry point.
 	identityC2 := types.CurvePoint{X: big.NewInt(0), Y: big.NewInt(1)}
-	return BuildPartialDecryptionSubmissionFromBase(ctx, epochID, [32]byte{}, 1, participantIndex, group.Encode(basePoint), identityC2, secret, nonce)
+	return BuildPartialDecryptionSubmissionFromBase(ctx, epochID, [32]byte{}, ciphertextIndex, participantIndex, group.Encode(basePoint), identityC2, secret, nonce)
 }
 
 // BuildPartialDecryptionSubmissionFromBase is the variant used when the caller
@@ -336,6 +335,7 @@ func BuildPartialDecryptionSubmissionFromBase(
 func BuildDecryptCombineOutput(
 	ctx context.Context,
 	epochID [12]byte,
+	ciphertextIndex uint16,
 	threshold uint16,
 	base *big.Int,
 	participantIndexes []uint16,
@@ -360,7 +360,7 @@ func BuildDecryptCombineOutput(
 	c2Point.Set(messagePoint)
 	c2Point.Add(c2Point, combinedNative)
 
-	return BuildDecryptCombineOutputFromCiphertext(ctx, epochID, threshold,
+	return BuildDecryptCombineOutputFromCiphertext(ctx, epochID, ciphertextIndex, threshold,
 		group.Encode(c1Point), group.Encode(c2Point),
 		participantIndexes, partialDecryptions, plaintext)
 }
@@ -379,6 +379,7 @@ func BuildDecryptCombineOutput(
 func BuildDecryptCombineOutputFromCiphertext(
 	ctx context.Context,
 	epochID [12]byte,
+	ciphertextIndex uint16,
 	threshold uint16,
 	ciphertextC1 types.CurvePoint,
 	ciphertextC2 types.CurvePoint,
@@ -387,7 +388,7 @@ func BuildDecryptCombineOutputFromCiphertext(
 	plaintext *big.Int,
 ) (*DecryptCombineOutput, error) {
 	return BuildDecryptCombineOutputForApp(
-		ctx, epochID, [32]byte{}, 1, 0 /* mode */, big.NewInt(0), /* S */
+		ctx, epochID, [32]byte{}, ciphertextIndex, 0 /* mode */, big.NewInt(0), /* S */
 		identityPoint(), threshold, ciphertextC1, ciphertextC2,
 		participantIndexes, partialDecryptions, plaintext,
 	)

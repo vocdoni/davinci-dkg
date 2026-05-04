@@ -110,14 +110,15 @@ func TestCommitteeRoundHappyPath(t *testing.T) {
 	c.Assert(err, qt.IsNil)
 	c.Assert(len(recoveredShares), qt.Equals, 3)
 
-	partial0, err := helpers.BuildPartialDecryptionSubmission(ctx, epochID, 1, big.NewInt(9), recoveredShares[0], big.NewInt(11))
+	partial0, err := helpers.BuildPartialDecryptionSubmission(ctx, epochID, 1, 1, big.NewInt(9), recoveredShares[0], big.NewInt(11))
 	c.Assert(err, qt.IsNil)
-	partial1, err := helpers.BuildPartialDecryptionSubmission(ctx, epochID, 2, big.NewInt(9), recoveredShares[1], big.NewInt(13))
+	partial1, err := helpers.BuildPartialDecryptionSubmission(ctx, epochID, 1, 2, big.NewInt(9), recoveredShares[1], big.NewInt(13))
 	c.Assert(err, qt.IsNil)
 
 	combineOutput, err := helpers.BuildDecryptCombineOutput(
 		ctx,
 		epochID,
+		1, // ciphertextIndex
 		2,
 		big.NewInt(9),
 		[]uint16{1, 2},

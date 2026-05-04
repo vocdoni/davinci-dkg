@@ -191,7 +191,7 @@ func submitPartialDecryptForGasProfile(t *testing.T, ctx context.Context, epochI
 		epochID, 1, c1Enc.X, c1Enc.Y, c2Enc.X, c2Enc.Y,
 	), qt.IsNil)
 
-	output, err := helpers.BuildPartialDecryptionSubmission(ctx, epochID, 1, big.NewInt(9), big.NewInt(7), big.NewInt(5))
+	output, err := helpers.BuildPartialDecryptionSubmission(ctx, epochID, 1, 1, big.NewInt(9), big.NewInt(7), big.NewInt(5))
 	c.Assert(err, qt.IsNil)
 
 	auth, err := services.TxManager.NewTransactOpts(ctx)
@@ -218,6 +218,7 @@ func combineDecryptionForGasProfile(t *testing.T, ctx context.Context, epochID [
 	output, err := helpers.BuildDecryptCombineOutput(
 		ctx,
 		epochID,
+		1, // ciphertextIndex
 		1,
 		big.NewInt(9),
 		[]uint16{1},

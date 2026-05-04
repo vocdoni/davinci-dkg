@@ -191,7 +191,7 @@ func benchmarkGasForN(t *testing.T, n, threshold int) gasProfileResult {
 	}, threshold)
 	for i, actor := range partialActors {
 		partial, err := helpers.BuildPartialDecryptionSubmission(
-			ctx, epochID, uint16(i+1), ciphertextBase, recoveredShares[i], big.NewInt(int64(i+100)),
+			ctx, epochID, 1, uint16(i+1), ciphertextBase, recoveredShares[i], big.NewInt(int64(i+100)),
 		)
 		c.Assert(err, qt.IsNil)
 		gas, err := helpers.SubmitPartialDecryptionMeasured(ctx, services, actor, epochID, uint16(i+1), 1, partial)
@@ -214,7 +214,7 @@ func benchmarkGasForN(t *testing.T, n, threshold int) gasProfileResult {
 	plaintextScalar := big.NewInt(99)
 
 	combineOut, err := helpers.BuildDecryptCombineOutput(
-		ctx, epochID, uint16(threshold),
+		ctx, epochID, 1 /* ciphertextIndex */, uint16(threshold),
 		ciphertextBase, idxs, deltas, plaintextScalar,
 	)
 	c.Assert(err, qt.IsNil)

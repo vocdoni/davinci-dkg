@@ -210,12 +210,14 @@ func parseCommitmentPoints(data []byte, t uint16) ([]nodetypes.CurvePoint, error
 		return nil, fmt.Errorf("data too short")
 	}
 	payload := data[4:]
-	// transcript is the 7th parameter (index 6, after commitment0X and commitment0Y),
-	// offset is at head bytes 192..223.
+	// submitContribution(epochId, contributorIndex, commitmentsHash,
+	// encryptedSharesHash, transcript, proof, input) — 7 params, head is
+	// 7×32 = 224 bytes. transcript is param index 4 (zero-based), so its
+	// head offset slot is bytes 128..160.
 	if len(payload) < 224 {
 		return nil, fmt.Errorf("payload head too short")
 	}
-	tOffset := int64(new(big.Int).SetBytes(pad32(payload[192:224])).Uint64())
+	tOffset := int64(new(big.Int).SetBytes(pad32(payload[128:160])).Uint64())
 	if int(tOffset)+32 > len(payload) {
 		return nil, fmt.Errorf("transcript offset out of bounds")
 	}
