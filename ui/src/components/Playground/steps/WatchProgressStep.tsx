@@ -37,7 +37,7 @@ export function WatchProgressStep({ status, epochId, log }: Props) {
     const s = Number(epoch.data.epoch.status)
     if (lastStatus.current !== s) {
       lastStatus.current = s
-      const labels = ['None', 'Registration', 'Contribution', 'Finalized', 'Aborted', 'Completed']
+      const labels = ['None', 'CommitteeSelection', 'KeyAssembly', 'Live', 'Aborted', 'Completed']
       log(`Epoch status → ${labels[s] ?? s}`, s === 3 ? 'success' : s === 4 ? 'error' : 'chain')
     }
   }, [epoch.data, log])
@@ -89,7 +89,7 @@ export function WatchProgressStep({ status, epochId, log }: Props) {
     >
       {!epochId ? (
         <Text fontSize='sm' color='ink.4'>
-          Create a epoch above first.
+          Create an epoch above first.
         </Text>
       ) : !epoch.data ? (
         <Text fontSize='sm' color='ink.4'>
@@ -126,18 +126,18 @@ export function WatchProgressStep({ status, epochId, log }: Props) {
           {epoch.data.epoch.status === EpochPhase.CommitteeSelection && !failure && (
             <Countdown
               target={epoch.data.epoch.policy.committeeSelectionDeadlineBlock}
-              label='until registration closes'
+              label='until committee selection closes'
             />
           )}
           {epoch.data.epoch.status === EpochPhase.KeyAssembly && !failure && (
             <Stack gap={1}>
               <Countdown
                 target={epoch.data.epoch.policy.keyAssemblyDeadlineBlock}
-                label='until contributions close'
+                label='until key assembly closes'
               />
               <Countdown
                 target={epoch.data.epoch.policy.liveNotBeforeBlock}
-                label='until finalize unlocks'
+                label='until the epoch goes Live'
               />
             </Stack>
           )}
@@ -149,8 +149,8 @@ export function WatchProgressStep({ status, epochId, log }: Props) {
               <Alert.Content>
                 <Alert.Title>
                   {failure.kind === 'committee-selection'
-                    ? 'Registration closed without a viable committee.'
-                    : 'Contribution window closed without enough contributions.'}
+                    ? 'Committee Selection closed without a viable committee.'
+                    : 'Key Assembly window closed without enough contributions.'}
                 </Alert.Title>
                 <Alert.Description fontSize='xs'>
                   {failure.kind === 'committee-selection' ? (
@@ -246,7 +246,7 @@ function pickHeadlineCounter(epoch: Epoch): CounterSpec | null {
         tone: epoch.contributionCount >= min ? 'live' : 'accent',
         caption:
           epoch.contributionCount >= min
-            ? `Threshold reached. Awaiting finalize at block ${epoch.policy.liveNotBeforeBlock.toString()}.`
+            ? `Threshold reached. Epoch goes Live at block ${epoch.policy.liveNotBeforeBlock.toString()}.`
             : `${epoch.contributionCount} of ${min} required contributions received.`,
       }
     default:

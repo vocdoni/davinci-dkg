@@ -3,9 +3,10 @@ import { roundPhase, roundPhaseLabel, type EpochPhase } from '~lib/epoch-utils'
 import type { Epoch } from '@vocdoni/davinci-dkg-sdk'
 
 // Editorial status badge: a tiny indicator dot + small mono uppercase
-// label. Five tones, each with a paired (fg / bg / dot) mapping. The dot
-// pulses for "current" / "in-progress" phases (registration, contribution)
-// so a glance at the badge tells you whether the epoch is moving.
+// label. Six tones, each with a paired (fg / bg / dot) mapping. The dot
+// pulses for the in-progress Preparation phases (CommitteeSelection,
+// KeyAssembly) so a glance at the badge tells you whether the epoch is
+// still warming up.
 type Tone = {
   fg: string
   bg: string

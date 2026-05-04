@@ -100,7 +100,7 @@ export function EpochView() {
                   hint='candidate-pool oversubscription'
                 />
                 <PolicyRow
-                  label='Registration closes'
+                  label='Committee Selection closes'
                   value={
                     blockNumber
                       ? blocksToDuration(
@@ -111,7 +111,7 @@ export function EpochView() {
                   hint={`block #${epoch.data.epoch.policy.committeeSelectionDeadlineBlock.toString()}`}
                 />
                 <PolicyRow
-                  label='Contribution closes'
+                  label='Key Assembly closes'
                   value={
                     blockNumber
                       ? blocksToDuration(
@@ -122,7 +122,7 @@ export function EpochView() {
                   hint={`block #${epoch.data.epoch.policy.keyAssemblyDeadlineBlock.toString()}`}
                 />
                 <PolicyRow
-                  label='Finalize unlocks'
+                  label='Goes Live at'
                   value={
                     blockNumber
                       ? blocksToDuration(

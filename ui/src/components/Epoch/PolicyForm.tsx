@@ -1,4 +1,4 @@
-import { Alert, Box, chakra, Field, HStack, NumberInput, SimpleGrid, Stack, Text } from '@chakra-ui/react'
+import { Alert, Field, NumberInput, SimpleGrid, Stack, Text } from '@chakra-ui/react'
 import { DetailDisclosure } from '~components/Debug/DetailDisclosure'
 
 export interface PolicyFormState {
@@ -6,10 +6,6 @@ export interface PolicyFormState {
   committeeSize: string
   minValidContributions: string
   lotteryAlphaBps: string
-  seedDelay: string
-  regDeadlineOffset: string
-  contribDeadlineOffset: string
-  finalizeDelayBlocks: string
 }
 
 export const defaultPolicyForm: PolicyFormState = {
@@ -17,10 +13,6 @@ export const defaultPolicyForm: PolicyFormState = {
   committeeSize: '3',
   minValidContributions: '2',
   lotteryAlphaBps: '15000',
-  seedDelay: '2',
-  regDeadlineOffset: '30',
-  contribDeadlineOffset: '70',
-  finalizeDelayBlocks: '2',
 }
 
 /**
@@ -39,7 +31,7 @@ export const MAX_COMMITTEE_SIZE = 32
  * Returns a human-readable error string when the form is in an invalid
  * state, or null when it's safe to submit. Catches the gotchas the
  * contract itself doesn't enforce — most importantly
- * `minValidContributions >= threshold`, without which a epoch can finalize
+ * `minValidContributions >= threshold`, without which an epoch can finalize
  * but produce a key nobody can decrypt.
  */
 export function validatePolicyForm(v: PolicyFormState): string | null {
@@ -60,57 +52,23 @@ export function validatePolicyForm(v: PolicyFormState): string | null {
   return null
 }
 
-// Epoch-duration presets cover the "I just want to see it work" cases so
-// the simple view doesn't expose three separate block-offset knobs. The
-// Custom option falls through to the advanced section.
-//
-// Block offsets are measured from the epoch-creation block at ~12 s/block.
-// Seed delay (default 2) eats into the registration window, so picking a
-// reg offset close to seedDelay leaves nodes only a couple of blocks to
-// claim slots — keep the floor comfortable.
-const durationPresets: { id: string; label: string; reg: number; contrib: number; finalize: number }[] = [
-  { id: 'quick', label: 'Quick (~6 min)', reg: 15, contrib: 35, finalize: 1 },
-  { id: 'default', label: 'Default (~14 min)', reg: 30, contrib: 70, finalize: 2 },
-  { id: 'long', label: 'Long (~30 min)', reg: 60, contrib: 150, finalize: 3 },
-]
-
-function detectPreset(v: PolicyFormState): string {
-  return (
-    durationPresets.find(
-      (p) =>
-        p.reg.toString() === v.regDeadlineOffset &&
-        p.contrib.toString() === v.contribDeadlineOffset &&
-        p.finalize.toString() === v.finalizeDelayBlocks
-    )?.id ?? 'custom'
-  )
-}
-
 interface Props {
   value: PolicyFormState
   onChange: (next: PolicyFormState) => void
   disabled?: boolean
 }
 
-// Two-tier policy form: the four basics most users care about (committee
-// size, threshold, minimum contributions, epoch duration) live up top;
-// every other knob — lottery oversubscription, seed delay, individual
-// block offsets, secret-key disclosure — sits behind an Advanced
-// disclosure so first-time users aren't drowned in ZK protocol jargon.
+// Two-tier policy form. The basics most users care about (committee size,
+// threshold) live up top. Min-valid-contributions and lottery
+// oversubscription sit behind an Advanced disclosure for power users.
+//
+// Phase budgets (CommitteeSelection / KeyAssembly / FinalizeGap blocks)
+// and total epoch duration are *contract immutables* set at deploy time —
+// the UI doesn't expose them per-epoch because every caller would have to
+// agree on the same numbers anyway, and a per-epoch override would just
+// be discarded by the writer.
 export function PolicyForm({ value, onChange, disabled }: Props) {
   const set = <K extends keyof PolicyFormState>(key: K, v: PolicyFormState[K]) => onChange({ ...value, [key]: v })
-
-  const presetId = detectPreset(value)
-  const applyPreset = (id: string) => {
-    if (id === 'custom') return
-    const p = durationPresets.find((x) => x.id === id)
-    if (!p) return
-    onChange({
-      ...value,
-      regDeadlineOffset: p.reg.toString(),
-      contribDeadlineOffset: p.contrib.toString(),
-      finalizeDelayBlocks: p.finalize.toString(),
-    })
-  }
 
   // Auto-track min valid contributions to the threshold when the user
   // hasn't manually overridden it. This keeps the basic UX two-knobs
@@ -139,7 +97,7 @@ export function PolicyForm({ value, onChange, disabled }: Props) {
         />
         <SmallNumberField
           label='Threshold'
-          help='Members needed to decrypt later. By default this is also the minimum number of contributions required to finalize the epoch (override under Advanced for extra redundancy).'
+          help='Members needed to decrypt later. By default this is also the minimum number of contributions required for the epoch to go Live (override under Advanced for extra redundancy).'
           value={value.threshold}
           onChange={setThreshold}
           disabled={disabled}
@@ -157,49 +115,27 @@ export function PolicyForm({ value, onChange, disabled }: Props) {
           <Alert.Content>
             <Alert.Title>Min valid contributions is below threshold.</Alert.Title>
             <Alert.Description fontSize='xs'>
-              The epoch will finalize once {value.minValidContributions} contribution(s) arrive, but
-              decryption needs {value.threshold}. With these settings, the epoch can lock in a key
-              that nobody can ever use. Raise it under Advanced.
+              The epoch will go Live once {value.minValidContributions} contribution(s) arrive,
+              but decryption needs {value.threshold}. With these settings, the epoch can lock in
+              a key that nobody can ever use. Raise it under Advanced.
             </Alert.Description>
           </Alert.Content>
         </Alert.Root>
       )}
 
-      <Box>
-        <Text fontSize='xs' color='ink.3' mb={2}>
-          Epoch duration
-        </Text>
-        <HStack gap={2} wrap='wrap'>
-          {durationPresets.map((p) => (
-            <PresetChip
-              key={p.id}
-              isActive={presetId === p.id}
-              onClick={() => applyPreset(p.id)}
-              disabled={disabled}
-            >
-              {p.label}
-            </PresetChip>
-          ))}
-          <PresetChip isActive={presetId === 'custom'} disabled>
-            {presetId === 'custom' ? 'Custom (set below)' : 'Custom'}
-          </PresetChip>
-        </HStack>
-        <Text fontSize='2xs' color='ink.4' mt={2} lineHeight='1.55' maxW='62ch'>
-          Each epoch runs in two timed phases (one block ≈ 12 s):{' '}
-          <Box as='span' color='ink.2'>registration</Box>, where committee members claim their
-          slot, then <Box as='span' color='ink.2'>contribution</Box>, where each posts its share
-          of the key. Longer windows give nodes more time to participate — useful when the
-          network is small or you want to keep a comfortable margin. Tune individual phases
-          under Advanced.
-        </Text>
-      </Box>
+      <Text fontSize='2xs' color='ink.4' lineHeight='1.55' maxW='62ch'>
+        Phase budgets and total epoch duration are fixed by the deployed{' '}
+        <code>DKGManager</code> contract — every caller sees the same schedule. The next epoch
+        starts automatically once the cadence window elapses; nodes race to fire{' '}
+        <code>createEpoch</code> with a small random jitter.
+      </Text>
 
       {/* ── Advanced ────────────────────────────────────────────────────── */}
       <DetailDisclosure title='Advanced configuration'>
         <Stack gap={4} p={1}>
           <Text fontSize='xs' color='ink.3'>
-            Fine-grained protocol parameters. Defaults are sensible — touch these only if you have a
-            reason.
+            Fine-grained protocol parameters. Defaults are sensible — touch these only if you have
+            a reason.
           </Text>
           <SimpleGrid columns={{ base: 1, md: 2 }} gap={3}>
             <SmallNumberField
@@ -207,7 +143,7 @@ export function PolicyForm({ value, onChange, disabled }: Props) {
               help={
                 linked
                   ? 'Auto-tracks threshold (raise it for extra redundancy — e.g. t=3, n=10, min=7 means up to 4 share holders can go offline post-finalize and decryption still works).'
-                  : 'How many contributions must arrive before finalize is allowed. Must be ≥ threshold or the epoch can finalize without a decryptable key.'
+                  : 'How many contributions must arrive before the epoch can go Live. Must be ≥ threshold or the epoch can finalize without a decryptable key.'
               }
               value={value.minValidContributions}
               onChange={(v) => set('minValidContributions', v)}
@@ -219,34 +155,6 @@ export function PolicyForm({ value, onChange, disabled }: Props) {
               help='Candidate-pool size = α × committee. 10 000 = 1.0×.'
               value={value.lotteryAlphaBps}
               onChange={(v) => set('lotteryAlphaBps', v)}
-              disabled={disabled}
-            />
-            <SmallNumberField
-              label='Seed delay (blocks)'
-              help='Block delay until the lottery seed is revealed.'
-              value={value.seedDelay}
-              onChange={(v) => set('seedDelay', v)}
-              disabled={disabled}
-            />
-            <SmallNumberField
-              label='Registration window (blocks)'
-              help='How long nodes have to claim slots.'
-              value={value.regDeadlineOffset}
-              onChange={(v) => set('regDeadlineOffset', v)}
-              disabled={disabled}
-            />
-            <SmallNumberField
-              label='Contribution window (blocks)'
-              help='How long nodes have to contribute.'
-              value={value.contribDeadlineOffset}
-              onChange={(v) => set('contribDeadlineOffset', v)}
-              disabled={disabled}
-            />
-            <SmallNumberField
-              label='Finalize delay (blocks)'
-              help='Wait between contribution close and finalize.'
-              value={value.finalizeDelayBlocks}
-              onChange={(v) => set('finalizeDelayBlocks', v)}
               disabled={disabled}
             />
           </SimpleGrid>
@@ -302,58 +210,9 @@ function SmallNumberField({
           _focus={{ borderColor: 'accent.fg', boxShadow: 'none' }}
         />
       </NumberInput.Root>
-      <Field.HelperText
-       
-       
-        fontSize='2xs'
-        color='ink.3'
-        mt={1.5}
-      >
+      <Field.HelperText fontSize='2xs' color='ink.3' mt={1.5}>
         {help}
       </Field.HelperText>
     </Field.Root>
-  )
-}
-
-// chakra.button is the recommended Chakra v3 way to attach style props to
-// a real <button>, avoiding the polymorphic-as-prop type juggling that
-// Box's `as` prop demands. It's a plain HTML button under the hood.
-const StyledChip = chakra('button', {
-  base: {
-    px: 3,
-    py: 1.5,
-    borderRadius: 'full',
-    borderWidth: '1px',
-    fontFamily: 'sans',
-    fontSize: 'xs',
-    transition: 'background 0.12s, border-color 0.12s, color 0.12s',
-  },
-})
-
-function PresetChip({
-  isActive,
-  disabled,
-  onClick,
-  children,
-}: {
-  isActive: boolean
-  disabled?: boolean
-  onClick?: () => void
-  children: React.ReactNode
-}) {
-  return (
-    <StyledChip
-      type='button'
-      borderColor={isActive ? 'accent.border' : 'border.subtle'}
-      bg={isActive ? 'accent.bg.strong' : 'transparent'}
-      color={isActive ? 'accent.bright' : 'ink.2'}
-      cursor={disabled ? 'not-allowed' : 'pointer'}
-      opacity={disabled ? 0.5 : 1}
-      onClick={disabled ? undefined : onClick}
-      disabled={disabled}
-      _hover={!disabled ? { borderColor: isActive ? 'accent.border' : 'border', color: 'ink.0' } : undefined}
-    >
-      {children}
-    </StyledChip>
   )
 }

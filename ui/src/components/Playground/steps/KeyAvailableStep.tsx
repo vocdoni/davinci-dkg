@@ -19,22 +19,22 @@ interface Props {
   log: (msg: string, level?: 'info' | 'success' | 'error' | 'crypto') => void
 }
 
-// Reads the on-chain collective public key once the epoch reaches Finalized.
-// We deliberately do NOT surface this key during the Contribution phase
+// Reads the on-chain collective public key once the epoch reaches Live.
+// We deliberately do NOT surface this key during the KeyAssembly phase
 // (the on-chain accumulator carries it, but submitCiphertext requires
-// Finalized status).
+// Live status).
 export function KeyAvailableStep({ status, epochId, onKeyReady, log }: Props) {
   const { dkg } = useDkgClient()
   const epoch = useEpoch((epochId ?? undefined) as `0x${string}` | undefined)
   const [key, setKey] = useState<{ x: bigint; y: bigint } | null>(null)
   const [loading, setLoading] = useState(false)
 
-  const isFinalized =
+  const isLive =
     epoch.data &&
     (epoch.data.epoch.status === EpochPhase.Live || epoch.data.epoch.status === EpochPhase.Completed)
 
   useEffect(() => {
-    if (!epochId || !isFinalized || key || loading) return
+    if (!epochId || !isLive || key || loading) return
     setLoading(true)
     dkg
       .getCollectivePublicKey(epochId)
@@ -47,7 +47,7 @@ export function KeyAvailableStep({ status, epochId, onKeyReady, log }: Props) {
         log(`Failed to read collective public key: ${err instanceof Error ? err.message : String(err)}`, 'error')
       })
       .finally(() => setLoading(false))
-  }, [epochId, isFinalized, key, loading, dkg, onKeyReady, log])
+  }, [epochId, isLive, key, loading, dkg, onKeyReady, log])
 
   return (
     <StepCard
@@ -58,17 +58,17 @@ export function KeyAvailableStep({ status, epochId, onKeyReady, log }: Props) {
     >
       {!epochId || !epoch.data ? (
         <Text fontSize='sm' color='ink.4'>
-          Create a epoch and wait for it to be finalized.
+          Create an epoch and wait for it to go Live.
         </Text>
-      ) : !isFinalized ? (
+      ) : !isLive ? (
         <Stack gap={3}>
           <Text fontSize='sm' color='ink.2'>
             Hang tight — the committee is still building the key. The encrypt step will unlock as
-            soon as the epoch finalizes.
+            soon as the epoch goes Live.
           </Text>
           <Countdown
             target={epoch.data.epoch.policy.liveNotBeforeBlock}
-            label='until finalize unlocks'
+            label='until the epoch goes Live'
           />
           <HowItWorks
             body={

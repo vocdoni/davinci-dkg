@@ -11,9 +11,9 @@ type Filter = 'all' | EpochPhase
 
 const filterLabels: Record<Filter, string> = {
   all: 'All',
-  'committee-selection': 'Registration',
-  'key-assembly': 'Contribution',
-  'live': 'Finalized',
+  'committee-selection': 'Committee Selection',
+  'key-assembly': 'Key Assembly',
+  'live': 'Live',
   completed: 'Completed',
   aborted: 'Aborted',
   unknown: 'Unknown',
