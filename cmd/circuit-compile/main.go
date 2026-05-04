@@ -140,7 +140,8 @@ func uploadArtifacts(ctx context.Context, s3Config *S3Config, destination string
 	var uploads []upload
 	for name, a := range results {
 		_ = name
-		uploads = append(uploads,
+		uploads = append(
+			uploads,
 			upload{filepath.Join(destination, a.CircuitHash), a.CircuitHash + ".ccs"},
 			upload{filepath.Join(destination, a.ProvingKeyHash), a.ProvingKeyHash + ".pk"},
 			upload{filepath.Join(destination, a.VerifyingKeyHash), a.VerifyingKeyHash + ".vk"},

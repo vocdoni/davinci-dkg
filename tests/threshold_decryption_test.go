@@ -43,7 +43,8 @@ func TestThresholdDecryptionHappyPath(t *testing.T) {
 
 	// submitCiphertext must precede submitPartialDecryption: the
 	// partial-decrypt verifier binds pi[5..6] to the on-chain C1.
-	c.Assert(helpers.SubmitCiphertextAs(ctx,
+	c.Assert(helpers.SubmitCiphertextAs(
+		ctx,
 		&helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager},
 		result.EpochID, 1,
 		combine.CiphertextC1.X, combine.CiphertextC1.Y,
@@ -145,7 +146,8 @@ func TestThresholdDecryptionSupportsMultipleCiphertextsPerRound(t *testing.T) {
 		c.Assert(err, qt.IsNil)
 
 		// submitCiphertext must precede submitPartialDecryption.
-		c.Assert(helpers.SubmitCiphertextAs(ctx,
+		c.Assert(helpers.SubmitCiphertextAs(
+			ctx,
 			&helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager},
 			result.EpochID, ciphertextIndex,
 			combine.CiphertextC1.X, combine.CiphertextC1.Y,

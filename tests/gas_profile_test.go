@@ -186,7 +186,8 @@ func submitPartialDecryptForGasProfile(t *testing.T, ctx context.Context, epochI
 	c2 := group.Generator()
 	c2.ScalarBaseMult(big.NewInt(11))
 	c1Enc, c2Enc := group.Encode(c1), group.Encode(c2)
-	c.Assert(helpers.SubmitCiphertextAs(ctx,
+	c.Assert(helpers.SubmitCiphertextAs(
+		ctx,
 		&helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager},
 		epochID, 1, c1Enc.X, c1Enc.Y, c2Enc.X, c2Enc.Y,
 	), qt.IsNil)
@@ -227,7 +228,8 @@ func combineDecryptionForGasProfile(t *testing.T, ctx context.Context, epochID [
 	)
 	c.Assert(err, qt.IsNil)
 
-	c.Assert(helpers.SubmitCiphertextAs(ctx,
+	c.Assert(helpers.SubmitCiphertextAs(
+		ctx,
 		&helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager},
 		epochID, 1,
 		output.CiphertextC1.X, output.CiphertextC1.Y,

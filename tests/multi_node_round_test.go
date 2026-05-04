@@ -129,7 +129,8 @@ func TestCommitteeRoundHappyPath(t *testing.T) {
 
 	// submitCiphertext must precede submitPartialDecryption so the
 	// proof's pi[5..6] can be bound against the on-chain C1.
-	c.Assert(helpers.SubmitCiphertextAs(ctx,
+	c.Assert(helpers.SubmitCiphertextAs(
+		ctx,
 		&helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager},
 		epochID, 1,
 		combineOutput.CiphertextC1.X, combineOutput.CiphertextC1.Y,

@@ -111,7 +111,8 @@ func (a *Artifact) readFromCache() ([]byte, error) {
 func (a *Artifact) checkHash(content []byte) error {
 	sum := sha256.Sum256(content)
 	if !bytes.Equal(sum[:], a.Hash) {
-		log.Warnw("hash mismatch for cached artifact",
+		log.Warnw(
+			"hash mismatch for cached artifact",
 			"expected", hex.EncodeToString(a.Hash),
 			"got", hex.EncodeToString(sum[:]),
 		)

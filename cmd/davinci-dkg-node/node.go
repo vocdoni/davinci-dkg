@@ -483,7 +483,8 @@ func (n *Node) Run(ctx context.Context, cfg *Config) {
 	// Emit balance and gas-spent info every 10 minutes regardless of poll interval.
 	fundsTicker := time.NewTicker(10 * time.Minute)
 	defer fundsTicker.Stop()
-	log.Infow("node running",
+	log.Infow(
+		"node running",
 		"address", n.address,
 		"poll", cfg.PollInterval,
 		"auto-create", cfg.AutoCreateEpochs,
@@ -542,7 +543,8 @@ func (n *Node) maybeScheduleAutoCreate(ctx context.Context, cfg *Config) {
 	if cfg.AutoCreateJitter > 0 {
 		jitter = time.Duration(mrand.Int63n(int64(cfg.AutoCreateJitter)))
 	}
-	log.Infow("auto-create: scheduling createEpoch attempt",
+	log.Infow(
+		"auto-create: scheduling createEpoch attempt",
 		"nextStart", next,
 		"currentBlock", currentBlock,
 		"jitter", jitter,
@@ -842,7 +844,8 @@ func (n *Node) doContribution(
 	// outcome we're trying to avoid, just costing more. This guard keeps
 	// the common case cheap.
 	if epoch.ContributionCount >= epoch.Policy.MinValidContributions {
-		log.Infow("contribution: epoch already has enough contributions to finalize — skipping",
+		log.Infow(
+			"contribution: epoch already has enough contributions to finalize — skipping",
 			"epoch", roundHex(epochID),
 			"contributions", epoch.ContributionCount,
 			"required", epoch.Policy.MinValidContributions,
@@ -886,7 +889,8 @@ func (n *Node) doContribution(
 		nonces[i] = big.NewInt(int64(1000 + recipientIdxs[i]))
 	}
 
-	log.Infow("contribution assignment",
+	log.Infow(
+		"contribution assignment",
 		"epoch", roundHex(epochID),
 		"index", idx,
 		"threshold", threshold,
@@ -1054,7 +1058,8 @@ func (n *Node) tryAutoFinalize(
 		return nil
 	}
 
-	log.Infow("auto-finalize: my turn",
+	log.Infow(
+		"auto-finalize: my turn",
 		"epoch", roundHex(epochID),
 		"myIdx", myIdx,
 		"startSlot", startSlot,

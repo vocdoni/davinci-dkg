@@ -192,7 +192,8 @@ func (c *ContributionCircuit) Define(api frontend.API) error {
 			api.Select(recipientMask[i], expectedMaskedShare, 0),
 		)
 
-		shareInputs = append(shareInputs,
+		shareInputs = append(
+			shareInputs,
 			api.Select(recipientMask[i], c.RecipientIndexes[i], 0),
 			api.Select(recipientMask[i], c.Ephemerals[i].X, 0),
 			api.Select(recipientMask[i], c.Ephemerals[i].Y, 1),

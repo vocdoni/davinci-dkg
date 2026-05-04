@@ -50,7 +50,8 @@ func NewS3Uploader(cfg *S3Config) (*S3Uploader, error) {
 		return nil, fmt.Errorf("s3 access key and secret key are required")
 	}
 
-	sdkCfg, err := awsconfig.LoadDefaultConfig(context.Background(),
+	sdkCfg, err := awsconfig.LoadDefaultConfig(
+		context.Background(),
 		awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
 			cfg.AccessKey, cfg.SecretKey, "",
 		)),

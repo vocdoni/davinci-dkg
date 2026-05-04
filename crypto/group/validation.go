@@ -10,7 +10,8 @@ import (
 // bn254Q is the BN254 scalar field prime — the coordinate field of
 // BabyJubJub in the reduced twisted-Edwards form used by gnark-crypto.
 var bn254Q, _ = new(big.Int).SetString(
-	"21888242871839275222246405745257275088548364400416034343698204186575808495617", 10)
+	"21888242871839275222246405745257275088548364400416034343698204186575808495617", 10,
+)
 
 // IsCanonical reports whether (x, y) are both reduced modulo the
 // coordinate field prime Q. Non-canonical encodings are rejected to

@@ -78,7 +78,8 @@ func TestGasProfilesMultiNode(t *testing.T) {
 	t.Log("| n | t | createEpoch | claimSlot (avg) | submitContribution | finalizeEpoch | submitPartialDecryption | combineDecryption |")
 	t.Log("|---|---|---|---|---|---|---|---|")
 	for _, r := range results {
-		t.Logf("| %d | %d | %d | %d | %d | %d | %d | %d |",
+		t.Logf(
+			"| %d | %d | %d | %d | %d | %d | %d | %d |",
 			r.n, r.t, r.createGas, r.claimSlotGas,
 			r.submitContributionGas, r.finalizeGas,
 			r.partialDecryptGas, r.combineGas,
@@ -89,7 +90,8 @@ func TestGasProfilesMultiNode(t *testing.T) {
 	t.Log("\n=== Compact (submitContribution | finalizeEpoch | submitPartialDecryption | combineDecryption) ===")
 	var sb strings.Builder
 	for _, r := range results {
-		fmt.Fprintf(&sb, "| %d | %d | %d | %d | %d | %d |\n",
+		fmt.Fprintf(
+			&sb, "| %d | %d | %d | %d | %d | %d |\n",
 			r.n, r.t,
 			r.submitContributionGas, r.finalizeGas,
 			r.partialDecryptGas, r.combineGas,
@@ -220,7 +222,8 @@ func benchmarkGasForN(t *testing.T, n, threshold int) gasProfileResult {
 	c.Assert(err, qt.IsNil)
 
 	// The combine tx is now bound to an on-chain ciphertext; submit it first.
-	c.Assert(helpers.SubmitCiphertextAs(ctx,
+	c.Assert(helpers.SubmitCiphertextAs(
+		ctx,
 		&helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager},
 		epochID, 1,
 		combineOut.CiphertextC1.X, combineOut.CiphertextC1.Y,
@@ -255,7 +258,8 @@ func createRoundMeasured(t *testing.T, ctx context.Context, policy types.EpochPo
 
 	auth, err := services.TxManager.NewTransactOpts(ctx)
 	c.Assert(err, qt.IsNil)
-	tx, err := services.Manager.CreateEpoch(auth,
+	tx, err := services.Manager.CreateEpoch(
+		auth,
 		policy.Threshold, policy.CommitteeSize, policy.MinValidContributions,
 		policy.LotteryAlphaBps,
 		helpers.ZeroDecryptionPolicy(),
@@ -273,7 +277,8 @@ func finalizeRoundMeasured(t *testing.T, ctx context.Context, epochID [12]byte, 
 	c.Assert(helpers.WaitForFinalizeGate(ctx, services, epochID), qt.IsNil)
 	auth, err := services.TxManager.NewTransactOpts(ctx)
 	c.Assert(err, qt.IsNil)
-	tx, err := services.Manager.FinalizeEpoch(auth, epochID,
+	tx, err := services.Manager.FinalizeEpoch(
+		auth, epochID,
 		output.AggregateCommitmentsHash, output.CollectivePublicKeyHash, output.ShareCommitmentHash,
 		output.Transcript, output.Proof, output.Input,
 	)
@@ -289,7 +294,8 @@ func combineMeasured(t *testing.T, ctx context.Context, epochID [12]byte, output
 	c := qt.New(t)
 	auth, err := services.TxManager.NewTransactOpts(ctx)
 	c.Assert(err, qt.IsNil)
-	tx, err := services.Manager.CombineDecryption(auth, epochID, [32]byte{}, 1,
+	tx, err := services.Manager.CombineDecryption(
+		auth, epochID, [32]byte{}, 1,
 		output.CombineHash, output.Plaintext,
 		output.Transcript, output.Proof, output.Input,
 	)

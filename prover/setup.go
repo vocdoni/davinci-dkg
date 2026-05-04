@@ -18,7 +18,8 @@ func Setup(ccs constraint.ConstraintSystem) (groth16.ProvingKey, groth16.Verifyi
 	if UseGPUProver {
 		pk, vk, err := gpugroth16.Setup(ccs)
 		if err == nil {
-			log.Debugw("circuit keys setup done",
+			log.Debugw(
+				"circuit keys setup done",
 				"gpu", UseGPUProver,
 				"constraints", ccs.GetNbConstraints(),
 				"elapsed", time.Since(start).String(),
@@ -28,7 +29,8 @@ func Setup(ccs constraint.ConstraintSystem) (groth16.ProvingKey, groth16.Verifyi
 	}
 	pk, vk, err := groth16.Setup(ccs)
 	if err == nil {
-		log.Debugw("circuit keys setup done",
+		log.Debugw(
+			"circuit keys setup done",
 			"gpu", UseGPUProver,
 			"constraints", ccs.GetNbConstraints(),
 			"elapsed", time.Since(start).String(),

@@ -123,7 +123,8 @@ func BuildAndSubmit(
 	if err != nil {
 		return nil, err
 	}
-	tx, err := m.FinalizeEpoch(auth, epochID,
+	tx, err := m.FinalizeEpoch(
+		auth, epochID,
 		common.BigToHash(pi.AggregateHash),
 		common.BigToHash(pi.CollectivePublicKey),
 		common.BigToHash(pi.ShareCommitmentHash),
