@@ -10,9 +10,9 @@ import { bigIntToHex } from '~lib/format'
 
 // Mirrors the Go committee's MaxDLogPlaintext (cmd/davinci-dkg-node/dlog.go).
 // The committee can only recover plaintexts strictly below this — submitting
-// anything larger guarantees the round will fail at the combine step. We
+// anything larger guarantees the epoch will fail at the combine step. We
 // reject it client-side so the user gets immediate, actionable feedback
-// instead of waiting for the chain to finalize a doomed round.
+// instead of waiting for the chain to finalize a doomed epoch.
 const MAX_PLAINTEXT = 1n << 50n // 1,125,899,906,842,624
 
 interface Props {

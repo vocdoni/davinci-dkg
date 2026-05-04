@@ -24,10 +24,10 @@ func TestEncryptDecryptShare(t *testing.T) {
 		PubY:     encodedKey.Y,
 	}
 
-	ciphertext, err := EncryptShare("round-1", 1, 2, big.NewInt(33), recipient)
+	ciphertext, err := EncryptShare("epoch-1", 1, 2, big.NewInt(33), recipient)
 	c.Assert(err, qt.IsNil)
 
-	share, err := DecryptShare("round-1", 1, 2, *ciphertext, privateKey)
+	share, err := DecryptShare("epoch-1", 1, 2, *ciphertext, privateKey)
 	c.Assert(err, qt.IsNil)
 	c.Assert(share.Cmp(big.NewInt(33)), qt.Equals, 0)
 }
@@ -46,10 +46,10 @@ func TestDecryptShareRejectsWrongKey(t *testing.T) {
 		PubY:     encodedKey.Y,
 	}
 
-	ciphertext, err := EncryptShare("round-1", 1, 2, big.NewInt(33), recipient)
+	ciphertext, err := EncryptShare("epoch-1", 1, 2, big.NewInt(33), recipient)
 	c.Assert(err, qt.IsNil)
 
-	share, err := DecryptShare("round-1", 1, 2, *ciphertext, big.NewInt(19))
+	share, err := DecryptShare("epoch-1", 1, 2, *ciphertext, big.NewInt(19))
 	c.Assert(err, qt.IsNil)
 	c.Assert(share.Cmp(big.NewInt(33)) == 0, qt.IsFalse)
 }
@@ -69,7 +69,7 @@ func TestEncryptShareWithNonce(t *testing.T) {
 	}
 
 	nonce := big.NewInt(23)
-	ciphertext, err := EncryptShareWithNonce("round-1", 1, 2, big.NewInt(33), recipient, nonce)
+	ciphertext, err := EncryptShareWithNonce("epoch-1", 1, 2, big.NewInt(33), recipient, nonce)
 	c.Assert(err, qt.IsNil)
 	c.Assert(ciphertext, qt.Not(qt.IsNil))
 
@@ -79,7 +79,7 @@ func TestEncryptShareWithNonce(t *testing.T) {
 	c.Assert(ciphertext.Ephemeral.X.Cmp(expected.X), qt.Equals, 0)
 	c.Assert(ciphertext.Ephemeral.Y.Cmp(expected.Y), qt.Equals, 0)
 
-	share, err := DecryptShare("round-1", 1, 2, *ciphertext, privateKey)
+	share, err := DecryptShare("epoch-1", 1, 2, *ciphertext, privateKey)
 	c.Assert(err, qt.IsNil)
 	c.Assert(share.Cmp(big.NewInt(33)), qt.Equals, 0)
 }

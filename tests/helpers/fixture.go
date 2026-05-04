@@ -68,9 +68,9 @@ func NewTestServicesFromExternal(
 	return services, cleanup, nil
 }
 
-// CreateSDKTestFixture creates a finalized single-participant round on the given
-// testnet and returns the round ID. Useful as a fixture for TypeScript SDK tests
-// that need a finalized round without generating ZK proofs themselves.
+// CreateSDKTestFixture creates a finalized single-participant epoch on the given
+// testnet and returns the epoch ID. Useful as a fixture for TypeScript SDK tests
+// that need a finalized epoch without generating ZK proofs themselves.
 func CreateSDKTestFixture(
 	ctx context.Context,
 	services *TestServices,
@@ -80,14 +80,13 @@ func CreateSDKTestFixture(
 		return nil, fmt.Errorf("get block number: %w", err)
 	}
 
-	policy := types.RoundPolicy{
+	policy := types.EpochPolicy{
 		Threshold:                 1,
 		CommitteeSize:             1,
 		MinValidContributions:     1,
 		RegistrationDeadlineBlock: head + 25,
 		ContributionDeadlineBlock: head + 50,
 		FinalizeNotBeforeBlock:    head + 51,
-		DisclosureAllowed:         false,
 	}
 	coefficients := []*big.Int{big.NewInt(11)}
 

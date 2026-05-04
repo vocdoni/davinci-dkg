@@ -9,10 +9,10 @@ import (
 func TestRoundIDHelpers(t *testing.T) {
 	c := qt.New(t)
 
-	roundID := RoundIDFromString("round-1")
+	epochID := RoundIDFromString("epoch-1")
 
-	c.Assert(RoundIDToString(roundID), qt.Equals, "round-1")
+	c.Assert(RoundIDToString(epochID), qt.Equals, "epoch-1")
 
-	overflow := RoundIDFromString("round-identifier-overflow")
-	c.Assert(RoundIDToString(overflow), qt.Equals, "round-identi")
+	overflow := RoundIDFromString("epoch-identifier-overflow")
+	c.Assert(RoundIDToString(overflow), qt.Equals, "epoch-identi")
 }

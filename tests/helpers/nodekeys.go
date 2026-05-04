@@ -9,6 +9,7 @@ import (
 	ethcrypto "github.com/ethereum/go-ethereum/crypto"
 	"github.com/vocdoni/davinci-dkg/crypto/group"
 	dkghash "github.com/vocdoni/davinci-dkg/crypto/hash"
+	"github.com/vocdoni/davinci-dkg/crypto/schnorr"
 )
 
 // localNodeKeyDerivationDomain must match bjjKeyDomain in
@@ -45,7 +46,7 @@ func bootstrapLocalNodeKeys(ctx context.Context, services *TestServices) error {
 			return fmt.Errorf("actor from private key: %w", err)
 		}
 
-		expectedX, expectedY, _, err := deterministicNodeKeyMaterial(privateKey)
+		expectedX, expectedY, secret, err := deterministicNodeKeyMaterial(privateKey)
 		if err != nil {
 			return fmt.Errorf("derive deterministic node key for %s: %w", actor.Address().Hex(), err)
 		}
@@ -62,6 +63,12 @@ func bootstrapLocalNodeKeys(ctx context.Context, services *TestServices) error {
 			continue
 		}
 
+		// Build the Schnorr proof of knowledge required by the registry.
+		_, _, proof, err := schnorr.ProveOperatorRegister(secret, actor.Address())
+		if err != nil {
+			return fmt.Errorf("schnorr proof for %s: %w", actor.Address().Hex(), err)
+		}
+
 		auth, err := actor.TxManager.NewTransactOpts(ctx)
 		if err != nil {
 			return fmt.Errorf("tx opts for %s: %w", actor.Address().Hex(), err)
@@ -69,13 +76,13 @@ func bootstrapLocalNodeKeys(ctx context.Context, services *TestServices) error {
 
 		var txHash common.Hash
 		if node.Status == 0 {
-			tx, err := actor.Registry.RegisterKey(auth, expectedX, expectedY)
+			tx, err := actor.Registry.RegisterKey(auth, expectedX, expectedY, proof.Ax, proof.Ay, proof.Z)
 			if err != nil {
 				return fmt.Errorf("register key for %s: %w", actor.Address().Hex(), err)
 			}
 			txHash = tx.Hash()
 		} else {
-			tx, err := actor.Registry.UpdateKey(auth, expectedX, expectedY)
+			tx, err := actor.Registry.UpdateKey(auth, expectedX, expectedY, proof.Ax, proof.Ay, proof.Z)
 			if err != nil {
 				return fmt.Errorf("update key for %s: %w", actor.Address().Hex(), err)
 			}

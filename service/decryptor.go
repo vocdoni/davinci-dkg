@@ -8,7 +8,7 @@ import (
 )
 
 type PendingPartialDecryption struct {
-	RoundID          string
+	EpochID          string
 	Operator         common.Address
 	ParticipantIndex uint16
 	CiphertextIndex  uint16
@@ -26,29 +26,29 @@ func NewDecryptor(operator common.Address, st *storage.Storage) *Decryptor {
 	}
 }
 
-func (d *Decryptor) PendingPartialDecryption(roundID string, ciphertextIndex uint16) (*PendingPartialDecryption, error) {
+func (d *Decryptor) PendingPartialDecryption(epochID string, ciphertextIndex uint16) (*PendingPartialDecryption, error) {
 	if ciphertextIndex == 0 {
 		return nil, fmt.Errorf("ciphertext index is required")
 	}
 
-	round, err := d.storage.Round(roundID)
+	epoch, err := d.storage.Epoch(epochID)
 	if err != nil {
 		return nil, err
 	}
-	if !allowsDecryption(round.Phase) {
+	if !allowsDecryption(epoch.Phase) {
 		return nil, nil
 	}
 
-	index := participantIndex(round.SelectedParticipants, d.operator)
+	index := participantIndex(epoch.SelectedParticipants, d.operator)
 	if index == 0 {
 		return nil, nil
 	}
-	if hasPartialDecryption(d.storage, roundID, d.operator, ciphertextIndex) {
+	if hasPartialDecryption(d.storage, epochID, d.operator, ciphertextIndex) {
 		return nil, nil
 	}
 
 	return &PendingPartialDecryption{
-		RoundID:          roundID,
+		EpochID:          epochID,
 		Operator:         d.operator,
 		ParticipantIndex: index,
 		CiphertextIndex:  ciphertextIndex,

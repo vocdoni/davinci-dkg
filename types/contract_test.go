@@ -17,8 +17,6 @@ func TestContractAddressesValidate(t *testing.T) {
 		FinalizeVerifier:       common.HexToAddress("0x4000000000000000000000000000000000000004"),
 		PartialDecryptVerifier: common.HexToAddress("0x5000000000000000000000000000000000000005"),
 		DecryptCombineVerifier: common.HexToAddress("0x6000000000000000000000000000000000000006"),
-		RevealSubmitVerifier:   common.HexToAddress("0x6500000000000000000000000000000000000006"),
-		RevealShareVerifier:    common.HexToAddress("0x7000000000000000000000000000000000000007"),
 	}
 
 	c.Assert(addresses.Validate(), qt.IsNil)
@@ -46,8 +44,6 @@ func TestContractAddressesValidateRejectsMissingPartialDecryptVerifier(t *testin
 		ContributionVerifier:   common.HexToAddress("0x3000000000000000000000000000000000000003"),
 		FinalizeVerifier:       common.HexToAddress("0x4000000000000000000000000000000000000004"),
 		DecryptCombineVerifier: common.HexToAddress("0x6000000000000000000000000000000000000006"),
-		RevealSubmitVerifier:   common.HexToAddress("0x6500000000000000000000000000000000000006"),
-		RevealShareVerifier:    common.HexToAddress("0x7000000000000000000000000000000000000007"),
 	}
 
 	err := addresses.Validate()

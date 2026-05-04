@@ -72,18 +72,6 @@ jobs:
             -o dist/${{ matrix.target }}/davinci-dkg-node \
             ./cmd/davinci-dkg-node
 
-      - name: Build dkg-runner
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: ${{ matrix.cgo }}
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          go build -trimpath \
-            -ldflags "-s -w -X github.com/vocdoni/davinci-dkg/internal/version.Version=${VERSION}" \
-            -o dist/${{ matrix.target }}/dkg-runner \
-            ./cmd/dkg-runner
-
       - name: Package tarball
         id: package
         shell: bash
@@ -94,7 +82,6 @@ jobs:
           pkg_dir="davinci-dkg-${VERSION}-${TARGET}"
           mkdir -p "release/${pkg_dir}"
           cp dist/${TARGET}/davinci-dkg-node "release/${pkg_dir}/"
-          cp dist/${TARGET}/dkg-runner      "release/${pkg_dir}/"
           cp README.md LICENSE .env.example "release/${pkg_dir}/"
           (cd release && tar -czf "${pkg_dir}.tar.gz" "${pkg_dir}")
           (cd release && sha256sum "${pkg_dir}.tar.gz" > "${pkg_dir}.tar.gz.sha256")

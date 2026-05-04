@@ -28,6 +28,14 @@ type FinalizeCircuit struct {
 }
 
 func (c *FinalizeCircuit) Define(api frontend.API) error {
+	// Bound the public count inputs to their fixed array sizes and to
+	// each other so PrefixMask cannot be coerced
+	// into masking the wrong slot count.
+	api.AssertIsLessOrEqual(c.Threshold, MaxCoefficients)
+	api.AssertIsLessOrEqual(c.AcceptedCount, MaxParticipants)
+	api.AssertIsLessOrEqual(c.AcceptedCount, c.CommitteeSize)
+	api.AssertIsLessOrEqual(c.Threshold, c.AcceptedCount)
+
 	coeffMask := ccommon.PrefixMask(api, c.Threshold, MaxCoefficients)
 	participantMask := ccommon.PrefixMask(api, c.AcceptedCount, MaxParticipants)
 
@@ -94,11 +102,17 @@ func (c *FinalizeCircuit) Define(api frontend.API) error {
 		if err := ccommon.AssertPointOnCurve(api, c.ShareCommitments[i]); err != nil {
 			return err
 		}
+		// Range-check the participant index to ≤ MaxParticipants
+		// (one-based). The small-scalar path in
+		// CommitmentPolynomialValue uses width = xMaxBits·k + 1 for
+		// power_k = x^k (see contribution circuit for why the +1).
+		api.AssertIsLessOrEqual(c.ParticipantIndexes[i], MaxParticipants)
 		shareCommitment, err := ccommon.CommitmentPolynomialValue(
 			api,
 			maskedAggregate,
 			nil, // mask already baked in
 			c.ParticipantIndexes[i],
+			xMaxBits,
 		)
 		if err != nil {
 			return err

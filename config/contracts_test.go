@@ -27,8 +27,6 @@ REVEAL_SHARE_VERIFIER=0x8000000000000000000000000000000000000008
 	c.Assert(addresses.FinalizeVerifier, qt.Equals, common.HexToAddress("0x4000000000000000000000000000000000000004"))
 	c.Assert(addresses.PartialDecryptVerifier, qt.Equals, common.HexToAddress("0x5000000000000000000000000000000000000005"))
 	c.Assert(addresses.DecryptCombineVerifier, qt.Equals, common.HexToAddress("0x6000000000000000000000000000000000000006"))
-	c.Assert(addresses.RevealSubmitVerifier, qt.Equals, common.HexToAddress("0x7000000000000000000000000000000000000007"))
-	c.Assert(addresses.RevealShareVerifier, qt.Equals, common.HexToAddress("0x8000000000000000000000000000000000000008"))
 }
 
 func TestParseContractAddressesEnvRejectsMissingManager(t *testing.T) {

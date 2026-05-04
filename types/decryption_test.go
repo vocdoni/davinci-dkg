@@ -12,7 +12,7 @@ func TestPartialDecryptionValidate(t *testing.T) {
 	c := qt.New(t)
 
 	decryption := PartialDecryption{
-		RoundID:          "round-1",
+		EpochID:          testEpochID,
 		Participant:      common.HexToAddress("0x3000000000000000000000000000000000000003"),
 		ParticipantIndex: 2,
 		CiphertextIndex:  1,
@@ -21,18 +21,4 @@ func TestPartialDecryptionValidate(t *testing.T) {
 	}
 
 	c.Assert(decryption.Validate(), qt.IsNil)
-}
-
-func TestRevealedShareValidateRejectsMissingShare(t *testing.T) {
-	c := qt.New(t)
-
-	share := RevealedShare{
-		RoundID:          "round-1",
-		Participant:      common.HexToAddress("0x3000000000000000000000000000000000000003"),
-		ParticipantIndex: 2,
-	}
-
-	err := share.Validate()
-	c.Assert(err, qt.Not(qt.IsNil))
-	c.Assert(err.Error(), qt.Contains, "share is required")
 }

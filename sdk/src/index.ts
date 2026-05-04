@@ -4,41 +4,42 @@ export { DKGWriter } from './writer.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 export {
-  RoundStatus,
+  EpochPhase,
   NodeStatus,
   OpenDecryptionPolicy,
   roundStatusLabel,
-  type RoundStatusValue,
+  type EpochPhaseValue,
   type NodeStatusValue,
-  type RoundPolicy,
+  type EpochPolicy,
   type DecryptionPolicy,
-  type Round,
+  type Epoch,
   type ContributionRecord,
   type PartialDecryptionRecord,
   type CombinedDecryptionRecord,
-  type RevealedShareRecord,
   type NodeKey,
   type DKGConfig,
   type DKGWriterConfig,
   type BabyJubPoint,
   type ElGamalCiphertext,
   type PollOptions,
-  type RoundEvent,
-  type RoundEntry,
+  type EpochEvent,
+  type EpochEntry,
+  type AppPolicy,
+  type ApplicationRecord,
 } from './types.js';
 
 // ── ABI ───────────────────────────────────────────────────────────────────────
 export { dkgManagerAbi, dkgRegistryAbi } from './abi.js';
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
-export { buildRoundId, parseRoundId } from './utils.js';
+export { buildEpochId, parseEpochId } from './utils.js';
 
 // ── Monitor / polling ─────────────────────────────────────────────────────────
 export {
-  waitForRoundStatus,
+  waitForEpochPhase,
   waitForDecryption,
   watchNewRounds,
-  watchRoundFinalized,
+  watchEpochFinalized,
   watchDecryptionCombined,
   watchCiphertextSubmitted,
   networkSummary,
@@ -57,3 +58,37 @@ export {
 // ── Crypto ────────────────────────────────────────────────────────────────────
 export { buildElGamal } from './crypto/index.js';
 export type { ElGamal } from './crypto/index.js';
+
+// ── Protocol constants + per-application derivation ──────────────────────────
+export {
+  AppMode,
+  Role,
+  DomainOperatorRegisterV1,
+  DomainOrganizerRegisterV1,
+  DomainDLEQV1,
+  DomainOperatorRegisterV1Str,
+  DomainOrganizerRegisterV1Str,
+  DomainDLEQV1Str,
+  type AppModeValue,
+  type RoleValue,
+} from './protocol.js';
+
+export { computeS, validateDerivePKAppInput, SUBGROUP_ORDER } from './derive.js';
+export type { DerivePKAppInput } from './derive.js';
+
+// ── Schnorr / DLEQ verifiers ─────────────────────────────────────────────────
+export {
+  verifyOperatorSchnorr,
+  operatorSchnorrChallenge,
+  verifyOrganizerSchnorr,
+  organizerSchnorrChallenge,
+  proveOrganizer,
+  verifyDleq,
+  dleqChallenge,
+  DOMAIN_PARTIAL_DECRYPT,
+  BN254_Q,
+  type OperatorSchnorrProof,
+  type OrganizerSchnorrProof,
+  type DleqPoints,
+  type DleqTranscriptInputs,
+} from './schnorr.js';

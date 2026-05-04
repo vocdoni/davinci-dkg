@@ -1,6 +1,4 @@
-# Multi-stage build producing two binaries:
-#   davinci-dkg-node  – long-running DKG participant daemon
-#   dkg-runner        – testnet scenario orchestrator
+# Multi-stage build producing the davinci-dkg-node binary.
 #
 # The node binary is UI-blind: the explorer ships as a separate image
 # (ui/Dockerfile → ghcr.io/vocdoni/davinci-dkg-ui). This image therefore
@@ -32,15 +30,6 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     -o davinci-dkg-node \
     ./cmd/davinci-dkg-node
 
-# Build scenario runner
-RUN --mount=type=cache,target=/go/pkg/mod \
-    --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 \
-    go build -trimpath \
-    -ldflags="-w -s" \
-    -o dkg-runner \
-    ./cmd/dkg-runner
-
 # ---------------------------------------------------------------------------
 # Final minimal runtime image
 # ---------------------------------------------------------------------------
@@ -54,6 +43,5 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /src/davinci-dkg-node ./
-COPY --from=builder /src/dkg-runner ./
 
 ENTRYPOINT ["/app/davinci-dkg-node"]

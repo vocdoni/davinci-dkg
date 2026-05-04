@@ -12,6 +12,14 @@ import (
 const (
 	MaxCoefficients = ccommon.MaxN
 	MaxRecipients   = ccommon.MaxN
+	// xMaxBits is ⌈log₂(MaxRecipients)⌉ — the per-step bit growth of
+	// `power_k = x^k` when x is range-checked to ≤ MaxRecipients (one-
+	// based committee indexes go from 1 to MaxRecipients inclusive).
+	// CommitmentPolynomialValue passes nbBits =
+	// xMaxBits·k + 1 per iteration; the +1 covers the boundary case
+	// `x = MaxRecipients = 2^xMaxBits` where x^k = 2^(xMaxBits·k) needs
+	// one extra bit beyond the xMaxBits·k bits used for x ∈ [0, MaxN-1].
+	xMaxBits = 5 // covers MaxRecipients up to 32 (one-based indexes 1..32)
 )
 
 // ContributionCircuit proves the full DKG phase-4 statement from the paper:
@@ -25,13 +33,6 @@ type ContributionCircuit struct {
 	ShareHash            frontend.Variable `gnark:",public"`
 	Challenge            frontend.Variable `gnark:",public"`
 	TranscriptCommitment frontend.Variable `gnark:",public"`
-	// CommitmentX0 and CommitmentY0 are the coordinates of the contributor's
-	// zeroth Feldman commitment point (a_{i,0}·G), which equals the contributor's
-	// individual public key share. Exposing them as public inputs lets the
-	// smart contract accumulate the collective public key on-chain by summing
-	// all commitment[0] points as contributions are submitted.
-	CommitmentX0 frontend.Variable `gnark:",public"`
-	CommitmentY0 frontend.Variable `gnark:",public"`
 
 	Commitments      [MaxCoefficients]twistededwards.Point
 	RecipientPubKeys [MaxRecipients]twistededwards.Point
@@ -52,10 +53,17 @@ func (c *ContributionCircuit) Define(api frontend.API) error {
 	if err != nil {
 		return err
 	}
-	// Assert that the public CommitmentX0/Y0 match the private Commitments[0] point.
-	// This links the on-chain key accumulation to the ZK-proven polynomial commitment.
-	api.AssertIsEqual(c.CommitmentX0, c.Commitments[0].X)
-	api.AssertIsEqual(c.CommitmentY0, c.Commitments[0].Y)
+	// Bound the public count inputs to their fixed array sizes.
+	// PrefixMask returns all-active when count > size, so
+	// without these the statement could prove a partial set while
+	// claiming a larger one.
+	api.AssertIsLessOrEqual(c.Threshold, MaxCoefficients)
+	api.AssertIsLessOrEqual(c.CommitteeSize, MaxRecipients)
+	api.AssertIsLessOrEqual(c.Threshold, c.CommitteeSize)
+	// Honest contributor index is one-based in [1, CommitteeSize]. Asserting
+	// the upper bound here closes a future-composition gap; the contract
+	// already enforces non-zero.
+	api.AssertIsLessOrEqual(c.ContributorIndex, c.CommitteeSize)
 
 	coeffMask := ccommon.PrefixMask(api, c.Threshold, MaxCoefficients)
 	recipientMask := ccommon.PrefixMask(api, c.CommitteeSize, MaxRecipients)
@@ -75,7 +83,7 @@ func (c *ContributionCircuit) Define(api frontend.API) error {
 		}
 		// Range-check the coefficient witness to its canonical [0, r) form.
 		// FixedBaseMul itself wraps mod r, so the constraint is defence in
-		// depth against future composition (see SECURITY.md M-1).
+		// depth against future composition.
 		api.AssertIsLessOrEqual(c.Coefficients[i], subgroupOrderMinusOne)
 		expectedCommitment := ccommon.FixedBaseMul(api, c.Coefficients[i])
 		// Conditional equality: when coeffMask[i] == 1 the witness commitment
@@ -108,22 +116,36 @@ func (c *ContributionCircuit) Define(api frontend.API) error {
 
 	shareInputs := []frontend.Variable{c.RoundHash, c.ContributorIndex, c.CommitteeSize}
 	for i := range MaxRecipients {
-		// SECURITY (C-1): Shares[i] must lie in [0, r). Without this check
+		// Shares[i] must lie in [0, r). Without this check
 		// the prover can pick s' = honest_share + 7·r (still <p when
 		// honest_share<δ) and have AddModSubgroupOrder publish a
 		// MaskedShare that decrypts to honest_share+(r−δ)≠honest_share.
-		// That breaks recipient-side Feldman and DoSes the round.
+		// That breaks recipient-side Feldman and DoSes the epoch.
 		api.AssertIsLessOrEqual(c.Shares[i], subgroupOrderMinusOne)
 		activeShare := api.Select(recipientMask[i], c.Shares[i], 0)
 
 		if err := ccommon.AssertPointOnCurve(api, c.RecipientPubKeys[i]); err != nil {
 			return err
 		}
-		if err := ccommon.AssertPointOnCurve(api, c.Ephemerals[i]); err != nil {
-			return err
-		}
+		// Ephemerals[i] doesn't need an explicit on-curve check: when
+		// recipientMask[i] == 1 the conditional equality below forces it
+		// to equal `expectedEphemeral = FixedBaseMul(EncryptionNonces[i])`
+		// which is on-curve by construction. When inactive the value is
+		// masked out of the share-hash and transcript and the sharedSecret
+		// scalar mul on RecipientPubKeys[i] is the only consumer left.
 
-		feldmanPoint, err := ccommon.CommitmentPolynomialValue(api, maskedCommitments, nil, c.RecipientIndexes[i])
+		// Range-check the recipient index to ≤ MaxRecipients (one-based).
+		// The contract enforces non-zero, so the
+		// honest range is [1, MaxRecipients]. This bound is what lets
+		// CommitmentPolynomialValue use the small-scalar variant for the
+		// scaled commitments below: for k ≥ 1, power_k = x^k fits in
+		// xMaxBits·k + 1 bits, and the per-iteration scalar mul shrinks
+		// from ~2.4k constraints to ~14·(bit count) constraints.
+		api.AssertIsLessOrEqual(c.RecipientIndexes[i], MaxRecipients)
+
+		feldmanPoint, err := ccommon.CommitmentPolynomialValue(
+			api, maskedCommitments, nil, c.RecipientIndexes[i], xMaxBits,
+		)
 		if err != nil {
 			return err
 		}

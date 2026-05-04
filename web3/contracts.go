@@ -20,19 +20,14 @@ const (
 		{"inputs":[],"name":"FINALIZE_VERIFIER","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},
 		{"inputs":[],"name":"PARTIAL_DECRYPT_VERIFIER","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},
 		{"inputs":[],"name":"DECRYPT_COMBINE_VERIFIER","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},
-		{"inputs":[],"name":"REVEAL_SUBMIT_VERIFIER","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},
-		{"inputs":[],"name":"REVEAL_SHARE_VERIFIER","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},
-		{"inputs":[{"internalType":"bytes12","name":"roundId","type":"bytes12"}],"name":"getRound","outputs":[{"name":"organizer","type":"address"},{"components":[{"name":"threshold","type":"uint16"},{"name":"committeeSize","type":"uint16"},{"name":"minValidContributions","type":"uint16"},{"name":"lotteryAlphaBps","type":"uint16"},{"name":"seedDelay","type":"uint16"},{"name":"registrationDeadlineBlock","type":"uint64"},{"name":"contributionDeadlineBlock","type":"uint64"},{"name":"finalizeNotBeforeBlock","type":"uint64"},{"name":"disclosureAllowed","type":"bool"}],"name":"policy","type":"tuple"},{"components":[{"name":"ownerOnly","type":"bool"},{"name":"maxDecryptions","type":"uint16"},{"name":"notBeforeBlock","type":"uint64"},{"name":"notBeforeTimestamp","type":"uint64"},{"name":"notAfterBlock","type":"uint64"},{"name":"notAfterTimestamp","type":"uint64"}],"name":"decryptionPolicy","type":"tuple"},{"name":"status","type":"uint8"},{"name":"nonce","type":"uint64"},{"name":"seedBlock","type":"uint64"},{"name":"seed","type":"bytes32"},{"name":"lotteryThreshold","type":"uint256"},{"name":"claimedCount","type":"uint16"},{"name":"contributionCount","type":"uint16"},{"name":"partialDecryptionCount","type":"uint16"},{"name":"revealedShareCount","type":"uint16"},{"name":"ciphertextCount","type":"uint16"}],"stateMutability":"view","type":"function"},
+		{"inputs":[{"internalType":"bytes12","name":"epochId","type":"bytes12"}],"name":"getEpoch","outputs":[{"name":"organizer","type":"address"},{"components":[{"name":"threshold","type":"uint16"},{"name":"committeeSize","type":"uint16"},{"name":"minValidContributions","type":"uint16"},{"name":"lotteryAlphaBps","type":"uint16"},{"name":"registrationDeadlineBlock","type":"uint64"},{"name":"contributionDeadlineBlock","type":"uint64"},{"name":"finalizeNotBeforeBlock","type":"uint64"}],"name":"policy","type":"tuple"},{"components":[{"name":"ownerOnly","type":"bool"},{"name":"maxDecryptions","type":"uint16"},{"name":"notBeforeBlock","type":"uint64"},{"name":"notBeforeTimestamp","type":"uint64"},{"name":"notAfterBlock","type":"uint64"},{"name":"notAfterTimestamp","type":"uint64"}],"name":"decryptionPolicy","type":"tuple"},{"name":"status","type":"uint8"},{"name":"nonce","type":"uint64"},{"name":"startBlock","type":"uint64"},{"name":"seedBlock","type":"uint64"},{"name":"seed","type":"bytes32"},{"name":"lotteryThreshold","type":"uint256"},{"name":"claimedCount","type":"uint16"},{"name":"contributionCount","type":"uint16"},{"name":"partialDecryptionCount","type":"uint16"},{"name":"ciphertextCount","type":"uint16"}],"stateMutability":"view","type":"function"},
 		{"inputs":[],"name":"getContributionVerifierVKeyHash","outputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"stateMutability":"view","type":"function"},
 		{"inputs":[],"name":"getFinalizeVerifierVKeyHash","outputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"stateMutability":"view","type":"function"},
 		{"inputs":[],"name":"getPartialDecryptVerifierVKeyHash","outputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"stateMutability":"view","type":"function"},
 		{"inputs":[],"name":"getDecryptCombineVerifierVKeyHash","outputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"stateMutability":"view","type":"function"},
-		{"inputs":[],"name":"getRevealSubmitVerifierVKeyHash","outputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"stateMutability":"view","type":"function"},
-		{"inputs":[],"name":"getRevealShareVerifierVKeyHash","outputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"stateMutability":"view","type":"function"},
-		{"inputs":[{"internalType":"bytes12","name":"roundId","type":"bytes12"},{"internalType":"uint16","name":"participantIndex","type":"uint16"}],"name":"getShareCommitment","outputs":[{"name":"x","type":"uint256"},{"name":"y","type":"uint256"}],"stateMutability":"view","type":"function"},
-		{"inputs":[{"internalType":"bytes12","name":"roundId","type":"bytes12"}],"name":"selectedParticipants","outputs":[{"internalType":"address[]","name":"","type":"address[]"}],"stateMutability":"view","type":"function"},
-		{"inputs":[{"internalType":"bytes12","name":"roundId","type":"bytes12"},{"internalType":"uint16","name":"ciphertextIndex","type":"uint16"}],"name":"getCombinedDecryption","outputs":[{"name":"ciphertextIndex","type":"uint16"},{"name":"completed","type":"bool"},{"name":"plaintext","type":"uint256"}],"stateMutability":"view","type":"function"},
-		{"inputs":[{"internalType":"bytes12","name":"roundId","type":"bytes12"},{"internalType":"address","name":"participant","type":"address"}],"name":"getRevealedShare","outputs":[{"name":"participant","type":"address"},{"name":"participantIndex","type":"uint16"},{"name":"shareValue","type":"uint256"},{"name":"shareHash","type":"bytes32"},{"name":"accepted","type":"bool"}],"stateMutability":"view","type":"function"}
+		{"inputs":[{"internalType":"bytes12","name":"epochId","type":"bytes12"},{"internalType":"uint16","name":"participantIndex","type":"uint16"}],"name":"getShareCommitment","outputs":[{"name":"x","type":"uint256"},{"name":"y","type":"uint256"}],"stateMutability":"view","type":"function"},
+		{"inputs":[{"internalType":"bytes12","name":"epochId","type":"bytes12"}],"name":"selectedParticipants","outputs":[{"internalType":"address[]","name":"","type":"address[]"}],"stateMutability":"view","type":"function"},
+		{"inputs":[{"internalType":"bytes12","name":"epochId","type":"bytes12"},{"internalType":"bytes32","name":"aid","type":"bytes32"},{"internalType":"uint16","name":"ciphertextIndex","type":"uint16"}],"name":"getCombinedDecryption","outputs":[{"name":"ciphertextIndex","type":"uint16"},{"name":"completed","type":"bool"},{"name":"plaintext","type":"uint256"}],"stateMutability":"view","type":"function"}
 	]`
 	dkgRegistryABIJSON = `[
 		{"inputs":[{"internalType":"address","name":"operator","type":"address"}],"name":"getNode","outputs":[{"name":"operator","type":"address"},{"name":"pubX","type":"uint256"},{"name":"pubY","type":"uint256"},{"name":"status","type":"uint8"}],"stateMutability":"view","type":"function"}
@@ -60,44 +55,35 @@ type RegistryNode struct {
 	Status   uint8
 }
 
-type RoundPolicy struct {
+type EpochPolicy struct {
 	Threshold                 uint16
 	CommitteeSize             uint16
 	MinValidContributions     uint16
 	LotteryAlphaBps           uint16
-	SeedDelay                 uint16
 	RegistrationDeadlineBlock uint64
 	ContributionDeadlineBlock uint64
 	FinalizeNotBeforeBlock    uint64
-	DisclosureAllowed         bool
 }
 
-type RoundView struct {
+type EpochView struct {
 	Organizer              common.Address
-	Policy                 RoundPolicy
+	Policy                 EpochPolicy
 	Status                 uint8
 	Nonce                  uint64
+	StartBlock             uint64
 	SeedBlock              uint64
 	Seed                   common.Hash
 	LotteryThreshold       *big.Int
 	ClaimedCount           uint16
 	ContributionCount      uint16
 	PartialDecryptionCount uint16
-	RevealedShareCount     uint16
+	CiphertextCount        uint16
 }
 
 type CombinedDecryptionView struct {
 	CiphertextIndex uint16
 	Completed       bool
 	Plaintext       *big.Int
-}
-
-type RevealedShareView struct {
-	Participant      common.Address
-	ParticipantIndex uint16
-	ShareValue       *big.Int
-	ShareHash        common.Hash
-	Accepted         bool
 }
 
 // New creates a Contracts handle connected to the given RPC endpoints.
@@ -111,7 +97,7 @@ type RevealedShareView struct {
 // Explicitly-supplied non-zero addresses always take precedence over the
 // on-chain values, so individual verifier overrides still work as before.
 //
-// Multiple RPC URLs may be provided; they are used in a round-robin pool with
+// Multiple RPC URLs may be provided; they are used in a epoch-robin pool with
 // automatic failover (see RPCPool).
 func New(rpcURLs []string, addresses types.ContractAddresses) (*Contracts, error) {
 	if addresses.Manager == (common.Address{}) {
@@ -155,8 +141,6 @@ func New(rpcURLs []string, addresses types.ContractAddresses) (*Contracts, error
 		{"FINALIZE_VERIFIER", &addresses.FinalizeVerifier},
 		{"PARTIAL_DECRYPT_VERIFIER", &addresses.PartialDecryptVerifier},
 		{"DECRYPT_COMBINE_VERIFIER", &addresses.DecryptCombineVerifier},
-		{"REVEAL_SUBMIT_VERIFIER", &addresses.RevealSubmitVerifier},
-		{"REVEAL_SHARE_VERIFIER", &addresses.RevealShareVerifier},
 	}
 	for _, vf := range verifierFields {
 		if *vf.dest != (common.Address{}) {

@@ -227,7 +227,7 @@ func BuildWitnessFromCommitmentPoints(a CommitmentPointsAssignment) (*FinalizeCi
 	// (set coefficients[k] = 1 and override the commitment computation).
 	// We do this by building the witness manually from the provided points.
 	if a.RoundHash == nil {
-		return nil, nil, fmt.Errorf("round hash is required")
+		return nil, nil, fmt.Errorf("epoch hash is required")
 	}
 	if a.Threshold == 0 || a.CommitteeSize == 0 {
 		return nil, nil, fmt.Errorf("threshold and committee size are required")
@@ -237,6 +237,24 @@ func BuildWitnessFromCommitmentPoints(a CommitmentPointsAssignment) (*FinalizeCi
 	}
 	if len(a.ContributionPoints) != len(a.ParticipantIndexes) {
 		return nil, nil, fmt.Errorf("contribution point count mismatch")
+	}
+	if len(a.ParticipantIndexes) > int(a.CommitteeSize) {
+		return nil, nil, fmt.Errorf("participant count %d exceeds committee size %d", len(a.ParticipantIndexes), a.CommitteeSize)
+	}
+	// Reject duplicate participant indexes — see
+	// finalize.Assignment.Validate.
+	seen := make(map[uint16]struct{}, len(a.ParticipantIndexes))
+	for i, idx := range a.ParticipantIndexes {
+		if idx == 0 {
+			return nil, nil, fmt.Errorf("participant index %d is zero", i)
+		}
+		if idx > a.CommitteeSize {
+			return nil, nil, fmt.Errorf("participant index %d exceeds committee size %d", idx, a.CommitteeSize)
+		}
+		if _, dup := seen[idx]; dup {
+			return nil, nil, fmt.Errorf("duplicate participant index %d", idx)
+		}
+		seen[idx] = struct{}{}
 	}
 
 	modulus := ecc.BN254.ScalarField()
@@ -474,7 +492,14 @@ func (p PublicInputs) TranscriptScalars() []*big.Int {
 	return values
 }
 
-// BRLCCommitment compresses the public input vector into one scalar commitment.
+// BRLCCommitment compresses the finalize transcript scalar vector into
+// one BRLC commitment, matching the circuit's `TranscriptCommitment`
+// public input and the contract's `_verifyFinalizeTranscript` check.
+//
+// The commitment is taken over `TranscriptScalars()` (participantIndexes
+// ‖ contributionCommitments ‖ aggregateCommitments ‖ shareCommitments)
+// — the slice the on-chain check actually streams — not over the full
+// public-input vector.
 func (p PublicInputs) BRLCCommitment(challenge *big.Int) (*big.Int, error) {
-	return ccommon.BRLCNative(challenge, p.Scalars()...)
+	return ccommon.BRLCNative(challenge, p.TranscriptScalars()...)
 }

@@ -4,12 +4,24 @@ import (
 	"fmt"
 	"math/big"
 
+	ccommon "github.com/vocdoni/davinci-dkg/circuits/common"
 	"github.com/vocdoni/davinci-dkg/types"
 )
 
 // Assignment is the native input model used to build a decrypt-combine witness.
+//
+// Aid, CtIdx, Mode, S, and DeltaOrg are the per-application correction fields
+// (paper §5.5 lines 1051–1077). They default to zero/identity when
+// callers don't supply them — preserving backward compatibility with the
+// pre-application combine path. With Mode=0 and S=0, the in-circuit
+// computation `T = S·C_1 = O` reduces to the legacy `M = C_2 - Σλ_k·δ_xk`.
 type Assignment struct {
-	RoundHash          *big.Int
+	RoundHash          *big.Int // semantically: eid
+	Aid                *big.Int
+	CtIdx              *big.Int
+	Mode               *big.Int         // 0 = public derivation (default), 1 = co-decryption
+	S                  *big.Int         // derivation tag scalar (mode 0); ignored if Mode=1
+	DeltaOrg           types.CurvePoint // organizer Δ_org (mode 1); identity if Mode=0
 	Threshold          uint16
 	CiphertextC1       types.CurvePoint
 	CiphertextC2       types.CurvePoint
@@ -21,7 +33,7 @@ type Assignment struct {
 // Validate checks that the assignment is complete.
 func (a Assignment) Validate() error {
 	if a.RoundHash == nil {
-		return fmt.Errorf("round hash is required")
+		return fmt.Errorf("epoch hash is required")
 	}
 	if a.Threshold == 0 {
 		return fmt.Errorf("threshold is required")
@@ -53,6 +65,11 @@ func (a Assignment) Validate() error {
 	}
 	if a.Plaintext == nil {
 		return fmt.Errorf("plaintext is required")
+	}
+	// Mirror the in-circuit canonical-range bound so the
+	// prover fails fast at witness build instead of inside the SNARK.
+	if a.Plaintext.Sign() < 0 || a.Plaintext.Cmp(ccommon.SubgroupOrderMinusOne()) > 0 {
+		return fmt.Errorf("plaintext is not canonical: must be in [0, r_bjj-1]")
 	}
 	return nil
 }

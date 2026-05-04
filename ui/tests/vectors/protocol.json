@@ -1,0 +1,14 @@
+{
+  "mode_public_derivation": 0,
+  "mode_organizer_codec": 1,
+  "role_committee": 1,
+  "role_organizer": 2,
+  "domain_operator_register_v1_str": "davinci-dkg:operator-register:v1",
+  "domain_operator_register_v1": "0x4599aabb337c91d65fe440ef7e20c6dcc72c2459fd0901c45add50b08b3bb34d",
+  "domain_organizer_register_v1_str": "davinci-dkg:organizer-register:v1",
+  "domain_organizer_register_v1": "0x41ea6f3fa95eccd1f3b1ce8e05efa11027280aa0c6b4167fd6695db659c30b28",
+  "domain_dleq_v1_str": "davinci-dkg:dleq:v1",
+  "domain_dleq_v1": "0x48fabea26e7a072780483852e403ea60b2f51a07c735c3e4b852ac6bb99b5a91",
+  "domain_derivation_v1_str": "davinci-dkg:app-derivation:v1",
+  "domain_derivation_v1": "0x692a66ad85c5e7550872b5a662dece6aabff6236756ca8c8f657e5340ea4950f"
+}

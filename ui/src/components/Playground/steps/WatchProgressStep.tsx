@@ -1,46 +1,46 @@
 import { useEffect, useRef, useState } from 'react'
 import { Alert, Box, Button, HStack, Stack, Text } from '@chakra-ui/react'
 import type { Hex } from 'viem'
-import { RoundStatus, type Round } from '@vocdoni/davinci-dkg-sdk'
+import { EpochPhase, type Epoch } from '@vocdoni/davinci-dkg-sdk'
 import { LuClipboardList, LuKey, LuLock } from 'react-icons/lu'
 import { StepCard, type StepStatus } from '../StepCard'
-import { useRound, useRoundEvents } from '~queries/rounds'
+import { useEpoch, useEpochEvents } from '~queries/epochs'
 import { useBlockNumber } from '~queries/chain'
 import { useDkgWriter } from '~hooks/use-dkg-writer'
-import { StatusBadge } from '~components/Round/StatusBadge'
-import { PhaseTimeline } from '~components/Round/PhaseTimeline'
-import { Countdown } from '~components/Round/Countdown'
+import { StatusBadge } from '~components/Epoch/StatusBadge'
+import { PhaseTimeline } from '~components/Epoch/PhaseTimeline'
+import { Countdown } from '~components/Epoch/Countdown'
 import { HowItWorks } from '../HowItWorks'
-import { roundFailure, roundSummary } from '~lib/round-utils'
+import { roundFailure, roundSummary } from '~lib/epoch-utils'
 
 interface Props {
   status: StepStatus
-  roundId: Hex | null
+  epochId: Hex | null
   log: (msg: string, level?: 'info' | 'success' | 'error' | 'tx' | 'chain') => void
 }
 
-export function WatchProgressStep({ status, roundId, log }: Props) {
+export function WatchProgressStep({ status, epochId, log }: Props) {
   const writer = useDkgWriter()
-  const round = useRound((roundId ?? undefined) as `0x${string}` | undefined)
-  const events = useRoundEvents((roundId ?? undefined) as `0x${string}` | undefined)
+  const epoch = useEpoch((epochId ?? undefined) as `0x${string}` | undefined)
+  const events = useEpochEvents((epochId ?? undefined) as `0x${string}` | undefined)
   const { data: block } = useBlockNumber()
 
   const [abortBusy, setAbortBusy] = useState(false)
 
-  // Mirror round-status / event-count transitions into the activity log.
+  // Mirror epoch-status / event-count transitions into the activity log.
   // We track the last-seen values in refs so the effect doesn't re-fire on
   // every render — only when the underlying value actually changed.
   const lastStatus = useRef<number | null>(null)
   const lastEventCount = useRef(0)
   useEffect(() => {
-    if (!round.data) return
-    const s = Number(round.data.round.status)
+    if (!epoch.data) return
+    const s = Number(epoch.data.epoch.status)
     if (lastStatus.current !== s) {
       lastStatus.current = s
       const labels = ['None', 'Registration', 'Contribution', 'Finalized', 'Aborted', 'Completed']
-      log(`Round status → ${labels[s] ?? s}`, s === 3 ? 'success' : s === 4 ? 'error' : 'chain')
+      log(`Epoch status → ${labels[s] ?? s}`, s === 3 ? 'success' : s === 4 ? 'error' : 'chain')
     }
-  }, [round.data, log])
+  }, [epoch.data, log])
   useEffect(() => {
     if (!events.data) return
     if (events.data.length > lastEventCount.current) {
@@ -53,14 +53,14 @@ export function WatchProgressStep({ status, roundId, log }: Props) {
   }, [events.data, log])
 
   const onAbort = async () => {
-    if (!writer || !roundId) return
+    if (!writer || !epochId) return
     setAbortBusy(true)
     try {
-      log('Aborting round…', 'error')
-      const hash = await writer.abortRound(roundId)
+      log('Aborting epoch…', 'error')
+      const hash = await writer.abortEpoch(epochId)
       log(`Abort tx submitted: ${hash}`, 'tx')
       await writer.waitForTransaction(hash)
-      log('Round aborted.', 'error')
+      log('Epoch aborted.', 'error')
     } catch (err) {
       log(`Abort failed: ${err instanceof Error ? err.message : String(err)}`, 'error')
     } finally {
@@ -68,15 +68,15 @@ export function WatchProgressStep({ status, roundId, log }: Props) {
     }
   }
 
-  const failure = round.data ? roundFailure(round.data.round, block ?? null) : null
+  const failure = epoch.data ? roundFailure(epoch.data.epoch, block ?? null) : null
   const canAbort =
-    round.data &&
-    (round.data.round.status === RoundStatus.Registration ||
-      round.data.round.status === RoundStatus.Contribution)
+    epoch.data &&
+    (epoch.data.epoch.status === EpochPhase.Registration ||
+      epoch.data.epoch.status === EpochPhase.Contribution)
 
   // Pick the headline counter for the current phase. After finalize the
   // counters are no longer meaningful here — KeyAvailableStep takes over.
-  const headlineCounter = round.data ? pickHeadlineCounter(round.data.round) : null
+  const headlineCounter = epoch.data ? pickHeadlineCounter(epoch.data.epoch) : null
 
   const cardStatus: StepStatus = failure ? 'error' : status
 
@@ -85,29 +85,29 @@ export function WatchProgressStep({ status, roundId, log }: Props) {
       n={3}
       title='Watch the committee build the key'
       status={cardStatus}
-      description='The committee members claim their slots, then each one publishes a cryptographic contribution. When enough have arrived, the round finalizes.'
+      description='The committee members claim their slots, then each one publishes a cryptographic contribution. When enough have arrived, the epoch finalizes.'
     >
-      {!roundId ? (
+      {!epochId ? (
         <Text fontSize='sm' color='ink.4'>
-          Create a round above first.
+          Create a epoch above first.
         </Text>
-      ) : !round.data ? (
+      ) : !epoch.data ? (
         <Text fontSize='sm' color='ink.4'>
-          Loading round…
+          Loading epoch…
         </Text>
       ) : (
         <Stack gap={5}>
           <HStack gap={3} wrap='wrap'>
-            <StatusBadge round={round.data.round} />
+            <StatusBadge epoch={epoch.data.epoch} />
             <Text fontSize='xs' color='ink.4'>
-              nonce {round.data.round.nonce.toString()}
+              nonce {epoch.data.epoch.nonce.toString()}
             </Text>
           </HStack>
           <Text fontSize='sm' color='ink.2'>
-            {roundSummary(round.data.round, block ?? null)}
+            {roundSummary(epoch.data.epoch, block ?? null)}
           </Text>
           <Box>
-            <PhaseTimeline round={round.data.round} />
+            <PhaseTimeline epoch={epoch.data.epoch} />
           </Box>
 
           {/* Big live counter for the active phase. */}
@@ -123,26 +123,26 @@ export function WatchProgressStep({ status, roundId, log }: Props) {
           )}
 
           {/* Live countdown to whichever deadline is currently relevant. */}
-          {round.data.round.status === RoundStatus.Registration && !failure && (
+          {epoch.data.epoch.status === EpochPhase.Registration && !failure && (
             <Countdown
-              target={round.data.round.policy.registrationDeadlineBlock}
+              target={epoch.data.epoch.policy.registrationDeadlineBlock}
               label='until registration closes'
             />
           )}
-          {round.data.round.status === RoundStatus.Contribution && !failure && (
+          {epoch.data.epoch.status === EpochPhase.Contribution && !failure && (
             <Stack gap={1}>
               <Countdown
-                target={round.data.round.policy.contributionDeadlineBlock}
+                target={epoch.data.epoch.policy.contributionDeadlineBlock}
                 label='until contributions close'
               />
               <Countdown
-                target={round.data.round.policy.finalizeNotBeforeBlock}
+                target={epoch.data.epoch.policy.finalizeNotBeforeBlock}
                 label='until finalize unlocks'
               />
             </Stack>
           )}
 
-          {/* Failure banner — round window expired without enough nodes. */}
+          {/* Failure banner — epoch window expired without enough nodes. */}
           {failure && (
             <Alert.Root status='error'>
               <Alert.Indicator />
@@ -157,7 +157,7 @@ export function WatchProgressStep({ status, roundId, log }: Props) {
                     <>
                       Only <b>{failure.have}</b> of the {failure.total} committee slot(s) were
                       claimed before the deadline — at least <b>{failure.need}</b> are needed for
-                      the round to be decryptable. The playground cannot continue with this round.
+                      the epoch to be decryptable. The playground cannot continue with this epoch.
                       Abort it and try again with a longer window, or wait for more nodes to come
                       online.
                     </>
@@ -165,7 +165,7 @@ export function WatchProgressStep({ status, roundId, log }: Props) {
                     <>
                       Only <b>{failure.have}</b> contribution(s) arrived in time —{' '}
                       <b>{failure.need}</b> are required to finalize. The playground cannot
-                      continue. Abort and create a new round.
+                      continue. Abort and create a new epoch.
                     </>
                   )}
                 </Alert.Description>
@@ -176,17 +176,17 @@ export function WatchProgressStep({ status, roundId, log }: Props) {
           {canAbort && (
             <Box>
               <Button size='xs' colorPalette='red' variant='outline' onClick={onAbort} loading={abortBusy}>
-                Abort round
+                Abort epoch
               </Button>
               <Text fontSize='2xs' color='ink.4' mt={1}>
-                Organizer-only. Useful if you started a round you don't intend to complete.
+                Organizer-only. Useful if you started a epoch you don't intend to complete.
               </Text>
             </Box>
           )}
-          {round.data.round.status === RoundStatus.Aborted && (
+          {epoch.data.epoch.status === EpochPhase.Aborted && (
             <Alert.Root status='error'>
               <Alert.Indicator />
-              <Alert.Title>This round was aborted.</Alert.Title>
+              <Alert.Title>This epoch was aborted.</Alert.Title>
             </Alert.Root>
           )}
 
@@ -221,33 +221,33 @@ interface CounterSpec {
   caption: string
 }
 
-function pickHeadlineCounter(round: Round): CounterSpec | null {
-  const min = round.policy.minValidContributions
-  const n = round.policy.committeeSize
-  switch (round.status) {
-    case RoundStatus.Registration:
+function pickHeadlineCounter(epoch: Epoch): CounterSpec | null {
+  const min = epoch.policy.minValidContributions
+  const n = epoch.policy.committeeSize
+  switch (epoch.status) {
+    case EpochPhase.Registration:
       return {
         label: 'Slots claimed',
-        have: round.claimedCount,
+        have: epoch.claimedCount,
         total: n,
         need: Math.min(min, n),
-        tone: round.claimedCount >= n ? 'live' : 'accent',
+        tone: epoch.claimedCount >= n ? 'live' : 'accent',
         caption:
-          round.claimedCount >= n
+          epoch.claimedCount >= n
             ? 'Committee full — moving to contribution phase.'
-            : `${round.claimedCount} of ${n} eligible nodes have joined this committee.`,
+            : `${epoch.claimedCount} of ${n} eligible nodes have joined this committee.`,
       }
-    case RoundStatus.Contribution:
+    case EpochPhase.Contribution:
       return {
         label: 'Contributions accepted',
-        have: round.contributionCount,
+        have: epoch.contributionCount,
         total: n,
         need: min,
-        tone: round.contributionCount >= min ? 'live' : 'accent',
+        tone: epoch.contributionCount >= min ? 'live' : 'accent',
         caption:
-          round.contributionCount >= min
-            ? `Threshold reached. Awaiting finalize at block ${round.policy.finalizeNotBeforeBlock.toString()}.`
-            : `${round.contributionCount} of ${min} required contributions received.`,
+          epoch.contributionCount >= min
+            ? `Threshold reached. Awaiting finalize at block ${epoch.policy.finalizeNotBeforeBlock.toString()}.`
+            : `${epoch.contributionCount} of ${min} required contributions received.`,
       }
     default:
       return null

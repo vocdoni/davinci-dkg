@@ -1,6 +1,6 @@
 package tests
 
-// TestGasProfilesMultiNode runs a complete DKG round for each committee size
+// TestGasProfilesMultiNode runs a complete DKG epoch for each committee size
 // defined in benchSizes and logs the per-call gas cost of every protocol phase.
 // This is the data source for BENCHMARKS.md.
 //
@@ -75,7 +75,7 @@ func TestGasProfilesMultiNode(t *testing.T) {
 
 	// Print a markdown table for easy copy-paste into BENCHMARKS.md.
 	t.Log("\n\n=== GAS PROFILE RESULTS (MaxN=" + fmt.Sprintf("%d", maxN) + ") ===")
-	t.Log("| n | t | createRound | claimSlot (avg) | submitContribution | finalizeRound | submitPartialDecryption | combineDecryption |")
+	t.Log("| n | t | createEpoch | claimSlot (avg) | submitContribution | finalizeEpoch | submitPartialDecryption | combineDecryption |")
 	t.Log("|---|---|---|---|---|---|---|---|")
 	for _, r := range results {
 		t.Logf("| %d | %d | %d | %d | %d | %d | %d | %d |",
@@ -86,7 +86,7 @@ func TestGasProfilesMultiNode(t *testing.T) {
 	}
 
 	// Also print the compact form used in BENCHMARKS.md:
-	t.Log("\n=== Compact (submitContribution | finalizeRound | submitPartialDecryption | combineDecryption) ===")
+	t.Log("\n=== Compact (submitContribution | finalizeEpoch | submitPartialDecryption | combineDecryption) ===")
 	var sb strings.Builder
 	for _, r := range results {
 		fmt.Fprintf(&sb, "| %d | %d | %d | %d | %d | %d |\n",
@@ -122,27 +122,25 @@ func benchmarkGasForN(t *testing.T, n, threshold int) gasProfileResult {
 		c.Assert(helpers.EnsureNodeKeyRegistered(ctx, services, a), qt.IsNil)
 	}
 
-	// ── 1. createRound ──────────────────────────────────────────────────────
+	// ── 1. createEpoch ──────────────────────────────────────────────────────
 	head, err := services.Contracts.Client().BlockNumber(ctx)
 	c.Assert(err, qt.IsNil)
-	policy := types.RoundPolicy{
+	policy := types.EpochPolicy{
 		Threshold:                 uint16(threshold),
 		CommitteeSize:             uint16(n),
 		MinValidContributions:     uint16(threshold),
 		LotteryAlphaBps:           helpers.DefaultLotteryAlphaBps,
-		SeedDelay:                 helpers.DefaultSeedDelay,
 		RegistrationDeadlineBlock: head + 50,
 		ContributionDeadlineBlock: head + 200,
 		FinalizeNotBeforeBlock:    head + 201,
-		DisclosureAllowed:         false,
 	}
-	roundID, createGas := createRoundMeasured(t, ctx, policy)
+	epochID, createGas := createRoundMeasured(t, ctx, policy)
 
 	// ── 2. claimSlot for all n actors ───────────────────────────────────────
-	c.Assert(helpers.MineBlocks(ctx, services, uint64(policy.SeedDelay)+1), qt.IsNil)
+	c.Assert(helpers.MineBlocks(ctx, services, helpers.DefaultSeedDelay+1), qt.IsNil)
 	var totalClaimGas uint64
 	for _, actor := range actors {
-		gas, err := helpers.ClaimSlotMeasured(ctx, services, actor, roundID)
+		gas, err := helpers.ClaimSlotMeasured(ctx, services, actor, epochID)
 		c.Assert(err, qt.IsNil)
 		totalClaimGas += gas
 	}
@@ -164,21 +162,21 @@ func benchmarkGasForN(t *testing.T, n, threshold int) gasProfileResult {
 	var lastContribGas uint64
 	for i, actor := range actors {
 		sub, err := helpers.BuildContributionSubmission(
-			ctx, services, roundID,
+			ctx, services, epochID,
 			uint16(threshold), uint16(n), uint16(i+1),
 			coefficients[i], recipientIndexes,
 		)
 		c.Assert(err, qt.IsNil)
-		gas, err := helpers.SubmitContributionMeasured(ctx, services, actor, roundID, uint16(i+1), sub)
+		gas, err := helpers.SubmitContributionMeasured(ctx, services, actor, epochID, uint16(i+1), sub)
 		c.Assert(err, qt.IsNil)
 		lastContribGas = gas // keep the last one (warmest storage)
 	}
 
-	// ── 4. finalizeRound ────────────────────────────────────────────────────
-	output, err := helpers.BuildFinalizeRoundOutput(ctx, roundID,
+	// ── 4. finalizeEpoch ────────────────────────────────────────────────────
+	output, err := helpers.BuildFinalizeEpochOutput(ctx, epochID,
 		uint16(threshold), uint16(n), recipientIndexes, coefficients)
 	c.Assert(err, qt.IsNil)
-	finalizeGas := finalizeRoundMeasured(t, ctx, roundID, output)
+	finalizeGas := finalizeRoundMeasured(t, ctx, epochID, output)
 
 	// ── 5. submitPartialDecryption (first t actors) ─────────────────────────
 	recoveredShares, err := helpers.RecoverParticipantShares(coefficients, recipientIndexes)
@@ -193,10 +191,10 @@ func benchmarkGasForN(t *testing.T, n, threshold int) gasProfileResult {
 	}, threshold)
 	for i, actor := range partialActors {
 		partial, err := helpers.BuildPartialDecryptionSubmission(
-			ctx, roundID, uint16(i+1), ciphertextBase, recoveredShares[i], big.NewInt(int64(i+100)),
+			ctx, epochID, 1, uint16(i+1), ciphertextBase, recoveredShares[i], big.NewInt(int64(i+100)),
 		)
 		c.Assert(err, qt.IsNil)
-		gas, err := helpers.SubmitPartialDecryptionMeasured(ctx, services, actor, roundID, uint16(i+1), 1, partial)
+		gas, err := helpers.SubmitPartialDecryptionMeasured(ctx, services, actor, epochID, uint16(i+1), 1, partial)
 		c.Assert(err, qt.IsNil)
 		lastPartialGas = gas
 		partials[i].delta = partial.Delta
@@ -216,7 +214,7 @@ func benchmarkGasForN(t *testing.T, n, threshold int) gasProfileResult {
 	plaintextScalar := big.NewInt(99)
 
 	combineOut, err := helpers.BuildDecryptCombineOutput(
-		ctx, roundID, uint16(threshold),
+		ctx, epochID, 1 /* ciphertextIndex */, uint16(threshold),
 		ciphertextBase, idxs, deltas, plaintextScalar,
 	)
 	c.Assert(err, qt.IsNil)
@@ -224,12 +222,12 @@ func benchmarkGasForN(t *testing.T, n, threshold int) gasProfileResult {
 	// The combine tx is now bound to an on-chain ciphertext; submit it first.
 	c.Assert(helpers.SubmitCiphertextAs(ctx,
 		&helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager},
-		roundID, 1,
+		epochID, 1,
 		combineOut.CiphertextC1.X, combineOut.CiphertextC1.Y,
 		combineOut.CiphertextC2.X, combineOut.CiphertextC2.Y,
 	), qt.IsNil)
 
-	combineGas := combineMeasured(t, ctx, roundID, combineOut)
+	combineGas := combineMeasured(t, ctx, epochID, combineOut)
 
 	t.Logf("n=%d t=%d create=%d claim_avg=%d contrib=%d finalize=%d pdecrypt=%d combine=%d",
 		n, threshold, createGas, avgClaimGas, lastContribGas, finalizeGas, lastPartialGas, combineGas)
@@ -246,23 +244,20 @@ func benchmarkGasForN(t *testing.T, n, threshold int) gasProfileResult {
 
 // ── measurement helpers ──────────────────────────────────────────────────────
 
-func createRoundMeasured(t *testing.T, ctx context.Context, policy types.RoundPolicy) ([12]byte, uint64) {
+func createRoundMeasured(t *testing.T, ctx context.Context, policy types.EpochPolicy) ([12]byte, uint64) {
 	t.Helper()
 	c := qt.New(t)
 
-	prefix, err := services.Manager.ROUNDPREFIX(services.CallOpts(ctx))
+	prefix, err := services.Manager.EPOCHPREFIX(services.CallOpts(ctx))
 	c.Assert(err, qt.IsNil)
-	nonce, err := services.Manager.RoundNonce(services.CallOpts(ctx))
+	nonce, err := services.Manager.EpochNonce(services.CallOpts(ctx))
 	c.Assert(err, qt.IsNil)
 
 	auth, err := services.TxManager.NewTransactOpts(ctx)
 	c.Assert(err, qt.IsNil)
-	tx, err := services.Manager.CreateRound(auth,
+	tx, err := services.Manager.CreateEpoch(auth,
 		policy.Threshold, policy.CommitteeSize, policy.MinValidContributions,
-		policy.LotteryAlphaBps, policy.SeedDelay,
-		policy.RegistrationDeadlineBlock, policy.ContributionDeadlineBlock,
-		policy.FinalizeNotBeforeBlock,
-		policy.DisclosureAllowed,
+		policy.LotteryAlphaBps,
 		helpers.ZeroDecryptionPolicy(),
 	)
 	c.Assert(err, qt.IsNil)
@@ -272,13 +267,13 @@ func createRoundMeasured(t *testing.T, ctx context.Context, policy types.RoundPo
 	return helpers.ComputeRoundID(prefix, nonce+1), receipt.GasUsed
 }
 
-func finalizeRoundMeasured(t *testing.T, ctx context.Context, roundID [12]byte, output *helpers.FinalizeRoundOutput) uint64 {
+func finalizeRoundMeasured(t *testing.T, ctx context.Context, epochID [12]byte, output *helpers.FinalizeEpochOutput) uint64 {
 	t.Helper()
 	c := qt.New(t)
-	c.Assert(helpers.WaitForFinalizeGate(ctx, services, roundID), qt.IsNil)
+	c.Assert(helpers.WaitForFinalizeGate(ctx, services, epochID), qt.IsNil)
 	auth, err := services.TxManager.NewTransactOpts(ctx)
 	c.Assert(err, qt.IsNil)
-	tx, err := services.Manager.FinalizeRound(auth, roundID,
+	tx, err := services.Manager.FinalizeEpoch(auth, epochID,
 		output.AggregateCommitmentsHash, output.CollectivePublicKeyHash, output.ShareCommitmentHash,
 		output.Transcript, output.Proof, output.Input,
 	)
@@ -289,12 +284,12 @@ func finalizeRoundMeasured(t *testing.T, ctx context.Context, roundID [12]byte, 
 	return receipt.GasUsed
 }
 
-func combineMeasured(t *testing.T, ctx context.Context, roundID [12]byte, output *helpers.DecryptCombineOutput) uint64 {
+func combineMeasured(t *testing.T, ctx context.Context, epochID [12]byte, output *helpers.DecryptCombineOutput) uint64 {
 	t.Helper()
 	c := qt.New(t)
 	auth, err := services.TxManager.NewTransactOpts(ctx)
 	c.Assert(err, qt.IsNil)
-	tx, err := services.Manager.CombineDecryption(auth, roundID, 1,
+	tx, err := services.Manager.CombineDecryption(auth, epochID, [32]byte{}, 1,
 		output.CombineHash, output.Plaintext,
 		output.Transcript, output.Proof, output.Input,
 	)

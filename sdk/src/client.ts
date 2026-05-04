@@ -4,24 +4,24 @@ import {
   type Address,
   type GetContractReturnType,
 } from 'viem';
-import { dkgManagerAbi, dkgRegistryAbi } from './abi.js';
+import { dkgManagerAbi, dkgRegistryAbi, dkgAppManagerAbi } from './abi.js';
 import {
-  type Round,
+  type Epoch,
   type ContributionRecord,
   type PartialDecryptionRecord,
   type CombinedDecryptionRecord,
-  type RevealedShareRecord,
   type NodeKey,
   type DKGConfig,
-  type RoundStatusValue,
-  type RoundEvent,
-  type RoundEntry,
+  type EpochPhaseValue,
+  type EpochEvent,
+  type EpochEntry,
 } from './types.js';
-import { buildRoundId } from './utils.js';
+import { buildEpochId } from './utils.js';
 import { fromRTEtoTE } from './crypto/babyjub-form.js';
 
 type ManagerContract = GetContractReturnType<typeof dkgManagerAbi, PublicClient>;
 type RegistryContract = GetContractReturnType<typeof dkgRegistryAbi, PublicClient>;
+type AppManagerContract = GetContractReturnType<typeof dkgAppManagerAbi, PublicClient>;
 
 /** Default chunk size for chunked getLogs (blocks per request). */
 const DEFAULT_LOG_CHUNK = 2000n;
@@ -118,6 +118,8 @@ export class DKGClient {
   private _manager: ManagerContract;
   private _registry: RegistryContract | null;
   private _resolvedRegistryAddress: Address | null;
+  private _appManager: AppManagerContract | null;
+  private _resolvedAppManagerAddress: Address | null;
 
   constructor(config: DKGConfig) {
     this.publicClient = config.publicClient;
@@ -139,6 +141,18 @@ export class DKGClient {
     } else {
       this._resolvedRegistryAddress = null;
       this._registry = null;
+    }
+
+    if (config.appManagerAddress) {
+      this._resolvedAppManagerAddress = config.appManagerAddress;
+      this._appManager = getContract({
+        address: config.appManagerAddress,
+        abi: dkgAppManagerAbi,
+        client: this.publicClient,
+      });
+    } else {
+      this._resolvedAppManagerAddress = null;
+      this._appManager = null;
     }
   }
 
@@ -173,44 +187,99 @@ export class DKGClient {
     return this._resolvedRegistryAddress!;
   }
 
-  // ── Round ID utilities ─────────────────────────────────────────────────────
+  /**
+   * The DKGAppManager address. Throws if not resolved yet — call
+   * `_getAppManagerAddress()` (async) when you don't already have it cached.
+   */
+  get appManagerAddress(): Address {
+    if (!this._resolvedAppManagerAddress) {
+      throw new Error('appManagerAddress not yet resolved; call an app-manager method first or provide it in config');
+    }
+    return this._resolvedAppManagerAddress;
+  }
+
+  /** Resolve and cache the app manager contract, fetching its address from the manager when needed. */
+  protected async _getAppManager(): Promise<AppManagerContract> {
+    if (this._appManager) return this._appManager;
+    const addr = (await this._manager.read.appManager()) as Address;
+    this._resolvedAppManagerAddress = addr;
+    this._appManager = getContract({
+      address: addr,
+      abi: dkgAppManagerAbi,
+      client: this.publicClient,
+    });
+    return this._appManager;
+  }
+
+  /** Resolve and return the app manager address, fetching from the manager when needed. */
+  protected async _getAppManagerAddress(): Promise<Address> {
+    if (this._resolvedAppManagerAddress) return this._resolvedAppManagerAddress;
+    await this._getAppManager();
+    return this._resolvedAppManagerAddress!;
+  }
+
+  // ── Epoch ID utilities ─────────────────────────────────────────────────────
 
   /**
-   * Fetch the current ROUND_PREFIX and roundNonce, then assemble a round ID.
-   * Call this after `createRound` is mined to derive the new round ID
+   * Fetch the current EPOCH_PREFIX and epochNonce, then assemble a epoch ID.
+   * Call this after `createEpoch` is mined to derive the new epoch ID
    * without needing the transaction receipt.
    *
-   * @param nonce  The nonce at round-creation time (roundNonce() before the tx)
+   * @param nonce  The nonce at epoch-creation time (epochNonce() before the tx)
    */
-  async buildRoundId(nonce: bigint): Promise<`0x${string}`> {
-    const prefix = await this._manager.read.ROUND_PREFIX();
-    return buildRoundId(prefix, nonce);
+  async buildEpochId(nonce: bigint): Promise<`0x${string}`> {
+    const prefix = await this._manager.read.EPOCH_PREFIX();
+    return buildEpochId(prefix, nonce);
   }
 
-  /** Current round nonce (incremented by each createRound call). */
-  async roundNonce(): Promise<bigint> {
-    return this._manager.read.roundNonce();
+  /** Current epoch nonce (incremented by each createEpoch call). */
+  async epochNonce(): Promise<bigint> {
+    return this._manager.read.epochNonce();
   }
 
-  // ── Round queries ──────────────────────────────────────────────────────────
-
-  /** Fetch full round state. */
-  async getRound(roundId: `0x${string}`): Promise<Round> {
-    const r = await this._manager.read.getRound([roundId as `0x${string}` & { length: 26 }]);
-    return r as unknown as Round;
+  /**
+   * The contract's compile-time epoch length in blocks. Set per-deploy via
+   * the constructor; read once and cache. Pair with
+   * {@link getNextEpochStartBlock} and a block-time estimate to render the
+   * "next epoch in" countdown in the UI.
+   */
+  async getEpochDurationBlocks(): Promise<bigint> {
+    return this._manager.read.epochDurationBlocks() as Promise<bigint>;
   }
 
-  /** Fetch the list of addresses that claimed a slot in this round. */
-  async selectedParticipants(roundId: `0x${string}`): Promise<Address[]> {
-    return this._manager.read.selectedParticipants([roundId as any]) as Promise<Address[]>;
+  /**
+   * Earliest block at which the next `createEpoch` call may succeed.
+   * Equals `lastEpochStartBlock + EPOCH_DURATION_BLOCKS`, or `block.number`
+   * before any epoch has been created.
+   */
+  async getNextEpochStartBlock(): Promise<bigint> {
+    return BigInt(await this._manager.read.nextEpochStartBlock() as bigint);
+  }
+
+  /** Block in which the most recent epoch was created. */
+  async getLastEpochStartBlock(): Promise<bigint> {
+    return BigInt(await this._manager.read.lastEpochStartBlock() as bigint);
+  }
+
+  // ── Epoch queries ──────────────────────────────────────────────────────────
+
+  /** Fetch full epoch state. */
+  async getEpoch(epochId: `0x${string}`): Promise<Epoch> {
+    const r = await this._manager.read.getEpoch([epochId as `0x${string}` & { length: 26 }]);
+    return r as unknown as Epoch;
+  }
+
+  /** Fetch the list of addresses that claimed a slot in this epoch. */
+  async selectedParticipants(epochId: `0x${string}`): Promise<Address[]> {
+    return this._manager.read.selectedParticipants([epochId as any]) as Promise<Address[]>;
   }
 
   /** Fetch the contribution record for a specific contributor. */
   async getContribution(
-    roundId: `0x${string}`,
+    epochId: `0x${string}`,
     contributor: Address,
   ): Promise<ContributionRecord> {
-    const r = await this._manager.read.getContribution([roundId as any, contributor]);
+    const r = await this._manager.read.getContribution([epochId as any, contributor]);
     return r as unknown as ContributionRecord;
   }
 
@@ -220,77 +289,102 @@ export class DKGClient {
    * RTE to TE for consistency with `getCollectivePublicKey`.
    */
   async getPartialDecryption(
-    roundId: `0x${string}`,
-    participant: Address,
+    epochId: `0x${string}`,
+    aid: `0x${string}`,
+    participantIndex: number,
     ciphertextIndex: number,
   ): Promise<PartialDecryptionRecord> {
     const r = await this._manager.read.getPartialDecryption([
-      roundId as any,
-      participant,
+      epochId as any,
+      aid as any,
+      participantIndex,
       ciphertextIndex,
     ]) as unknown as PartialDecryptionRecord;
-    const [dx, dy] = fromRTEtoTE(r.delta.x, r.delta.y);
-    return { ...r, delta: { x: dx, y: dy } };
+    return r;
+  }
+
+  /**
+   * Fetch the cached on-chain `Application` record for `(epochId, aid)`.
+   * Returns an `exists: false` record when the application has not been
+   * registered. Callers should check `record.exists` before reading
+   * `mode`-specific fields. The `organizerPK` curve point is converted
+   * from on-chain RTE to TE for consistency with `getCollectivePublicKey`.
+   */
+  async getApplication(
+    epochId: `0x${string}`,
+    aid: `0x${string}`,
+  ): Promise<import('./types.js').ApplicationRecord> {
+    const am = await this._getAppManager();
+    const r = (await am.read.getApplication([epochId as any, aid as any])) as any;
+    const [pkX, pkY] = fromRTEtoTE(BigInt(r.organizerPK.x), BigInt(r.organizerPK.y));
+    return {
+      creator: r.creator,
+      mode: Number(r.mode) as 0 | 1,
+      derivationS: BigInt(r.derivationS),
+      organizerPK: [pkX, pkY],
+      policy: {
+        authorizedSubmitter: r.policy.authorizedSubmitter,
+        maxCiphertexts: Number(r.policy.maxCiphertexts),
+        notBeforeBlock: BigInt(r.policy.notBeforeBlock),
+        notAfterBlock: BigInt(r.policy.notAfterBlock),
+      },
+      createdAtBlock: BigInt(r.createdAtBlock),
+      exists: Boolean(r.exists),
+    };
   }
 
   /** Fetch the combined decryption record for a ciphertext index. */
   async getCombinedDecryption(
-    roundId: `0x${string}`,
+    epochId: `0x${string}`,
+    aid: `0x${string}`,
     ciphertextIndex: number,
   ): Promise<CombinedDecryptionRecord> {
-    const r = await this._manager.read.getCombinedDecryption([roundId as any, ciphertextIndex]);
+    const r = await this._manager.read.getCombinedDecryption([epochId as any, aid as any, ciphertextIndex]);
     return r as unknown as CombinedDecryptionRecord;
   }
 
   /**
-   * Fetch the recovered plaintext for (roundId, ciphertextIndex). Returns 0n
+   * Fetch the recovered plaintext for (epochId, ciphertextIndex). Returns 0n
    * when the decryption has not been combined yet — consumers that need to
    * disambiguate "not combined" from "plaintext is literally zero" should also
    * check `getCombinedDecryption(...).completed`.
    */
   async getPlaintext(
-    roundId: `0x${string}`,
+    epochId: `0x${string}`,
+    aid: `0x${string}`,
     ciphertextIndex: number,
   ): Promise<bigint> {
-    return this._manager.read.getPlaintext([roundId as any, ciphertextIndex]) as Promise<bigint>;
+    return this._manager.read.getPlaintext([epochId as any, aid as any, ciphertextIndex]) as Promise<bigint>;
   }
 
   /**
    * keccak256(abi.encode(c1x, c1y, c2x, c2y)) for the ciphertext stored at
-   * (roundId, ciphertextIndex). Returns 0x00..00 when no ciphertext has been
+   * (epochId, ciphertextIndex). Returns 0x00..00 when no ciphertext has been
    * submitted at this slot. The raw coordinates are only in the
    * `CiphertextSubmitted` event log.
    */
   async getCiphertextHash(
-    roundId: `0x${string}`,
+    epochId: `0x${string}`,
+    aid: `0x${string}`,
     ciphertextIndex: number,
   ): Promise<`0x${string}`> {
-    return this._manager.read.getCiphertextHash([roundId as any, ciphertextIndex]);
+    return this._manager.read.getCiphertextHash([epochId as any, aid as any, ciphertextIndex]);
   }
 
-  /** Fetch the decryption policy set at round creation. */
+  /** Fetch the decryption policy set at epoch creation. */
   async getDecryptionPolicy(
-    roundId: `0x${string}`,
+    epochId: `0x${string}`,
   ): Promise<import('./types.js').DecryptionPolicy> {
-    const r = await this._manager.read.getDecryptionPolicy([roundId as any]);
+    const r = await this._manager.read.getDecryptionPolicy([epochId as any]);
     return r as unknown as import('./types.js').DecryptionPolicy;
-  }
-
-  /** Fetch the revealed share record for a participant. */
-  async getRevealedShare(
-    roundId: `0x${string}`,
-    participant: Address,
-  ): Promise<RevealedShareRecord> {
-    const r = await this._manager.read.getRevealedShare([roundId as any, participant]);
-    return r as unknown as RevealedShareRecord;
   }
 
   /** Fetch the share-commitment hash for a given participant index. */
   async getShareCommitmentHash(
-    roundId: `0x${string}`,
+    epochId: `0x${string}`,
     participantIndex: number,
   ): Promise<`0x${string}`> {
-    return this._manager.read.getShareCommitmentHash([roundId as any, participantIndex]);
+    return this._manager.read.getShareCommitmentHash([epochId as any, participantIndex]);
   }
 
   // ── Verifier key hashes ────────────────────────────────────────────────────
@@ -309,14 +403,6 @@ export class DKGClient {
 
   async getDecryptCombineVerifierVKeyHash(): Promise<`0x${string}`> {
     return this._manager.read.getDecryptCombineVerifierVKeyHash();
-  }
-
-  async getRevealSubmitVerifierVKeyHash(): Promise<`0x${string}`> {
-    return this._manager.read.getRevealSubmitVerifierVKeyHash();
-  }
-
-  async getRevealShareVerifierVKeyHash(): Promise<`0x${string}`> {
-    return this._manager.read.getRevealShareVerifierVKeyHash();
   }
 
   // ── Registry queries ───────────────────────────────────────────────────────
@@ -362,16 +448,17 @@ export class DKGClient {
   // ── Event queries ──────────────────────────────────────────────────────────
 
   /**
-   * Fetch RoundCreated events in the given block range.
+   * Fetch EpochCreated events in the given block range.
    * Returns up to `count` most-recent events when `fromBlock` is omitted.
    */
-  async getRoundCreatedEvents(options?: {
+  async getEpochCreatedEvents(options?: {
     fromBlock?: bigint;
     toBlock?: bigint;
   }): Promise<
     Array<{
-      roundId: `0x${string}`;
+      epochId: `0x${string}`;
       organizer: Address;
+      startBlock: bigint;
       seedBlock: bigint;
       lotteryThreshold: bigint;
       blockNumber: bigint;
@@ -383,10 +470,11 @@ export class DKGClient {
         address: this.managerAddress,
         event: {
           type: 'event',
-          name: 'RoundCreated',
+          name: 'EpochCreated',
           inputs: [
-            { name: 'roundId', type: 'bytes12', indexed: true },
+            { name: 'epochId', type: 'bytes12', indexed: true },
             { name: 'organizer', type: 'address', indexed: true },
+            { name: 'startBlock', type: 'uint64', indexed: false },
             { name: 'seedBlock', type: 'uint64', indexed: false },
             { name: 'lotteryThreshold', type: 'uint256', indexed: false },
           ],
@@ -397,8 +485,9 @@ export class DKGClient {
       { fallbackWindow: 50_000n },
     );
     return logs.map((l) => ({
-      roundId: (l.args as any).roundId as `0x${string}`,
+      epochId: (l.args as any).epochId as `0x${string}`,
       organizer: (l.args as any).organizer as Address,
+      startBlock: BigInt((l.args as any).startBlock ?? 0),
       seedBlock: BigInt((l.args as any).seedBlock ?? 0),
       lotteryThreshold: BigInt((l.args as any).lotteryThreshold ?? 0),
       blockNumber: l.blockNumber ?? 0n,
@@ -406,9 +495,9 @@ export class DKGClient {
   }
 
   /**
-   * Fetch all RoundFinalized events for a specific round.
+   * Fetch all EpochFinalized events for a specific epoch.
    */
-  async getRoundFinalizedEvents(roundId: `0x${string}`): Promise<
+  async getEpochFinalizedEvents(epochId: `0x${string}`): Promise<
     Array<{
       aggregateCommitmentsHash: `0x${string}`;
       collectivePublicKeyHash: `0x${string}`;
@@ -423,15 +512,15 @@ export class DKGClient {
         address: this.managerAddress,
         event: {
           type: 'event',
-          name: 'RoundFinalized',
+          name: 'EpochFinalized',
           inputs: [
-            { name: 'roundId', type: 'bytes12', indexed: true },
+            { name: 'epochId', type: 'bytes12', indexed: true },
             { name: 'aggregateCommitmentsHash', type: 'bytes32', indexed: false },
             { name: 'collectivePublicKeyHash', type: 'bytes32', indexed: false },
             { name: 'shareCommitmentHash', type: 'bytes32', indexed: false },
           ],
         } as const,
-        args: { roundId: roundId as any },
+        args: { epochId: epochId as any },
         fromBlock: 0n,
         toBlock: 'latest',
       },
@@ -447,12 +536,12 @@ export class DKGClient {
   }
 
   /**
-   * Fetch all CiphertextSubmitted events for a specific round. Each entry
+   * Fetch all CiphertextSubmitted events for a specific epoch. Each entry
    * carries the raw (C1, C2) coordinates; nodes and consumers need these to
    * perform threshold decryption since the contract only stores a keccak hash.
    */
   async getCiphertextSubmittedEvents(
-    roundId: `0x${string}`,
+    epochId: `0x${string}`,
     opts?: { ciphertextIndex?: number },
   ): Promise<
     Array<{
@@ -464,7 +553,7 @@ export class DKGClient {
       transactionHash: `0x${string}` | null;
     }>
   > {
-    const args: Record<string, unknown> = { roundId: roundId as any };
+    const args: Record<string, unknown> = { epochId: epochId as any };
     if (opts?.ciphertextIndex != null) args.ciphertextIndex = opts.ciphertextIndex;
     const logs = await getLogsChunked(
       this.publicClient,
@@ -474,7 +563,7 @@ export class DKGClient {
           type: 'event',
           name: 'CiphertextSubmitted',
           inputs: [
-            { name: 'roundId', type: 'bytes12', indexed: true },
+            { name: 'epochId', type: 'bytes12', indexed: true },
             { name: 'ciphertextIndex', type: 'uint16', indexed: true },
             { name: 'submitter', type: 'address', indexed: true },
             { name: 'c1x', type: 'uint256', indexed: false },
@@ -503,11 +592,11 @@ export class DKGClient {
   }
 
   /**
-   * Fetch all DecryptionCombined events for a specific round (optionally
+   * Fetch all DecryptionCombined events for a specific epoch (optionally
    * filtered by `ciphertextIndex`). Each entry contains the plaintext scalar.
    */
   async getDecryptionCombinedEvents(
-    roundId: `0x${string}`,
+    epochId: `0x${string}`,
     opts?: { ciphertextIndex?: number },
   ): Promise<
     Array<{
@@ -518,7 +607,7 @@ export class DKGClient {
       transactionHash: `0x${string}` | null;
     }>
   > {
-    const args: Record<string, unknown> = { roundId: roundId as any };
+    const args: Record<string, unknown> = { epochId: epochId as any };
     if (opts?.ciphertextIndex != null) args.ciphertextIndex = opts.ciphertextIndex;
     const logs = await getLogsChunked(
       this.publicClient,
@@ -528,7 +617,7 @@ export class DKGClient {
           type: 'event',
           name: 'DecryptionCombined',
           inputs: [
-            { name: 'roundId', type: 'bytes12', indexed: true },
+            { name: 'epochId', type: 'bytes12', indexed: true },
             { name: 'ciphertextIndex', type: 'uint16', indexed: true },
             { name: 'combineHash', type: 'bytes32', indexed: false },
             { name: 'plaintext', type: 'uint256', indexed: false },
@@ -553,11 +642,11 @@ export class DKGClient {
   }
 
   /**
-   * Returns the collective public key accumulated on-chain for the given round.
+   * Returns the collective public key accumulated on-chain for the given epoch.
    *
    * The contract accumulates this key as contributions are submitted — each
    * accepted contributor's commitment[0] point (a_{i,0}·G) is added to a
-   * running sum.  Once the round is finalized the value equals the full
+   * running sum.  Once the epoch is finalized the value equals the full
    * collective public key.  The key is available as soon as the first
    * contribution is accepted.
    *
@@ -566,9 +655,9 @@ export class DKGClient {
    *
    * IMPORTANT: do NOT encrypt and call `submitCiphertext` with the value
    * returned during the Contribution phase. The contract's `submitCiphertext`
-   * requires `RoundStatus.Finalized` and will revert otherwise. Either:
+   * requires `EpochPhase.Finalized` and will revert otherwise. Either:
    *   - use `flow.ts:waitForCollectivePublicKeyHash` then read this getter, or
-   *   - check `getRound(roundId).status === RoundStatus.Finalized` first.
+   *   - check `getEpoch(epochId).status === EpochPhase.Finalized` first.
    * Pre-finalize reads of this value are intended for monitoring/observation
    * (e.g. displaying the in-progress accumulator), not for producing
    * ciphertexts that will actually be sent on-chain.
@@ -581,13 +670,13 @@ export class DKGClient {
    * formula (vendored from davinci-sdk for wire compatibility).
    */
   async getCollectivePublicKey(
-    roundId: `0x${string}`,
+    epochId: `0x${string}`,
   ): Promise<{ x: bigint; y: bigint }> {
     const result = await this.publicClient.readContract({
       address: this.managerAddress,
       abi: dkgManagerAbi,
       functionName: 'getCollectivePublicKey',
-      args: [roundId as any],
+      args: [epochId as any],
     }) as { x: bigint; y: bigint };
     // Identity (0, 1) is the same in both forms — no-op conversion is safe.
     const [x, y] = fromRTEtoTE(result.x, result.y);
@@ -600,10 +689,10 @@ export class DKGClient {
    * getter which accumulates the key as contributions are submitted.
    */
   async getCollectivePublicKeyFromContributions(
-    roundId: `0x${string}`,
+    epochId: `0x${string}`,
     _participants?: Address[],
   ): Promise<{ x: bigint; y: bigint }> {
-    return this.getCollectivePublicKey(roundId);
+    return this.getCollectivePublicKey(epochId);
   }
 
   /**
@@ -634,9 +723,9 @@ export class DKGClient {
 
   // ── Extended queries ───────────────────────────────────────────────────────
 
-  /** Fetch the ROUND_PREFIX constant. Cached cheaply because it is immutable. */
+  /** Fetch the EPOCH_PREFIX constant. Cached cheaply because it is immutable. */
   async roundPrefix(): Promise<number> {
-    return this._manager.read.ROUND_PREFIX();
+    return this._manager.read.EPOCH_PREFIX();
   }
 
   /**
@@ -690,12 +779,12 @@ export class DKGClient {
   }
 
   /**
-   * Fetch all DKGManager events that reference a specific round.
+   * Fetch all DKGManager events that reference a specific epoch.
    *
    * Events are returned in block order (ascending).  The caller can filter
    * by `eventName` to isolate e.g. only `ContributionSubmitted` events.
    */
-  async getAllRoundEvents(roundId: `0x${string}`, fromBlock = 0n): Promise<RoundEvent[]> {
+  async getAllEpochEvents(epochId: `0x${string}`, fromBlock = 0n): Promise<EpochEvent[]> {
     const latest = await this.publicClient.getBlockNumber();
     let start = fromBlock;
     // Apply fallback window when fromBlock is unknown (0).
@@ -727,7 +816,7 @@ export class DKGClient {
     }
     const logs = allLogs;
     return logs
-      .filter((l) => 'args' in l && (l.args as any).roundId === roundId)
+      .filter((l) => 'args' in l && (l.args as any).epochId === epochId)
       .map((l) => ({
         eventName: (l as any).eventName as string,
         args: (l.args ?? {}) as Record<string, unknown>,
@@ -737,16 +826,16 @@ export class DKGClient {
   }
 
   /**
-   * Fetch the most recent `limit` rounds in descending nonce order.
+   * Fetch the most recent `limit` epochs in descending nonce order.
    *
-   * Rounds with status 0 (None) are omitted — they indicate an evicted slot
+   * Epochs with status 0 (None) are omitted — they indicate an evicted slot
    * in the ring buffer.
    *
-   * @param limit  Maximum number of rounds to return (default: 20)
+   * @param limit  Maximum number of epochs to return (default: 20)
    */
-  async getRecentRounds(limit = 20): Promise<RoundEntry[]> {
+  async getRecentEpochs(limit = 20): Promise<EpochEntry[]> {
     const [nonce, prefix] = await Promise.all([
-      this.roundNonce(),
+      this.epochNonce(),
       this.roundPrefix(),
     ]);
     if (nonce === 0n) return [];
@@ -756,23 +845,28 @@ export class DKGClient {
 
     const ids: `0x${string}`[] = [];
     for (let i = nonce; i >= minNonce && ids.length < limit; i--) {
-      ids.push(buildRoundId(prefix, i));
+      ids.push(buildEpochId(prefix, i));
       if (i === 1n) break;
     }
 
     const entries = await Promise.all(
       ids.map(async (id) => {
         try {
-          const round = await this.getRound(id);
-          return { id, round };
+          const epoch = await this.getEpoch(id);
+          return { id, epoch };
         } catch {
           return null;
         }
       }),
     );
     return entries.filter(
-      (e): e is RoundEntry => e !== null && Number(e.round.status) !== 0,
+      (e): e is EpochEntry => e !== null && Number(e.epoch.status) !== 0,
     );
+  }
+
+  /** @deprecated Use {@link getRecentEpochs}. Kept for SDK 0.1.x compatibility. */
+  async getRecentRounds(limit = 20): Promise<EpochEntry[]> {
+    return this.getRecentEpochs(limit);
   }
 
   // ── Internal access for DKGWriter ──────────────────────────────────────────

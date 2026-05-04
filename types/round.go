@@ -2,61 +2,63 @@ package types
 
 import "fmt"
 
-// RoundPhase identifies the current lifecycle phase of a DKG round.
-type RoundPhase uint8
+// EpochPhase identifies the current lifecycle phase of a DKG epoch.
+type EpochPhase uint8
 
 const (
-	RoundPhaseUnknown RoundPhase = iota
-	RoundPhaseRegistration
-	RoundPhaseContribution
-	RoundPhaseFinalized
-	RoundPhaseDecryption
-	RoundPhaseDisclosure
-	RoundPhaseAborted
-	RoundPhaseCompleted
+	EpochPhaseUnknown EpochPhase = iota
+	EpochPhaseRegistration
+	EpochPhaseContribution
+	EpochPhaseFinalized
+	EpochPhaseDecryption
+	EpochPhaseAborted
+	EpochPhaseCompleted
 )
 
-func (p RoundPhase) String() string {
+func (p EpochPhase) String() string {
 	switch p {
-	case RoundPhaseRegistration:
+	case EpochPhaseRegistration:
 		return "registration"
-	case RoundPhaseContribution:
+	case EpochPhaseContribution:
 		return "contribution"
-	case RoundPhaseFinalized:
+	case EpochPhaseFinalized:
 		return "finalized"
-	case RoundPhaseDecryption:
+	case EpochPhaseDecryption:
 		return "decryption"
-	case RoundPhaseDisclosure:
-		return "disclosure"
-	case RoundPhaseAborted:
+	case EpochPhaseAborted:
 		return "aborted"
-	case RoundPhaseCompleted:
+	case EpochPhaseCompleted:
 		return "completed"
 	default:
 		return "unknown"
 	}
 }
 
-// RoundPolicy configures the thresholds and phase windows for one DKG round.
-type RoundPolicy struct {
+// EpochPolicy configures the thresholds and decryption-window settings for
+// one DKG epoch. Phase deadline blocks are derived on-chain from the
+// contract's immutable EPOCH_DURATION_BLOCKS plus the per-phase BPS
+// constants in `solidity/src/libraries/Sizes.sol`, so callers no longer
+// supply them: the policy struct here matches the new createEpoch ABI.
+//
+// The deadline-block fields below remain on the struct because the on-chain
+// EpochPolicy struct still surfaces them (for downstream phase-check reads
+// — they are populated by createEpoch from the immutable offsets). Callers
+// constructing a fresh policy for createEpoch may leave them zero; helpers
+// fill the per-phase blocks from the on-chain `getEpoch` view after
+// creation.
+type EpochPolicy struct {
 	Threshold                 uint16
 	CommitteeSize             uint16
 	MinValidContributions     uint16
 	LotteryAlphaBps           uint16
-	SeedDelay                 uint16
 	RegistrationDeadlineBlock uint64
 	ContributionDeadlineBlock uint64
-	// FinalizeNotBeforeBlock is the earliest block at which finalizeRound can
-	// succeed. Must be strictly greater than ContributionDeadlineBlock; allows
-	// every selected participant time to submit before the contribution set is
-	// frozen.
-	FinalizeNotBeforeBlock uint64
-	DisclosureAllowed      bool
-	DecryptionPolicy       DecryptionPolicy
+	FinalizeNotBeforeBlock    uint64
+	DecryptionPolicy          DecryptionPolicy
 }
 
 // DecryptionPolicy mirrors the on-chain DKGTypes.DecryptionPolicy struct and
-// gates who may call submitCiphertext for a round. All checks AND together;
+// gates who may call submitCiphertext for a epoch. All checks AND together;
 // a zero-valued field is a no-op for that check.
 type DecryptionPolicy struct {
 	OwnerOnly          bool
@@ -68,7 +70,7 @@ type DecryptionPolicy struct {
 }
 
 // Validate checks that the policy is internally coherent.
-func (p RoundPolicy) Validate() error {
+func (p EpochPolicy) Validate() error {
 	if p.Threshold == 0 || p.CommitteeSize == 0 {
 		return fmt.Errorf("threshold and committee size must be non-zero")
 	}
@@ -81,17 +83,10 @@ func (p RoundPolicy) Validate() error {
 	if p.LotteryAlphaBps < 10000 {
 		return fmt.Errorf("lottery alpha must be at least 1.0 (10000 bps)")
 	}
-	if p.SeedDelay == 0 || p.SeedDelay > 256 {
-		return fmt.Errorf("seed delay must be in (0, 256]")
-	}
-	if p.RegistrationDeadlineBlock == 0 || p.ContributionDeadlineBlock == 0 {
-		return fmt.Errorf("deadline blocks must be non-zero")
-	}
-	if p.ContributionDeadlineBlock <= p.RegistrationDeadlineBlock {
-		return fmt.Errorf("contribution deadline must be after registration deadline")
-	}
-	if p.FinalizeNotBeforeBlock <= p.ContributionDeadlineBlock {
-		return fmt.Errorf("finalize-not-before block must be after contribution deadline")
-	}
+	// Phase deadlines are derived on-chain — no client-side validation beyond
+	// the threshold/committee-size invariants above. (Pre-refactor versions of
+	// this struct also validated SeedDelay / RegistrationDeadlineBlock /
+	// ContributionDeadlineBlock / FinalizeNotBeforeBlock; those fields are
+	// now populated by the contract from EPOCH_DURATION_BLOCKS.)
 	return nil
 }

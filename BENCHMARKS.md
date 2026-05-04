@@ -1,167 +1,245 @@
 # DAVINCI DKG — Benchmarks
 
-Two compile-time builds are compared:
+Reference figures for the production **MaxN = 32** build, with side-by-side
+comparison columns for **MaxN = 16** and **MaxN = 48** so operators can size
+proving infrastructure for alternative committee bounds. The four Groth16
+circuits are: Contribution, Finalize, PartialDecrypt, DecryptCombine.
 
-- **MaxN = 32** — committees up to 32 participants per round.
-- **MaxN = 16** — committees up to 16 participants per round (current default).
+Constraint counts come from `<circuit>.Compile()` + `ccs.GetNbConstraints()`.
+Proving / verifying times are wall-clock per single proof on the full host
+CPU (gnark parallelises internally over all logical cores), measured on
+**Intel Core i9-14900K (32 logical cores) with 64 GiB RAM**. Gas figures
+are from `forge test --gas-report` against the local Anvil backend running
+the production Solidity contracts with mock verifiers
+(`MockContributionVerifier` etc.) — proof verification itself adds a
+constant ~280 k of pairing-check gas to the Groth16-bound write paths,
+which the production deployment includes.
 
-Tested on AMD Ryzen 7 7840U with 64 GiB RAM.
-
----
-
-## Circuit Constraint Counts
-
-| Circuit | MaxN = 32 | MaxN = 16 | Δ | Scaling |
-|---|---|---|---|---|
-| Contribution    | 2,835,328 | 802,476 | **−71.7%** | O(N²) |
-| Finalize        | 2,490,861 | 625,522 | **−74.9%** | O(N²) |
-| DecryptCombine  |    84,314 |  43,635 | −48.3%     | O(N)  |
-| RevealShare     |     3,342 |   1,904 | −43.0%     | O(N)  |
-| PartialDecrypt  |    20,361 |  20,361 | —          | O(1)  |
-| RevealSubmit    |     2,346 |   2,346 | —          | O(1)  |
-| **Total**       | **5,436,552** | **1,496,244** | **−72.5%** | |
-
----
-
-## Proof Generation Time
-
-Wall-clock per proof on a single CPU (`gnark` Groth16 BN254, no GPU). Per-node
-proving time is constant in actual `n` for a given build — the circuit pays its
-full compile-time size regardless of how many slots are used.
-
-| Circuit | MaxN = 32 | MaxN = 16 |
-|---|---|---|
-| Contribution (per node) | ~3.4 s  | ~0.9 s  |
-| Finalize                | ~1.5 s  | ~0.4 s  |
-| DecryptCombine          | ~100 ms | ~70 ms  |
-| RevealShare             | ~10 ms  | ~5 ms   |
-| PartialDecrypt          | ~60 ms  | ~60 ms  |
-| RevealSubmit            | ~30 ms  | ~30 ms  |
-
-For a full house at n=16: total proving wall-clock drops from ~109 s
-(32 × 3.4 s + 1.5 s) at MaxN=32 to ~14 s (16 × 0.9 s + 0.4 s) at MaxN=16 —
-**~8× faster end-to-end** when the committee fits.
+> **Caveat — single-party local trusted setup.** All proving / verifying
+> figures use a single-party Groth16 setup. A multi-party trusted-setup
+> ceremony will produce fresh pk/vk values; the *constraint counts and
+> call-shape gas costs* are unchanged by the ceremony, but the verifier
+> contract bytecode may shift by a few hundred bytes worth of vkey
+> constants.
 
 ---
 
-## Gas Costs by Committee Size
+## Circuit constraint counts
 
-Measured on local Anvil (block gas limit 30M, 2-second blocks, EIP-1559) with
-the lottery-based committee selection. Each row is one complete DKG +
-threshold decryption run.
+| Circuit         |  MaxN = 16  |   MaxN = 32 |   MaxN = 48 |
+|-----------------|------------:|------------:|------------:|
+| Contribution    |     352,338 |   1,430,852 |   3,978,119 |
+| Finalize        |     143,288 |   1,021,651 |   3,377,949 |
+| PartialDecrypt  |      20,717 |      20,717 |      20,717 |
+| DecryptCombine  |      47,491 |      88,170 |     128,844 |
+| **Total**       | **563,834** | **2,561,390** | **7,505,629** |
 
-Two new constant-cost calls and one change since the last benchmark:
+The dominant cost in Contribution and Finalize is `CommitmentPolynomialValue`,
+which evaluates `Σ_k commitments[k] · x^k` for each recipient (or participant)
+index `x ≤ MaxN`. The implementation specialises this to a 2-bit-windowed
+left-to-right double-and-add over `api.ToBinary(scalar, nbBits)` with a
+caller-supplied bit width, so the per-iteration scalar mul shrinks from a
+~252-bit BabyJubJub field op (`scalarMulFakeGLV`) to roughly
+`14 · (xMaxBits · k + 1)` constraints. The `k = 0` (`power = 1`) case is
+special-cased to a direct point add. Range-check on the recipient /
+participant index makes the bit-width bound sound — an oversized scalar
+fails the proof rather than silently truncating.
 
-- **`submitCiphertext` ≈ 65,800 gas** (independent of `n`). Includes the
-  on-curve + canonical-coord check on `(c1, c2)` (~2k gas), one cold SSTORE
-  of `keccak256(c1, c2)` (22.1k), increment of `ciphertextCount`, and a
-  7-topic event. Measured 65,820 at n=4 and 65,784 at n=32 — the small
-  delta is storage-slot warmth noise.
-- **`createRound` ≈ 205 k** (was ~194 k). The `DecryptionPolicy` struct
-  occupies 2 extra SSTOREs on the round creation (≈ 9k gas); this is a
-  one-time per-round cost, independent of committee size.
-- **`combineDecryption` +25 k gas flat** across all `n`. Cost split:
-  ~22 k for the cold SSTORE of the recovered plaintext into
-  `CombinedDecryptionRecord.plaintext` (new — previously only `completed`
-  was stored), plus ~3 k for the `SLOAD` of the stored ciphertext hash and
-  `keccak256` over the transcript's first 128 bytes that binds the combine
-  proof to the submitted ciphertext.
+The empirical scaling roughly tracks O(N²) for Contribution and Finalize
+(constraint count grows ~4× from N=16→32 and ~2.8× from N=32→48), is flat
+in N for PartialDecrypt (per-share, not per-committee), and roughly linear
+in N for DecryptCombine (qualifying-set Lagrange).
 
-### MaxN = 16
+---
 
-| n | t | submitContribution | finalizeRound | submitPartialDecryption | combineDecryption |
-|---|---|---|---|---|---|
-| 4  | 3  | 454,701 |   610,016 | 427,826 | 358,595 |
-| 8  | 6  | 464,469 |   774,651 | 427,802 | 395,672 |
-| 12 | 8  | 473,625 |   947,599 | 427,826 | 420,426 |
-| 16 | 11 | 483,525 | 1,145,456 | 427,814 | 457,539 |
+## Proof generation time (full host, all cores)
 
-*(MaxN=16 numbers are pre-submitCiphertext; add ~66k for the new
-`submitCiphertext` call and ~+25k to `combineDecryption` for the plaintext
-persistence to compute current totals. The ring is expected to shift by the
-same constants as MaxN=32 below.)*
+Wall-clock per single proof, with gnark parallelising internally over all
+32 logical cores of the i9-14900K. The numbers include the gnark
+constraint-system solver (witness solving) **and** the Groth16 prover, but
+not the per-process pk/vk load (~hundreds of ms, amortised across many
+proofs in the production node). Each cell is `time` from
+`go test -bench='^BenchmarkProve$' -benchtime=3x`.
 
-### MaxN = 32
+| Circuit         |  MaxN = 16 |  MaxN = 32 |  MaxN = 48 |
+|-----------------|-----------:|-----------:|-----------:|
+| Contribution    |     285 ms |   1.010 s  |   2.027 s  |
+| Finalize        |     181 ms |     598 ms |   1.935 s  |
+| PartialDecrypt  |      53 ms |      50 ms |      52 ms |
+| DecryptCombine  |      76 ms |     101 ms |     128 ms |
 
-| n | t | submitContribution | finalizeRound | submitPartialDecryption | **submitCiphertext** | combineDecryption |
-|---|---|---|---|---|---|---|
-| 4  | 3  | 491,260 | 1,062,412 | 427,832 | 65,820 | 400,112 |
-| 16 | 11 | 520,100 | 1,604,296 | 427,880 | 65,820 | 499,032 |
-| 32 | 22 | 558,896 | 2,563,850 | 427,820 | 65,784 | 635,077 |
+Contribution and Finalize are the only N-scaling circuits at the proving
+level, mirroring the constraint scaling above. PartialDecrypt is per-share
+work and is essentially constant; DecryptCombine grows linearly in N.
 
-`createRound` was 204,835 gas in all three runs (independent of `n`).
+For a `n = 16` epoch on hardware comparable to the i9-14900K with all
+nodes proving in parallel on separate hosts, the proving critical path is
+one Contribution proof (~1.0 s) + one Finalize proof (~0.6 s) ≈ **1.6 s
+of wall-clock proving** at MaxN = 32. Serialised on a single host the
+total is `n × 1.0 s + 0.6 s ≈ 16.6 s`. At MaxN = 48 the same critical
+path is ~4.0 s parallelised, ~32.4 s serialised.
 
-Rows at n=8, 12, 20, 24, 28 were not re-measured in this pass; they shift
-uniformly from the pre-change table above by **+25,430 gas in
-`combineDecryption`** and **+65,800 gas for the new `submitCiphertext`
-call**. `submitContribution` / `finalizeRound` / `submitPartialDecryption`
-shift by <0.1% (measurement noise).
+---
 
-### Side-by-side at the sizes both builds support (n = 4, 8, 12, 16)
+## Gas costs (Cancun fork)
 
-| n  | Call | MaxN=32 | MaxN=16 | Δ |
-|---|---|---|---|---|
-| 4  | submitContribution | 491,224   |   454,701 | −7.4%      |
-| 4  | finalizeRound      | 1,062,448 |   610,016 | **−42.6%** |
-| 4  | combineDecryption  | 374,675   |   358,595 | −4.3%      |
-| 8  | submitContribution | 501,028   |   464,469 | −7.3%      |
-| 8  | finalizeRound      | 1,228,943 |   774,651 | **−37.0%** |
-| 8  | combineDecryption  | 411,788   |   395,672 | −4.1%      |
-| 12 | submitContribution | 510,148   |   473,625 | −7.2%      |
-| 12 | finalizeRound      | 1,404,019 |   947,599 | **−32.5%** |
-| 12 | combineDecryption  | 436,518   |   420,426 | −3.7%      |
-| 16 | submitContribution | 520,000   |   483,525 | **−7.0%**  |
-| 16 | finalizeRound      | 1,604,080 | 1,145,456 | **−28.6%** |
-| 16 | combineDecryption  | 473,607   |   457,539 | −3.4%      |
+Median values from `forge test --gas-report`. The min often reflects revert
+paths and the max sometimes includes a cold-storage boundary; the median is
+the production-relevant number.
 
-`submitPartialDecryption` is essentially identical between builds (~425–427 k);
-its dominant cost is the Groth16 verifier base which doesn't scale with N.
+> **Contract layout.** `DKGManager` and `DKGAppManager` are deployed as a
+> sibling pair to fit the EIP-170 24,576-byte contract-size limit. The
+> per-application surface (`registerApplication`, `registerApplicationCoDec`,
+> `submitOrganizerShare`, `getApplication`) lives on `DKGAppManager` and is
+> wired one-shot via `DKGManager.setAppManager()`. The two contracts share
+> the same epoch storage through the manager, but bill gas independently.
 
-### Setup overhead (createRound + n × claimSlot)
+### DKGManager / DKGAppManager — write paths (median gas, three N values)
 
-`createRound` ≈ 144–196 k in both builds (varies by round nonce / storage state).
-`claimSlot` ≈ 122–137 k average per node (first claimer pays the seed-resolve,
-last claimer pays the committee snapshot). Setup overhead scales linearly with `n`
-and is essentially identical between the two builds — none of it depends on MaxN.
+| Function                              | MaxN = 16 | MaxN = 32 | MaxN = 48 |
+|---------------------------------------|----------:|----------:|----------:|
+| `createEpoch`                         |   223,800 |   223,800 |   223,800 |
+| `claimSlot`                           |   154,083 |   159,184 |   159,184 |
+| `submitContribution`                  |   175,605 |   212,116 |   248,679 |
+| `finalizeEpoch`                       |   303,569 |   745,957 | 1,467,876 |
+| `submitCiphertext`                    |    65,905 |    65,905 |    65,905 |
+| `submitPartialDecryption`             |    97,939 |    97,939 |    97,939 |
+| `combineDecryption`                   |    80,656 |    91,960 |   103,264 |
+| `registerApplication` (mode 0)        |    53,481 |    53,481 |    53,481 |
+| `registerApplicationCoDec` (mode 1)   |    53,406 |    53,406 |    53,406 |
+| `abortEpoch`                          |    28,115 |    28,115 |    28,115 |
 
-### Whole-round totals at n = 16 (MaxN = 32)
+The N-dependent write paths are:
 
-Post-change measured figures:
+* `finalizeEpoch` — O(N²) transcript verification, the dominant scaling
+  cost on chain. ~5× from N=16 to N=48.
+* `submitContribution` — linear in N via per-recipient calldata + storage.
+  ~1.4× from N=16 to N=48.
+* `combineDecryption` — linear in N via the Lagrange qualifying-set loop.
+  ~1.3× from N=16 to N=48.
+* `claimSlot` — marginally N-dependent (~3% spread N=16 vs N=32).
 
-| Phase | Gas |
-|---|---|
-| createRound                  |    204,835 |
-| 16× claimSlot                |  1,905,000 (≈118k avg × 16) |
-| 16× submitContribution       |  8,321,600 (520,100 × 16) |
-| 1×  finalizeRound            |  1,604,296 |
-| 1×  submitCiphertext         |     65,820 |
-| 11× submitPartialDecryption  |  4,706,680 (427,880 × 11) |
-| 1×  combineDecryption        |    499,032 |
-| **Round total at n=16**      | **17,307,263** |
+Everything else (registry, ciphertext submission, partial decryption,
+application registration, lifecycle controls) is constant in N at the EVM
+level. Min/max columns match closely across all three N values; we report
+medians here for compactness — the per-N raw output from
+`forge test --gas-report` is regenerable in seconds via the procedure in
+the "How to reproduce" section below.
 
-### Whole-round totals at n = 32 (MaxN = 32)
+**Methodology.** A single file-level constant `MAX_N` lives in
+`solidity/src/libraries/Sizes.sol` and is imported by both `DKGManager.sol`
+and `test/TestHelpers.t.sol`, so switching N for a gas sweep is a
+one-line edit + `forge test --gas-report`. All 114 Foundry tests pass at
+each of N = 16, 32, 48.
 
-| Phase | Gas |
-|---|---|
-| createRound                  |    204,835 |
-| 32× claimSlot                |  3,776,000 (≈118k avg × 32) |
-| 32× submitContribution       | 17,884,672 (558,896 × 32) |
-| 1×  finalizeRound            |  2,563,850 |
-| 1×  submitCiphertext         |     65,784 |
-| 22× submitPartialDecryption  |  9,412,040 (427,820 × 22) |
-| 1×  combineDecryption        |    635,077 |
-| **Round total at n=32**      | **34,542,258** |
+`registerApplication`, `registerApplicationCoDec` (and the read-side
+`getApplication`) live on `DKGAppManager`; everything else above is
+`DKGManager`. Both contracts share the same Foundry gas-report run.
 
-Net effect vs. previous (pre-DecryptionPolicy / pre-submitCiphertext) build:
-n=16 +98 k (+0.6%), n=32 +104 k (+0.3%). The increase is dominated by the
-new `submitCiphertext` call and the on-chain plaintext persistence, both of
-which are constants independent of `n`. Per-node per-phase costs are
-unchanged.
+### DKGRegistry — write paths
 
-The largest absolute saving comes from `finalizeRound` (−28.6%), driven by
-the smaller calldata transcript and the smaller per-contributor digest input.
-The contribution savings are smaller than before because the BabyJubJub point
-accumulation overhead now dominates the calldata savings at small n.
+| Function           |    Min |       Median |          Max |
+|--------------------|-------:|-------------:|-------------:|
+| `registerKey`      | 23,513 |  **1,269,784** |  1,278,511 |
+| `updateKey`        | 27,693 |  **1,165,147** |  1,180,691 |
+| `markActive`       | 23,874 |       25,063 |     30,959 |
+| `heartbeat`        | 23,484 |       25,772 |     28,061 |
+| `reactivate`       | 23,719 |       35,036 |     35,036 |
+| `reap`             | 23,895 |       34,053 |     34,053 |
+
+`registerKey` and `updateKey` carry the on-chain Schnorr proof of knowledge
+that the caller controls the secret behind the published BabyJubJub public
+key (paper §5.1.1). The Fiat-Shamir challenge is now `c = keccak256(domain ‖
+… ‖ PK ‖ A) mod L` — the legacy `PoseidonT5` / `PoseidonT6` helper
+contracts (which exceeded EIP-170 anyway) are no longer deployed. After the
+keccak swap the dominant cost is the in-EVM BabyJubJub double scalar
+multiplication that verifies `z·G == A + c·PK`. The verifier uses a width-2
+windowed Strauss–Shamir double-and-add over the basis `(G, -PK)` with
+multiples of `G` precomputed as Solidity constants, so the per-window cost
+is two doublings plus at most one conditional add against a 16-entry
+`i·G + j·(-PK)` lookup table. Twisted-Edwards `pointAdd` uses the
+single-inverse trick: both denominators are inverted via one `bigModExp`
+precompile call instead of two. Paid exactly once per node-key lifecycle
+event.
+
+`submitCiphertext` enforces only the cheap membership checks on each
+ciphertext point: canonical encoding (X, Y < Q), on-curve, and non-identity.
+The expensive prime-order subgroup test (`[L]·P == identity`, ~1 M gas per
+point, ~2 M gas total) is intentionally **not** performed on chain — that
+check lives in the off-chain DKG-node software
+(`crypto/group/validation.go::ValidateCiphertext`), which refuses to compute
+a partial decryption for any toxic ciphertext. See SECURITY.md §O-1 for the
+threat model. Skipping the on-chain test cuts `submitCiphertext` from
+~2.06 M gas to ~66 k.
+
+### Read paths
+
+| Function                          |     Gas |
+|-----------------------------------|--------:|
+| `getEpoch`                        |  22,661 |
+| `getApplication`                  |  17,250 |
+| `getContribution`                 |  12,233 |
+| `getPartialDecryption`            |   6,126 |
+| `getCombinedDecryption`           |   5,542 |
+| `getCiphertextHash`               |   2,766 |
+| `getPlaintext`                    |   2,882 |
+| `getCollectivePublicKey`          |   5,034 |
+| `selectedParticipants` (n = 2)    |   7,989 |
+| `getContributionVerifierVKeyHash` |   3,368 |
+| `nodeCount`                       |   2,372 |
+| `activeCount`                     |   2,334 |
+| `isActive`                        |   2,637 |
+
+### Deployment
+
+| Contract       | Runtime bytecode | Deploy gas |
+|----------------|-----------------:|-----------:|
+| DKGManager     |           20,818 |  4,560,386 |
+| DKGAppManager  |            8,216 |  1,832,236 |
+| DKGRegistry    |            4,931 |  1,120,982 |
+
+The three production contracts are deployed by `script/DeployAll.s.sol` in
+the order `DKGRegistry → DKGManager → DKGAppManager`, followed by the
+one-shot wiring calls `DKGRegistry.setManager(...)` and
+`DKGManager.setAppManager(...)`. Total core deployment cost is roughly
+**7.5 M gas**. The `DKGManager` runtime is 20,818 bytes, leaving a
+3,758-byte margin against the 24,576-byte EIP-170 limit; splitting the
+per-application surface into `DKGAppManager` is what created that margin.
+Because the on-chain Schnorr challenge moved from Poseidon to keccak256,
+the legacy `PoseidonT2 / PoseidonT3 / PoseidonT5 / PoseidonT6` helper
+contracts are no longer required for the production deploy. The four
+Groth16 verifier contracts (one per circuit) are deployed separately by
+the circuit-compile pipeline; their bytecode is purely the verifying-key
+dump and the standard gnark verifier scaffolding.
+
+---
+
+## Whole-epoch totals
+
+Using the medians above, end-to-end gas for one full DKG epoch followed by
+one threshold decryption, evaluated at the natural pairing of (committee
+size n, MaxN bound):
+
+Each row uses the gas figures from the matching MaxN column above (so the
+finalize/contribution costs reflect the actual on-chain transcript scaling
+at that bound).
+
+| Phase | n=16 (MaxN=16) | n=32 (MaxN=32) | n=48 (MaxN=48) |
+|---|---:|---:|---:|
+| `createEpoch`                                  |     223,800 |     223,800 |      223,800 |
+| n × `claimSlot`                                |   2,465,328 |   5,093,888 |    7,640,832 |
+| n × `submitContribution`                       |   2,809,680 |   6,787,712 |   11,936,592 |
+| 1 × `finalizeEpoch`                            |     303,569 |     745,957 |    1,467,876 |
+| 1 × `submitCiphertext`                         |      65,905 |      65,905 |       65,905 |
+| t × `submitPartialDecryption` (t = ⌈2n/3⌉)     |   1,077,329 (×11) | 2,154,658 (×22) | 3,231,987 (×33) |
+| 1 × `combineDecryption`                        |      80,656 |      91,960 |      103,264 |
+| **Epoch total**                                | **7,026,267** | **15,163,880** | **24,670,256** |
+
+These are *epoch-only* costs — application registration is paid once per
+`(eid, aid)` pair on `DKGAppManager` (~55 k for mode 0, ~55 k for mode 1).
+
+The big-ticket cost is node registration via `registerKey` (~1.27 M after
+the keccak swap), amortised across every epoch the node participates in.
 
 ---
 
@@ -171,60 +249,63 @@ Two-line edit, then one `make` command:
 
 ```go
 // circuits/common/sizes.go
-const MaxN = 16   // ← edit this
+const MaxN = 16   // ← edit this (Go side)
 ```
 
 ```solidity
-// solidity/src/DKGManager.sol
-uint256 internal constant MAX_N = 16;   // ← keep equal to circuits/common.MaxN
+// solidity/src/libraries/Sizes.sol
+uint256 constant MAX_N = 16;   // ← edit this (Solidity side, must match)
 ```
 
 ```bash
 make circuits   # compile circuits → patch hashes → rebuild Solidity → regen Go bindings
 ```
 
----
+The single `Sizes.sol` constant is imported by both the production
+`DKGManager` contract and the Foundry test helpers
+(`test/TestHelpers.t.sol`), so a `MaxN` change does not require any other
+Solidity edits — `forge test --gas-report` will produce a complete gas
+table for the new N immediately.
 
-## Gas Cost Model (MaxN-aware)
+Empirically (see the constraint-count and proving-time tables above):
 
-Gas per call breaks down into N-independent and N-dependent parts:
-
-0. **Ciphertext submission** (new). `submitCiphertext` is a flat ~66 k: on-curve
-   + canonical-field check on the two BabyJubJub points (~2 k), one cold SSTORE
-   for `keccak256(c1,c2)` (22.1 k), one cold SSTORE bump of `ciphertextCount`
-   (warmed to 5 k after first write), and a 7-topic event (~3 k). Independent
-   of N.
-1. **Groth16 BN254 pairing verification** (~207 k base + ~6.65 k per public
-   input). Independent of N; this is the floor for every proof-gated call.
-2. **Calldata-direct transcript verification** (~30 gas per word). Linear in
-   transcript word count: `O(N²)` for `finalizeRound`, `O(N)` for the others.
-3. **Cold SSTOREs** (22.1 k each). Linear in actual `n`, independent of MaxN.
-   Mostly: 1 per `submitContribution`, `n` at finalize for share commitments,
-   2-3 per partial-decryption / reveal call.
-4. **Lottery setup**: `createRound` ≈ 194 k + `n × claimSlot` ≈ 118 k each,
-   distributed across nodes. Independent of MaxN.
-5. **Per-contributor digest in finalize**: `keccak256` over each contributor's
-   `2N`-word slice in calldata, ~`30 + 6×(2N)` gas per iteration. Linear in MaxN.
-
-Halving MaxN cuts items 2 and 5 by roughly the same factor, which is why
-`finalizeRound` shrinks the most when you switch to MaxN=16.
+* MaxN = 16 cuts Contribution + Finalize constraints by ~4× vs MaxN = 32
+  (~5.7× total work), and proving wall-clock by ~3.5×.
+* MaxN = 48 inflates Contribution + Finalize constraints by ~3× vs
+  MaxN = 32, and proving wall-clock by ~2× for Contribution and ~3.2× for
+  Finalize.
+* PartialDecrypt is fully independent of MaxN.
+* DecryptCombine grows roughly linearly in MaxN.
+* On-chain, only `submitContribution` and `finalizeEpoch` are meaningfully
+  N-scaling; the rest of the write paths (registry, partial-decrypt,
+  combine, ciphertext submission) are constant-gas.
 
 ---
 
-## How to Reproduce
+## How to reproduce
 
 ```bash
-# 1. Set MaxN in circuits/common/sizes.go AND solidity/src/DKGManager.sol::MAX_N
-# 2. Recompile circuits + Solidity + Go bindings
-make circuits
+# 1. (Optional) Switch MaxN in circuits/common/sizes.go AND
+#    solidity/src/DKGManager.sol::MAX_N. Both must match — the test
+#    `TestSolidityMaxNMatchesGoMaxN` enforces this.
 
-# 3. Build Docker images
-docker compose -f testnet/docker-compose.yml build deployer dkg-node
+# 2. Refresh circuit constraint counts:
+go run ./cmd/constraints/
 
-# 4. Start chain + nodes, run scenario
-docker compose -f testnet/docker-compose.yml up -d anvil deployer
-DKG_NODE_COUNT=16 DKG_THRESHOLD=11 \
-  docker compose -f testnet/docker-compose.yml up -d --scale dkg-node=16 dkg-node
-DKG_NODE_COUNT=16 DKG_THRESHOLD=11 \
-  docker compose -f testnet/docker-compose.yml --profile runner run --rm dkg-runner
+# 3. Refresh proof timings (full host, all cores). Each circuit package has
+#    a one-line BenchmarkProve in bench_test.go that wraps testAssignment +
+#    Artifacts.LoadOrSetupForCircuit + ProveAndVerify. Do NOT pin
+#    GOMAXPROCS — gnark parallelises internally and the production node
+#    proves with all cores available.
+go test -count=1 -bench='^BenchmarkProve$' -benchtime=3x \
+  -run='^$' -timeout 1800s \
+  ./circuits/contribution/ ./circuits/finalize/ \
+  ./circuits/partialdecrypt/ ./circuits/decryptcombine/
+
+# 4. Refresh gas table:
+cd solidity && forge test --gas-report --no-match-test '_Heavy|Stress'
 ```
+
+The canonical inputs are `circuits/{contribution,finalize,partialdecrypt,decryptcombine}/`
+and the Foundry suite. CI runs the gas report on every PR via the existing
+test target.

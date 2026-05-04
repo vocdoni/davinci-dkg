@@ -53,10 +53,36 @@ interface IDKGRegistry {
     error StillActive();
     error NotInactive();
     error Unauthorized();
+    error InvalidSchnorrProof();
+    error PointNotCanonical();
+    error PointNotOnCurve();
+    error PointIsIdentity();
 
     // ── registration ──────────────────────────────────────────────────────
-    function registerKey(uint256 pubX, uint256 pubY) external;
-    function updateKey(uint256 pubX, uint256 pubY) external;
+    /// @notice Register the caller's BabyJubJub encryption key together
+    ///         with a Schnorr proof of knowledge of the secret. Implements
+    ///         paper §5.1.1 (line ~747).
+    /// @param  pubX     X coordinate of the operator's encryption key.
+    /// @param  pubY     Y coordinate of the operator's encryption key.
+    /// @param  schnorrAx X coordinate of the Schnorr nonce point A = w·G.
+    /// @param  schnorrAy Y coordinate of the Schnorr nonce point.
+    /// @param  schnorrZ  Schnorr response: z = w + c · sk_op  (mod L), where
+    ///                   c = Poseidon(domain || op || pub || A) computed via
+    ///                   `_operatorSchnorrChallenge`.
+    function registerKey(
+        uint256 pubX,
+        uint256 pubY,
+        uint256 schnorrAx,
+        uint256 schnorrAy,
+        uint256 schnorrZ
+    ) external;
+    function updateKey(
+        uint256 pubX,
+        uint256 pubY,
+        uint256 schnorrAx,
+        uint256 schnorrAy,
+        uint256 schnorrZ
+    ) external;
 
     // ── liveness ──────────────────────────────────────────────────────────
     /// @notice Refresh the caller's `lastActiveBlock`. Callable only by the

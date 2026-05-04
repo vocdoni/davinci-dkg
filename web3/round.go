@@ -29,87 +29,74 @@ func (c *Contracts) GetDecryptCombineVerifierVKeyHash(ctx context.Context) (comm
 	return c.callHash(ctx, c.Addresses.Manager, c.managerABI, "getDecryptCombineVerifierVKeyHash")
 }
 
-// GetRevealSubmitVerifierVKeyHash returns the configured reveal-submit proving key hash.
-func (c *Contracts) GetRevealSubmitVerifierVKeyHash(ctx context.Context) (common.Hash, error) {
-	return c.callHash(ctx, c.Addresses.Manager, c.managerABI, "getRevealSubmitVerifierVKeyHash")
-}
-
-// GetRevealShareVerifierVKeyHash returns the configured reveal-share proving key hash.
-func (c *Contracts) GetRevealShareVerifierVKeyHash(ctx context.Context) (common.Hash, error) {
-	return c.callHash(ctx, c.Addresses.Manager, c.managerABI, "getRevealShareVerifierVKeyHash")
-}
-
-// GetRound returns the on-chain round view.
-func (c *Contracts) GetRound(ctx context.Context, roundID [12]byte) (RoundView, error) {
-	input, err := c.managerABI.Pack("getRound", roundID)
+// GetEpoch returns the on-chain epoch view.
+func (c *Contracts) GetEpoch(ctx context.Context, epochID [12]byte) (EpochView, error) {
+	input, err := c.managerABI.Pack("getEpoch", epochID)
 	if err != nil {
-		return RoundView{}, fmt.Errorf("pack getRound: %w", err)
+		return EpochView{}, fmt.Errorf("pack getEpoch: %w", err)
 	}
 	output, err := c.pool.Current().CallContract(ctx, ethereum.CallMsg{
 		To:   &c.Addresses.Manager,
 		Data: input,
 	}, nil)
 	if err != nil {
-		return RoundView{}, fmt.Errorf("call getRound: %w", err)
+		return EpochView{}, fmt.Errorf("call getEpoch: %w", err)
 	}
-	values, err := c.managerABI.Unpack("getRound", output)
+	values, err := c.managerABI.Unpack("getEpoch", output)
 	if err != nil {
-		return RoundView{}, fmt.Errorf("unpack getRound: %w", err)
+		return EpochView{}, fmt.Errorf("unpack getEpoch: %w", err)
 	}
 	// Flat layout (per hand-written ABI; tuples count as single values):
-	//   0 organizer                7 lotteryThreshold
-	//   1 policy (tuple)           8 claimedCount
-	//   2 decryptionPolicy (tuple) 9 contributionCount
-	//   3 status                  10 partialDecryptionCount
-	//   4 nonce                   11 revealedShareCount
-	//   5 seedBlock               12 ciphertextCount
-	//   6 seed
+	//   0  organizer                 7  seed
+	//   1  policy (tuple)            8  lotteryThreshold
+	//   2  decryptionPolicy (tuple)  9  claimedCount
+	//   3  status                   10  contributionCount
+	//   4  nonce                    11  partialDecryptionCount
+	//   5  startBlock               12  ciphertextCount
+	//   6  seedBlock
 	if len(values) != 13 {
-		return RoundView{}, fmt.Errorf("unexpected output count for getRound: %d", len(values))
+		return EpochView{}, fmt.Errorf("unexpected output count for getEpoch: %d", len(values))
 	}
 	policy, ok := values[1].(struct {
 		Threshold                 uint16 `json:"threshold"`
 		CommitteeSize             uint16 `json:"committeeSize"`
 		MinValidContributions     uint16 `json:"minValidContributions"`
 		LotteryAlphaBps           uint16 `json:"lotteryAlphaBps"`
-		SeedDelay                 uint16 `json:"seedDelay"`
 		RegistrationDeadlineBlock uint64 `json:"registrationDeadlineBlock"`
 		ContributionDeadlineBlock uint64 `json:"contributionDeadlineBlock"`
 		FinalizeNotBeforeBlock    uint64 `json:"finalizeNotBeforeBlock"`
-		DisclosureAllowed         bool   `json:"disclosureAllowed"`
 	})
 	if !ok {
-		return RoundView{}, fmt.Errorf("unexpected policy tuple shape")
+		return EpochView{}, fmt.Errorf("unexpected policy tuple shape")
 	}
-	seedBytes := values[6].([32]byte)
-	return RoundView{
+	seedBytes := values[7].([32]byte)
+	return EpochView{
 		Organizer: values[0].(common.Address),
-		Policy: RoundPolicy{
+		Policy: EpochPolicy{
 			Threshold:                 policy.Threshold,
 			CommitteeSize:             policy.CommitteeSize,
 			MinValidContributions:     policy.MinValidContributions,
 			LotteryAlphaBps:           policy.LotteryAlphaBps,
-			SeedDelay:                 policy.SeedDelay,
 			RegistrationDeadlineBlock: policy.RegistrationDeadlineBlock,
 			ContributionDeadlineBlock: policy.ContributionDeadlineBlock,
 			FinalizeNotBeforeBlock:    policy.FinalizeNotBeforeBlock,
-			DisclosureAllowed:         policy.DisclosureAllowed,
 		},
 		Status:                 values[3].(uint8),
 		Nonce:                  values[4].(uint64),
-		SeedBlock:              values[5].(uint64),
+		StartBlock:             values[5].(uint64),
+		SeedBlock:              values[6].(uint64),
 		Seed:                   common.BytesToHash(seedBytes[:]),
-		LotteryThreshold:       values[7].(*big.Int),
-		ClaimedCount:           values[8].(uint16),
-		ContributionCount:      values[9].(uint16),
-		PartialDecryptionCount: values[10].(uint16),
-		RevealedShareCount:     values[11].(uint16),
+		LotteryThreshold:       values[8].(*big.Int),
+		ClaimedCount:           values[9].(uint16),
+		ContributionCount:      values[10].(uint16),
+		PartialDecryptionCount: values[11].(uint16),
+		CiphertextCount:        values[12].(uint16),
 	}, nil
 }
 
-// SelectedParticipants returns the ordered participant set for a round.
-func (c *Contracts) SelectedParticipants(ctx context.Context, roundID [12]byte) ([]common.Address, error) {
-	input, err := c.managerABI.Pack("selectedParticipants", roundID)
+// SelectedParticipants returns the ordered participant set for a epoch.
+func (c *Contracts) SelectedParticipants(ctx context.Context, epochID [12]byte) ([]common.Address, error) {
+	input, err := c.managerABI.Pack("selectedParticipants", epochID)
 	if err != nil {
 		return nil, fmt.Errorf("pack selectedParticipants: %w", err)
 	}

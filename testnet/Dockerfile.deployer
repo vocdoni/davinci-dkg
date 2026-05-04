@@ -10,8 +10,10 @@ RUN apt-get update \
 
 WORKDIR /workspace
 
-# Copy only what Foundry needs to deploy
-COPY solidity/        /workspace/solidity/
+# Copy only what Foundry needs to deploy. poseidon-solidity is vendored
+# under solidity/lib/poseidon-solidity, alongside forge-std, so the whole
+# library tree comes in via the single solidity/ copy.
+COPY solidity/         /workspace/solidity/
 COPY testnet/deploy.sh /workspace/testnet/deploy.sh
 RUN chmod +x /workspace/testnet/deploy.sh
 

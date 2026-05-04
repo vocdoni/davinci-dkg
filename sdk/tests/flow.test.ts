@@ -1,17 +1,17 @@
 // Full DKG flow test.
 //
 // This test relies on the sdk-test-fixture Go binary to create a finalized
-// single-participant round (including ZK proof generation).  If the binary
+// single-participant epoch (including ZK proof generation).  If the binary
 // cannot be built or run (e.g. circuit artifacts are not compiled), the test
 // is skipped gracefully.
 //
 // What is tested:
-//   • DKGClient reads a Finalized round correctly
-//   • getRoundFinalizedEvents returns the expected event
-//   • waitForRoundStatus resolves immediately for an already-finalized round
+//   • DKGClient reads a Finalized epoch correctly
+//   • getEpochFinalizedEvents returns the expected event
+//   • waitForEpochPhase resolves immediately for an already-finalized epoch
 //   • getContribution / getShareCommitmentHash return accepted records
 //   • ElGamal encrypt/decrypt roundtrip using a synthetic key pair
-//   • buildRoundId / parseRoundId roundtrip on the fixture round ID
+//   • buildEpochId / parseEpochId roundtrip on the fixture epoch ID
 
 import { describe, it, expect, beforeAll } from 'vitest';
 import { inject } from 'vitest';
@@ -20,11 +20,11 @@ import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   DKGClient,
-  RoundStatus,
+  EpochPhase,
   buildElGamal,
-  waitForRoundStatus,
-  parseRoundId,
-  buildRoundId,
+  waitForEpochPhase,
+  parseEpochId,
+  buildEpochId,
 } from '../src/index.js';
 import { makePublicClient } from './helpers/accounts.js';
 
@@ -41,7 +41,7 @@ function useHarness() {
 }
 
 interface FixtureResult {
-  roundId: `0x${string}`;
+  epochId: `0x${string}`;
   collectivePublicKeyHash: `0x${string}`;
 }
 
@@ -126,38 +126,38 @@ describe('Full DKG flow (via Go fixture)', () => {
       managerAddress,
     });
 
-    console.log('[flow-test] Running Go fixture to create a finalized round…');
+    console.log('[flow-test] Running Go fixture to create a finalized epoch…');
     fixture = await runGoFixture(rpcUrl, addressesFile);
 
     if (fixture) {
-      console.log(`[flow-test] Fixture round: ${fixture.roundId}`);
+      console.log(`[flow-test] Fixture epoch: ${fixture.epochId}`);
     }
   });
 
-  it('fixture round is in Finalized status', async () => {
+  it('fixture epoch is in Finalized status', async () => {
     const { enabled } = useHarness();
     if (!enabled || !fixture) return;
 
-    const round = await client.getRound(fixture.roundId);
-    expect(round.status).toBe(RoundStatus.Finalized);
-    expect(round.policy.threshold).toBe(1);
+    const epoch = await client.getEpoch(fixture.epochId);
+    expect(epoch.status).toBe(EpochPhase.Finalized);
+    expect(epoch.policy.threshold).toBe(1);
   });
 
-  it('waitForRoundStatus resolves immediately for an already-finalized round', async () => {
+  it('waitForEpochPhase resolves immediately for an already-finalized epoch', async () => {
     const { enabled } = useHarness();
     if (!enabled || !fixture) return;
 
-    await waitForRoundStatus(client, fixture.roundId, RoundStatus.Finalized, {
+    await waitForEpochPhase(client, fixture.epochId, EpochPhase.Finalized, {
       intervalMs: 500,
       timeoutMs:  10_000,
     });
   });
 
-  it('getRoundFinalizedEvents returns the finalization event', async () => {
+  it('getEpochFinalizedEvents returns the finalization event', async () => {
     const { enabled } = useHarness();
     if (!enabled || !fixture) return;
 
-    const events = await client.getRoundFinalizedEvents(fixture.roundId);
+    const events = await client.getEpochFinalizedEvents(fixture.epochId);
     expect(events.length).toBeGreaterThan(0);
 
     const ev = events[0];
@@ -170,7 +170,7 @@ describe('Full DKG flow (via Go fixture)', () => {
     const { enabled } = useHarness();
     if (!enabled || !fixture) return;
 
-    const participants = await client.selectedParticipants(fixture.roundId);
+    const participants = await client.selectedParticipants(fixture.epochId);
     expect(participants).toHaveLength(1);
     expect(participants[0]).toMatch(/^0x[0-9a-fA-F]{40}$/);
   });
@@ -179,8 +179,8 @@ describe('Full DKG flow (via Go fixture)', () => {
     const { enabled } = useHarness();
     if (!enabled || !fixture) return;
 
-    const participants = await client.selectedParticipants(fixture.roundId);
-    const contrib      = await client.getContribution(fixture.roundId, participants[0]);
+    const participants = await client.selectedParticipants(fixture.epochId);
+    const contrib      = await client.getContribution(fixture.epochId, participants[0]);
     expect(contrib.accepted).toBe(true);
     expect(contrib.commitmentsHash).toMatch(/^0x[0-9a-f]{64}$/i);
   });
@@ -189,17 +189,17 @@ describe('Full DKG flow (via Go fixture)', () => {
     const { enabled } = useHarness();
     if (!enabled || !fixture) return;
 
-    const h = await client.getShareCommitmentHash(fixture.roundId, 1);
+    const h = await client.getShareCommitmentHash(fixture.epochId, 1);
     expect(h).not.toBe('0x' + '0'.repeat(64));
   });
 
-  it('parseRoundId on fixture round ID roundtrips through buildRoundId', async () => {
+  it('parseEpochId on fixture epoch ID roundtrips through buildEpochId', async () => {
     const { enabled } = useHarness();
     if (!enabled || !fixture) return;
 
-    const { prefix, nonce } = parseRoundId(fixture.roundId);
-    const rebuilt = buildRoundId(prefix, nonce);
-    expect(rebuilt.toLowerCase()).toBe(fixture.roundId.toLowerCase());
+    const { prefix, nonce } = parseEpochId(fixture.epochId);
+    const rebuilt = buildEpochId(prefix, nonce);
+    expect(rebuilt.toLowerCase()).toBe(fixture.epochId.toLowerCase());
   });
 
   it('ElGamal encrypt/decrypt with a synthetic key pair', async () => {
@@ -208,7 +208,7 @@ describe('Full DKG flow (via Go fixture)', () => {
 
     // Test the cryptographic primitive with a locally-generated key pair.
     // In the full protocol, the collective public key is fetched via
-    // client.getCollectivePublicKey(roundId).
+    // client.getCollectivePublicKey(epochId).
     const eg = await buildElGamal();
     const { privKey, pubKey } = eg.generateKeyPair();
 

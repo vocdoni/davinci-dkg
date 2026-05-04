@@ -48,7 +48,7 @@ func (s EncryptedShare) Validate() error {
 
 // Contribution is the off-chain typed representation of one accepted DKG contribution.
 type Contribution struct {
-	RoundID          string
+	EpochID          string
 	Contributor      common.Address
 	ContributorIndex uint16
 	Commitments      []CurvePoint
@@ -59,8 +59,8 @@ type Contribution struct {
 
 // Validate checks that the contribution contains the minimum data needed by storage and services.
 func (c Contribution) Validate() error {
-	if c.RoundID == "" {
-		return fmt.Errorf("round id is required")
+	if c.EpochID == "" {
+		return fmt.Errorf("epoch id is required")
 	}
 	if c.Contributor == (common.Address{}) {
 		return fmt.Errorf("contributor is required")
@@ -92,7 +92,7 @@ func (c Contribution) Validate() error {
 
 // FinalizedOutput is the typed result of the contribution aggregation/finalization phase.
 type FinalizedOutput struct {
-	RoundID               string
+	EpochID               string
 	CollectivePublicKey   CurvePoint
 	AggregateCommitments  []CurvePoint
 	SelectedParticipantIX []uint16
@@ -100,8 +100,8 @@ type FinalizedOutput struct {
 
 // Validate checks that the finalized output is minimally coherent.
 func (o FinalizedOutput) Validate() error {
-	if o.RoundID == "" {
-		return fmt.Errorf("round id is required")
+	if o.EpochID == "" {
+		return fmt.Errorf("epoch id is required")
 	}
 	if err := o.CollectivePublicKey.Validate(); err != nil {
 		return fmt.Errorf("collective public key: %w", err)

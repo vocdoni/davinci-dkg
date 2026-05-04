@@ -2,9 +2,9 @@ import type { Address, Hex, PublicClient, WalletClient } from 'viem';
 
 export type { Address, Hex } from 'viem';
 
-// ── Round status ──────────────────────────────────────────────────────────────
+// ── Epoch status ──────────────────────────────────────────────────────────────
 
-export const RoundStatus = {
+export const EpochPhase = {
   None: 0,
   Registration: 1,
   Contribution: 2,
@@ -13,16 +13,16 @@ export const RoundStatus = {
   Completed: 5,
 } as const;
 
-export type RoundStatusValue = (typeof RoundStatus)[keyof typeof RoundStatus];
+export type EpochPhaseValue = (typeof EpochPhase)[keyof typeof EpochPhase];
 
 export function roundStatusLabel(status: number): string {
   switch (status) {
-    case RoundStatus.None: return 'None';
-    case RoundStatus.Registration: return 'Registration';
-    case RoundStatus.Contribution: return 'Contribution';
-    case RoundStatus.Finalized: return 'Finalized';
-    case RoundStatus.Aborted: return 'Aborted';
-    case RoundStatus.Completed: return 'Completed';
+    case EpochPhase.None: return 'None';
+    case EpochPhase.Registration: return 'Registration';
+    case EpochPhase.Contribution: return 'Contribution';
+    case EpochPhase.Finalized: return 'Finalized';
+    case EpochPhase.Aborted: return 'Aborted';
+    case EpochPhase.Completed: return 'Completed';
     default: return `Unknown(${status})`;
   }
 }
@@ -39,36 +39,42 @@ export type NodeStatusValue = (typeof NodeStatus)[keyof typeof NodeStatus];
 
 // ── Contract types ────────────────────────────────────────────────────────────
 
-export interface RoundPolicy {
+/**
+ * Per-epoch DKG policy. Phase deadline blocks are derived ON-CHAIN at
+ * `createEpoch` time from the contract's immutable `EPOCH_DURATION_BLOCKS`
+ * plus the per-phase BPS constants (registration / contribution /
+ * finalize gap). Callers no longer supply them: `writer.createEpoch` only
+ * takes the policy fields below. The on-chain Epoch struct continues to
+ * surface the resolved deadline blocks (populated by createEpoch from the
+ * derived offsets) for downstream phase-check reads.
+ */
+export interface EpochPolicy {
   threshold: number;
   committeeSize: number;
   minValidContributions: number;
   /** Over-subscription factor in basis points (min 10000 = 1.0×). Default 15000 = 1.5×. */
   lotteryAlphaBps: number;
-  /** Number of blocks between createRound and seed availability (1–256). */
-  seedDelay: number;
+  /**
+   * On-chain-derived deadline blocks. Populated by the contract from
+   * `EPOCH_DURATION_BLOCKS`, surfaced via `getEpoch` for phase checks.
+   * Callers constructing a fresh policy for `createEpoch` may leave them
+   * at 0 — they are not transmitted by the writer.
+   */
   registrationDeadlineBlock: bigint;
   contributionDeadlineBlock: bigint;
-  /**
-   * Earliest block at which `finalizeRound` can succeed. Must be strictly
-   * greater than `contributionDeadlineBlock`; gives selected participants a
-   * window to submit before the contribution set is frozen. The contract
-   * reverts with `FinalizeTooEarly` if `block.number < finalizeNotBeforeBlock`.
-   */
   finalizeNotBeforeBlock: bigint;
-  disclosureAllowed: boolean;
 }
 
 /**
- * Gates `submitCiphertext` for a round. All checks AND together; a zero-valued
+ * Gates `submitCiphertext` for a epoch. All checks AND together; a zero-valued
  * field is a no-op for that check. Policy gates SUBMISSION only — once a
  * ciphertext is on-chain, committee decryption proceeds regardless of these
  * fields.
  */
 export interface DecryptionPolicy {
-  /** If true, only the round organizer may call `submitCiphertext`. */
+  /** If true, only the epoch organizer may call `submitCiphertext`. */
   ownerOnly: boolean;
-  /** Maximum accepted ciphertexts per round; 0 = unlimited (bounded by MAX_CIPHERTEXT_INDEX). */
+  /** Maximum accepted ciphertexts per epoch; 0 = unlimited (bounded by MAX_CIPHERTEXT_INDEX). */
   maxDecryptions: number;
   /** submitCiphertext reverts if `block.number < notBeforeBlock`; 0 = no lock. */
   notBeforeBlock: bigint;
@@ -90,19 +96,20 @@ export const OpenDecryptionPolicy: DecryptionPolicy = {
   notAfterTimestamp: 0n,
 };
 
-export interface Round {
+export interface Epoch {
   organizer: Address;
-  policy: RoundPolicy;
+  policy: EpochPolicy;
   decryptionPolicy: DecryptionPolicy;
-  status: RoundStatusValue;
+  status: EpochPhaseValue;
   nonce: bigint;
+  /** Block in which this epoch was created (anchor for nextEpochStartBlock). */
+  startBlock: bigint;
   seedBlock: bigint;
   seed: Hex;
   lotteryThreshold: bigint;
   claimedCount: number;
   contributionCount: number;
   partialDecryptionCount: number;
-  revealedShareCount: number;
   ciphertextCount: number;
 }
 
@@ -116,11 +123,9 @@ export interface ContributionRecord {
 }
 
 export interface PartialDecryptionRecord {
-  participant: Address;
   participantIndex: number;
   ciphertextIndex: number;
   deltaHash: Hex;
-  delta: { x: bigint; y: bigint };
   accepted: boolean;
 }
 
@@ -131,20 +136,42 @@ export interface CombinedDecryptionRecord {
   plaintext: bigint;
 }
 
-export interface RevealedShareRecord {
-  participant: Address;
-  participantIndex: number;
-  shareValue: bigint;
-  shareHash: Hex;
-  accepted: boolean;
-}
-
 export interface NodeKey {
   operator: Address;
   pubX: bigint;
   pubY: bigint;
   status: NodeStatusValue;
   lastActiveBlock: bigint;
+}
+
+// ── Application (P8/P9) ──────────────────────────────────────────────────────
+
+/** Per-application policy gating submitCiphertext, mirrors `DKGTypes.AppPolicy`. */
+export interface AppPolicy {
+  /** Address authorized to submit ciphertexts; zero address means open. */
+  authorizedSubmitter: Address;
+  /** Maximum ciphertexts under this aid; 0 means unlimited. */
+  maxCiphertexts: number;
+  /** Earliest block at which submitCiphertext is valid; 0 means no floor. */
+  notBeforeBlock: bigint;
+  /** Latest block at which submitCiphertext is valid; 0 means no ceiling. */
+  notAfterBlock: bigint;
+}
+
+/**
+ * Cached on-chain `Application` record. `mode === 0` means public derivation
+ * (PK_aid = PK_ep + S·G); `mode === 1` means organizer co-decryption
+ * (PK_aid = PK_ep + PK_org). `derivationS` is meaningful only in mode 0;
+ * `organizerPK` is meaningful only in mode 1.
+ */
+export interface ApplicationRecord {
+  creator: Address;
+  mode: 0 | 1;
+  derivationS: bigint;
+  organizerPK: BabyJubPoint;
+  policy: AppPolicy;
+  createdAtBlock: bigint;
+  exists: boolean;
 }
 
 // ── SDK config ────────────────────────────────────────────────────────────────
@@ -159,6 +186,12 @@ export interface DKGConfig {
    * When omitted, the client reads it from DKGManager.REGISTRY() on first use.
    */
   registryAddress?: Address;
+  /**
+   * Address of the deployed DKGAppManager contract (sibling to DKGManager
+   * that owns the per-application registration surface).
+   * When omitted, the client reads it from DKGManager.appManager() on first use.
+   */
+  appManagerAddress?: Address;
 }
 
 export interface DKGWriterConfig extends DKGConfig {
@@ -189,16 +222,16 @@ export interface PollOptions {
 
 // ── Event query types ─────────────────────────────────────────────────────────
 
-/** A single parsed contract event returned by getAllRoundEvents / getRoundCreatedEvents. */
-export interface RoundEvent {
+/** A single parsed contract event returned by getAllEpochEvents / getEpochCreatedEvents. */
+export interface EpochEvent {
   eventName: string;
   args: Record<string, unknown>;
   blockNumber: bigint;
   transactionHash: `0x${string}`;
 }
 
-/** A round entry returned by getRecentRounds. */
-export interface RoundEntry {
+/** A epoch entry returned by getRecentRounds. */
+export interface EpochEntry {
   id: `0x${string}`;
-  round: Round;
+  epoch: Epoch;
 }

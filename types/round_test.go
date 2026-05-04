@@ -6,33 +6,30 @@ import (
 	qt "github.com/frankban/quicktest"
 )
 
-func TestRoundPhaseString(t *testing.T) {
+func TestEpochPhaseString(t *testing.T) {
 	c := qt.New(t)
 
-	c.Assert(RoundPhaseUnknown.String(), qt.Equals, "unknown")
-	c.Assert(RoundPhaseRegistration.String(), qt.Equals, "registration")
-	c.Assert(RoundPhaseContribution.String(), qt.Equals, "contribution")
-	c.Assert(RoundPhaseFinalized.String(), qt.Equals, "finalized")
-	c.Assert(RoundPhaseDecryption.String(), qt.Equals, "decryption")
-	c.Assert(RoundPhaseDisclosure.String(), qt.Equals, "disclosure")
-	c.Assert(RoundPhaseAborted.String(), qt.Equals, "aborted")
-	c.Assert(RoundPhaseCompleted.String(), qt.Equals, "completed")
+	c.Assert(EpochPhaseUnknown.String(), qt.Equals, "unknown")
+	c.Assert(EpochPhaseRegistration.String(), qt.Equals, "registration")
+	c.Assert(EpochPhaseContribution.String(), qt.Equals, "contribution")
+	c.Assert(EpochPhaseFinalized.String(), qt.Equals, "finalized")
+	c.Assert(EpochPhaseDecryption.String(), qt.Equals, "decryption")
+	c.Assert(EpochPhaseAborted.String(), qt.Equals, "aborted")
+	c.Assert(EpochPhaseCompleted.String(), qt.Equals, "completed")
 }
 
-func TestRoundPolicyValidate(t *testing.T) {
+func TestEpochPolicyValidate(t *testing.T) {
 	c := qt.New(t)
 
 	c.Run("accepts coherent policy", func(c *qt.C) {
-		policy := RoundPolicy{
+		policy := EpochPolicy{
 			Threshold:                 3,
 			CommitteeSize:             5,
 			MinValidContributions:     3,
 			LotteryAlphaBps:           20000,
-			SeedDelay:                 4,
 			RegistrationDeadlineBlock: 10,
 			ContributionDeadlineBlock: 20,
 			FinalizeNotBeforeBlock:    21,
-			DisclosureAllowed:         true,
 		}
 
 		err := policy.Validate()
@@ -41,14 +38,13 @@ func TestRoundPolicyValidate(t *testing.T) {
 	})
 
 	c.Run("rejects threshold larger than committee", func(c *qt.C) {
-		policy := RoundPolicy{
+		policy := EpochPolicy{
 			Threshold:                 6,
 			CommitteeSize:             5,
 			MinValidContributions:     3,
 			RegistrationDeadlineBlock: 10,
 			ContributionDeadlineBlock: 20,
 			FinalizeNotBeforeBlock:    21,
-			DisclosureAllowed:         true,
 		}
 
 		err := policy.Validate()
@@ -57,22 +53,21 @@ func TestRoundPolicyValidate(t *testing.T) {
 		c.Assert(err.Error(), qt.Contains, "threshold")
 	})
 
-	c.Run("rejects non monotonic block windows", func(c *qt.C) {
-		policy := RoundPolicy{
-			Threshold:                 3,
-			CommitteeSize:             5,
-			MinValidContributions:     3,
-			LotteryAlphaBps:           20000,
-			SeedDelay:                 4,
-			RegistrationDeadlineBlock: 20,
-			ContributionDeadlineBlock: 10,
-			FinalizeNotBeforeBlock:    11,
-			DisclosureAllowed:         true,
+	// The "rejects non monotonic block windows" test was removed when phase
+	// deadlines moved from caller-supplied to contract-derived (from
+	// EPOCH_DURATION_BLOCKS). The Go-side policy struct no longer validates
+	// deadline ordering; the on-chain constructor enforces it via the
+	// derived per-phase offsets.
+
+	c.Run("rejects lottery alpha below 1.0", func(c *qt.C) {
+		policy := EpochPolicy{
+			Threshold:             3,
+			CommitteeSize:         5,
+			MinValidContributions: 3,
+			LotteryAlphaBps:       9999,
 		}
-
 		err := policy.Validate()
-
 		c.Assert(err, qt.Not(qt.IsNil))
-		c.Assert(err.Error(), qt.Contains, "deadline")
+		c.Assert(err.Error(), qt.Contains, "alpha")
 	})
 }

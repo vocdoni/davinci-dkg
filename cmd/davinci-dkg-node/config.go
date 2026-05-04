@@ -20,6 +20,28 @@ type Config struct {
 	Network      string        `mapstructure:"network"`
 	ManagerAddr  string        `mapstructure:"manager"`
 	PollInterval time.Duration `mapstructure:"poll-interval"`
+
+	// AutoCreateEpochs makes this node race other nodes to fire `createEpoch`
+	// once `nextEpochStartBlock()` is reached. Each candidate sleeps a random
+	// jitter (0..AutoCreateJitter) before firing, so the population spreads
+	// out and most calls succeed cheaply with one revert per loser. Default
+	// true; disable for nodes that should only participate, not propose.
+	AutoCreateEpochs bool          `mapstructure:"auto-create-epochs"`
+	AutoCreateJitter time.Duration `mapstructure:"auto-create-jitter"`
+
+	// EpochPolicy is the per-epoch policy this node proposes when it wins
+	// the auto-create race. All fields are optional: missing fields fall
+	// back to safe defaults (committee of 4, threshold 3, α=1.5, no
+	// decryption-policy gating). Only consulted when AutoCreateEpochs is
+	// true.
+	EpochPolicy EpochPolicyConfig `mapstructure:"epoch-policy"`
+}
+
+type EpochPolicyConfig struct {
+	Threshold             uint16 `mapstructure:"threshold"`
+	CommitteeSize         uint16 `mapstructure:"committee-size"`
+	MinValidContributions uint16 `mapstructure:"min-valid-contributions"`
+	LotteryAlphaBps       uint16 `mapstructure:"lottery-alpha-bps"`
 }
 
 type Web3Config struct {
@@ -48,8 +70,16 @@ func defaultConfig() *Config {
 			Level:  "info",
 			Output: "stdout",
 		},
-		Datadir:      filepath.Join(home, ".davinci-dkg"),
-		PollInterval: 5 * time.Second,
+		Datadir:          filepath.Join(home, ".davinci-dkg"),
+		PollInterval:     5 * time.Second,
+		AutoCreateEpochs: true,
+		AutoCreateJitter: 12 * time.Second,
+		EpochPolicy: EpochPolicyConfig{
+			Threshold:             3,
+			CommitteeSize:         4,
+			MinValidContributions: 3,
+			LotteryAlphaBps:       15000,
+		},
 	}
 }
 
@@ -71,6 +101,12 @@ func loadConfigFromArgs(args []string) (*Config, error) {
 	fs.String("privkey", cfg.PrivKey, "hex private key for signing transactions")
 	fs.String("manager", cfg.ManagerAddr, "DKGManager contract address (optional when --network is set)")
 	fs.Duration("poll-interval", cfg.PollInterval, "chain polling interval")
+	fs.Bool("auto-create-epochs", cfg.AutoCreateEpochs, "race other nodes to fire createEpoch once nextEpochStartBlock() is reached (default true; disable to participate only)")
+	fs.Duration("auto-create-jitter", cfg.AutoCreateJitter, "max random delay before firing the auto-create transaction (spreads contention)")
+	fs.Uint16("epoch-policy.threshold", cfg.EpochPolicy.Threshold, "Shamir threshold t when this node proposes an epoch")
+	fs.Uint16("epoch-policy.committee-size", cfg.EpochPolicy.CommitteeSize, "committee size n when this node proposes an epoch")
+	fs.Uint16("epoch-policy.min-valid-contributions", cfg.EpochPolicy.MinValidContributions, "minValidContributions when this node proposes an epoch")
+	fs.Uint16("epoch-policy.lottery-alpha-bps", cfg.EpochPolicy.LotteryAlphaBps, "lottery oversubscription α in basis points (10000 = 1.0)")
 	if err := fs.Parse(args); err != nil {
 		return nil, fmt.Errorf("parse flags: %w", err)
 	}
@@ -110,7 +146,7 @@ func validateConfig(cfg *Config) error {
 }
 
 // HasChainConfig reports whether enough configuration is present to connect to
-// the chain and participate in DKG rounds. A private key is always required; the
+// the chain and participate in DKG epochs. A private key is always required; the
 // DKGManager address may come from --manager or from a --network preset.
 func (c *Config) HasChainConfig() bool {
 	if c.PrivKey == "" {

@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react'
 import { Box, Spinner, Stack, Text } from '@chakra-ui/react'
 import type { Hex } from 'viem'
-import { RoundStatus } from '@vocdoni/davinci-dkg-sdk'
+import { EpochPhase } from '@vocdoni/davinci-dkg-sdk'
 import { LuPuzzle, LuCombine, LuKeyRound } from 'react-icons/lu'
 import { StepCard, type StepStatus } from '../StepCard'
-import { useRound } from '~queries/rounds'
+import { useEpoch } from '~queries/epochs'
 import { useDkgClient } from '~hooks/use-dkg-client'
-import { Countdown } from '~components/Round/Countdown'
+import { Countdown } from '~components/Epoch/Countdown'
 import { HowItWorks } from '../HowItWorks'
 import { HashCell } from '~components/ui/HashCell'
 import { DetailDisclosure } from '~components/Debug/DetailDisclosure'
@@ -14,30 +14,30 @@ import { bigIntToHex } from '~lib/format'
 
 interface Props {
   status: StepStatus
-  roundId: Hex | null
+  epochId: Hex | null
   onKeyReady: (key: { x: bigint; y: bigint }) => void
   log: (msg: string, level?: 'info' | 'success' | 'error' | 'crypto') => void
 }
 
-// Reads the on-chain collective public key once the round reaches Finalized.
-// Cf. UI_PLAN.md §4 / sdk/src/client.ts:565 — we deliberately do NOT surface
-// this key during the Contribution phase (the on-chain accumulator carries
-// it, but submitCiphertext requires Finalized status).
-export function KeyAvailableStep({ status, roundId, onKeyReady, log }: Props) {
+// Reads the on-chain collective public key once the epoch reaches Finalized.
+// We deliberately do NOT surface this key during the Contribution phase
+// (the on-chain accumulator carries it, but submitCiphertext requires
+// Finalized status).
+export function KeyAvailableStep({ status, epochId, onKeyReady, log }: Props) {
   const { dkg } = useDkgClient()
-  const round = useRound((roundId ?? undefined) as `0x${string}` | undefined)
+  const epoch = useEpoch((epochId ?? undefined) as `0x${string}` | undefined)
   const [key, setKey] = useState<{ x: bigint; y: bigint } | null>(null)
   const [loading, setLoading] = useState(false)
 
   const isFinalized =
-    round.data &&
-    (round.data.round.status === RoundStatus.Finalized || round.data.round.status === RoundStatus.Completed)
+    epoch.data &&
+    (epoch.data.epoch.status === EpochPhase.Finalized || epoch.data.epoch.status === EpochPhase.Completed)
 
   useEffect(() => {
-    if (!roundId || !isFinalized || key || loading) return
+    if (!epochId || !isFinalized || key || loading) return
     setLoading(true)
     dkg
-      .getCollectivePublicKey(roundId)
+      .getCollectivePublicKey(epochId)
       .then((pk) => {
         setKey(pk)
         onKeyReady(pk)
@@ -47,27 +47,27 @@ export function KeyAvailableStep({ status, roundId, onKeyReady, log }: Props) {
         log(`Failed to read collective public key: ${err instanceof Error ? err.message : String(err)}`, 'error')
       })
       .finally(() => setLoading(false))
-  }, [roundId, isFinalized, key, loading, dkg, onKeyReady, log])
+  }, [epochId, isFinalized, key, loading, dkg, onKeyReady, log])
 
   return (
     <StepCard
       n={4}
       title='The shared encryption key is ready'
       status={status}
-      description='Once enough committee members have contributed, the round finalizes and a single public key — built from all their pieces — becomes available.'
+      description='Once enough committee members have contributed, the epoch finalizes and a single public key — built from all their pieces — becomes available.'
     >
-      {!roundId || !round.data ? (
+      {!epochId || !epoch.data ? (
         <Text fontSize='sm' color='ink.4'>
-          Create a round and wait for it to be finalized.
+          Create a epoch and wait for it to be finalized.
         </Text>
       ) : !isFinalized ? (
         <Stack gap={3}>
           <Text fontSize='sm' color='ink.2'>
             Hang tight — the committee is still building the key. The encrypt step will unlock as
-            soon as the round finalizes.
+            soon as the epoch finalizes.
           </Text>
           <Countdown
-            target={round.data.round.policy.finalizeNotBeforeBlock}
+            target={epoch.data.epoch.policy.finalizeNotBeforeBlock}
             label='until finalize unlocks'
           />
           <HowItWorks

@@ -110,14 +110,14 @@ DAVINCI_DKG_NETWORK=sepolia
             registered and active.
           </List.Item>
           <List.Item>
-            Polls the chain for round events at the configured interval (default: 20 seconds).
+            Polls the chain for epoch events at the configured interval (default: 20 seconds).
           </List.Item>
         </List.Root>
       </Section>
 
       <Section heading='4. (Optional) Host an explorer alongside it'>
         <Text fontSize='sm' color='ink.2'>
-          The node binary does not serve any HTTP — it only talks to the chain. To browse rounds,
+          The node binary does not serve any HTTP — it only talks to the chain. To browse epochs,
           the registry, and the playground from a wallet, host the explorer separately. The
           explorer is a Vite static bundle whose chain config is baked in at build time.
         </Text>
@@ -129,7 +129,7 @@ DAVINCI_DKG_NETWORK=sepolia
           {`# 1. Build the bundle with the chain config you want.
 make ui-build \\
   RPC_URL=https://eth-sepolia.public.blastapi.io \\
-  MANAGER_ADDRESS=0x01ee71fdce1705c8823f9f8b2f312100165fdd70 \\
+  MANAGER_ADDRESS=0x6683f889ce518945053f7d01abef7da842283078 \\
   CHAIN_ID=11155111 CHAIN_NAME=sepolia
 
 # 2. Run nginx alongside the node.
@@ -160,7 +160,7 @@ docker compose --profile node --profile ui up -d
               State.
             </Text>{' '}
             The node mounts a Docker volume named <Code>run</Code> for its data directory. All
-            per-round state is rebuilt from on-chain records on restart, so a stop/start mid-round
+            per-epoch state is rebuilt from on-chain records on restart, so a stop/start mid-epoch
             is safe.
           </List.Item>
           <List.Item>
@@ -179,16 +179,16 @@ docker compose --profile node --profile ui up -d
             <Text as='span' fontWeight='semibold' color='ink.0'>
               Committee size.
             </Text>{' '}
-            Capped at <Code>32</Code> per round (the circuits' compile-time <Code>MaxN</Code>). The
-            contract enforces this in <Code>createRound</Code>; raising the cap requires a fresh
+            Capped at <Code>32</Code> per epoch (the circuits' compile-time <Code>MaxN</Code>). The
+            contract enforces this in <Code>createEpoch</Code>; raising the cap requires a fresh
             trusted setup, redeployed verifier contracts, and a redeployed manager.
           </List.Item>
           <List.Item>
             <Text as='span' fontWeight='semibold' color='ink.0'>
-              Recent rounds buffer.
+              Recent epochs buffer.
             </Text>{' '}
-            The contract keeps a ring buffer of the most recent 64 rounds for the explorer's
-            "Rounds" page. Older rounds remain valid on-chain but are not enumerated.
+            The contract keeps a ring buffer of the most recent 64 epochs for the explorer's
+            "Rounds" page. Older epochs remain valid on-chain but are not enumerated.
           </List.Item>
           <List.Item>
             <Text as='span' fontWeight='semibold' color='ink.0'>
@@ -197,8 +197,8 @@ docker compose --profile node --profile ui up -d
             Combined ciphertexts must encode a non-negative integer strictly below{' '}
             <Code>2^50</Code> (≈ 1.13 × 10<sup>15</sup>). Recovery uses baby-step / giant-step
             DLOG with a precomputed table — about ~30–60 s and ~1–2 GB heap on first decrypt,
-            then the table is reused for every subsequent round. A node never decrypting pays
-            nothing. Submitting larger plaintexts leaves the round permanently unrecoverable.
+            then the table is reused for every subsequent epoch. A node never decrypting pays
+            nothing. Submitting larger plaintexts leaves the epoch permanently unrecoverable.
           </List.Item>
         </List.Root>
       </Section>

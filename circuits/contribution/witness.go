@@ -26,15 +26,11 @@ type PublicInputs struct {
 	ShareHash            *big.Int
 	Challenge            *big.Int
 	TranscriptCommitment *big.Int
-	// CommitmentX0 and CommitmentY0 are the coordinates of the contributor's
-	// zeroth Feldman commitment point (a_{i,0}·G = individual public key share).
-	CommitmentX0     *big.Int
-	CommitmentY0     *big.Int
-	Commitments      []types.CurvePoint
-	RecipientKeys    []types.CurvePoint
-	Shares           []*big.Int
-	EncryptedShares  []types.EncryptedShare
-	RecipientIndexes []*big.Int
+	Commitments          []types.CurvePoint
+	RecipientKeys        []types.CurvePoint
+	Shares               []*big.Int
+	EncryptedShares      []types.EncryptedShare
+	RecipientIndexes     []*big.Int
 }
 
 // BuildWitness materializes the native assignment into a gnark witness and the
@@ -244,10 +240,6 @@ func BuildWitness(a Assignment) (*ContributionCircuit, *PublicInputs, error) {
 		return nil, nil, fmt.Errorf("brlc contribution transcript: %w", err)
 	}
 
-	// Commitment[0] = a_{i,0}·G is the contributor's individual public key share.
-	commitment0X := new(big.Int).Set(commitments[0].X)
-	commitment0Y := new(big.Int).Set(commitments[0].Y)
-
 	witness := &ContributionCircuit{
 		RoundHash:            new(big.Int).Set(a.RoundHash),
 		Threshold:            threshold,
@@ -257,8 +249,6 @@ func BuildWitness(a Assignment) (*ContributionCircuit, *PublicInputs, error) {
 		ShareHash:            shareHash,
 		Challenge:            challenge,
 		TranscriptCommitment: transcriptCommitment,
-		CommitmentX0:         commitment0X,
-		CommitmentY0:         commitment0Y,
 		MaskedShares:         toWitnessScalars(maskedShares),
 	}
 	for i := range MaxCoefficients {
@@ -285,8 +275,6 @@ func BuildWitness(a Assignment) (*ContributionCircuit, *PublicInputs, error) {
 		ShareHash:            new(big.Int).Set(shareHash),
 		Challenge:            new(big.Int).Set(challenge),
 		TranscriptCommitment: new(big.Int).Set(transcriptCommitment),
-		CommitmentX0:         new(big.Int).Set(commitment0X),
-		CommitmentY0:         new(big.Int).Set(commitment0Y),
 		Commitments:          commitments,
 		RecipientKeys:        recipientKeys,
 		Shares:               shares[:len(a.RecipientIndexes)],
@@ -307,8 +295,6 @@ func (p PublicInputs) PublicWitness() *ContributionCircuit {
 		ShareHash:            p.ShareHash,
 		Challenge:            p.Challenge,
 		TranscriptCommitment: p.TranscriptCommitment,
-		CommitmentX0:         p.CommitmentX0,
-		CommitmentY0:         p.CommitmentY0,
 	}
 }
 
@@ -324,14 +310,17 @@ func (p PublicInputs) Scalars() []*big.Int {
 		p.ShareHash,
 		p.Challenge,
 		p.TranscriptCommitment,
-		p.CommitmentX0,
-		p.CommitmentY0,
 	}
 	return scalars
 }
 
 // TranscriptScalars returns the ordered transcript compressed by the verifier path.
-func (p PublicInputs) TranscriptScalars() []*big.Int {
+//
+// PadBigInts can fail when the caller passes more indexes than
+// `MaxRecipients`. The active witness builder validates the assignment
+// first, but a manually-constructed PublicInputs would otherwise
+// silently emit a malformed transcript.
+func (p PublicInputs) TranscriptScalars() ([]*big.Int, error) {
 	transcript := make([]*big.Int, 0, 64)
 	for _, commitment := range publicCommitmentPoints(p.Commitments) {
 		transcript = append(
@@ -340,7 +329,10 @@ func (p PublicInputs) TranscriptScalars() []*big.Int {
 			ephemeralCoordinate([]twistededwards.Point{commitment}, 0, false),
 		)
 	}
-	indexes, _ := ccommon.PadBigInts(p.RecipientIndexes, MaxRecipients)
+	indexes, err := ccommon.PadBigInts(p.RecipientIndexes, MaxRecipients)
+	if err != nil {
+		return nil, fmt.Errorf("contribution transcript: pad recipient indexes: %w", err)
+	}
 	transcript = append(transcript, indexes...)
 	for _, recipient := range publicRecipientPoints(p.RecipientKeys) {
 		transcript = append(
@@ -363,12 +355,16 @@ func (p PublicInputs) TranscriptScalars() []*big.Int {
 		}
 		transcript = append(transcript, value)
 	}
-	return transcript
+	return transcript, nil
 }
 
 // BRLCCommitment compresses the contribution transcript into one scalar commitment.
 func (p PublicInputs) BRLCCommitment(challenge *big.Int) (*big.Int, error) {
-	return ccommon.BRLCNative(challenge, p.TranscriptScalars()...)
+	scalars, err := p.TranscriptScalars()
+	if err != nil {
+		return nil, err
+	}
+	return ccommon.BRLCNative(challenge, scalars...)
 }
 
 func toWitnessScalars(values []*big.Int) [MaxRecipients]frontend.Variable {

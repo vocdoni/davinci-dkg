@@ -56,13 +56,22 @@ type DKGTypesDecryptionPolicy struct {
 	NotAfterTimestamp  uint64
 }
 
+// DKGTypesEpochPolicy is an auto generated low-level Go binding around an user-defined struct.
+type DKGTypesEpochPolicy struct {
+	Threshold                 uint16
+	CommitteeSize             uint16
+	MinValidContributions     uint16
+	LotteryAlphaBps           uint16
+	RegistrationDeadlineBlock uint64
+	ContributionDeadlineBlock uint64
+	FinalizeNotBeforeBlock    uint64
+}
+
 // DKGTypesPartialDecryptionRecord is an auto generated low-level Go binding around an user-defined struct.
 type DKGTypesPartialDecryptionRecord struct {
-	Participant      common.Address
 	ParticipantIndex uint16
 	CiphertextIndex  uint16
 	DeltaHash        [32]byte
-	Delta            DKGTypesPoint
 	Accepted         bool
 }
 
@@ -72,49 +81,27 @@ type DKGTypesPoint struct {
 	Y *big.Int
 }
 
-// DKGTypesRevealedShareRecord is an auto generated low-level Go binding around an user-defined struct.
-type DKGTypesRevealedShareRecord struct {
-	Participant      common.Address
-	ParticipantIndex uint16
-	ShareValue       *big.Int
-	ShareHash        [32]byte
-	Accepted         bool
-}
-
-// DKGTypesRoundPolicy is an auto generated low-level Go binding around an user-defined struct.
-type DKGTypesRoundPolicy struct {
-	Threshold                 uint16
-	CommitteeSize             uint16
-	MinValidContributions     uint16
-	LotteryAlphaBps           uint16
-	SeedDelay                 uint16
-	RegistrationDeadlineBlock uint64
-	ContributionDeadlineBlock uint64
-	FinalizeNotBeforeBlock    uint64
-	DisclosureAllowed         bool
-}
-
-// IDKGManagerRound is an auto generated low-level Go binding around an user-defined struct.
-type IDKGManagerRound struct {
+// IDKGManagerEpoch is an auto generated low-level Go binding around an user-defined struct.
+type IDKGManagerEpoch struct {
 	Organizer              common.Address
-	Policy                 DKGTypesRoundPolicy
+	Policy                 DKGTypesEpochPolicy
 	DecryptionPolicy       DKGTypesDecryptionPolicy
 	Status                 uint8
 	Nonce                  uint64
+	StartBlock             uint64
 	SeedBlock              uint64
 	Seed                   [32]byte
 	LotteryThreshold       *big.Int
 	ClaimedCount           uint16
 	ContributionCount      uint16
 	PartialDecryptionCount uint16
-	RevealedShareCount     uint16
 	CiphertextCount        uint16
 }
 
 // DKGManagerMetaData contains all meta data concerning the DKGManager contract.
 var DKGManagerMetaData = &bind.MetaData{
-	ABI: "[{\"type\":\"constructor\",\"inputs\":[{\"name\":\"_chainId\",\"type\":\"uint32\",\"internalType\":\"uint32\"},{\"name\":\"_registry\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"_contributionVerifier\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"_partialDecryptVerifier\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"_finalizeVerifier\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"_decryptCombineVerifier\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"_revealSubmitVerifier\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"_revealShareVerifier\",\"type\":\"address\",\"internalType\":\"address\"}],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"CHAIN_ID\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint32\",\"internalType\":\"uint32\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"CONTRIBUTION_VERIFIER\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"address\",\"internalType\":\"address\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"DECRYPT_COMBINE_VERIFIER\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"address\",\"internalType\":\"address\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"FINALIZE_VERIFIER\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"address\",\"internalType\":\"address\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"PARTIAL_DECRYPT_VERIFIER\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"address\",\"internalType\":\"address\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"REGISTRY\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"address\",\"internalType\":\"address\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"REVEAL_SHARE_VERIFIER\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"address\",\"internalType\":\"address\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"REVEAL_SUBMIT_VERIFIER\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"address\",\"internalType\":\"address\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"ROUND_PREFIX\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint32\",\"internalType\":\"uint32\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"abortRound\",\"inputs\":[{\"name\":\"roundId\",\"type\":\"bytes12\",\"internalType\":\"bytes12\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"claimSlot\",\"inputs\":[{\"name\":\"roundId\",\"type\":\"bytes12\",\"internalType\":\"bytes12\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"combineDecryption\",\"inputs\":[{\"name\":\"roundId\",\"type\":\"bytes12\",\"internalType\":\"bytes12\"},{\"name\":\"ciphertextIndex\",\"type\":\"uint16\",\"internalType\":\"uint16\"},{\"name\":\"combineHash\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"plaintext\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"transcript\",\"type\":\"bytes\",\"internalType\":\"bytes\"},{\"name\":\"proof\",\"type\":\"bytes\",\"internalType\":\"bytes\"},{\"name\":\"input\",\"type\":\"bytes\",\"internalType\":\"bytes\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"createRound\",\"inputs\":[{\"name\":\"threshold\",\"type\":\"uint16\",\"internalType\":\"uint16\"},{\"name\":\"committeeSize\",\"type\":\"uint16\",\"internalType\":\"uint16\"},{\"name\":\"minValidContributions\",\"type\":\"uint16\",\"internalType\":\"uint16\"},{\"name\":\"lotteryAlphaBps\",\"type\":\"uint16\",\"internalType\":\"uint16\"},{\"name\":\"seedDelay\",\"type\":\"uint16\",\"internalType\":\"uint16\"},{\"name\":\"registrationDeadlineBlock\",\"type\":\"uint64\",\"internalType\":\"uint64\"},{\"name\":\"contributionDeadlineBlock\",\"type\":\"uint64\",\"internalType\":\"uint64\"},{\"name\":\"finalizeNotBeforeBlock\",\"type\":\"uint64\",\"internalType\":\"uint64\"},{\"name\":\"disclosureAllowed\",\"type\":\"bool\",\"internalType\":\"bool\"},{\"name\":\"decryptionPolicy\",\"type\":\"tuple\",\"internalType\":\"structDKGTypes.DecryptionPolicy\",\"components\":[{\"name\":\"ownerOnly\",\"type\":\"bool\",\"internalType\":\"bool\"},{\"name\":\"maxDecryptions\",\"type\":\"uint16\",\"internalType\":\"uint16\"},{\"name\":\"notBeforeBlock\",\"type\":\"uint64\",\"internalType\":\"uint64\"},{\"name\":\"notBeforeTimestamp\",\"type\":\"uint64\",\"internalType\":\"uint64\"},{\"name\":\"notAfterBlock\",\"type\":\"uint64\",\"internalType\":\"uint64\"},{\"name\":\"notAfterTimestamp\",\"type\":\"uint64\",\"internalType\":\"uint64\"}]}],\"outputs\":[{\"name\":\"\",\"type\":\"bytes12\",\"internalType\":\"bytes12\"}],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"extendRegistration\",\"inputs\":[{\"name\":\"roundId\",\"type\":\"bytes12\",\"internalType\":\"bytes12\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"finalizeRound\",\"inputs\":[{\"name\":\"roundId\",\"type\":\"bytes12\",\"internalType\":\"bytes12\"},{\"name\":\"aggregateCommitmentsHash\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"collectivePublicKeyHash\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"shareCommitmentHash\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"transcript\",\"type\":\"bytes\",\"internalType\":\"bytes\"},{\"name\":\"proof\",\"type\":\"bytes\",\"internalType\":\"bytes\"},{\"name\":\"input\",\"type\":\"bytes\",\"internalType\":\"bytes\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"getCiphertextHash\",\"inputs\":[{\"name\":\"roundId\",\"type\":\"bytes12\",\"internalType\":\"bytes12\"},{\"name\":\"ciphertextIndex\",\"type\":\"uint16\",\"internalType\":\"uint16\"}],\"outputs\":[{\"name\":\"\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getCollectivePublicKey\",\"inputs\":[{\"name\":\"roundId\",\"type\":\"bytes12\",\"internalType\":\"bytes12\"}],\"outputs\":[{\"name\":\"\",\"type\":\"tuple\",\"internalType\":\"structDKGTypes.Point\",\"components\":[{\"name\":\"x\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"y\",\"type\":\"uint256\",\"internalType\":\"uint256\"}]}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getCombinedDecryption\",\"inputs\":[{\"name\":\"roundId\",\"type\":\"bytes12\",\"internalType\":\"bytes12\"},{\"name\":\"ciphertextIndex\",\"type\":\"uint16\",\"internalType\":\"uint16\"}],\"outputs\":[{\"name\":\"\",\"type\":\"tuple\",\"internalType\":\"structDKGTypes.CombinedDecryptionRecord\",\"components\":[{\"name\":\"ciphertextIndex\",\"type\":\"uint16\",\"internalType\":\"uint16\"},{\"name\":\"completed\",\"type\":\"bool\",\"internalType\":\"bool\"},{\"name\":\"plaintext\",\"type\":\"uint256\",\"internalType\":\"uint256\"}]}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getContribution\",\"inputs\":[{\"name\":\"roundId\",\"type\":\"bytes12\",\"internalType\":\"bytes12\"},{\"name\":\"contributor\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[{\"name\":\"\",\"type\":\"tuple\",\"internalType\":\"structDKGTypes.ContributionRecord\",\"components\":[{\"name\":\"contributor\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"contributorIndex\",\"type\":\"uint16\",\"internalType\":\"uint16\"},{\"name\":\"commitmentsHash\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"encryptedSharesHash\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"commitmentVectorDigest\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"accepted\",\"type\":\"bool\",\"internalType\":\"bool\"}]}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getContributionVerifierVKeyHash\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getDecryptCombineVerifierVKeyHash\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getDecryptionPolicy\",\"inputs\":[{\"name\":\"roundId\",\"type\":\"bytes12\",\"internalType\":\"bytes12\"}],\"outputs\":[{\"name\":\"\",\"type\":\"tuple\",\"internalType\":\"structDKGTypes.DecryptionPolicy\",\"components\":[{\"name\":\"ownerOnly\",\"type\":\"bool\",\"internalType\":\"bool\"},{\"name\":\"maxDecryptions\",\"type\":\"uint16\",\"internalType\":\"uint16\"},{\"name\":\"notBeforeBlock\",\"type\":\"uint64\",\"internalType\":\"uint64\"},{\"name\":\"notBeforeTimestamp\",\"type\":\"uint64\",\"internalType\":\"uint64\"},{\"name\":\"notAfterBlock\",\"type\":\"uint64\",\"internalType\":\"uint64\"},{\"name\":\"notAfterTimestamp\",\"type\":\"uint64\",\"internalType\":\"uint64\"}]}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getFinalizeVerifierVKeyHash\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getPartialDecryptVerifierVKeyHash\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getPartialDecryption\",\"inputs\":[{\"name\":\"roundId\",\"type\":\"bytes12\",\"internalType\":\"bytes12\"},{\"name\":\"participant\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"ciphertextIndex\",\"type\":\"uint16\",\"internalType\":\"uint16\"}],\"outputs\":[{\"name\":\"\",\"type\":\"tuple\",\"internalType\":\"structDKGTypes.PartialDecryptionRecord\",\"components\":[{\"name\":\"participant\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"participantIndex\",\"type\":\"uint16\",\"internalType\":\"uint16\"},{\"name\":\"ciphertextIndex\",\"type\":\"uint16\",\"internalType\":\"uint16\"},{\"name\":\"deltaHash\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"delta\",\"type\":\"tuple\",\"internalType\":\"structDKGTypes.Point\",\"components\":[{\"name\":\"x\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"y\",\"type\":\"uint256\",\"internalType\":\"uint256\"}]},{\"name\":\"accepted\",\"type\":\"bool\",\"internalType\":\"bool\"}]}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getPlaintext\",\"inputs\":[{\"name\":\"roundId\",\"type\":\"bytes12\",\"internalType\":\"bytes12\"},{\"name\":\"ciphertextIndex\",\"type\":\"uint16\",\"internalType\":\"uint16\"}],\"outputs\":[{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getRevealShareVerifierVKeyHash\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getRevealSubmitVerifierVKeyHash\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getRevealedShare\",\"inputs\":[{\"name\":\"roundId\",\"type\":\"bytes12\",\"internalType\":\"bytes12\"},{\"name\":\"participant\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[{\"name\":\"\",\"type\":\"tuple\",\"internalType\":\"structDKGTypes.RevealedShareRecord\",\"components\":[{\"name\":\"participant\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"participantIndex\",\"type\":\"uint16\",\"internalType\":\"uint16\"},{\"name\":\"shareValue\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"shareHash\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"accepted\",\"type\":\"bool\",\"internalType\":\"bool\"}]}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getRound\",\"inputs\":[{\"name\":\"roundId\",\"type\":\"bytes12\",\"internalType\":\"bytes12\"}],\"outputs\":[{\"name\":\"\",\"type\":\"tuple\",\"internalType\":\"structIDKGManager.Round\",\"components\":[{\"name\":\"organizer\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"policy\",\"type\":\"tuple\",\"internalType\":\"structDKGTypes.RoundPolicy\",\"components\":[{\"name\":\"threshold\",\"type\":\"uint16\",\"internalType\":\"uint16\"},{\"name\":\"committeeSize\",\"type\":\"uint16\",\"internalType\":\"uint16\"},{\"name\":\"minValidContributions\",\"type\":\"uint16\",\"internalType\":\"uint16\"},{\"name\":\"lotteryAlphaBps\",\"type\":\"uint16\",\"internalType\":\"uint16\"},{\"name\":\"seedDelay\",\"type\":\"uint16\",\"internalType\":\"uint16\"},{\"name\":\"registrationDeadlineBlock\",\"type\":\"uint64\",\"internalType\":\"uint64\"},{\"name\":\"contributionDeadlineBlock\",\"type\":\"uint64\",\"internalType\":\"uint64\"},{\"name\":\"finalizeNotBeforeBlock\",\"type\":\"uint64\",\"internalType\":\"uint64\"},{\"name\":\"disclosureAllowed\",\"type\":\"bool\",\"internalType\":\"bool\"}]},{\"name\":\"decryptionPolicy\",\"type\":\"tuple\",\"internalType\":\"structDKGTypes.DecryptionPolicy\",\"components\":[{\"name\":\"ownerOnly\",\"type\":\"bool\",\"internalType\":\"bool\"},{\"name\":\"maxDecryptions\",\"type\":\"uint16\",\"internalType\":\"uint16\"},{\"name\":\"notBeforeBlock\",\"type\":\"uint64\",\"internalType\":\"uint64\"},{\"name\":\"notBeforeTimestamp\",\"type\":\"uint64\",\"internalType\":\"uint64\"},{\"name\":\"notAfterBlock\",\"type\":\"uint64\",\"internalType\":\"uint64\"},{\"name\":\"notAfterTimestamp\",\"type\":\"uint64\",\"internalType\":\"uint64\"}]},{\"name\":\"status\",\"type\":\"uint8\",\"internalType\":\"enumDKGTypes.RoundStatus\"},{\"name\":\"nonce\",\"type\":\"uint64\",\"internalType\":\"uint64\"},{\"name\":\"seedBlock\",\"type\":\"uint64\",\"internalType\":\"uint64\"},{\"name\":\"seed\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"lotteryThreshold\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"claimedCount\",\"type\":\"uint16\",\"internalType\":\"uint16\"},{\"name\":\"contributionCount\",\"type\":\"uint16\",\"internalType\":\"uint16\"},{\"name\":\"partialDecryptionCount\",\"type\":\"uint16\",\"internalType\":\"uint16\"},{\"name\":\"revealedShareCount\",\"type\":\"uint16\",\"internalType\":\"uint16\"},{\"name\":\"ciphertextCount\",\"type\":\"uint16\",\"internalType\":\"uint16\"}]}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getShareCommitmentHash\",\"inputs\":[{\"name\":\"roundId\",\"type\":\"bytes12\",\"internalType\":\"bytes12\"},{\"name\":\"participantIndex\",\"type\":\"uint16\",\"internalType\":\"uint16\"}],\"outputs\":[{\"name\":\"\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"reconstructSecret\",\"inputs\":[{\"name\":\"roundId\",\"type\":\"bytes12\",\"internalType\":\"bytes12\"},{\"name\":\"disclosureHash\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"reconstructedSecretHash\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"transcript\",\"type\":\"bytes\",\"internalType\":\"bytes\"},{\"name\":\"proof\",\"type\":\"bytes\",\"internalType\":\"bytes\"},{\"name\":\"input\",\"type\":\"bytes\",\"internalType\":\"bytes\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"roundNonce\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint64\",\"internalType\":\"uint64\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"selectedParticipants\",\"inputs\":[{\"name\":\"roundId\",\"type\":\"bytes12\",\"internalType\":\"bytes12\"}],\"outputs\":[{\"name\":\"\",\"type\":\"address[]\",\"internalType\":\"address[]\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"submitCiphertext\",\"inputs\":[{\"name\":\"roundId\",\"type\":\"bytes12\",\"internalType\":\"bytes12\"},{\"name\":\"ciphertextIndex\",\"type\":\"uint16\",\"internalType\":\"uint16\"},{\"name\":\"c1x\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"c1y\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"c2x\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"c2y\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"submitContribution\",\"inputs\":[{\"name\":\"roundId\",\"type\":\"bytes12\",\"internalType\":\"bytes12\"},{\"name\":\"contributorIndex\",\"type\":\"uint16\",\"internalType\":\"uint16\"},{\"name\":\"commitmentsHash\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"encryptedSharesHash\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"commitment0X\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"commitment0Y\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"transcript\",\"type\":\"bytes\",\"internalType\":\"bytes\"},{\"name\":\"proof\",\"type\":\"bytes\",\"internalType\":\"bytes\"},{\"name\":\"input\",\"type\":\"bytes\",\"internalType\":\"bytes\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"submitPartialDecryption\",\"inputs\":[{\"name\":\"roundId\",\"type\":\"bytes12\",\"internalType\":\"bytes12\"},{\"name\":\"participantIndex\",\"type\":\"uint16\",\"internalType\":\"uint16\"},{\"name\":\"ciphertextIndex\",\"type\":\"uint16\",\"internalType\":\"uint16\"},{\"name\":\"deltaHash\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"proof\",\"type\":\"bytes\",\"internalType\":\"bytes\"},{\"name\":\"input\",\"type\":\"bytes\",\"internalType\":\"bytes\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"submitRevealedShare\",\"inputs\":[{\"name\":\"roundId\",\"type\":\"bytes12\",\"internalType\":\"bytes12\"},{\"name\":\"participantIndex\",\"type\":\"uint16\",\"internalType\":\"uint16\"},{\"name\":\"shareValue\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"proof\",\"type\":\"bytes\",\"internalType\":\"bytes\"},{\"name\":\"input\",\"type\":\"bytes\",\"internalType\":\"bytes\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"event\",\"name\":\"CiphertextSubmitted\",\"inputs\":[{\"name\":\"roundId\",\"type\":\"bytes12\",\"indexed\":true,\"internalType\":\"bytes12\"},{\"name\":\"ciphertextIndex\",\"type\":\"uint16\",\"indexed\":true,\"internalType\":\"uint16\"},{\"name\":\"submitter\",\"type\":\"address\",\"indexed\":true,\"internalType\":\"address\"},{\"name\":\"c1x\",\"type\":\"uint256\",\"indexed\":false,\"internalType\":\"uint256\"},{\"name\":\"c1y\",\"type\":\"uint256\",\"indexed\":false,\"internalType\":\"uint256\"},{\"name\":\"c2x\",\"type\":\"uint256\",\"indexed\":false,\"internalType\":\"uint256\"},{\"name\":\"c2y\",\"type\":\"uint256\",\"indexed\":false,\"internalType\":\"uint256\"}],\"anonymous\":false},{\"type\":\"event\",\"name\":\"ContributionSubmitted\",\"inputs\":[{\"name\":\"roundId\",\"type\":\"bytes12\",\"indexed\":true,\"internalType\":\"bytes12\"},{\"name\":\"contributor\",\"type\":\"address\",\"indexed\":true,\"internalType\":\"address\"},{\"name\":\"contributorIndex\",\"type\":\"uint16\",\"indexed\":false,\"internalType\":\"uint16\"},{\"name\":\"commitmentsHash\",\"type\":\"bytes32\",\"indexed\":false,\"internalType\":\"bytes32\"},{\"name\":\"encryptedSharesHash\",\"type\":\"bytes32\",\"indexed\":false,\"internalType\":\"bytes32\"}],\"anonymous\":false},{\"type\":\"event\",\"name\":\"DecryptionCombined\",\"inputs\":[{\"name\":\"roundId\",\"type\":\"bytes12\",\"indexed\":true,\"internalType\":\"bytes12\"},{\"name\":\"ciphertextIndex\",\"type\":\"uint16\",\"indexed\":true,\"internalType\":\"uint16\"},{\"name\":\"combineHash\",\"type\":\"bytes32\",\"indexed\":false,\"internalType\":\"bytes32\"},{\"name\":\"plaintext\",\"type\":\"uint256\",\"indexed\":false,\"internalType\":\"uint256\"}],\"anonymous\":false},{\"type\":\"event\",\"name\":\"PartialDecryptionSubmitted\",\"inputs\":[{\"name\":\"roundId\",\"type\":\"bytes12\",\"indexed\":true,\"internalType\":\"bytes12\"},{\"name\":\"participant\",\"type\":\"address\",\"indexed\":true,\"internalType\":\"address\"},{\"name\":\"participantIndex\",\"type\":\"uint16\",\"indexed\":false,\"internalType\":\"uint16\"},{\"name\":\"ciphertextIndex\",\"type\":\"uint16\",\"indexed\":false,\"internalType\":\"uint16\"},{\"name\":\"deltaHash\",\"type\":\"bytes32\",\"indexed\":false,\"internalType\":\"bytes32\"}],\"anonymous\":false},{\"type\":\"event\",\"name\":\"RegistrationClosed\",\"inputs\":[{\"name\":\"roundId\",\"type\":\"bytes12\",\"indexed\":true,\"internalType\":\"bytes12\"}],\"anonymous\":false},{\"type\":\"event\",\"name\":\"RegistrationExtended\",\"inputs\":[{\"name\":\"roundId\",\"type\":\"bytes12\",\"indexed\":true,\"internalType\":\"bytes12\"},{\"name\":\"newSeedBlock\",\"type\":\"uint64\",\"indexed\":false,\"internalType\":\"uint64\"},{\"name\":\"newRegistrationDeadline\",\"type\":\"uint64\",\"indexed\":false,\"internalType\":\"uint64\"}],\"anonymous\":false},{\"type\":\"event\",\"name\":\"RevealedShareSubmitted\",\"inputs\":[{\"name\":\"roundId\",\"type\":\"bytes12\",\"indexed\":true,\"internalType\":\"bytes12\"},{\"name\":\"participant\",\"type\":\"address\",\"indexed\":true,\"internalType\":\"address\"},{\"name\":\"participantIndex\",\"type\":\"uint16\",\"indexed\":false,\"internalType\":\"uint16\"},{\"name\":\"shareHash\",\"type\":\"bytes32\",\"indexed\":false,\"internalType\":\"bytes32\"}],\"anonymous\":false},{\"type\":\"event\",\"name\":\"RoundAborted\",\"inputs\":[{\"name\":\"roundId\",\"type\":\"bytes12\",\"indexed\":true,\"internalType\":\"bytes12\"}],\"anonymous\":false},{\"type\":\"event\",\"name\":\"RoundCreated\",\"inputs\":[{\"name\":\"roundId\",\"type\":\"bytes12\",\"indexed\":true,\"internalType\":\"bytes12\"},{\"name\":\"organizer\",\"type\":\"address\",\"indexed\":true,\"internalType\":\"address\"},{\"name\":\"seedBlock\",\"type\":\"uint64\",\"indexed\":false,\"internalType\":\"uint64\"},{\"name\":\"lotteryThreshold\",\"type\":\"uint256\",\"indexed\":false,\"internalType\":\"uint256\"}],\"anonymous\":false},{\"type\":\"event\",\"name\":\"RoundEvicted\",\"inputs\":[{\"name\":\"roundId\",\"type\":\"bytes12\",\"indexed\":true,\"internalType\":\"bytes12\"}],\"anonymous\":false},{\"type\":\"event\",\"name\":\"RoundFinalized\",\"inputs\":[{\"name\":\"roundId\",\"type\":\"bytes12\",\"indexed\":true,\"internalType\":\"bytes12\"},{\"name\":\"aggregateCommitmentsHash\",\"type\":\"bytes32\",\"indexed\":false,\"internalType\":\"bytes32\"},{\"name\":\"collectivePublicKeyHash\",\"type\":\"bytes32\",\"indexed\":false,\"internalType\":\"bytes32\"},{\"name\":\"shareCommitmentHash\",\"type\":\"bytes32\",\"indexed\":false,\"internalType\":\"bytes32\"}],\"anonymous\":false},{\"type\":\"event\",\"name\":\"SecretReconstructed\",\"inputs\":[{\"name\":\"roundId\",\"type\":\"bytes12\",\"indexed\":true,\"internalType\":\"bytes12\"},{\"name\":\"disclosureHash\",\"type\":\"bytes32\",\"indexed\":false,\"internalType\":\"bytes32\"},{\"name\":\"reconstructedSecretHash\",\"type\":\"bytes32\",\"indexed\":false,\"internalType\":\"bytes32\"}],\"anonymous\":false},{\"type\":\"event\",\"name\":\"SeedResolved\",\"inputs\":[{\"name\":\"roundId\",\"type\":\"bytes12\",\"indexed\":true,\"internalType\":\"bytes12\"},{\"name\":\"seed\",\"type\":\"bytes32\",\"indexed\":false,\"internalType\":\"bytes32\"}],\"anonymous\":false},{\"type\":\"event\",\"name\":\"SlotClaimed\",\"inputs\":[{\"name\":\"roundId\",\"type\":\"bytes12\",\"indexed\":true,\"internalType\":\"bytes12\"},{\"name\":\"claimer\",\"type\":\"address\",\"indexed\":true,\"internalType\":\"address\"},{\"name\":\"slot\",\"type\":\"uint16\",\"indexed\":false,\"internalType\":\"uint16\"}],\"anonymous\":false},{\"type\":\"error\",\"name\":\"AlreadyClaimed\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"AlreadyCombined\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"AlreadyContributed\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"AlreadyFinalized\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"AlreadyPartiallyDecrypted\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"AlreadyRevealed\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"CiphertextAlreadySubmitted\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"CiphertextNotSubmitted\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"DecryptionExpired\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"DecryptionLimitReached\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"DecryptionNotYetAllowed\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"DisclosureDisabled\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"DuplicateIndex\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"InsufficientContributions\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"InsufficientPartialDecryptions\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"InsufficientRevealedShares\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"InvalidAddress\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"InvalidChainId\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"InvalidCiphertext\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"InvalidCombinedDecryption\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"InvalidCommitteeSize\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"InvalidContribution\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"InvalidDecryptionPolicy\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"InvalidFinalization\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"InvalidPartialDecryption\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"InvalidPhase\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"InvalidPolicy\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"InvalidProofInput\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"InvalidReconstruction\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"InvalidRevealedShare\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"InvalidRound\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"InvalidShareCount\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"InvalidVerifier\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"LagrangeMismatch\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"NotEligible\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"NotOwner\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"NotRegistered\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"NotSelectedParticipant\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"SeedExpired\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"SeedNotReady\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"SlotsFull\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"Unauthorized\",\"inputs\":[]}]",
-	Bin: "0x6101a0806040523461029657610100816161848038038091610021828561029a565b8339810103126102965780519063ffffffff82169182810361029657610049602083016102d1565b610055604084016102d1565b610061606085016102d1565b9061006e608086016102d1565b9261007b60a087016102d1565b9461009460e061008d60c08a016102d1565b98016102d1565b9763ffffffff461603610287576001600160a01b03821615610278576001600160a01b038316158015610267575b8015610256575b8015610245575b8015610234575b8015610223575b6102145763ffffffff918160805260a05260405160208101918360e01b9060e01b1682523060601b60248201526018815261011a60388261029a565b5190201660c05260e0526101005261012052610140526101605261018052604051615e9e90816102e6823960805181611483015260a051818181610374015281816121ce015281816138540152818161468d0152615b11015260c051818181610bfd015261390a015260e05181818161040c01528181610c7a015261444701526101005181818161112a015281816114cc0152611a02015261012051818181610cce015281816115240152612b3e015261014051818181610f1f0152818161271e01526140790152610160518181816103b80152818161190f0152611c1a015261018051818181610c3601528181611a560152612f8f0152f35b63baa3de5f60e01b5f5260045ffd5b506001600160a01b038816156100de565b506001600160a01b038716156100d7565b506001600160a01b038616156100d0565b506001600160a01b038516156100c9565b506001600160a01b038416156100c2565b63e6c4247b60e01b5f5260045ffd5b633d23e4d160e11b5f5260045ffd5b5f80fd5b601f909101601f19168101906001600160401b038211908210176102bd57604052565b634e487b7160e01b5f52604160045260245ffd5b51906001600160a01b03821682036102965756fe60806040526004361015610011575f80fd5b5f3560e01c8063058994a11461027457806306433b1b1461026f578063070c74921461026a578063074a75e1146102655780630b1451f0146102605780630e2c53f71461025b5780633353ec6e14610256578063349181a214610251578063373877a61461024c5780633caf448714610247578063415a1b86146102425780634554c0be1461023d578063510ba2df1461023857806353d721841461023357806356664d151461022e5780635ddd06261461022957806363f314cd14610224578063669a76a91461021f5780636759e0e11461021a57806370f2469b1461021557806372517b4b14610210578063802ae2311461020b57806385e1f4d0146102065780638dc1f53a1461020157806393c3d3a8146101fc578063a9c4b25f146101f7578063b18730c2146101f2578063b58aab90146101ed578063bf192209146101e8578063c2440e16146101e3578063c9396bf0146101de578063ca3c0458146101d9578063d3720aac146101d4578063d6c29c9e146101cf578063d9933767146101ca578063f4e34945146101c5578063fe1604b5146101c05763fe234897146101bb575f80fd5b61274d565b612709565b61261b565b6120d9565b61203c565b611f32565b611eaa565b611a99565b611a31565b6119ed565b611952565b6118ea565b611553565b61150f565b6114a7565b611467565b610f62565b610efa565b610dd1565b610d11565b610ca9565b610c65565b610c21565b610be1565b610ad2565b610a6f565b610a1c565b6109ab565b6108f9565b61085d565b610756565b61071b565b61068e565b610484565b6103e7565b6103a3565b61035f565b6102c1565b600435906001600160a01b03198216820361029057565b5f80fd5b9181601f84011215610290578235916001600160401b038311610290576020838186019501011161029057565b346102905760e0366003190112610290576102da610279565b602435604435916064356084356001600160401b03811161029057610303903690600401610294565b60a4929192356001600160401b03811161029057610325903690600401610294565b93909260c435976001600160401b0389116102905761034b610353993690600401610294565b989097612a65565b005b5f91031261029057565b34610290575f366003190112610290576040517f00000000000000000000000000000000000000000000000000000000000000006001600160a01b03168152602090f35b34610290575f366003190112610290576040517f00000000000000000000000000000000000000000000000000000000000000006001600160a01b03168152602090f35b34610290575f3660031901126102905760405163233ace1160e01b81526020816004817f00000000000000000000000000000000000000000000000000000000000000006001600160a01b03165afa90811561047f575f91610450575b50604051908152602090f35b610472915060203d602011610478575b61046a81836128d0565b810190612e3c565b5f610444565b503d610460565b61293b565b346102905760203660031901126102905761049d610279565b6001600160a01b031981165f90815260226020526040902080546001600160a01b03161561067f5760058101805492600160ff85166104db8161251d565b0361067057600883015461ffff1691600184019384549361ffff61050e6105078761ffff9060101c1690565b61ffff1690565b911614610670576001600160401b03605085901c1695438710156106705761059861058861056e61054c6105a4946001600160401b039060481c1690565b9961056861056160408b901c61ffff16610507565b809c612e4b565b90612e4b565b6105826001600160401b0343169a8b612e6b565b99612e6b565b9560901c6001600160401b031690565b6001600160401b031690565b6001600160401b0385161015610661577f9f2b9abf7edf3bc2ca127de52d5e6f818ee43f02fa41ffd5ef9d24e45130cb9c9461060d87610638945f6006899601559067ffffffffffffffff60481b82549160481b169067ffffffffffffffff60481b1916179055565b805467ffffffffffffffff60501b191660509290921b67ffffffffffffffff60501b16919091179055565b604080516001600160401b0395861681529290941660208301526001600160a01b0319169290a2005b63d06b96b160e01b5f5260045ffd5b63268dbf6760e21b5f5260045ffd5b6328ad4a9560e21b5f5260045ffd5b346102905760c0366003190112610290576106a7610279565b602435604435916064356001600160401b038111610290576106cd903690600401610294565b906084356001600160401b038111610290576106ed903690600401610294565b92909160a435966001600160401b03881161029057610713610353983690600401610294565b979096612edc565b3461029057602036600319011261029057604061073e610739610279565b6131b3565b6107548251809260208091805184520151910152565bf35b346102905760203660031901126102905761076f610279565b6001600160a01b031981165f90815260226020526040902080546001600160a01b0316801561067f576001600160a01b0316330361083457600501805460ff166107b88161251d565b6003811490811561081f575b811561080b575b5061067057805460ff191660041790556001600160a01b0319167f97d5ddda8e4d1dcdb9643b144637aeef99ca0f2efe328a2b8e2620776cf1e4105f80a2005b600491506108188161251d565b145f6107cb565b905061082a8161251d565b60058114906107c4565b6282b42960e81b5f5260045ffd5b61ffff81160361029057565b6024359061085b82610842565b565b346102905760403660031901126102905760206108af61087b610279565b6024359061088882610842565b6001600160601b0360a01b165f52602d835260405f209061ffff165f5260205260405f2090565b54604051908152f35b6001600160401b0381160361029057565b6101043590811515820361029057565b3590811515820361029057565b60c0906101231901126102905761012490565b34610290576101e0366003190112610290576109a761098c60043561091d81610842565b60243561092981610842565b60443561093581610842565b60643561094181610842565b60843561094d81610842565b60a4359061095a826108b8565b60c43592610967846108b8565b60e43594610974866108b8565b61097c6108c9565b96610986366108e6565b986137ab565b6040516001600160a01b031990911681529081906020820190565b0390f35b34610290575f3660031901126102905760206001600160401b035f5416604051908152f35b6001600160401b0360a0809280511515855261ffff6020820151166020860152826040820151166040860152826060820151166060860152826080820151166080860152015116910152565b3461029057602036600319011261029057610a35610279565b610a3d613d8b565b506001600160601b0360a01b165f52602260205260c0610a62600360405f2001613dbb565b61075460405180926109d0565b346102905760403660031901126102905760206108af610a8d610279565b60243590610a9a82610842565b6001600160601b0360a01b165f52602a835260405f209061ffff165f5260205260405f2090565b6001600160a01b0381160361029057565b34610290576040366003190112610290576109a7610b50610af1610279565b60243590610afe82610ac1565b5f6080604051610b0d81612827565b82815282602082015282604082015282606082015201526001600160601b0360a01b165f52602960205260405f209060018060a01b03165f5260205260405f2090565b60ff600360405192610b6184612827565b61ffff815460018060a01b038116865260a01c1660208501526001810154604085015260028101546060850152015416151560808201526040519182918291909160808060a083019460018060a01b03815116845261ffff6020820151166020850152604081015160408501526060810151606085015201511515910152565b34610290575f36600319011261029057602060405163ffffffff7f0000000000000000000000000000000000000000000000000000000000000000168152f35b34610290575f366003190112610290576040517f00000000000000000000000000000000000000000000000000000000000000006001600160a01b03168152602090f35b34610290575f366003190112610290576040517f00000000000000000000000000000000000000000000000000000000000000006001600160a01b03168152602090f35b34610290575f3660031901126102905760405163233ace1160e01b81526020816004817f00000000000000000000000000000000000000000000000000000000000000006001600160a01b03165afa90811561047f575f916104505750604051908152602090f35b346102905760403660031901126102905760206001610d65610d31610279565b60243590610d3e82610842565b6001600160601b0360a01b165f526028845260405f209061ffff165f5260205260405f2090565b0154604051908152f35b91909160c060a060e0830194600180831b03815116845261ffff602082015116602085015261ffff604082015116604085015260608101516060850152610dc86080820151608086019060208091805184520151910152565b01511515910152565b34610290576060366003190112610290576109a7610e7d610df0610279565b610e6860243591610e0083610ac1565b60443590610e0d82610842565b5f60a0604051610e1c81612847565b828152826020820152826040820152826060820152610e3961317d565b608082015201526001600160601b0360a01b165f52602660205260405f209061ffff165f5260205260405f2090565b9060018060a01b03165f5260205260405f2090565b610eee610ee5600460405193610e9285612847565b80546001600160a01b038116865261ffff60a082901c81166020880152610ec29160b01c1661ffff166040870152565b60018101546060860152610ed860028201613195565b6080860152015460ff1690565b151560a0830152565b60405191829182610d6f565b34610290575f3660031901126102905760405163233ace1160e01b81526020816004817f00000000000000000000000000000000000000000000000000000000000000006001600160a01b03165afa90811561047f575f916104505750604051908152602090f35b346102905760c036600319011261029057610f7b610279565b602435610f8781610842565b604435610f9381610842565b6064356084356001600160401b03811161029057610fb5903690600401610294565b60a4939193356001600160401b03811161029057610fd7903690600401610294565b90610ff6886001600160601b0360a01b165f52602260205260405f2090565b80549096906001600160a01b03161561067f576003611019600589015460ff1690565b6110228161251d565b036106705761106b61106761106061104e8c6001600160601b0360a01b165f52602360205260405f2090565b335f9081526020919091526040902090565b5460ff1690565b1590565b6114585761ffff8816938415801561143b575b801561142f575b8015611420575b8015611418575b61140a576110c76110b88b6001600160601b0360a01b165f52602460205260405f2090565b6110c18b613e55565b90613e69565b90543360039290921b1c6001600160a01b03160361138057611124600461111c8c610e688a61110b33936001600160601b0360a01b165f52602660205260405f2090565b9061ffff165f5260205260405f2090565b015460ff1690565b6113fb577f00000000000000000000000000000000000000000000000000000000000000006001600160a01b031691823b156102905784925f92859261118060405198899586948594635c73957b60e11b865260048601612911565b03915afa92831561047f5761119d936113e1575b50810190613e7e565b906111c08661110b896001600160601b0360a01b165f52602a60205260405f2090565b5482516111dc6111d08a60a01c90565b6001600160601b031690565b14918215926113d2575b5081156113c9575b811561138f575b506113805760c081018051909160e0019061122a61123883516040519283916020830195869091604092825260208201520190565b03601f1981018352826128d0565b5190208403611380577f39e01752de5471ef06952341613214369ee48b9bf21f57f7d6fcf9239f397f229461130c9260036008936112938b610e688961110b33936001600160601b0360a01b165f52602660205260405f2090565b805460a08c901b61ffff60a01b1663ffffffff60a01b199091161760b089901b61ffff60b01b1617815560048101805460ff1916600117905592516002840155519101550180546112ef9060201c61ffff16613ed0565b613ed0565b65ffff0000000082549160201b169065ffff000000001916179055565b6113506113318261110b886001600160601b0360a01b165f52602760205260405f2090565b6113406112ea825461ffff1690565b61ffff1661ffff19825416179055565b6040805161ffff958616815294909116602085015283015233926001600160a01b0319169180606081015b0390a3005b63d1fed5fd60e01b5f5260045ffd5b9050608082015161122a6113be60a085015b516040805160208101958652908101919091529182906060820190565b51902014155f6111f5565b801591506111ee565b6020840151141591505f6111e6565b806113ef5f6113f5936128d0565b80610355565b5f611194565b633466526160e01b5f5260045ffd5b62d949df60e51b5f5260045ffd5b508615611093565b5061010061ffff87161161108c565b5061ffff861615611085565b5060018801546114519060101c61ffff16610507565b851161107e565b63965c290d60e01b5f5260045ffd5b34610290575f36600319011261029057602060405163ffffffff7f0000000000000000000000000000000000000000000000000000000000000000168152f35b34610290575f3660031901126102905760405163233ace1160e01b81526020816004817f00000000000000000000000000000000000000000000000000000000000000006001600160a01b03165afa90811561047f575f916104505750604051908152602090f35b34610290575f366003190112610290576040517f00000000000000000000000000000000000000000000000000000000000000006001600160a01b03168152602090f35b346102905760c03660031901126102905761156c610279565b60243561157881610842565b6044356064359160843560a435936115a4866001600160601b0360a01b165f52602260205260405f2090565b80546001600160a01b031695909390861561067f5760036115c9600587015460ff1690565b6115d28161251d565b036106705761ffff821696871580156118df575b6118bd576115f761106785896156b7565b80156118cc575b6118bd5761160e60038701613dbb565b906116198251151590565b90816118a9575b5061189a5760408101516001600160401b0316801515908161187e575b5061185c5761165961059860608301516001600160401b031690565b801515908161186b575b5061185c5761167f61059860808301516001600160401b031690565b8015159081611849575b50611827576116a561059860a08301516001600160401b031690565b8015159081611836575b5061182757602001516116c59061ffff16610507565b8015159081611806575b506117f7576116f68261110b8a6001600160601b0360a01b165f52602d60205260405f2090565b546117e8576117b160087fa5a7194c3409f675784ea2429410513d4d52c73d5fd751d44ed21da06cc643cf968a61177d6117e39661110b8c8b61175f8c61122a8c6040519485936020850197889094939260609260808301968352602083015260408201520152565b519020936001600160601b0360a01b165f52602d60205260405f2090565b550180546117969060401c61ffff1660010161ffff1690565b61ffff60401b82549160401b169061ffff60401b1916179055565b60405193849333996001600160601b0360a01b1697859094939260609260808301968352602083015260408201520152565b0390a4005b6316feb18560e11b5f5260045ffd5b63464e67af60e01b5f5260045ffd5b905061ffff61181e600888015461ffff9060401c1690565b1610155f6116cf565b630410ff2960e31b5f5260045ffd5b90506001600160401b034216115f6116af565b90506001600160401b034316115f611689565b633deac39560e01b5f5260045ffd5b90506001600160401b034216105f611663565b6001600160401b031690506001600160401b034316105f61163d565b6330cd747160e01b5f5260045ffd5b6001600160a01b031690503314155f611620565b634c4d29cd60e11b5f5260045ffd5b506118da61106783876156b7565b6115fe565b5061010088116115e6565b34610290575f3660031901126102905760405163233ace1160e01b81526020816004817f00000000000000000000000000000000000000000000000000000000000000006001600160a01b03165afa90811561047f575f916104505750604051908152602090f35b346102905760e03660031901126102905761196b610279565b60243561197781610842565b604435916064356084356001600160401b0381116102905761199d903690600401610294565b60a4929192356001600160401b038111610290576119bf903690600401610294565b93909260c435976001600160401b038911610290576119e5610353993690600401610294565b989097613f5c565b34610290575f366003190112610290576040517f00000000000000000000000000000000000000000000000000000000000000006001600160a01b03168152602090f35b34610290575f3660031901126102905760405163233ace1160e01b81526020816004817f00000000000000000000000000000000000000000000000000000000000000006001600160a01b03165afa90811561047f575f916104505750604051908152602090f35b346102905760a036600319011261029057611ab2610279565b602435611abe81610842565b6044356064356001600160401b03811161029057611ae0903690600401610294565b6084356001600160401b03811161029057611aff903690600401610294565b90611b1e876001600160601b0360a01b165f52602260205260405f2090565b80549094906001600160a01b03161561067f576002850154611b449060401c60ff161590565b611e59576003611b58600587015460ff1690565b611b618161251d565b0361067057611b8d61106761106061104e8b6001600160601b0360a01b165f52602360205260405f2090565b6114585761ffff87169384158015611e3c575b8015611e34575b611e2557611bd5611bcc8a6001600160601b0360a01b165f52602460205260405f2090565b6110c18a613e55565b90543360039290921b1c6001600160a01b03160361138057611c14600361111c33610e688d6001600160601b0360a01b165f52602960205260405f2090565b611e16577f00000000000000000000000000000000000000000000000000000000000000006001600160a01b031691823b156102905784925f928592611c7060405198899586948594635c73957b60e11b865260048601612911565b03915afa92831561047f57611c8d93611e02575b50810190614281565b611caf8561110b886001600160601b0360a01b165f52602a60205260405f2090565b54908051611cc06111d08960a01c90565b1492831593611df3575b508215611de4575b8215611ddb575b8215611db7575b50506113805781611d8e600861137b937f5f16f25c2c3e0004ddf0924462825a82df1cd393546962d8a9757d1e71dc1dac956001611d3633610e688c6001600160601b0360a01b165f52602960205260405f2090565b805461ffff60a01b191660a08b901b61ffff60a01b1617815560038101805460ff191660011790550155018054611d739060301c61ffff16613ed0565b61ffff60301b82549160301b169061ffff60301b1916179055565b6040805161ffff9095168552602085019190915233946001600160a01b03191693918291820190565b90915061122a611dcf6113a160608401519360800190565b51902014155f80611ce0565b81159250611cd9565b60408101518514159250611cd2565b6020820151141592505f611cca565b806113ef5f611e10936128d0565b5f611c84565b63a89ac15160e01b5f5260045ffd5b639eae062d60e01b5f5260045ffd5b508615611ba7565b506001860154611e529060101c61ffff16610507565b8511611ba0565b630ba0cb2f60e21b5f5260045ffd5b60206040818301928281528451809452019201905f5b818110611e8b5750505090565b82516001600160a01b0316845260209384019390920191600101611e7e565b34610290576020366003190112610290576001600160a01b0319611ecc610279565b165f52602460205260405f206040519081602082549182815201915f5260205f20905f5b818110611f13576109a785611f07818703826128d0565b60405191829182611e68565b82546001600160a01b0316845260209093019260019283019201611ef0565b34610290576040366003190112610290576109a7611f95611f51610279565b60243590611f5e82610ac1565b611f66613d8b565b506001600160a01b0319165f9081526025602090815260408083206001600160a01b0390941683529290522090565b611fea610ee5600460405193611faa85612847565b80546001600160a01b038116865260a01c61ffff166020860152600181015460408601526002810154606086015260038101546080860152015460ff1690565b6040519182918291909160a08060c0830194600180831b03815116845261ffff602082015116602085015260408101516040850152606081015160608501526080810151608085015201511515910152565b346102905761012036600319011261029057612056610279565b61205e61084e565b6044359160843560643560a43560c4356001600160401b0381116102905761208a903690600401610294565b9160e4356001600160401b038111610290576120aa903690600401610294565b95909461010435996001600160401b038b11610290576120d16103539b3690600401610294565b9a9099614324565b34610290576020366003190112610290576120f2610279565b6001600160a01b031981165f90815260226020526040902080549091906001600160a01b03161561067f576005820180546001840180549490939161214a6110676001600160401b03605089901c1660ff8416615a28565b61067057600882019561ffff6121736105076121688a5461ffff1690565b9360101c61ffff1690565b911610156124685761219f61106061104e856001600160601b0360a01b165f52602360205260405f2090565b612459576006820180549182156123d1575b50506040516313a4120960e31b815233600482015260a0816024817f00000000000000000000000000000000000000000000000000000000000000006001600160a01b03165afa90811561047f576001916060915f916123a2575b50015161221881614874565b61222181614874565b036123935760408051602081019283523360601b6bffffffffffffffffffffffff1916918101919091526007919061225c816054810161122a565b5190209101541115612384576122da612277855461ffff1690565b9461229f3361229a856001600160601b0360a01b165f52602460205260405f2090565b61487e565b6122d16122c433610e68866001600160601b0360a01b165f52602360205260405f2090565b805460ff19166001179055565b611340866148c4565b60405161ffff851681526001600160a01b0319821694612334916123289190339088907f80d59d7599daf0493f96a2d1016163c29d85f5e4a8b59f3001f6e9a115a6c96b90602090a36148c4565b935460101c61ffff1690565b9261ffff80851691161461234457005b61235e9261235191615add565b805460ff19166002179055565b7fca89d7e15807c1ba6a0622215afe84b083f061c44c2e78e6e226709a8f5f13585f80a2005b637c75aa6f60e11b5f5260045ffd5b63aba4733960e01b5f5260045ffd5b6123c4915060a03d60a0116123ca575b6123bc81836128d0565b810190614811565b5f61220c565b503d6123b2565b9091506123e99060481c6001600160401b0316610598565b8043111561244a574090811561243b578190556040518181526001600160a01b03198416907fc16e97da5706abead845583dfc2e6126862a0c07801be8ac6027010b5013965290602090a25f806121b1565b6302504bb360e61b5f5260045ffd5b63172181cb60e21b5f5260045ffd5b630c8d9eab60e31b5f5260045ffd5b63848084dd60e01b5f5260045ffd5b906101008061085b9361ffff815116845261ffff60208201511660208501526124ab6040820151604086019061ffff169052565b60608181015161ffff169085015260808181015161ffff169085015260a0818101516001600160401b03169085015260c0818101516001600160401b03169085015260e0818101516001600160401b03169085015201511515910152565b634e487b7160e01b5f52602160045260245ffd5b6006111561252757565b612509565b9060068210156125275752565b81516001600160a01b031681526103408101929161085b9190610320906101809061256c60208201516020860190612477565b61257f60408201516101408601906109d0565b612592606082015161020086019061252c565b60808101516001600160401b031661022085015260a08101516001600160401b031661024085015260c081015161026085015260e081015161028085015261010081015161ffff166102a085015261012081015161ffff166102c085015261014081015161ffff166102e085015261016081015161ffff16610300850152015161ffff16910152565b34610290576020366003190112610290576109a76126fd6126f861263d610279565b5f61018060405161264d81612862565b82815260405161265c8161287e565b8381528360208201528360408201528360608201528360808201528360a08201528360c08201528360e082015283610100820152602082015261269d613d8b565b60408201528260608201528260808201528260a08201528260c08201528260e08201528261010082015282610120820152826101408201528261016082015201526001600160601b0360a01b165f52602260205260405f2090565b614996565b60405191829182612539565b34610290575f366003190112610290576040517f00000000000000000000000000000000000000000000000000000000000000006001600160a01b03168152602090f35b34610290576040366003190112610290576109a76127ba61276c610279565b6024359061277982610842565b5f604080516127878161289a565b82815282602082015201526001600160601b0360a01b165f52602860205260405f209061ffff165f5260205260405f2090565b6001604051916127c98361289a565b60ff815461ffff8116855260101c16151560208401520154604082015260405191829182919091604080606083019461ffff81511684526020810151151560208501520151910152565b634e487b7160e01b5f52604160045260245ffd5b60a081019081106001600160401b0382111761284257604052565b612813565b60c081019081106001600160401b0382111761284257604052565b6101a081019081106001600160401b0382111761284257604052565b61012081019081106001600160401b0382111761284257604052565b606081019081106001600160401b0382111761284257604052565b604081019081106001600160401b0382111761284257604052565b90601f801991011681019081106001600160401b0382111761284257604052565b908060209392818452848401375f828201840152601f01601f1916010190565b929061292a9061293895936040865260408601916128f1565b9260208185039101526128f1565b90565b6040513d5f823e3d90fd5b6040519061085b610120836128d0565b6040519061085b6101a0836128d0565b90610120828203126102905780601f83011215610290576101206040519261298e82856128d0565b8391810192831161029057905b8282106129a85750505090565b813581526020918201910161299b565b634e487b7160e01b5f52603260045260245ffd5b634e487b7160e01b5f52601160045260245ffd5b908160051b91808304602014901517156129f657565b6129cc565b908160011b91808304600214901517156129f657565b818102929181159184041417156129f657565b90600182018092116129f657565b90608082018092116129f657565b919082018092116129f657565b9060068110156125275760ff80198354169116179055565b9592949399989791969097612a8e876001600160601b0360a01b165f52602260205260405f2090565b80549092906001600160a01b03161561067f576005830191612ab1835460ff1690565b612aba8161251d565b60038114612e2d5780612ace60029261251d565b0361067057612aea61059860028601546001600160401b031690565b4310610670576008840194612b05865461ffff9060101c1690565b96600186015493612b1e6105078661ffff9060201c1690565b61ffff8a1610612e1e578d158015612e16575b8015612e0e575b612dff577f00000000000000000000000000000000000000000000000000000000000000006001600160a01b031691823b156102905784925f928592612b9460405198899586948594635c73957b60e11b865260048601612911565b03915afa92831561047f57612bb193612deb575b50810190612966565b948551612bc16111d08b60a01c90565b1491821592612dcf575b8215612dac575b508115612d99575b508015612d8b575b8015612d7d575b8015612d6f575b6113805760408051602081018b81529181018a905260608101889052612c279190612c1e816080810161122a565b51902088614a8e565b8060e08601510361138057612c3d6108a06129e0565b860361138057612c7e958c612c7394612c6693612c5e610507996101000190565b51918c614c15565b805460ff19166003179055565b5460101c61ffff1690565b612c92612c8c6108606129e0565b88612a40565b965f5b828110612cf7575050507f5f329a28ec91a18b4e7904324a3c08646c7c3d433fe5e4a36c788af074a7245593949550612cf2906040519384936001600160601b0360a01b1696846040919493926060820195825260208201520152565b0390a2565b8060019160061b8a01604051612d298161122a6020820194602081013590358660209093929193604081019481520152565b519020612d68612d4d886001600160601b0360a01b165f52602a60205260405f2090565b61ffff8460051b8701351661ffff165f5260205260405f2090565b5501612c95565b508560c08501511415612bf0565b508760a08501511415612be9565b508860808501511415612be2565b6060860151915061ffff1614155f612bda565b909150612dc6610507604088015b519260101c61ffff1690565b1415905f612bd2565b91506020860151612de361ffff8416610507565b141591612bcb565b806113ef5f612df9936128d0565b5f612ba8565b63c5f680ed60e01b5f5260045ffd5b508a15612b38565b508c15612b31565b63368f2d7d60e21b5f5260045ffd5b63475a253560e01b5f5260045ffd5b90816020910312610290575190565b906001600160401b03809116911603906001600160401b0382116129f657565b906001600160401b03809116911601906001600160401b0382116129f657565b9060e0828203126102905780601f830112156102905760405191612eb060e0846128d0565b829060e0810192831161029057905b828210612ecc5750505090565b8135815260209182019101612ebf565b949293909796919596612f03866001600160601b0360a01b165f52602260205260405f2090565b80549093906001600160a01b03161561067f576002840154612f299060401c60ff161590565b611e595760058401946003612f3f875460ff1690565b612f488161251d565b03610670578a158015613175575b6131665761ffff996001612f73600888015461ffff9060301c1690565b96015495612f8461ffff8816610507565b9b8c911610613157577f00000000000000000000000000000000000000000000000000000000000000006001600160a01b031691823b156102905784925f928592612fe560405198899586948594635c73957b60e11b865260048601612911565b03915afa92831561047f5761300293613143575b50810190612e8b565b9182516130126111d08860a01c90565b14801590613135575b8015613127575b8015613119575b6113805760408301978851106113805760408051602081018b8152918101899052613065919061305c816060810161122a565b51902087614af5565b918260a0850151036113805761307b60406129e0565b03611380576040856130b2936130a68261309d6130ab9661ffff9060101c1690565b8d51908c614d8d565b614ea9565b9160c00190565b5103611380576130e86130f592857fbc874c1da78f7646af98f19f16267e99af67534204f56955055f5a5a2d73b4829751614f67565b805460ff19166005179055565b6040805194855260208501929092526001600160a01b031916929081908101612cf2565b508660808401511415613029565b508860608401511415613022565b50876020840151141561301b565b806113ef5f613151936128d0565b5f612ff9565b63957674fd60e01b5f5260045ffd5b6314141ce560e21b5f5260045ffd5b508815612f56565b6040519061318a826128b5565b5f6020838281520152565b906040516131a2816128b5565b602060018294805484520154910152565b6131bb61317d565b506001600160601b0360a01b165f52602c60205260405f206001810154156131e65761293890613195565b506040516131f3816128b5565b5f81526001602082015290565b35612938816108b8565b3561293881610842565b908160209103126102905751612938816108b8565b634e487b7160e01b5f52601260045260245ffd5b8115613247570490565b613229565b6001600160401b03166001600160401b0381146129f65760010190565b90604082101561328257600c600183811c810193160290565b6129b8565b91908260c09103126102905760405161329f81612847565b60a08082946132ad816108d9565b845260208101356132bd81610842565b602085015260408101356132d0816108b8565b604085015260608101356132e3816108b8565b606085015260808101356132f6816108b8565b6080850152013591613307836108b8565b0152565b60068210156125275752565b906134ba610100600161085b9461333f61ffff865116829061ffff1661ffff19825416179055565b61336b613351602087015161ffff1690565b825463ffff0000191660109190911b63ffff000016178255565b61339b61337d604087015161ffff1690565b825465ffff00000000191660209190911b65ffff0000000016178255565b6133cc6133ad606087015161ffff1690565b825467ffff000000000000191660309190911b61ffff60301b16178255565b6133ff6133de608087015161ffff1690565b825469ffff0000000000000000191660409190911b61ffff60401b16178255565b61343e61341660a08701516001600160401b031690565b825467ffffffffffffffff60501b191660509190911b67ffffffffffffffff60501b16178255565b61347d61345560c08701516001600160401b031690565b825467ffffffffffffffff60901b191660909190911b67ffffffffffffffff60901b16178255565b01926134b361349660e08301516001600160401b031690565b855467ffffffffffffffff19166001600160401b03909116178555565b0151151590565b815468ff0000000000000000191690151560401b68ff000000000000000016179055565b60016135e060a061085b948051151560ff801987541691151516178555602081015162ffff0086549160081b169062ffff00191617855561355461352c60408301516001600160401b031690565b86546affffffffffffffff000000191660189190911b6affffffffffffffff00000016178655565b61359361356b60608301516001600160401b031690565b865467ffffffffffffffff60581b191660589190911b67ffffffffffffffff60581b16178655565b6135d26135aa60808301516001600160401b031690565b865467ffffffffffffffff60981b191660989190911b67ffffffffffffffff60981b16178655565b01516001600160401b031690565b9101906001600160401b03166001600160401b0319825416179055565b815181546001600160a01b0319166001600160a01b0390911617815561085b9190611796906101809060089061363a602086015160018301613317565b61364b6040860151600383016134de565b6136d76005820161366960608801516136638161251d565b82612a4d565b6136a461368060808901516001600160401b031690565b825468ffffffffffffffff00191660089190911b68ffffffffffffffff0016178255565b60a0870151815470ffffffffffffffff000000000000000000191660489190911b67ffffffffffffffff60481b16179055565b60c0850151600682015560e08501516007820155019261371261370061010083015161ffff1690565b855461ffff191661ffff909116178555565b61373f61372561012083015161ffff1690565b855463ffff0000191660109190911b63ffff000016178555565b61377061375261014083015161ffff1690565b855465ffff00000000191660209190911b65ffff0000000016178555565b6137a261378361016083015161ffff1690565b855467ffff000000000000191660309190911b61ffff60301b16178555565b015161ffff1690565b94909895919793969261ffff86168015908115613d7e575b8115613d70575b508015613d64575b8015613d53575b8015613d44575b8015613d38575b8015613d29575b8015613cfd575b8015613ce1575b8015613cc5575b61066157604087016001600160401b0361381c82613200565b1615159081613cac575b81613c86575b508015613c1b575b8015613c01575b613bf257604051634331ed1f60e01b81526020816004817f00000000000000000000000000000000000000000000000000000000000000006001600160a01b03165afa801561047f576001600160401b03915f91613bc3575b50168015610661576138ae61ffff8c1661ffff8416612a11565b906127108210613b8c5750505f19985b6138f46138da6138d55f546001600160401b031690565b61324c565b6001600160401b03166001600160401b03195f5416175f55565b6139576139085f546001600160401b031690565b7f000000000000000000000000000000000000000000000000000000000000000060401b6bffffffff0000000000000000166001600160401b03919091161760a01b6001600160a01b03191690565b9a8b61398961396e6021546001600160401b031690565b60406001600160401b03603f831692161015613b4e57613269565b6139ab92906001600160601b0383549160031b9260a01c831b921b1916179055565b602180546001600160401b038082166001011667ffffffffffffffff199091161790556139d6612946565b61ffff909816885261ffff16602088015261ffff16604087015261ffff16606086015261ffff871660808601526001600160401b031660a08501526001600160401b031660c08401526001600160401b031660e083015215156101008201525f546001600160401b031691436001600160401b03169361ffff1692613a5b8486612e6b565b91613a64612956565b33815293602085015236613a7791613287565b6040840152600160608401526001600160401b031660808301526001600160401b031660a08201525f60c0820181905260e08201859052610100820181905261012082018190526101408201819052610160820181905261018082018190526001600160a01b03198616815260226020526040902090613af6916135fd565b613aff91612e6b565b604080516001600160401b03929092168252602082019290925233916001600160a01b03198416917fcba424d4ca0c24cfd724662848b8cf062529c48daf9734f804ebcfa51f5ea8d79190a390565b613b67613b5a82613269565b90549060031b1c60a01b90565b6001600160a01b03198116613b7d575b50613269565b613b86906152c5565b5f613b77565b613bb8613bbd927e068db8bac710cb295e9e1b089a027525460aa64c2f837b4a2339c0ebedfa43612a11565b61323d565b986138be565b613be5915060203d602011613beb575b613bdd81836128d0565b810190613214565b5f613894565b503d613bd3565b63148b7e9360e31b5f5260045ffd5b5061010061ffff613c1460208a0161320a565b161161383b565b5060608701613c2c61059882613200565b15159081613c6d575b81613c41575b50613834565b90506001600160401b03613c63610598613c5d60a08c01613200565b93613200565b911611155f613c3b565b9050613c7e61059860a08a01613200565b151590613c35565b90506001600160401b03613ca2610598613c5d60808c01613200565b911611155f61382c565b9050613cbd61059860808a01613200565b151590613826565b506001600160401b0383166001600160401b0385161115613803565b506001600160401b0382166001600160401b03841611156137fc565b50613d1861059861ffff8a166001600160401b034316612e6b565b6001600160401b03831611156137f5565b5061010061ffff8916116137ee565b5061ffff8816156137e7565b5061271061ffff8216106137e0565b5061ffff8a1661ffff8a16116137d9565b5061ffff8916156137d2565b905061ffff8b16105f6137ca565b61ffff8c161591506137c3565b60405190613d9882612847565b5f60a0838281528260208201528260408201528260608201528260808201520152565b9061085b604051613dcb81612847565b60a0613e4760018396613e39613e29825460ff81161515885261ffff8160081c1660208901526001600160401b03808260181c161660408901526001600160401b03808260581c161660608901526001600160401b039060981c1690565b6001600160401b03166080870152565b01546001600160401b031690565b6001600160401b0316910152565b61ffff5f199116019061ffff82116129f657565b8054821015613282575f5260205f2001905f90565b906101a0828203126102905780601f83011215610290576101a060405192613ea682856128d0565b8391810192831161029057905b828210613ec05750505090565b8135815260209182019101613eb3565b61ffff1661ffff81146129f65760010190565b906080116102905790608090565b909291928311610290579190565b90939293848311610290578411610290578101920390565b9291926001600160401b0382116128425760405191613f40601f8201601f1916602001846128d0565b829481845281830111610290578281602093845f960137010152565b949295919793613f80866001600160601b0360a01b165f52602260205260405f2090565b80549094906001600160a01b03161561067f576003613fa3600587015460ff1690565b613fac8161251d565b036106705761ffff83169a8b158015614276575b801561426e575b61425f57613fed8461110b8a6001600160601b0360a01b165f52602d60205260405f2090565b549687156142505761ffff9561402661401e8761110b8d6001600160601b0360a01b165f52602760205260405f2090565b5461ffff1690565b61403861050760018b015461ffff1690565b9788911610614241576140638661110b8c6001600160601b0360a01b165f52602860205260405f2090565b9b6140738d5460ff9060101c1690565b614232577f00000000000000000000000000000000000000000000000000000000000000006001600160a01b031691823b156102905784925f9285926140cf60405198899586948594635c73957b60e11b865260048601612911565b03915afa92831561047f576140eb936131435750810190612e8b565b9586516140fb6111d08a60a01c90565b14801590614224575b8015614216575b8015614208575b6113805760408701948551106113805760408051602081018d81529181018b905261414e9190614145816060810161122a565b51902089614b55565b918260a0890151036113805761416460646129e0565b81036113805761417761417e9185613ee3565b3691613f17565b6020815191012003611380576130a6826064946141a1976130ab9751918b61575a565b510361138057816001846141e17ff00fbf9d648ee3274fc53f9f2eb67f1f6218a6bbc046de320813cdd0244b7336966201000062ff000019825416179055565b01556040805194855260208501929092526001600160a01b0319169290819081015b0390a3565b508860808801511415614112565b508a6060880151141561410b565b508460208801511415614104565b63955c0c4960e01b5f5260045ffd5b63032cddf960e11b5f5260045ffd5b6346f551f560e01b5f5260045ffd5b636d28699160e01b5f5260045ffd5b508a15613fc7565b506101008c11613fc0565b9060a0828203126102905780601f8301121561029057604051916142a660a0846128d0565b829060a0810192831161029057905b8282106142c25750505090565b81358152602091820191016142b5565b90610140828203126102905780601f8301121561029057610140604051926142fa82856128d0565b8391810192831161029057905b8282106143145750505090565b8135815260209182019101614307565b9a999496939591989297909961434e8c6001600160601b0360a01b165f52602260205260405f2090565b80549096906001600160a01b03161561067f57600587015460ff169261439061106760018a01549561438a876001600160401b039060901c1690565b906158d7565b610670576143bc6110678f61104e611060916001600160601b0360a01b165f52602360205260405f2090565b6114585761ffff8d1695861580156147f8575b6147e9576144008f8f906143fa6110c1916001600160601b0360a01b165f52602460205260405f2090565b91613e55565b90543360039290921b1c6001600160a01b031603611380576144418f61111c600491610e6833916001600160601b0360a01b165f52602560205260405f2090565b6147da577f00000000000000000000000000000000000000000000000000000000000000006001600160a01b031691823b156102905784925f92859261449d60405198899586948594635c73957b60e11b865260048601612911565b03915afa92831561047f576144ba936147c6575b508101906142d2565b928b6144cb6111d086519260a01c90565b14918215926147aa575b821561478f575b508115614780575b508015614772575b8015614764575b6113805760408051602081018a8152918101899052614523919061451a816060810161122a565b5190208b614bb5565b8060c084015103611380578561010084015114801590614755575b6113805761010061454e816129e0565b85036113805761457e6141776108009661456c614177898389613ef1565b60208151910120976114009187613eff565b602081519101206145a38d6001600160601b0360a01b165f52602b60205260405f2090565b5403611380576145bd926145b692614ea9565b9160e00190565b51036113805761464b9161461f60046008936145f28c610e6833916001600160601b0360a01b165f52602560205260405f2090565b805461ffff60a01b191660a08d901b61ffff60a01b1617815590600382015501805460ff19166001179055565b0180546146329060101c61ffff16613ed0565b63ffff000082549160101b169063ffff00001916179055565b61468861466c876001600160601b0360a01b165f52602c60205260405f2090565b928354926001850193845480155f1461474f57506001906158fe565b9255557f00000000000000000000000000000000000000000000000000000000000000006001600160a01b031691823b1561029057604051633c1bcdef60e21b8152336004820152925f908490602490829084905af192831561047f577f8f25a636f27af2671bfd0f5c59da52b0495e5415d2e605b2d0994830aba13fb59361473b575b506040805161ffff9095168552602085019190915283015233926001600160a01b031916918060608101614203565b806113ef5f614749936128d0565b5f61470c565b906158fe565b5086610120840151141561453e565b508660a083015114156144f3565b5087608083015114156144ec565b9050606083015114155f6144e4565b9091506147a161050760408601612dba565b1415905f6144dc565b915060208401516147be61ffff8416610507565b1415916144d5565b806113ef5f6147d4936128d0565b5f6144b1565b6305d252c360e01b5f5260045ffd5b63652122d960e01b5f5260045ffd5b5061480a601086901c61ffff16610507565b87116143cf565b908160a0910312610290576040519061482982612827565b805161483481610ac1565b825260208101516020830152604081015160408301526060810151906003821015610290576080916060840152015161486c816108b8565b608082015290565b6003111561252757565b805468010000000000000000811015612842576148a091600182018155613e69565b81546001600160a01b0393841660039290921b91821b9390911b1916919091179055565b61ffff60019116019061ffff82116129f657565b9061085b6040516148e88161287e565b61010061498f60018396614975614965825461ffff8116885261491961ffff8260101c1660208a019061ffff169052565b61ffff602082901c16604089015261ffff603082901c16606089015261ffff604082901c1660808901526001600160401b03605082901c1660a089015260901c6001600160401b031690565b6001600160401b031660c0870152565b01546001600160401b03811660e085015260401c60ff1690565b1515910152565b9061085b614a8260086149a7612956565b85546001600160a01b03168152946149c1600182016148d8565b60208701526149d260038201613dbb565b6040870152614a2a614a1a60058301546149f86149ef8260ff1690565b60608b0161330b565b6001600160401b03600882901c1660808a015260481c6001600160401b031690565b6001600160401b031660a0880152565b600681015460c0870152600781015460e0870152015461ffff811661010086015261ffff601082901c1661012086015261ffff602082901c1661014086015261ffff603082901c1661016086015260401c61ffff1690565b61ffff16610180840152565b5f516020615e295f395f51905f52916040519060208201926001600160601b0360a01b1683527f7c20af5072936dabc40921b055b4668149175807f325ff0242bb400c2c186a39602c830152604c820152604c8152614aee606c826128d0565b5190200690565b5f516020615e295f395f51905f52916040519060208201926001600160601b0360a01b1683527fc5cb4182e179e0279f50e2d772929d40dc9d4db3b30ec2ebbefbe6b9bb543075602c830152604c820152604c8152614aee606c826128d0565b5f516020615e295f395f51905f52916040519060208201926001600160601b0360a01b1683527fb22315ced73b8ff8bb301780e4a47d6c7771b0e8a551a02a7c0df167eca08dcb602c830152604c820152604c8152614aee606c826128d0565b5f516020615e295f395f51905f52916040519060208201926001600160601b0360a01b1683527f29aa19fbd94aef15994e2f585c00bbd3e7aa5aefc9372efb2ce55433ca0c6a72602c830152604c820152604c8152614aee606c826128d0565b9091939294614c3590610400614c2e6201000082612a40565b9186613eff565b91614c616105076001614c54610507600889015461ffff9060101c1690565b96015460101c61ffff1690565b92610800915f5b868110614c8b575050505050505090614c84916108a091614ea9565b0361138057565b61ffff8160051b8901351680158015614d84575b61138057614d05614ce8614cd3614cca866001600160601b0360a01b165f52602460205260405f2090565b6110c185613e55565b905460039190911b1c6001600160a01b031690565b6001600160a01b031985165f908152602560205260409020610e68565b90614d17611067600484015460ff1690565b908115614d67575b50611380576003614d50614177614d368886612a11565b614d4889614d4388612a24565b612a11565b90888b613eff565b602081519101209101540361138057600101614c68565b9050614d7c610507835461ffff9060a01c1690565b14155f614d1f565b50868111614c9f565b919091614d9c61040085612a40565b925f5b838110614de3575050505b60208110614db757505050565b8060051b808401351590811591614dd6575b5061138057600101614daa565b905082013515155f614dc9565b8060051b61ffff81880135169081158015614e9c575b61138057614e4a614e2d614cd3614e24886001600160601b0360a01b165f52602460205260405f2090565b6110c186613e55565b6001600160a01b031987165f908152602960205260409020610e68565b91614e5c611067600385015460ff1690565b908115614e7f575b50611380576001908701359101540361138057600101614d9f565b9050614e94610507845461ffff9060a01c1690565b14155f614e64565b5061ffff84168211614df9565b9291905f516020615e295f395f51905f525f940691829060051b8201915b828110614ed45750505050565b909192945f516020615e295f395f51905f5283816020938186358b099008970993929101614ec7565b6001600160401b0381116128425760051b60200190565b90614f1e82614efd565b614f2b60405191826128d0565b8281528092614f3c601f1991614efd565b0190602036910137565b8051156132825760200190565b80518210156132825760209160051b010190565b91614f7183614f14565b92614f7b81614f14565b916104008101908181116129f6575f5b83811061526b5750505080158015615261575b8015615257575b61524857614fb581949294614f14565b90614fbf81614f14565b945f93845b838110615195575050614fd682614f14565b614fdf84614f46565b51614fe982614f46565b5260015b838110615141575061501061500a61500485615c9e565b83614f53565b51615dad565b9061501a84614f14565b9484915b600183116150d95750505061503284614f46565b525f955f945b8386106150725750505050505061505c905f516020615e495f395f51905f52900690565b0361506357565b6373bdb71560e11b5f5260045ffd5b6150828683999495969799614f53565b5161508d8988614f53565b5191613247575f516020615e495f395f51905f528091816001946150c86150b48e8b614f53565b515f516020615e495f395f51905f52900690565b9209095f9408970194939291615038565b909192939495966150e984615c9e565b6150fb6150f582615c9e565b84614f53565b51916132475761512b5f516020615e495f395f51905f529182886151359509615124828d614f53565b5285614f53565b515f960993615cac565b9190969594939661501e565b948561515a615154839596979498615c9e565b88614f53565b516151658285614f53565b5192613247576001925f516020615e495f395f51905f5291096151888289614f53565b5201949093929194614fed565b6151a76150b482849895969798614f53565b600180915f905b8882106151dd5750509082916151c66001948c614f53565b526151d18289614f53565b52019493929194614fc4565b9092959183851461523d576151f56150b48588614f53565b9283831461522e57613247575f516020615e495f395f51905f52808085600194099461522085615c78565b90085f9809935b01906151ae565b63027639eb60e31b5f5260045ffd5b919592600190615227565b630a4960f960e31b5f5260045ffd5b5081518111614fa5565b5083518111614f9e565b8060019160051b80840135615280838b614f53565b5284013561528e8288614f53565b5201614f8b565b8054905f8155816152a4575050565b5f5260205f20908101905b8181106152ba575050565b5f81556001016152af565b6001600160a01b031981165f908152602260205260409020546001600160a01b0316156156b4576001600160a01b031981165f9081526024602052604081208054915b8281106155235750505060015b61010061ffff82161115615405575061534a615345826001600160601b0360a01b165f52602460205260405f2090565b615295565b6001600160a01b031981165f908152602b60209081526040808320839055602c909152902061537f905b60015f918281550155565b6153d56153a0826001600160601b0360a01b165f52602260205260405f2090565b60085f918281558260018201558260028201558260038201558260048201558260058201558260068201558260078201550155565b6001600160a01b0319167f98a9ec8a25ae28f42f24e68ce0e89786ac50d95191ef5bbd9a4aef2a7eeaef265f80a2565b8061543161050761401e6154969461110b876001600160601b0360a01b165f52602760205260405f2090565b6154ee575b61546561545b8261110b866001600160601b0360a01b165f52602860205260405f2090565b5460101c60ff1690565b6154c4575b61548c8161110b856001600160601b0360a01b165f52602d60205260405f2090565b5461549b57613ed0565b615315565b5f6154be8261110b866001600160601b0360a01b165f52602d60205260405f2090565b55613ed0565b6154e96153748261110b866001600160601b0360a01b165f52602860205260405f2090565b61546a565b61551e6155138261110b866001600160601b0360a01b165f52602760205260405f2090565b805461ffff19169055565b615436565b615530614cd38284613e69565b61555f61555582610e68886001600160601b0360a01b165f52602360205260405f2090565b805460ff19169055565b6001600160a01b031985165f908152602a602052604081206155979061558761050786612a24565b61ffff165f5260205260405f2090565b556155da6155bd82610e68886001600160601b0360a01b165f52602560205260405f2090565b60045f918281558260018201558260028201558260038201550155565b6156166155ff82610e68886001600160601b0360a01b165f52602960205260405f2090565b60035f918281558260018201558260028201550155565b60015b61010061ffff82161115615631575050600101615308565b80615660600461111c85610e686156699661110b8d6001600160601b0360a01b165f52602660205260405f2090565b61566e57613ed0565b615619565b6112ea61569784610e688461110b8c6001600160601b0360a01b165f52602660205260405f2090565b60045f918281558260018201558260016002830182815501550155565b50565b5f516020615e295f395f51905f528110801590615743575b61573d575f516020615e295f395f51905f528082819309928009818080808487097f1aee90f15f2189693df072d799fd11fc039b2959ebb7c867d075ca8cf4d7eb8e09600108937f30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f000000009081490565b50505f90565b505f516020615e295f395f51905f528210156156cf565b909392919361578a610507600161577d61577388612a32565b9761048090612a40565b97015460101c61ffff1690565b905f5b8481106157e057505050505b602081106157a657505050565b8060061b83018160051b83013561138057803515908115916157d0575b5061138057600101615799565b600191506020013514155f6157c3565b8060061b870161ffff8260051b8801351690811580156158ce575b61138057615848615826614cd3614e24896001600160601b0360a01b165f52602460205260405f2090565b610e688661110b8a6001600160601b0360a01b165f52602660205260405f2090565b9161585a611067600485015460ff1690565b9081156158b1575b5061138057815460b01c61ffff1661ffff8086169116036113805760028201548135149182159261589c575b50506113805760010161578d565b60209192506003015491013514155f8061588e565b90506158c6610507845461ffff9060a01c1690565b14155f615862565b508482116157fb565b60068110156125275760021490816158ed575090565b6001600160401b0391501643111590565b9392919091841580615a1e575b615a1657811580615a0c575b615a07575f516020615e295f395f51905f52828609945f516020615e295f395f51905f528285095f516020615e295f395f51905f528188095f516020615e295f395f51905f5290620292f809965f516020615e295f395f51905f5290620292fc0961598191615d00565b935f516020615e295f395f51905f528760010861599d90615d47565b935f516020615e295f395f51905f529109915f516020615e295f395f51905f529109905f516020615e295f395f51905f529108905f516020615e295f395f51905f529109926159eb90615cb8565b6159f490615d47565b5f516020615e295f395f51905f52910990565b505090565b5060018114615917565b935090509190565b506001831461590b565b60068110156125275760011490816158ed575090565b60405190610400615a4f81846128d0565b368337565b60405190610800615a4f81846128d0565b9060208110156132825760051b0190565b9060408110156132825760051b0190565b91905f835b60208210615ac75750505061040082015f905b60408210615ab157505050610c000190565b6020806001928551815201930191019091615a9f565b6020806001928551815201930191019091615a8c565b919091615ae8615a3e565b615af0615a54565b93615b0f836001600160601b0360a01b165f52602460205260405f2090565b7f00000000000000000000000000000000000000000000000000000000000000006001600160a01b03165f5b61ffff84168110615bba5750505061ffff165b60208110615b95575061122a615b74615b92939495604051928391602083019586615a87565b519020916001600160601b0360a01b165f52602b60205260405f2090565b55565b806001615bb3615bad615ba883956129fb565b612a24565b88615a76565b5201615b4e565b80615bc7615c0a92612a24565b615bd18288615a65565b5260a0615be1614cd38387613e69565b6040516313a4120960e31b81526001600160a01b03909116600482015292839081906024820190565b0381865afa91821561047f576001926040915f91615c5a575b506020810151615c3b615c35856129fb565b8d615a76565b520151615c53615c4d615ba8846129fb565b8b615a76565b5201615b3b565b615c72915060a03d81116123ca576123bc81836128d0565b5f615c23565b5f516020615e495f395f51905f5203905f516020615e495f395f51905f5282116129f657565b5f198101919082116129f657565b80156129f6575f190190565b5f516020615e295f395f51905f5290065f516020615e295f395f51905f52035f516020615e295f395f51905f5281116129f6575f516020615e295f395f51905f529060010890565b905f516020615e295f395f51905f5290065f516020615e295f395f51905f52035f516020615e295f395f51905f5281116129f6575f516020615e295f395f51905f52910890565b60405190602082526020808301526020604083015260608201527f30644e72e131a029b85045b68181585d2833e84879b9709143e1f593efffffff60808201525f516020615e295f395f51905f5260a082015260208160c08160055afa15610290575190565b9060405191602083526020808401526020604084015260608301527f060c89ce5c263405370a08b6d0302b0bab3eedb83920ee0a677297dc392126ef60808301525f516020615e495f395f51905f5260a083015260208260c08160055afa15615e1b5760c082519201604052565b639e44e6e05f526004601cfdfe30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001060c89ce5c263405370a08b6d0302b0bab3eedb83920ee0a677297dc392126f1a26469706673582212207251f14ce6a353c5163c3849cb046a8feb45754a1bf7eb07327f0c0453f1579164736f6c634300081c0033",
+	ABI: "[{\"type\":\"constructor\",\"inputs\":[{\"name\":\"_chainId\",\"type\":\"uint32\",\"internalType\":\"uint32\"},{\"name\":\"_registry\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"_contributionVerifier\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"_partialDecryptVerifier\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"_finalizeVerifier\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"_decryptCombineVerifier\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"_epochDurationBlocks\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"CHAIN_ID\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint32\",\"internalType\":\"uint32\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"CONTRIBUTION_VERIFIER\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"address\",\"internalType\":\"address\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"DECRYPT_COMBINE_VERIFIER\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"address\",\"internalType\":\"address\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"EPOCH_DURATION_BLOCKS\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"EPOCH_PREFIX\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint32\",\"internalType\":\"uint32\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"FINALIZE_VERIFIER\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"address\",\"internalType\":\"address\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"PARTIAL_DECRYPT_VERIFIER\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"address\",\"internalType\":\"address\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"REGISTRY\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"address\",\"internalType\":\"address\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"abortEpoch\",\"inputs\":[{\"name\":\"epochId\",\"type\":\"bytes12\",\"internalType\":\"bytes12\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"appManager\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"address\",\"internalType\":\"address\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"claimSlot\",\"inputs\":[{\"name\":\"epochId\",\"type\":\"bytes12\",\"internalType\":\"bytes12\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"combineDecryption\",\"inputs\":[{\"name\":\"epochId\",\"type\":\"bytes12\",\"internalType\":\"bytes12\"},{\"name\":\"aid\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"ciphertextIndex\",\"type\":\"uint16\",\"internalType\":\"uint16\"},{\"name\":\"combineHash\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"plaintext\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"transcript\",\"type\":\"bytes\",\"internalType\":\"bytes\"},{\"name\":\"proof\",\"type\":\"bytes\",\"internalType\":\"bytes\"},{\"name\":\"input\",\"type\":\"bytes\",\"internalType\":\"bytes\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"createEpoch\",\"inputs\":[{\"name\":\"threshold\",\"type\":\"uint16\",\"internalType\":\"uint16\"},{\"name\":\"committeeSize\",\"type\":\"uint16\",\"internalType\":\"uint16\"},{\"name\":\"minValidContributions\",\"type\":\"uint16\",\"internalType\":\"uint16\"},{\"name\":\"lotteryAlphaBps\",\"type\":\"uint16\",\"internalType\":\"uint16\"},{\"name\":\"decryptionPolicy\",\"type\":\"tuple\",\"internalType\":\"structDKGTypes.DecryptionPolicy\",\"components\":[{\"name\":\"ownerOnly\",\"type\":\"bool\",\"internalType\":\"bool\"},{\"name\":\"maxDecryptions\",\"type\":\"uint16\",\"internalType\":\"uint16\"},{\"name\":\"notBeforeBlock\",\"type\":\"uint64\",\"internalType\":\"uint64\"},{\"name\":\"notBeforeTimestamp\",\"type\":\"uint64\",\"internalType\":\"uint64\"},{\"name\":\"notAfterBlock\",\"type\":\"uint64\",\"internalType\":\"uint64\"},{\"name\":\"notAfterTimestamp\",\"type\":\"uint64\",\"internalType\":\"uint64\"}]}],\"outputs\":[{\"name\":\"\",\"type\":\"bytes12\",\"internalType\":\"bytes12\"}],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"epochDurationBlocks\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"epochNonce\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint64\",\"internalType\":\"uint64\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"finalizeEpoch\",\"inputs\":[{\"name\":\"epochId\",\"type\":\"bytes12\",\"internalType\":\"bytes12\"},{\"name\":\"aggregateCommitmentsHash\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"collectivePublicKeyHash\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"shareCommitmentHash\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"transcript\",\"type\":\"bytes\",\"internalType\":\"bytes\"},{\"name\":\"proof\",\"type\":\"bytes\",\"internalType\":\"bytes\"},{\"name\":\"input\",\"type\":\"bytes\",\"internalType\":\"bytes\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"getCiphertextHash\",\"inputs\":[{\"name\":\"epochId\",\"type\":\"bytes12\",\"internalType\":\"bytes12\"},{\"name\":\"aid\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"ciphertextIndex\",\"type\":\"uint16\",\"internalType\":\"uint16\"}],\"outputs\":[{\"name\":\"\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getCollectivePublicKey\",\"inputs\":[{\"name\":\"epochId\",\"type\":\"bytes12\",\"internalType\":\"bytes12\"}],\"outputs\":[{\"name\":\"\",\"type\":\"tuple\",\"internalType\":\"structDKGTypes.Point\",\"components\":[{\"name\":\"x\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"y\",\"type\":\"uint256\",\"internalType\":\"uint256\"}]}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getCombinedDecryption\",\"inputs\":[{\"name\":\"epochId\",\"type\":\"bytes12\",\"internalType\":\"bytes12\"},{\"name\":\"aid\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"ciphertextIndex\",\"type\":\"uint16\",\"internalType\":\"uint16\"}],\"outputs\":[{\"name\":\"\",\"type\":\"tuple\",\"internalType\":\"structDKGTypes.CombinedDecryptionRecord\",\"components\":[{\"name\":\"ciphertextIndex\",\"type\":\"uint16\",\"internalType\":\"uint16\"},{\"name\":\"completed\",\"type\":\"bool\",\"internalType\":\"bool\"},{\"name\":\"plaintext\",\"type\":\"uint256\",\"internalType\":\"uint256\"}]}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getContribution\",\"inputs\":[{\"name\":\"epochId\",\"type\":\"bytes12\",\"internalType\":\"bytes12\"},{\"name\":\"contributor\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[{\"name\":\"\",\"type\":\"tuple\",\"internalType\":\"structDKGTypes.ContributionRecord\",\"components\":[{\"name\":\"contributor\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"contributorIndex\",\"type\":\"uint16\",\"internalType\":\"uint16\"},{\"name\":\"commitmentsHash\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"encryptedSharesHash\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"commitmentVectorDigest\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"accepted\",\"type\":\"bool\",\"internalType\":\"bool\"}]}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getContributionVerifierVKeyHash\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getDecryptCombineVerifierVKeyHash\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getDecryptionPolicy\",\"inputs\":[{\"name\":\"epochId\",\"type\":\"bytes12\",\"internalType\":\"bytes12\"}],\"outputs\":[{\"name\":\"\",\"type\":\"tuple\",\"internalType\":\"structDKGTypes.DecryptionPolicy\",\"components\":[{\"name\":\"ownerOnly\",\"type\":\"bool\",\"internalType\":\"bool\"},{\"name\":\"maxDecryptions\",\"type\":\"uint16\",\"internalType\":\"uint16\"},{\"name\":\"notBeforeBlock\",\"type\":\"uint64\",\"internalType\":\"uint64\"},{\"name\":\"notBeforeTimestamp\",\"type\":\"uint64\",\"internalType\":\"uint64\"},{\"name\":\"notAfterBlock\",\"type\":\"uint64\",\"internalType\":\"uint64\"},{\"name\":\"notAfterTimestamp\",\"type\":\"uint64\",\"internalType\":\"uint64\"}]}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getEpoch\",\"inputs\":[{\"name\":\"epochId\",\"type\":\"bytes12\",\"internalType\":\"bytes12\"}],\"outputs\":[{\"name\":\"\",\"type\":\"tuple\",\"internalType\":\"structIDKGManager.Epoch\",\"components\":[{\"name\":\"organizer\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"policy\",\"type\":\"tuple\",\"internalType\":\"structDKGTypes.EpochPolicy\",\"components\":[{\"name\":\"threshold\",\"type\":\"uint16\",\"internalType\":\"uint16\"},{\"name\":\"committeeSize\",\"type\":\"uint16\",\"internalType\":\"uint16\"},{\"name\":\"minValidContributions\",\"type\":\"uint16\",\"internalType\":\"uint16\"},{\"name\":\"lotteryAlphaBps\",\"type\":\"uint16\",\"internalType\":\"uint16\"},{\"name\":\"registrationDeadlineBlock\",\"type\":\"uint64\",\"internalType\":\"uint64\"},{\"name\":\"contributionDeadlineBlock\",\"type\":\"uint64\",\"internalType\":\"uint64\"},{\"name\":\"finalizeNotBeforeBlock\",\"type\":\"uint64\",\"internalType\":\"uint64\"}]},{\"name\":\"decryptionPolicy\",\"type\":\"tuple\",\"internalType\":\"structDKGTypes.DecryptionPolicy\",\"components\":[{\"name\":\"ownerOnly\",\"type\":\"bool\",\"internalType\":\"bool\"},{\"name\":\"maxDecryptions\",\"type\":\"uint16\",\"internalType\":\"uint16\"},{\"name\":\"notBeforeBlock\",\"type\":\"uint64\",\"internalType\":\"uint64\"},{\"name\":\"notBeforeTimestamp\",\"type\":\"uint64\",\"internalType\":\"uint64\"},{\"name\":\"notAfterBlock\",\"type\":\"uint64\",\"internalType\":\"uint64\"},{\"name\":\"notAfterTimestamp\",\"type\":\"uint64\",\"internalType\":\"uint64\"}]},{\"name\":\"status\",\"type\":\"uint8\",\"internalType\":\"enumDKGTypes.EpochPhase\"},{\"name\":\"nonce\",\"type\":\"uint64\",\"internalType\":\"uint64\"},{\"name\":\"startBlock\",\"type\":\"uint64\",\"internalType\":\"uint64\"},{\"name\":\"seedBlock\",\"type\":\"uint64\",\"internalType\":\"uint64\"},{\"name\":\"seed\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"lotteryThreshold\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"claimedCount\",\"type\":\"uint16\",\"internalType\":\"uint16\"},{\"name\":\"contributionCount\",\"type\":\"uint16\",\"internalType\":\"uint16\"},{\"name\":\"partialDecryptionCount\",\"type\":\"uint16\",\"internalType\":\"uint16\"},{\"name\":\"ciphertextCount\",\"type\":\"uint16\",\"internalType\":\"uint16\"}]}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getFinalizeVerifierVKeyHash\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getPartialDecryptVerifierVKeyHash\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getPartialDecryption\",\"inputs\":[{\"name\":\"epochId\",\"type\":\"bytes12\",\"internalType\":\"bytes12\"},{\"name\":\"aid\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"participantIndex\",\"type\":\"uint16\",\"internalType\":\"uint16\"},{\"name\":\"ciphertextIndex\",\"type\":\"uint16\",\"internalType\":\"uint16\"}],\"outputs\":[{\"name\":\"\",\"type\":\"tuple\",\"internalType\":\"structDKGTypes.PartialDecryptionRecord\",\"components\":[{\"name\":\"participantIndex\",\"type\":\"uint16\",\"internalType\":\"uint16\"},{\"name\":\"ciphertextIndex\",\"type\":\"uint16\",\"internalType\":\"uint16\"},{\"name\":\"deltaHash\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"accepted\",\"type\":\"bool\",\"internalType\":\"bool\"}]}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getPlaintext\",\"inputs\":[{\"name\":\"epochId\",\"type\":\"bytes12\",\"internalType\":\"bytes12\"},{\"name\":\"aid\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"ciphertextIndex\",\"type\":\"uint16\",\"internalType\":\"uint16\"}],\"outputs\":[{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getShareCommitmentHash\",\"inputs\":[{\"name\":\"epochId\",\"type\":\"bytes12\",\"internalType\":\"bytes12\"},{\"name\":\"participantIndex\",\"type\":\"uint16\",\"internalType\":\"uint16\"}],\"outputs\":[{\"name\":\"\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"lastEpochStartBlock\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint64\",\"internalType\":\"uint64\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"nextEpochStartBlock\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint64\",\"internalType\":\"uint64\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"selectedParticipants\",\"inputs\":[{\"name\":\"epochId\",\"type\":\"bytes12\",\"internalType\":\"bytes12\"}],\"outputs\":[{\"name\":\"\",\"type\":\"address[]\",\"internalType\":\"address[]\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"setAppManager\",\"inputs\":[{\"name\":\"a\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"submitCiphertext\",\"inputs\":[{\"name\":\"epochId\",\"type\":\"bytes12\",\"internalType\":\"bytes12\"},{\"name\":\"aid\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"ciphertextIndex\",\"type\":\"uint16\",\"internalType\":\"uint16\"},{\"name\":\"c1x\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"c1y\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"c2x\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"c2y\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"submitContribution\",\"inputs\":[{\"name\":\"epochId\",\"type\":\"bytes12\",\"internalType\":\"bytes12\"},{\"name\":\"contributorIndex\",\"type\":\"uint16\",\"internalType\":\"uint16\"},{\"name\":\"commitmentsHash\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"encryptedSharesHash\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"transcript\",\"type\":\"bytes\",\"internalType\":\"bytes\"},{\"name\":\"proof\",\"type\":\"bytes\",\"internalType\":\"bytes\"},{\"name\":\"input\",\"type\":\"bytes\",\"internalType\":\"bytes\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"submitPartialDecryption\",\"inputs\":[{\"name\":\"epochId\",\"type\":\"bytes12\",\"internalType\":\"bytes12\"},{\"name\":\"aid\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"participantIndex\",\"type\":\"uint16\",\"internalType\":\"uint16\"},{\"name\":\"ciphertextIndex\",\"type\":\"uint16\",\"internalType\":\"uint16\"},{\"name\":\"c1x\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"c1y\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"c2x\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"c2y\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"deltaHash\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"proof\",\"type\":\"bytes\",\"internalType\":\"bytes\"},{\"name\":\"input\",\"type\":\"bytes\",\"internalType\":\"bytes\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"event\",\"name\":\"CiphertextSubmitted\",\"inputs\":[{\"name\":\"epochId\",\"type\":\"bytes12\",\"indexed\":true,\"internalType\":\"bytes12\"},{\"name\":\"aid\",\"type\":\"bytes32\",\"indexed\":true,\"internalType\":\"bytes32\"},{\"name\":\"ciphertextIndex\",\"type\":\"uint16\",\"indexed\":true,\"internalType\":\"uint16\"},{\"name\":\"submitter\",\"type\":\"address\",\"indexed\":false,\"internalType\":\"address\"},{\"name\":\"c1x\",\"type\":\"uint256\",\"indexed\":false,\"internalType\":\"uint256\"},{\"name\":\"c1y\",\"type\":\"uint256\",\"indexed\":false,\"internalType\":\"uint256\"},{\"name\":\"c2x\",\"type\":\"uint256\",\"indexed\":false,\"internalType\":\"uint256\"},{\"name\":\"c2y\",\"type\":\"uint256\",\"indexed\":false,\"internalType\":\"uint256\"}],\"anonymous\":false},{\"type\":\"event\",\"name\":\"ContributionSubmitted\",\"inputs\":[{\"name\":\"epochId\",\"type\":\"bytes12\",\"indexed\":true,\"internalType\":\"bytes12\"},{\"name\":\"contributor\",\"type\":\"address\",\"indexed\":true,\"internalType\":\"address\"},{\"name\":\"contributorIndex\",\"type\":\"uint16\",\"indexed\":false,\"internalType\":\"uint16\"},{\"name\":\"commitmentsHash\",\"type\":\"bytes32\",\"indexed\":false,\"internalType\":\"bytes32\"},{\"name\":\"encryptedSharesHash\",\"type\":\"bytes32\",\"indexed\":false,\"internalType\":\"bytes32\"}],\"anonymous\":false},{\"type\":\"event\",\"name\":\"DecryptionCombined\",\"inputs\":[{\"name\":\"epochId\",\"type\":\"bytes12\",\"indexed\":true,\"internalType\":\"bytes12\"},{\"name\":\"aid\",\"type\":\"bytes32\",\"indexed\":true,\"internalType\":\"bytes32\"},{\"name\":\"ciphertextIndex\",\"type\":\"uint16\",\"indexed\":true,\"internalType\":\"uint16\"},{\"name\":\"combineHash\",\"type\":\"bytes32\",\"indexed\":false,\"internalType\":\"bytes32\"},{\"name\":\"plaintext\",\"type\":\"uint256\",\"indexed\":false,\"internalType\":\"uint256\"}],\"anonymous\":false},{\"type\":\"event\",\"name\":\"EpochAborted\",\"inputs\":[{\"name\":\"epochId\",\"type\":\"bytes12\",\"indexed\":true,\"internalType\":\"bytes12\"}],\"anonymous\":false},{\"type\":\"event\",\"name\":\"EpochCreated\",\"inputs\":[{\"name\":\"epochId\",\"type\":\"bytes12\",\"indexed\":true,\"internalType\":\"bytes12\"},{\"name\":\"organizer\",\"type\":\"address\",\"indexed\":true,\"internalType\":\"address\"},{\"name\":\"startBlock\",\"type\":\"uint64\",\"indexed\":false,\"internalType\":\"uint64\"},{\"name\":\"seedBlock\",\"type\":\"uint64\",\"indexed\":false,\"internalType\":\"uint64\"},{\"name\":\"lotteryThreshold\",\"type\":\"uint256\",\"indexed\":false,\"internalType\":\"uint256\"}],\"anonymous\":false},{\"type\":\"event\",\"name\":\"EpochEvicted\",\"inputs\":[{\"name\":\"epochId\",\"type\":\"bytes12\",\"indexed\":true,\"internalType\":\"bytes12\"}],\"anonymous\":false},{\"type\":\"event\",\"name\":\"EpochFinalized\",\"inputs\":[{\"name\":\"epochId\",\"type\":\"bytes12\",\"indexed\":true,\"internalType\":\"bytes12\"},{\"name\":\"aggregateCommitmentsHash\",\"type\":\"bytes32\",\"indexed\":false,\"internalType\":\"bytes32\"},{\"name\":\"collectivePublicKeyHash\",\"type\":\"bytes32\",\"indexed\":false,\"internalType\":\"bytes32\"},{\"name\":\"shareCommitmentHash\",\"type\":\"bytes32\",\"indexed\":false,\"internalType\":\"bytes32\"}],\"anonymous\":false},{\"type\":\"event\",\"name\":\"PartialDecryptionSubmitted\",\"inputs\":[{\"name\":\"epochId\",\"type\":\"bytes12\",\"indexed\":true,\"internalType\":\"bytes12\"},{\"name\":\"aid\",\"type\":\"bytes32\",\"indexed\":true,\"internalType\":\"bytes32\"},{\"name\":\"participant\",\"type\":\"address\",\"indexed\":true,\"internalType\":\"address\"},{\"name\":\"participantIndex\",\"type\":\"uint16\",\"indexed\":false,\"internalType\":\"uint16\"},{\"name\":\"ciphertextIndex\",\"type\":\"uint16\",\"indexed\":false,\"internalType\":\"uint16\"},{\"name\":\"deltaX\",\"type\":\"uint256\",\"indexed\":false,\"internalType\":\"uint256\"},{\"name\":\"deltaY\",\"type\":\"uint256\",\"indexed\":false,\"internalType\":\"uint256\"}],\"anonymous\":false},{\"type\":\"event\",\"name\":\"RegistrationClosed\",\"inputs\":[{\"name\":\"epochId\",\"type\":\"bytes12\",\"indexed\":true,\"internalType\":\"bytes12\"}],\"anonymous\":false},{\"type\":\"event\",\"name\":\"SeedResolved\",\"inputs\":[{\"name\":\"epochId\",\"type\":\"bytes12\",\"indexed\":true,\"internalType\":\"bytes12\"},{\"name\":\"seed\",\"type\":\"bytes32\",\"indexed\":false,\"internalType\":\"bytes32\"}],\"anonymous\":false},{\"type\":\"event\",\"name\":\"SlotClaimed\",\"inputs\":[{\"name\":\"epochId\",\"type\":\"bytes12\",\"indexed\":true,\"internalType\":\"bytes12\"},{\"name\":\"claimer\",\"type\":\"address\",\"indexed\":true,\"internalType\":\"address\"},{\"name\":\"slot\",\"type\":\"uint16\",\"indexed\":false,\"internalType\":\"uint16\"}],\"anonymous\":false},{\"type\":\"error\",\"name\":\"AlreadyClaimed\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"AlreadyCombined\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"AlreadyContributed\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"AlreadyFinalized\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"AlreadyPartiallyDecrypted\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"AppManagerAlreadySet\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"AppManagerNotSet\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"CiphertextAlreadySubmitted\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"CiphertextNotSubmitted\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"DecryptionExpired\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"DecryptionLimitReached\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"DecryptionNotYetAllowed\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"InsufficientContributions\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"InsufficientPartialDecryptions\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"InvalidAddress\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"InvalidChainId\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"InvalidCiphertext\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"InvalidCombinedDecryption\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"InvalidCommitteeSize\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"InvalidContribution\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"InvalidDecryptionPolicy\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"InvalidEpoch\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"InvalidFinalization\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"InvalidPartialDecryption\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"InvalidPhase\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"InvalidPolicy\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"InvalidProofInput\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"InvalidVerifier\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"NotEligible\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"NotOwner\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"NotRegistered\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"NotSelectedParticipant\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"SeedExpired\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"SeedNotReady\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"SlotsFull\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"Unauthorized\",\"inputs\":[]}]",
+	Bin: "0x61020080604052346103345760e081614c7480380380916100208285610338565b8339810103126103345780519063ffffffff821691828103610334576100486020830161036f565b6100546040840161036f565b6100606060850161036f565b9161006d6080860161036f565b9360c061007c60a0880161036f565b9601519663ffffffff461603610325576001600160a01b03821615610316576001600160a01b038316158015610305575b80156102f4575b80156102e3575b6102d45763ffffffff918160805260a05260405160208101918360e01b9060e01b1682523060601b6024820152601881526100f7603882610338565b5190201660c05260e052610100526101205261014052806102cf575060645b6101f481028115908281046101f4148217156102bb5761271090046001600160401b0316906105dc8381029184830490911417156102bb5761271090046001600160401b031691600182118015906102b3575b80156102ab575b801561029b575b61028c576101a5926101a0916101605282610180526101968184610383565b6101a05282610383565b610383565b6101c052336101e0526040516148d7908161039d823960805181611bd8015260a0518181816102e70152818161121a0152818161337e0152613b97015260c0518181816131af0152613424015260e0518181816110d3015281816125bf0152613b410152610100518181816109bf015281816117220152611b3a015261012051818181611ae40152818161256801526128ae0152610140518181816101bf01528181611f84015261244f015261016051818181613cff0152613f84015261018051816134d901526101a0518161350701526101c0518161353201526101e051816124b90152f35b63d06b96b160e01b5f5260045ffd5b506001600160401b038111610177565b508115610170565b508215610169565b634e487b7160e01b5f52601160045260245ffd5b610116565b63baa3de5f60e01b5f5260045ffd5b506001600160a01b038616156100bb565b506001600160a01b038516156100b4565b506001600160a01b038416156100ad565b63e6c4247b60e01b5f5260045ffd5b633d23e4d160e11b5f5260045ffd5b5f80fd5b601f909101601f19168101906001600160401b0382119082101761035b57604052565b634e487b7160e01b5f52604160045260245ffd5b51906001600160a01b038216820361033457565b6001600160401b0391821690821601919082116102bb5756fe60e0806040526004361015610012575f80fd5b5f905f3560e01c90816304da574014613bc65750806306433b1b14613b82578063074a75e114613b1c578063143b4616146132a357806318287e5f146131d357806323488be5146131935780632648f56714612e00578063268ae2a114612dd35780632de546d514612d8d5780633353ec6e14612d575780634554c0be14612d0357806349c61a1214612687578063510ba2df146126375780635a8f2bb3146125ee57806363f314cd146125a9578063669a76a9146125415780636d16897d1461249057806371712c29146101f157806372517b4b1461242857806377235ee114611bfc57806385e1f4d014611bbb5780638dc1f53a14611b1357806393c3d3a814611ace5780639bbada6714611a32578063a305e0f314611465578063a4adcd7f1461143e578063b7bca61514610e4e578063be59b8ea14610b14578063bea5210d146109ee578063bf192209146109a9578063ca3c0458146108e1578063d3720aac146107f0578063d99337671461021f578063ebe86c13146101f6578063fa8f5e96146101f15763fe1604b5146101aa575f80fd5b346101ee57806003193601126101ee576040517f00000000000000000000000000000000000000000000000000000000000000006001600160a01b03168152602090f35b80fd5b613ce8565b50346101ee57806003193601126101ee576001546040516001600160a01b039091168152602090f35b50346101ee5760203660031901126101ee576001600160a01b0319610242613c1e565b1680825260236020526040822080546001600160a01b0316156107e157600481019081549060ff8216600182019182549160068110156107cd57600114806107b6575b156107a757600781019061ffff808354169360101c1683101561079857868852602460209081526040808a20335f908152925290205460ff1661078957600581018054958615610716575b50506040516313a4120960e31b81523360048201527f00000000000000000000000000000000000000000000000000000000000000006001600160a01b0316959060a0816024818a5afa801561067e576060918b916106f7575b50015160038110156106e3575f19016106d457600690604051602081019182523360601b604082015260348152610362605482613dc5565b51902091015411156106c557858752602560205260408720805490600160401b8210156106b1579261ffff959493926103a5838895600161042b960181556140b6565b81546001600160a01b0360039290921b91821b1916339182901b17909155898b52602460209081526040808d205f9384529091529020805460ff19166001179055836103f0836141b2565b168419825416179055604051818152887f80d59d7599daf0493f96a2d1016163c29d85f5e4a8b59f3001f6e9a115a6c96b60203393a36141b2565b915460101c169216821461043d578480f35b6040519161040061044e8185613dc5565b368437604051916108006104628185613dc5565b368437858752602560205260408720875b83811061057c575050505b6020811061053657506040519060208201928387905b6020821061052057505050610420820186905b6040821061050a57505050610c0081526104c3610c2082613dc5565b519020828452602c6020526040842055805460ff191660021790557fca89d7e15807c1ba6a0622215afe84b083f061c44c2e78e6e226709a8f5f13588280a25f8080808480f35b60208060019285518152019301910190916104a7565b6020806001928551815201930191019091610494565b8060011b8181046002148215171561056857600181018091116105685790600161056181938561478b565b520161047e565b634e487b7160e01b87526011600452602487fd5b6001810180821161069d576020821015610689578160051b8701526105a181836140b6565b90546040516313a4120960e31b815260039290921b1c6001600160a01b0316600482015260a081602481875afa90811561067e578a91610650575b506020810151908260011b918383046002148415171561063c5790604091610604848a61478b565b52015190600181018091116106285790610621600193928861478b565b5201610473565b634e487b7160e01b8b52601160045260248bfd5b634e487b7160e01b8c52601160045260248cfd5b610671915060a03d8111610677575b6106698183613dc5565b81019061413b565b5f6105dc565b503d61065f565b6040513d8c823e3d90fd5b634e487b7160e01b8a52603260045260248afd5b634e487b7160e01b8a52601160045260248afd5b634e487b7160e01b89526041600452602489fd5b637c75aa6f60e11b8752600487fd5b63aba4733960e01b8952600489fd5b634e487b7160e01b8a52602160045260248afd5b610710915060a03d60a011610677576106698183613dc5565b5f61032a565b90955060881c6001600160401b03164381101561077a574094851561076b57859055867fc16e97da5706abead845583dfc2e6126862a0c07801be8ac6027010b50139652602087604051908152a25f806102d0565b6302504bb360e61b8952600489fd5b63172181cb60e21b8952600489fd5b630c8d9eab60e31b8852600488fd5b63848084dd60e01b8852600488fd5b63268dbf6760e21b8752600487fd5b50604082901c6001600160401b0316431115610285565b634e487b7160e01b88526021600452602488fd5b63d5b25b6360e01b8352600483fd5b50346101ee5760403660031901126101ee5761080a613c1e565b60243591906001600160a01b03831683036108dd579060409161082b61402b565b5060018060a01b03191681526026602052209060018060a01b03165f5260205260c060405f2060405161085d81613d59565b81549160018060a01b0383169283835261ffff602084019160a01c16815260018201546040840190815261ffff6002840154926060860193845260a060ff600460038801549760808a01988952015416960195151586526040519687525116602086015251604085015251606084015251608083015251151560a0820152f35b5080fd5b50346101ee5760203660031901126101ee576001600160a01b0319610904613c1e565b168152602560205260408120604051908160208254918281520190819285526020852090855b81811061098a5750505082610940910383613dc5565b604051928392602084019060208552518091526040840192915b818110610968575050500390f35b82516001600160a01b031684528594506020938401939092019160010161095a565b82546001600160a01b031684526020909301926001928301920161092a565b50346101ee57806003193601126101ee576040517f00000000000000000000000000000000000000000000000000000000000000006001600160a01b03168152602090f35b50346101ee5760803660031901126101ee57608090610a0b613c1e565b9060243591610a18613bfc565b610a20613c0d565b91836060604051610a3081613daa565b828152826020820152826040820152015260018060a01b031916918284526028602052604084208585526020526040842061ffff82165f5260205261ffff6040600180825f20548487161c161495865f14610b0d5784975b8715610b065784965b825260276020528282209082526020522091165f5260205261ffff60405f2091165f5260205261ffff60405f20549160608260405196610ad088613daa565b16958681528360208201931683526040810194855201938452604051948552511660208401525160408301525115156060820152f35b8196610a91565b8097610a88565b50346101ee5760203660031901126101ee57610b2e613c1e565b81610180604051610b3e81613d3d565b828152604051610b4d81613d22565b8381528360208201528360408201528360608201528360808201528360a08201528360c08201526020820152610b8161402b565b60408201528260608201528260808201528260a08201528260c08201528260e082015282610100820152826101208201528261014082015282610160820152015260018060a01b03191681526023602052604081209060405190610be482613d3d565b82546001600160a01b0316825260405191610bfe83613d22565b600184015461ffff8116845261ffff8160101c16602085015261ffff8160201c16604085015261ffff8160301c16606085015260018060401b038160401c16608085015260018060401b038160801c1660a085015260c01c60c084015260208101928352610c6e60028501613f08565b60408201908152600485015460608301959060ff81166006811015610e3a578752608084019060018060401b038160081c16825260a0850160018060401b038260481c16815260c086019160018060401b039060881c16825260058401549260e087019384526007600686015495610100890196875201549761012088019a61ffff8a168c52610db06101408a019861ffff8c60101c168a526101608b019a61ffff8d60201c168c5261ffff61018082019d60301c168d5260e06040519e8f9260018060a01b0390511683525161ffff815116602084015261ffff602082015116604084015261ffff604082015116606084015261ffff606082015116608084015260018060401b0360808201511660a084015260018060401b0360a08201511660c084015260c060018060401b0391015116910152516101008d0190613c6b565b51906006821015610e2657506101c08a0152516001600160401b039081166101e08a0152905181166102008901529051166102208701525161024086015251610260850152845161ffff908116610280860152905181166102a0850152905181166102c08401528151166102e083015261030082f35b634e487b7160e01b81526021600452602490fd5b634e487b7160e01b86526021600452602486fd5b50346101ee5760e03660031901126101ee57610e68613c1e565b610e70613beb565b6064356044356084356001600160401b03811161131057610e95903690600401613cbb565b9360a4356001600160401b03811161143a57610eb5903690600401613cbb565b90959060c4356001600160401b03811161143657610ed7903690600401613cbb565b6001600160a01b03198a16808c52602360205260408c208054919a90979390916001600160a01b0316156114275760ff600489015416600189015490600681101561141357600214806113fc575b156113ed5760408e8d815260246020522060018060a01b0333165f5260205260ff60405f205416156113de5761ffff88169c8d1580156113ce575b6113bf57610f838f808f60409252602560205220610f7d8b6140a2565b906140b6565b90543360039290921b1c6001600160a01b0316036113145760408f8e815260266020522060018060a01b0333165f5260205260ff600460405f200154166113b057848301969594939291908f610100848a03126101ee5788601f850112156101ee575060405197610ff66101008a613dc5565b8861010085019182116113965784905b8282106113865750505087519060a01c1490811591611373575b811561135c575b50801561134e575b8015611340575b8015611332575b611323575f5160206148625f395f51905f528c8f8c8e6040519060208201928352604082015260408152611072606082613dc5565b519020905060405190602082019283527f29aa19fbd94aef15994e2f585c00bbd3e7aa5aefc9372efb2ce55433ca0c6a72602c830152604c820152604c81526110bc606c82613dc5565b51902006948560c088015103611314578e939291907f00000000000000000000000000000000000000000000000000000000000000006001600160a01b031690813b1561131057859361112560405196879586948594635c73957b60e11b86526004860161407b565b03915afa80156112c6576112f7575b50506101009161200085036112e0576108008581116112f3576111583682856140f6565b6020815191012095611400908183116112ef5781116112ef5781611181928501910336916140f6565b602081519101208a8d52602c60205260408d2054036112e057916111a79160e093614737565b910151036112d157858852602660209081526040808a20335f90815292529020805461ffff60a01b191660a09390931b61ffff60a01b169290921782556003820155600401805460ff19166001179055600701805461121791906112119060101c61ffff166140cb565b90613eb0565b847f00000000000000000000000000000000000000000000000000000000000000006001600160a01b0316803b156108dd57818091602460405180948193633c1bcdef60e21b83523360048401525af180156112c6576112ad575b5050604051938452602084015260408301527f8f25a636f27af2671bfd0f5c59da52b0495e5415d2e605b2d0994830aba13fb560603393a380f35b816112b791613dc5565b6112c257845f611272565b8480fd5b6040513d84823e3d90fd5b63d1fed5fd60e01b8852600488fd5b63d1fed5fd60e01b8c5260048cfd5b5f80fd5b8c80fd5b8161130191613dc5565b61130c578a5f611134565b8a80fd5b8580fd5b63d1fed5fd60e01b8f5260048ffd5b63d1fed5fd60e01b8e5260048efd5b508a60a0870151141561103d565b508960808701511415611036565b508c6060870151141561102f565b905061ffff60408801519160101c1614155f611027565b602088015161ffff821614159150611020565b8135815260209182019101611006565b50508f80fd5b634e487b7160e01b5f52604160045260245ffd5b6305d252c360e01b8f5260048ffd5b63652122d960e01b8f5260048ffd5b508d61ffff8360101c1610610f60565b63965c290d60e01b8e5260048efd5b63268dbf6760e21b8e5260048efd5b50608081901c6001600160401b0316431115610f25565b634e487b7160e01b8f52602160045260248ffd5b63d5b25b6360e01b8d5260048dfd5b8980fd5b8780fd5b50346101ee57806003193601126101ee57546040516001600160401b039091168152602090f35b50346101ee576101603660031901126101ee57611480613c1e565b611488613bfc565b90611491613c0d565b610124356001600160401b0381116112c2576114b1903690600401613cbb565b90610144356001600160401b0381116118c6576114d2903690600401613cbb565b6001600160a01b03198616885260236020526040882080549294909390926001600160a01b031615611a235760ff60048501541660068110156106e357600303611a14576001600160a01b031987168952602460209081526040808b20335f908152925290205460ff1615611a055761ffff88161580156119ed575b80156119e1575b80156119d2575b80156119c7575b6119b9576001600160a01b03198716895260256020526040892061158a90610f7d8a6140a2565b90543360039290921b1c6001600160a01b03160361199b576001600160a01b031987168952602e60209081526040808b206024358c528252808b2061ffff89165f908152925290205480156119aa576115ed60e43560c43560a435608435614719565b0361199b5760018060a01b0319871689526028602052604089206024358a526020526040892061ffff87165f5260205260405f20600161ffff8a161b90541661198c5781850194610200818703126114365785601f82011215611436576040519561165a61020088613dc5565b869061020083011161130c5781905b6102008301821061197c57505060018060a01b031988168a52602b60205260408a2061ffff8a165f5260205260405f205486518960a01c149081159161196b575b8115611958575b8115611948575b8115611935575b8115611924575b8115611913575b811561190a575b81156118e8575b506118d95761012086019361014085519701968751604051906020820192835260408201526040815261170f606082613dc5565b51902061010435036118ca578a939291907f00000000000000000000000000000000000000000000000000000000000000006001600160a01b031690813b1561131057859361177460405196879586948594635c73957b60e11b86526004860161407b565b03915afa80156112c6576118b1575b505061181b600761ffff9360018060a01b031988168a52602760205260408a206024358b5260205260408a208588165f5260205260405f20858a165f5260205260405f2061010435905560018060a01b031988168a52602860205260408a206024358b5260205260408a208588165f5260205260405f206001868b161b81541790550161181584825460201c166140cb565b90613eca565b60018060a01b0319851687526029602052604087206024358852602052604087208285165f5260205260405f2082611855818354166140cb565b1683198254161790555191519281604051961686521660208501526040840152606083015233917f22adff6e28e87e60c01f5d89cee122b88fbe9a7eb000159cd38220075a22a30260806024359360018060a01b03191692a480f35b816118bb91613dc5565b6118c657865f611783565b8680fd5b63d1fed5fd60e01b8b5260048bfd5b63d1fed5fd60e01b8a5260048afd5b9050604060e0880151610100890151825191825260208201522014155f6116db565b801591506116d4565b60c088015160a435141591506116cd565b60a0880151608435141591506116c6565b608088015161ffff8c16141591506116bf565b60608801516001141591506116b8565b604088015161ffff8a16141591506116b1565b6020880151602435141591506116aa565b8135815260209182019101611669565b633466526160e01b8952600489fd5b63d1fed5fd60e01b8952600489fd5b6346f551f560e01b8a5260048afd5b62d949df60e51b8952600489fd5b506101043515611563565b5061010061ffff87161161155c565b5061ffff861615611555565b5061ffff600185015460101c1661ffff89161161154e565b63965c290d60e01b8952600489fd5b63268dbf6760e21b8952600489fd5b63d5b25b6360e01b8952600489fd5b50346101ee5761ffff6040611a4636613c35565b949182848051611a5581613d8f565b828152826020820152015260018060a01b0319168252602a6020528282209082526020522091165f52602052606060405f20604051611a9381613d8f565b81546040600161ffff83169485855260ff602086019460101c1615158452015492019182526040519283525115156020830152516040820152f35b50346101ee57806003193601126101ee576040517f00000000000000000000000000000000000000000000000000000000000000006001600160a01b03168152602090f35b50346101ee57806003193601126101ee5760405163233ace1160e01b8152906020826004817f00000000000000000000000000000000000000000000000000000000000000006001600160a01b03165afa908115611baf5790611b7c575b602090604051908152f35b506020813d602011611ba7575b81611b9660209383613dc5565b810103126112ef5760209051611b71565b3d9150611b89565b604051903d90823e3d90fd5b50346101ee57806003193601126101ee57602060405163ffffffff7f0000000000000000000000000000000000000000000000000000000000000000168152f35b50346101ee576101003660031901126101ee57611c17613c1e565b60a052611c22613bfc565b60c05260a4356001600160401b0381116108dd57611c44903690600401613cbb565b90919060c4356001600160401b03811161242457611c66903690600401613cbb565b9060e4356001600160401b0381116112c257611c86903690600401613cbb565b60a0516001600160a01b03191686526023602052604086208054909392906001600160a01b0316156124155760ff60048501541660068110156107cd576003036107a75761ffff60c05116158015612404575b80156123fa575b6123eb5760a0516001600160a01b0319168752602e602090815260408089206024358a52825280892060c05161ffff165f90815292529020549283156123dc5760018060a01b031960a05116885260296020526040882060243589526020526040882061ffff60c051165f52602052600161ffff60405f2054169501549461ffff8616116123cd5760a0516001600160a01b0319168852602a60209081526040808a206024358b528252808a2060c05161ffff165f9081529252902060808190525496601088901c60ff166123be5788908991604051611dbf81613d74565b8b8152600160208201526024356122cd575b868601936101a0878603126112f35784601f880112156112f35760405194611dfb6101a087613dc5565b85906101a08901116122c95787905b6101a0890182106122b9575050845160a05160a01c14928315936122a8575b8315612292575b831561227e575b50821561226f575b50811561225f575b811561224b575b508015612239575b8015612228575b8015612217575b6118d95761ffff8716610100830151106118d9576020610100830151116118d9575f5160206148625f395f51905f5260405160208101906064358252608435604082015260408152611eb7606082613dc5565b51902060405160a0516001600160a01b031916602082019081527fb22315ced73b8ff8bb301780e4a47d6c7771b0e8a551a02a7c0df167eca08dcb602c830152604c80830193909352918152611f0e606c82613dc5565b519020069081610160840151036118ca57610c8081036118ca576080116114365760405195611f3e60a088613dc5565b608087526020870160808d01973689116112f35760808e83378c60a0820152519020036118d95760648b611f7192614737565b6101808201510361199b576101000151957f00000000000000000000000000000000000000000000000000000000000000006001600160a01b031691823b15611436579089939291611fd960405196879586948594635c73957b60e11b86526004860161407b565b03915afa801561220c579086916121f7575b505085116121e357610480850185116121e357839060101c61ffff16815b8381106120e6575050505b602081106120875750620100009062ff000019161760805155608435600160805101556040516064358152608435602082015261ffff60c0511690602435907f4c7dcb60e78f05c6d275f7243d256bbbd80718bd70167d6625266614573e1ae1604060018060a01b031960a0511692a480f35b6104808160061b85010160808260051b860101356120d757803515908115916120c7575b506120b857600101612014565b63d1fed5fd60e01b8352600483fd5b600191506020013514155f6120ab565b63d1fed5fd60e01b8452600484fd5b6104808160061b88010161ffff60808360051b8a0101351690811580156121da575b6112d1576001821b9485811661199b5785179460018060a01b031960a0511689526028602052604089206024358a526020526040892061ffff60c051165f5260205260405f205416156112d157604051602080820192803584520135604082015260408152612178606082613dc5565b5190209060018060a01b031960a05116885260276020526040882060243589526020526040882061ffff60c051165f5260205261ffff60405f2091165f5260205260405f2054036121cb57600101612009565b63d1fed5fd60e01b8652600486fd5b50838211612108565b634e487b7160e01b84526011600452602484fd5b8161220191613dc5565b6112c257845f611feb565b6040513d88823e3d90fd5b506084356101408301511415611e64565b506064356101208301511415611e5d565b5061ffff871660e08301511415611e56565b9050602060c084015191015114155f611e4e565b60a0840151815114159150611e47565b6080850151141591505f611e3f565b606086015160ff909116141592505f611e37565b925061ffff60c051166040860151141592611e30565b602086015160243514159350611e29565b8135815260209182019101611e0a565b8d80fd5b5050905060015460ff8160a01c16156123af5760405163be5b346360e01b815260a0516001600160a01b0319166004820152602480359082015260c05161ffff1660448201529190608090839060649082906001600160a01b03165afa91821561067e578a908b918c918d9561235a575b5091936040519161234e83613d74565b82526020820152611dd1565b94505050506080823d6080116123a7575b8161237860809383613dc5565b810103126114365781519160ff8316830361130c5760208101516040820151606090920151939091905f61233e565b3d915061236b565b63023b34fb60e11b8a5260048afd5b63955c0c4960e01b8952600489fd5b63032cddf960e11b8852600488fd5b6346f551f560e01b8852600488fd5b636d28699160e01b8752600487fd5b5060643515611ce0565b5061010061ffff60c0511611611cd9565b63d5b25b6360e01b8752600487fd5b8280fd5b50346101ee57806003193601126101ee5760405163233ace1160e01b8152906020826004817f00000000000000000000000000000000000000000000000000000000000000006001600160a01b03165afa908115611baf5790611b7c57602090604051908152f35b50346101ee5760203660031901126101ee576004356001600160a01b038116908190036108dd577f00000000000000000000000000000000000000000000000000000000000000006001600160a01b03163303612533576001549060ff8260a01c16612524578015612515576001600160a81b031990911617600160a01b1760015580f35b63e6c4247b60e01b8352600483fd5b6373253a9760e01b8352600483fd5b6282b42960e81b8252600482fd5b50346101ee57806003193601126101ee5760405163233ace1160e01b8152906020826004817f00000000000000000000000000000000000000000000000000000000000000006001600160a01b03165afa908115611baf5790611b7c57602090604051908152f35b50346101ee57806003193601126101ee576040517f00000000000000000000000000000000000000000000000000000000000000006001600160a01b03168152602090f35b50346101ee5761ffff604061260236613c35565b949160018060a01b0319168252602a6020528282209082526020522091165f526020526020600160405f200154604051908152f35b50346101ee5760403660031901126101ee5761ffff6040612656613c1e565b9261265f613beb565b9360018060a01b0319168152602b6020522091165f52602052602060405f2054604051908152f35b50346101ee5760e03660031901126101ee576126a1613c1e565b6084356001600160401b038111612424576126c0903690600401613cbb565b60a4356001600160401b0381116112c2576126df903690600401613cbb565b90919060c4356001600160401b0381116118c657612701903690600401613cbb565b6001600160a01b03198716885260236020526040882080549095919391906001600160a01b031615611a235760ff60048701541660068110156106e35760038114612cf45760011901611a14576001860154938460c01c4310612ce55761ffff600788015460101c169161ffff8660201c168310612cd657602435158015612ccc575b8015612cc2575b612cb3578185019461012081870312612caf5785601f82011215612caf57604051956101206127ba8189613dc5565b879083019182116122c95782905b828210612c9f5750505085518b60a01c14801590612c8d575b8015612c78575b8015612c6a575b8015612c5a575b8015612c4a575b8015612c3a575b6112e0575f5160206148625f395f51905f528b8d604051602081019060243582526044356040820152606435606082015260608152612844608082613dc5565b519020905060405190602082019260018060a01b03191683527f7c20af5072936dabc40921b055b4668149175807f325ff0242bb400c2c186a39602c830152604c820152604c8152612897606c82613dc5565b51902006948560e088015103612c2b578c939291907f00000000000000000000000000000000000000000000000000000000000000006001600160a01b031690813b1561131057859361290060405196879586948594635c73957b60e11b86526004860161407b565b03915afa80156112c657612c12575b50506108a0926201140086036118d9576101000151620104009590946104009187116112ef579392909182899384019088038c968d5b848110612a8357505050505061295b9350614737565b03612a74578201808311612a60576001600160a01b031984168552602d6020526040852090358155620104208301356001919091015560048101805460ff191660031790556007015460101c61ffff169062010c00810181116121e357835b828110612a0e575050507f4626ec91a37d133f9027eadd556f820c54a05b0da238327825d5e5983696a47260606040519260243584526044356020850152606435604085015260018060a01b03191692a280f35b80604062010c0060019360061b8501016020825191803583520135602082015220828060a01b031986168752602b6020526040872061ffff808460051b87013516165f5260205260405f2055016129ba565b634e487b7160e01b85526011600452602485fd5b63d1fed5fd60e01b8552600485fd5b919395509193959661ffff8260051b8d013516158015612bf8575b61132357600161ffff8d8460051b0135161b811661132357908c60408f612af88f9695600161ffff8760051b8a0135161b179660018060a01b0319851683526025602052610f7d61ffff858520928860051b0135166140a2565b90546001600160a01b03199094168252602660209081529290912060039190911b9290921c6001600160a01b03165f90815291905260409020600481015460ff16158015612bdc575b6113145761080082028281046108001483151715612bb25760018301808411612bc6576108008102908082046108001490151715612bb257612b8a612b9191600393898b6140de565b36916140f6565b602081519101209101540361132357600101908b9593919796949297612945565b634e487b7160e01b5f52601160045260245ffd5b5050634e487b7160e01b8f52601160045260248ffd5b5061ffff8d8360051b01351661ffff825460a01c161415612b41565b5061ffff8360101c1661ffff8d8460051b01351611612a9e565b81612c1c91613dc5565b612c2757885f61290f565b8880fd5b63d1fed5fd60e01b8d5260048dfd5b5060643560c08701511415612804565b5060443560a087015114156127fd565b50602435608087015114156127f6565b5083606087015114156127ef565b50604086015161ffff8860101c1614156127e8565b50602086015161ffff881614156127e1565b81358152602091820191016127c8565b8b80fd5b63c5f680ed60e01b8b5260048bfd5b506064351561278b565b5060443515612784565b63368f2d7d60e21b8b5260048bfd5b63268dbf6760e21b8a5260048afd5b63475a253560e01b8a5260048afd5b50346101ee5760203660031901126101ee57612d486002604060c093612d27613c1e565b612d2f61402b565b506001600160a01b031916815260236020522001613f08565b612d556040518092613c6b565bf35b50346101ee5760203660031901126101ee576040612d7b612d76613c1e565b613fc3565b60208251918051835201516020820152f35b50346101ee5761ffff6040612da136613c35565b949160018060a01b0319168252602e6020528282209082526020522091165f52602052602060405f2054604051908152f35b50346101ee57806003193601126101ee576020612dee613f6a565b6040516001600160401b039091168152f35b50346112ef5760e03660031901126112ef57612e1a613c1e565b602435612e25613bfc565b6001600160a01b03199092165f81815260236020526040902080546001600160a01b0316936064359160c4359160a435916084359188156131845760ff6004830154166006811015613170576003036131615761ffff169788158015613156575b61314757612e9483876146c1565b612e9e85856146c1565b876130b857612eaf60028301613f08565b908151151590816130ad575b5061309e5760408101516001600160401b0316801515908161308b575b506130695760608101516001600160401b03168015159081613078575b506130695760808101516001600160401b03168015159081613056575b506130345760a08101516001600160401b03168015159081613043575b50613034576020015161ffff16801515908161301e575b5061300f575b858952602e60205260408920878a5260205260408920885f5260205260405f2054613000579181612fe1600787958c6040612fad8a8860a09c9a7f1c8665e7b6ffd238f0d8ba92b2923fbcdc5eccb9dc9c138d5614eb279484ddfc9e614719565b918c8152602e6020528d828220908252602052208d5f5260205260405f20550161ffff600181835460301c16011690613ee9565b604051933385526020850152604084015260608301526080820152a480f35b6316feb18560e11b8952600489fd5b63464e67af60e01b8952600489fd5b905061ffff600783015460301c1610155f612f46565b630410ff2960e31b8a5260048afd5b426001600160401b03161190505f612f2f565b436001600160401b03161190505f612f12565b633deac39560e01b8a5260048afd5b426001600160401b03161090505f612ef5565b436001600160401b03161090505f612ed8565b6330cd747160e01b8a5260048afd5b90503314155f612ebb565b5060015460ff8160a01c1615613138576001600160a01b0316803b156112ef575f60849160405192838092633a54cd5d60e11b82528b60048301528c60248301528d60448301523360648301525afa801561312d57613118575b50612f4c565b6131259199505f90613dc5565b5f975f613112565b6040513d5f823e3d90fd5b63023b34fb60e11b5f5260045ffd5b634c4d29cd60e11b5f5260045ffd5b506101008911612e86565b63268dbf6760e21b5f5260045ffd5b634e487b7160e01b5f52602160045260245ffd5b63d5b25b6360e01b5f5260045ffd5b346112ef575f3660031901126112ef57602060405163ffffffff7f0000000000000000000000000000000000000000000000000000000000000000168152f35b346112ef5760203660031901126112ef576001600160a01b03196131f5613c1e565b165f81815260236020526040902080546001600160a01b031680156131845733036132955760040160ff815416600681101590816131705760038114918215613288575b8215613277575b505061316157805460ff191660041790557f379d6214174fba4ddb78deda3bc869bf16579e3ecef2dc0e55d6f688f66e44be5f80a2005b909150613170576004148380613240565b506005811491505f613239565b6282b42960e81b5f5260045ffd5b346112ef576101403660031901126112ef5760043561ffff81168091036112ef576132cc613beb565b906132d5613bfc565b6132dd613c0d565b9160c03660831901126112ef576001600160401b036132fa613f6a565b1643106131615780158015613b10575b8015613b03575b8015613af5575b8015613ae9575b8015613ad8575b8015613acb575b8015613abc575b6139a1576001600160401b03613348613de8565b16151580613aa3575b80613a77575b8015613a12575b80156139f9575b6139ea57604051634331ed1f60e01b81526020816004817f00000000000000000000000000000000000000000000000000000000000000006001600160a01b03165afa90811561312d575f916139b0575b506001600160401b03169283156139a15761ffff8091169416926133da8486613e56565b61271081106139745750505f19905b5f546001600160401b03808216908114612bb2576001600160401b03199091166001919091016001600160401b039081169182175f556022547f0000000000000000000000000000000000000000000000000000000000000000604090811b63ffffffff60401b1690931760a081901b6001600160a01b0319169793909261347d92603f8116929116101561393a57613e69565b81546001600160601b0360039290921b91821b191692901b919091179055602280546001600160401b031981166001600160401b03918216600190810183169190911790925543811691820197919591908811612bb2576134fe7f000000000000000000000000000000000000000000000000000000000000000087613e97565b9061ffff61352c7f000000000000000000000000000000000000000000000000000000000000000089613e97565b936135577f00000000000000000000000000000000000000000000000000000000000000008a613e97565b956040519761356589613d22565b885260208801521660408087019190915260608601919091526001600160401b03918216608086015291811660a085015291821660c08401525f549051911695906135af81613d3d565b33815260208101928352604051906135c682613d59565b60843580151581036112ef57825260a43561ffff811681036112ef57602083015260c4356001600160401b03811681036112ef57604083015260e4356001600160401b03811681036112ef576060830152610104356001600160401b03811681036112ef576080830152610124356001600160401b03811681036112ef5760a08301526040810191825286606082016001815260808301998a5260a083019088825260c084019560018060401b03169687875260e08501915f83526101008601938a85526101208701975f89526101408801905f82526101608901945f86526101808a01985f8a525f52602360205260405f209960018060a01b0390511660018060a01b03198b5416178a5560018a01905161ffff808251161661ffff198354161782556136fc61ffff60208301511683613eb0565b61370e61ffff60408301511683613eca565b61372061ffff60608301511683613ee9565b608081810151835460a08085015160c0958601516001600160401b03938416604095861b600160401b600160801b03161791861b600160801b600160c01b031691909117951b6001600160c01b031916949094179094559351805160028e0180546020840151978401516060850151958501516001600160d81b031990921660ff941515949094169390931760089890981b62ffff00169790971760189290921b6301000000600160581b03169190911760589390931b600160581b600160981b03169290921760989590951b600160981b600160d81b0316949094179055919091015160038a0180546001600160401b0319169190921617905591519860048801929060068b10156131705760209f600761ffff9a6138c8998c996138d09f988b98899788976138c09c60ff801986541691161784555191835490600160481b600160881b03905160481b1691600160881b600160c81b03905160881b1692610100600160481b039060081b1690610100600160c81b0319161717179055516005830155516006820155019a51161682198a5416178955511687613eb0565b511684613eca565b511690613ee9565b5f8054600160401b600160801b03191643604090811b600160401b600160801b031691909117909155805193845285840191909152820152339082907f1bd7dbfb91d6bbeee799f81d11452e0d0d87712734cbf66805ed6041d7d17a4d90606090a3604051908152f35b61394381613e69565b905460039190911b1c60a01b6001600160a01b03198116613965575b50613e69565b61396e906141c6565b8961395f565b805f5160206148825f395f51905f5202905f5160206148825f395f51905f52820403612bb25704906133e9565b63d06b96b160e01b5f5260045ffd5b90506020813d6020116139e2575b816139cb60209383613dc5565b810103126112ef576139dc90613e42565b856133b6565b3d91506139be565b63148b7e9360e31b5f5260045ffd5b5060a43561ffff81168091036112ef5761010010613365565b506001600160401b03613a23613e15565b16151580613a5e575b801561335e5750613a3b613e2b565b6001600160401b03613a4b613e15565b166001600160401b03909116111561335e565b506001600160401b03613a6f613e2b565b161515613a2c565b50613a80613dfe565b6001600160401b03613a90613de8565b166001600160401b039091161115613357565b506001600160401b03613ab4613dfe565b161515613351565b5061271061ffff841610613334565b508061ffff83161061332d565b5061ffff841661ffff831611613326565b5061ffff82161561331f565b50602061ffff851611613318565b5061ffff84168111613311565b5061ffff84161561330a565b346112ef575f3660031901126112ef5760405163233ace1160e01b81526020816004817f00000000000000000000000000000000000000000000000000000000000000006001600160a01b03165afa801561312d575f90611b7c57602090604051908152f35b346112ef575f3660031901126112ef576040517f00000000000000000000000000000000000000000000000000000000000000006001600160a01b03168152602090f35b346112ef575f3660031901126112ef575f5460401c6001600160401b03168152602090f35b6024359061ffff821682036112ef57565b6044359061ffff821682036112ef57565b6064359061ffff821682036112ef57565b600435906001600160a01b0319821682036112ef57565b60609060031901126112ef576004356001600160a01b0319811681036112ef57906024359060443561ffff811681036112ef5790565b80511515825260208082015161ffff16908301526040808201516001600160401b039081169184019190915260608083015182169084015260808083015182169084015260a09182015116910152565b9181601f840112156112ef578235916001600160401b0383116112ef57602083818601950101116112ef57565b346112ef575f3660031901126112ef5760206040517f00000000000000000000000000000000000000000000000000000000000000008152f35b60e081019081106001600160401b0382111761139c57604052565b6101a081019081106001600160401b0382111761139c57604052565b60c081019081106001600160401b0382111761139c57604052565b604081019081106001600160401b0382111761139c57604052565b606081019081106001600160401b0382111761139c57604052565b608081019081106001600160401b0382111761139c57604052565b601f909101601f19168101906001600160401b0382119082101761139c57604052565b60c4356001600160401b03811681036112ef5790565b610104356001600160401b03811681036112ef5790565b60e4356001600160401b03811681036112ef5790565b610124356001600160401b03811681036112ef5790565b51906001600160401b03821682036112ef57565b81810292918115918404141715612bb257565b906040821015613e8357600c600183811c60020193160290565b634e487b7160e01b5f52603260045260245ffd5b6001600160401b039182169082160191908211612bb257565b9063ffff000082549160101b169063ffff00001916179055565b805461ffff60201b191660209290921b61ffff60201b16919091179055565b805461ffff60301b191660309290921b61ffff60301b16919091179055565b90604051613f1581613d59565b825460ff81161515825261ffff600882901c1660208301526001600160401b03601882901c81166040840152605882901c8116606084015260989190911c8116608083015260019093015490921660a0830152565b5f5460401c6001600160401b03168015613fb557613fb2907f00000000000000000000000000000000000000000000000000000000000000006001600160401b031690613e97565b90565b50436001600160401b031690565b604051613fcf81613d74565b5f81525f60208201525060018060a01b0319165f52602d60205260405f2060018101548015614010576040519161400583613d74565b548252602082015290565b505060405161401e81613d74565b5f81526001602082015290565b6040519061403882613d59565b5f60a0838281528260208201528260408201528260608201528260808201520152565b908060209392818452848401375f828201840152601f01601f1916010190565b929061409490613fb2959360408652604086019161405b565b92602081850391015261405b565b61ffff5f199116019061ffff8211612bb257565b8054821015613e83575f5260205f2001905f90565b61ffff1661ffff8114612bb25760010190565b909392938483116112ef5784116112ef578101920390565b9192916001600160401b03821161139c576040519161411f601f8201601f191660200184613dc5565b8294818452818301116112ef578281602093845f960137010152565b908160a09103126112ef576040519060a082016001600160401b0381118382101761139c5760405280516001600160a01b03811681036112ef5782526020810151602083015260408101516040830152606081015160038110156112ef5760608301526141aa90608001613e42565b608082015290565b61ffff60019116019061ffff8211612bb257565b6001600160a01b0319165f818152602360205260409020546001600160a01b0316156146be57805f52602560205260405f20805460609060015460ff8160a01c166145e3575b5081519260018401809411612bb2575f5b82811061453d575050505f5b8281106142eb57505050805f52602560205260405f208054905f8155816142cd575b5050805f52602c6020525f6040812055805f52602d6020525f6001604082208281550155805f5260236020525f60076040822082815582600182015582600282015582600382015582600482015582600582015582600682015501557f457d47cb94f548852cc20fd99e9450eecfcf65ea0e2547389681f2e4bab9c9965f80a2565b5f5260205f20908101905b8181101561424b575f81556001016142d8565b8061451b575f5b60015b61010061ffff8216111561430d575050600101614229565b855f52602860205260405f20825f5260205260405f2061ffff82165f5260205260405f205461445a575b6143c790865f52602960205260405f20835f5260205260405f2061ffff82165f5260205261ffff60405f205416614428575b865f52602a60205260405f20835f5260205260405f2061ffff82165f5260205260ff60405f205460101c166143f7575b865f52602e60205260405f20835f5260205260405f2061ffff82165f5260205260405f20546143cc576140cb565b6142f5565b865f52602e60205260405f20835f5260205260405f2061ffff82165f526020525f60408120556140cb565b865f52602a60205260405f20835f5260205260405f2061ffff82165f526020525f6001604082208281550155614399565b865f52602960205260405f20835f5260205260405f2061ffff82165f5260205260405f2061ffff198154169055614369565b92855f979592969752602860205260405f20865f5260205260405f2061ffff85165f5260205260405f20549460015b61ffff8116602081116144e95790816001808a6144ae951c16146144b3575b506140cb565b614489565b8a5f52602760205260405f208a5f5260205260405f2061ffff89165f5260205260405f20905f526020525f60408120555f6144a8565b50505f8881526028602090815260408083208a8452825280832061ffff89168452909152812055969591945092614337565b5f198101818111612bb2578251811015613e835760051b8201602001516142f2565b61454781836140b6565b90545f88815260246020908152604080832060039590951b9390931c6001600160a01b0316808352938152828220805460ff19169055898252602b90522060018301929190838311612bb25761ffff8060019516165f526020525f6040812055875f52602660205260405f2090838060a01b03165f526020525f600460408220828155828582015582600282015582600382015501550161421d565b6040516376bc6b8f60e11b8152600481018690529192505f90829060249082906001600160a01b03165afa90811561312d575f91614624575b50905f61420c565b90503d805f833e6146358183613dc5565b8101906020818303126112ef578051906001600160401b0382116112ef57019080601f830112156112ef578151916001600160401b03831161139c578260051b90604051936146876020840186613dc5565b84526020808501928201019283116112ef57602001905b8282106146ae575050505f61461c565b815181526020918201910161469e565b50565b905f5160206148625f395f51905f52821080614703575b15613147578115806146f9575b613147576146f29161479c565b1561314757565b50600181146146e5565b505f5160206148625f395f51905f5281106146d8565b91608093916040519384526020840152604083015260608201522090565b9291905f5160206148625f395f51905f525f940691829060051b8201915b8281106147625750505050565b909192945f5160206148625f395f51905f5283816020938186358b099008970993929101614755565b906040811015613e835760051b0190565b5f5160206148625f395f51905f52811080159061484a575b614844575f5160206148625f395f51905f5281819209918009905f5160206148625f395f51905f5281065f5160206148625f395f51905f5203915f5160206148625f395f51905f528311612bb2575f5160206148625f395f51905f52808080848196097f1aee90f15f2189693df072d799fd11fc039b2959ebb7c867d075ca8cf4d7eb8e09600108935f08081490565b50505f90565b505f5160206148625f395f51905f528210156147b456fe30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f000000100068db8bac710cb295e9e1b089a027525460aa64c2f837b4a2339c0ebedfa43a264697066735822122011f22e1748a49d73ed482022960d673c26c636498caa22beaaa66488dfe6ca5064736f6c634300081c0033",
 }
 
 // DKGManagerABI is the input ABI used to generate the binding from.
@@ -126,7 +113,7 @@ var DKGManagerABI = DKGManagerMetaData.ABI
 var DKGManagerBin = DKGManagerMetaData.Bin
 
 // DeployDKGManager deploys a new Ethereum contract, binding an instance of DKGManager to it.
-func DeployDKGManager(auth *bind.TransactOpts, backend bind.ContractBackend, _chainId uint32, _registry common.Address, _contributionVerifier common.Address, _partialDecryptVerifier common.Address, _finalizeVerifier common.Address, _decryptCombineVerifier common.Address, _revealSubmitVerifier common.Address, _revealShareVerifier common.Address) (common.Address, *types.Transaction, *DKGManager, error) {
+func DeployDKGManager(auth *bind.TransactOpts, backend bind.ContractBackend, _chainId uint32, _registry common.Address, _contributionVerifier common.Address, _partialDecryptVerifier common.Address, _finalizeVerifier common.Address, _decryptCombineVerifier common.Address, _epochDurationBlocks *big.Int) (common.Address, *types.Transaction, *DKGManager, error) {
 	parsed, err := DKGManagerMetaData.GetAbi()
 	if err != nil {
 		return common.Address{}, nil, nil, err
@@ -135,7 +122,7 @@ func DeployDKGManager(auth *bind.TransactOpts, backend bind.ContractBackend, _ch
 		return common.Address{}, nil, nil, errors.New("GetABI returned nil")
 	}
 
-	address, tx, contract, err := bind.DeployContract(auth, *parsed, common.FromHex(DKGManagerBin), backend, _chainId, _registry, _contributionVerifier, _partialDecryptVerifier, _finalizeVerifier, _decryptCombineVerifier, _revealSubmitVerifier, _revealShareVerifier)
+	address, tx, contract, err := bind.DeployContract(auth, *parsed, common.FromHex(DKGManagerBin), backend, _chainId, _registry, _contributionVerifier, _partialDecryptVerifier, _finalizeVerifier, _decryptCombineVerifier, _epochDurationBlocks)
 	if err != nil {
 		return common.Address{}, nil, nil, err
 	}
@@ -377,6 +364,68 @@ func (_DKGManager *DKGManagerCallerSession) DECRYPTCOMBINEVERIFIER() (common.Add
 	return _DKGManager.Contract.DECRYPTCOMBINEVERIFIER(&_DKGManager.CallOpts)
 }
 
+// EPOCHDURATIONBLOCKS is a free data retrieval call binding the contract method 0xfa8f5e96.
+//
+// Solidity: function EPOCH_DURATION_BLOCKS() view returns(uint256)
+func (_DKGManager *DKGManagerCaller) EPOCHDURATIONBLOCKS(opts *bind.CallOpts) (*big.Int, error) {
+	var out []interface{}
+	err := _DKGManager.contract.Call(opts, &out, "EPOCH_DURATION_BLOCKS")
+
+	if err != nil {
+		return *new(*big.Int), err
+	}
+
+	out0 := *abi.ConvertType(out[0], new(*big.Int)).(**big.Int)
+
+	return out0, err
+
+}
+
+// EPOCHDURATIONBLOCKS is a free data retrieval call binding the contract method 0xfa8f5e96.
+//
+// Solidity: function EPOCH_DURATION_BLOCKS() view returns(uint256)
+func (_DKGManager *DKGManagerSession) EPOCHDURATIONBLOCKS() (*big.Int, error) {
+	return _DKGManager.Contract.EPOCHDURATIONBLOCKS(&_DKGManager.CallOpts)
+}
+
+// EPOCHDURATIONBLOCKS is a free data retrieval call binding the contract method 0xfa8f5e96.
+//
+// Solidity: function EPOCH_DURATION_BLOCKS() view returns(uint256)
+func (_DKGManager *DKGManagerCallerSession) EPOCHDURATIONBLOCKS() (*big.Int, error) {
+	return _DKGManager.Contract.EPOCHDURATIONBLOCKS(&_DKGManager.CallOpts)
+}
+
+// EPOCHPREFIX is a free data retrieval call binding the contract method 0x23488be5.
+//
+// Solidity: function EPOCH_PREFIX() view returns(uint32)
+func (_DKGManager *DKGManagerCaller) EPOCHPREFIX(opts *bind.CallOpts) (uint32, error) {
+	var out []interface{}
+	err := _DKGManager.contract.Call(opts, &out, "EPOCH_PREFIX")
+
+	if err != nil {
+		return *new(uint32), err
+	}
+
+	out0 := *abi.ConvertType(out[0], new(uint32)).(*uint32)
+
+	return out0, err
+
+}
+
+// EPOCHPREFIX is a free data retrieval call binding the contract method 0x23488be5.
+//
+// Solidity: function EPOCH_PREFIX() view returns(uint32)
+func (_DKGManager *DKGManagerSession) EPOCHPREFIX() (uint32, error) {
+	return _DKGManager.Contract.EPOCHPREFIX(&_DKGManager.CallOpts)
+}
+
+// EPOCHPREFIX is a free data retrieval call binding the contract method 0x23488be5.
+//
+// Solidity: function EPOCH_PREFIX() view returns(uint32)
+func (_DKGManager *DKGManagerCallerSession) EPOCHPREFIX() (uint32, error) {
+	return _DKGManager.Contract.EPOCHPREFIX(&_DKGManager.CallOpts)
+}
+
 // FINALIZEVERIFIER is a free data retrieval call binding the contract method 0x93c3d3a8.
 //
 // Solidity: function FINALIZE_VERIFIER() view returns(address)
@@ -470,12 +519,12 @@ func (_DKGManager *DKGManagerCallerSession) REGISTRY() (common.Address, error) {
 	return _DKGManager.Contract.REGISTRY(&_DKGManager.CallOpts)
 }
 
-// REVEALSHAREVERIFIER is a free data retrieval call binding the contract method 0x5ddd0626.
+// AppManager is a free data retrieval call binding the contract method 0xebe86c13.
 //
-// Solidity: function REVEAL_SHARE_VERIFIER() view returns(address)
-func (_DKGManager *DKGManagerCaller) REVEALSHAREVERIFIER(opts *bind.CallOpts) (common.Address, error) {
+// Solidity: function appManager() view returns(address)
+func (_DKGManager *DKGManagerCaller) AppManager(opts *bind.CallOpts) (common.Address, error) {
 	var out []interface{}
-	err := _DKGManager.contract.Call(opts, &out, "REVEAL_SHARE_VERIFIER")
+	err := _DKGManager.contract.Call(opts, &out, "appManager")
 
 	if err != nil {
 		return *new(common.Address), err
@@ -487,88 +536,88 @@ func (_DKGManager *DKGManagerCaller) REVEALSHAREVERIFIER(opts *bind.CallOpts) (c
 
 }
 
-// REVEALSHAREVERIFIER is a free data retrieval call binding the contract method 0x5ddd0626.
+// AppManager is a free data retrieval call binding the contract method 0xebe86c13.
 //
-// Solidity: function REVEAL_SHARE_VERIFIER() view returns(address)
-func (_DKGManager *DKGManagerSession) REVEALSHAREVERIFIER() (common.Address, error) {
-	return _DKGManager.Contract.REVEALSHAREVERIFIER(&_DKGManager.CallOpts)
+// Solidity: function appManager() view returns(address)
+func (_DKGManager *DKGManagerSession) AppManager() (common.Address, error) {
+	return _DKGManager.Contract.AppManager(&_DKGManager.CallOpts)
 }
 
-// REVEALSHAREVERIFIER is a free data retrieval call binding the contract method 0x5ddd0626.
+// AppManager is a free data retrieval call binding the contract method 0xebe86c13.
 //
-// Solidity: function REVEAL_SHARE_VERIFIER() view returns(address)
-func (_DKGManager *DKGManagerCallerSession) REVEALSHAREVERIFIER() (common.Address, error) {
-	return _DKGManager.Contract.REVEALSHAREVERIFIER(&_DKGManager.CallOpts)
+// Solidity: function appManager() view returns(address)
+func (_DKGManager *DKGManagerCallerSession) AppManager() (common.Address, error) {
+	return _DKGManager.Contract.AppManager(&_DKGManager.CallOpts)
 }
 
-// REVEALSUBMITVERIFIER is a free data retrieval call binding the contract method 0x070c7492.
+// EpochDurationBlocks is a free data retrieval call binding the contract method 0x71712c29.
 //
-// Solidity: function REVEAL_SUBMIT_VERIFIER() view returns(address)
-func (_DKGManager *DKGManagerCaller) REVEALSUBMITVERIFIER(opts *bind.CallOpts) (common.Address, error) {
+// Solidity: function epochDurationBlocks() view returns(uint256)
+func (_DKGManager *DKGManagerCaller) EpochDurationBlocks(opts *bind.CallOpts) (*big.Int, error) {
 	var out []interface{}
-	err := _DKGManager.contract.Call(opts, &out, "REVEAL_SUBMIT_VERIFIER")
+	err := _DKGManager.contract.Call(opts, &out, "epochDurationBlocks")
 
 	if err != nil {
-		return *new(common.Address), err
+		return *new(*big.Int), err
 	}
 
-	out0 := *abi.ConvertType(out[0], new(common.Address)).(*common.Address)
+	out0 := *abi.ConvertType(out[0], new(*big.Int)).(**big.Int)
 
 	return out0, err
 
 }
 
-// REVEALSUBMITVERIFIER is a free data retrieval call binding the contract method 0x070c7492.
+// EpochDurationBlocks is a free data retrieval call binding the contract method 0x71712c29.
 //
-// Solidity: function REVEAL_SUBMIT_VERIFIER() view returns(address)
-func (_DKGManager *DKGManagerSession) REVEALSUBMITVERIFIER() (common.Address, error) {
-	return _DKGManager.Contract.REVEALSUBMITVERIFIER(&_DKGManager.CallOpts)
+// Solidity: function epochDurationBlocks() view returns(uint256)
+func (_DKGManager *DKGManagerSession) EpochDurationBlocks() (*big.Int, error) {
+	return _DKGManager.Contract.EpochDurationBlocks(&_DKGManager.CallOpts)
 }
 
-// REVEALSUBMITVERIFIER is a free data retrieval call binding the contract method 0x070c7492.
+// EpochDurationBlocks is a free data retrieval call binding the contract method 0x71712c29.
 //
-// Solidity: function REVEAL_SUBMIT_VERIFIER() view returns(address)
-func (_DKGManager *DKGManagerCallerSession) REVEALSUBMITVERIFIER() (common.Address, error) {
-	return _DKGManager.Contract.REVEALSUBMITVERIFIER(&_DKGManager.CallOpts)
+// Solidity: function epochDurationBlocks() view returns(uint256)
+func (_DKGManager *DKGManagerCallerSession) EpochDurationBlocks() (*big.Int, error) {
+	return _DKGManager.Contract.EpochDurationBlocks(&_DKGManager.CallOpts)
 }
 
-// ROUNDPREFIX is a free data retrieval call binding the contract method 0x56664d15.
+// EpochNonce is a free data retrieval call binding the contract method 0xa4adcd7f.
 //
-// Solidity: function ROUND_PREFIX() view returns(uint32)
-func (_DKGManager *DKGManagerCaller) ROUNDPREFIX(opts *bind.CallOpts) (uint32, error) {
+// Solidity: function epochNonce() view returns(uint64)
+func (_DKGManager *DKGManagerCaller) EpochNonce(opts *bind.CallOpts) (uint64, error) {
 	var out []interface{}
-	err := _DKGManager.contract.Call(opts, &out, "ROUND_PREFIX")
+	err := _DKGManager.contract.Call(opts, &out, "epochNonce")
 
 	if err != nil {
-		return *new(uint32), err
+		return *new(uint64), err
 	}
 
-	out0 := *abi.ConvertType(out[0], new(uint32)).(*uint32)
+	out0 := *abi.ConvertType(out[0], new(uint64)).(*uint64)
 
 	return out0, err
 
 }
 
-// ROUNDPREFIX is a free data retrieval call binding the contract method 0x56664d15.
+// EpochNonce is a free data retrieval call binding the contract method 0xa4adcd7f.
 //
-// Solidity: function ROUND_PREFIX() view returns(uint32)
-func (_DKGManager *DKGManagerSession) ROUNDPREFIX() (uint32, error) {
-	return _DKGManager.Contract.ROUNDPREFIX(&_DKGManager.CallOpts)
+// Solidity: function epochNonce() view returns(uint64)
+func (_DKGManager *DKGManagerSession) EpochNonce() (uint64, error) {
+	return _DKGManager.Contract.EpochNonce(&_DKGManager.CallOpts)
 }
 
-// ROUNDPREFIX is a free data retrieval call binding the contract method 0x56664d15.
+// EpochNonce is a free data retrieval call binding the contract method 0xa4adcd7f.
 //
-// Solidity: function ROUND_PREFIX() view returns(uint32)
-func (_DKGManager *DKGManagerCallerSession) ROUNDPREFIX() (uint32, error) {
-	return _DKGManager.Contract.ROUNDPREFIX(&_DKGManager.CallOpts)
+// Solidity: function epochNonce() view returns(uint64)
+func (_DKGManager *DKGManagerCallerSession) EpochNonce() (uint64, error) {
+	return _DKGManager.Contract.EpochNonce(&_DKGManager.CallOpts)
 }
 
-// GetCiphertextHash is a free data retrieval call binding the contract method 0x373877a6.
+// GetCiphertextHash is a free data retrieval call binding the contract method 0x2de546d5.
 //
-// Solidity: function getCiphertextHash(bytes12 roundId, uint16 ciphertextIndex) view returns(bytes32)
-func (_DKGManager *DKGManagerCaller) GetCiphertextHash(opts *bind.CallOpts, roundId [12]byte, ciphertextIndex uint16) ([32]byte, error) {
+// Solidity: function getCiphertextHash(bytes12 epochId, bytes32 aid, uint16 ciphertextIndex) view returns(bytes32)
+func (_DKGManager *DKGManagerCaller) GetCiphertextHash(opts *bind.CallOpts, epochId [12]byte, aid [32]byte, ciphertextIndex uint16) ([32]byte, error) {
 	var out []interface{}
-	err := _DKGManager.contract.Call(opts, &out, "getCiphertextHash", roundId, ciphertextIndex)
+	err := _DKGManager.contract.Call(opts, &out, "getCiphertextHash", epochId, aid, ciphertextIndex)
 
 	if err != nil {
 		return *new([32]byte), err
@@ -580,26 +629,26 @@ func (_DKGManager *DKGManagerCaller) GetCiphertextHash(opts *bind.CallOpts, roun
 
 }
 
-// GetCiphertextHash is a free data retrieval call binding the contract method 0x373877a6.
+// GetCiphertextHash is a free data retrieval call binding the contract method 0x2de546d5.
 //
-// Solidity: function getCiphertextHash(bytes12 roundId, uint16 ciphertextIndex) view returns(bytes32)
-func (_DKGManager *DKGManagerSession) GetCiphertextHash(roundId [12]byte, ciphertextIndex uint16) ([32]byte, error) {
-	return _DKGManager.Contract.GetCiphertextHash(&_DKGManager.CallOpts, roundId, ciphertextIndex)
+// Solidity: function getCiphertextHash(bytes12 epochId, bytes32 aid, uint16 ciphertextIndex) view returns(bytes32)
+func (_DKGManager *DKGManagerSession) GetCiphertextHash(epochId [12]byte, aid [32]byte, ciphertextIndex uint16) ([32]byte, error) {
+	return _DKGManager.Contract.GetCiphertextHash(&_DKGManager.CallOpts, epochId, aid, ciphertextIndex)
 }
 
-// GetCiphertextHash is a free data retrieval call binding the contract method 0x373877a6.
+// GetCiphertextHash is a free data retrieval call binding the contract method 0x2de546d5.
 //
-// Solidity: function getCiphertextHash(bytes12 roundId, uint16 ciphertextIndex) view returns(bytes32)
-func (_DKGManager *DKGManagerCallerSession) GetCiphertextHash(roundId [12]byte, ciphertextIndex uint16) ([32]byte, error) {
-	return _DKGManager.Contract.GetCiphertextHash(&_DKGManager.CallOpts, roundId, ciphertextIndex)
+// Solidity: function getCiphertextHash(bytes12 epochId, bytes32 aid, uint16 ciphertextIndex) view returns(bytes32)
+func (_DKGManager *DKGManagerCallerSession) GetCiphertextHash(epochId [12]byte, aid [32]byte, ciphertextIndex uint16) ([32]byte, error) {
+	return _DKGManager.Contract.GetCiphertextHash(&_DKGManager.CallOpts, epochId, aid, ciphertextIndex)
 }
 
 // GetCollectivePublicKey is a free data retrieval call binding the contract method 0x3353ec6e.
 //
-// Solidity: function getCollectivePublicKey(bytes12 roundId) view returns((uint256,uint256))
-func (_DKGManager *DKGManagerCaller) GetCollectivePublicKey(opts *bind.CallOpts, roundId [12]byte) (DKGTypesPoint, error) {
+// Solidity: function getCollectivePublicKey(bytes12 epochId) view returns((uint256,uint256))
+func (_DKGManager *DKGManagerCaller) GetCollectivePublicKey(opts *bind.CallOpts, epochId [12]byte) (DKGTypesPoint, error) {
 	var out []interface{}
-	err := _DKGManager.contract.Call(opts, &out, "getCollectivePublicKey", roundId)
+	err := _DKGManager.contract.Call(opts, &out, "getCollectivePublicKey", epochId)
 
 	if err != nil {
 		return *new(DKGTypesPoint), err
@@ -613,24 +662,24 @@ func (_DKGManager *DKGManagerCaller) GetCollectivePublicKey(opts *bind.CallOpts,
 
 // GetCollectivePublicKey is a free data retrieval call binding the contract method 0x3353ec6e.
 //
-// Solidity: function getCollectivePublicKey(bytes12 roundId) view returns((uint256,uint256))
-func (_DKGManager *DKGManagerSession) GetCollectivePublicKey(roundId [12]byte) (DKGTypesPoint, error) {
-	return _DKGManager.Contract.GetCollectivePublicKey(&_DKGManager.CallOpts, roundId)
+// Solidity: function getCollectivePublicKey(bytes12 epochId) view returns((uint256,uint256))
+func (_DKGManager *DKGManagerSession) GetCollectivePublicKey(epochId [12]byte) (DKGTypesPoint, error) {
+	return _DKGManager.Contract.GetCollectivePublicKey(&_DKGManager.CallOpts, epochId)
 }
 
 // GetCollectivePublicKey is a free data retrieval call binding the contract method 0x3353ec6e.
 //
-// Solidity: function getCollectivePublicKey(bytes12 roundId) view returns((uint256,uint256))
-func (_DKGManager *DKGManagerCallerSession) GetCollectivePublicKey(roundId [12]byte) (DKGTypesPoint, error) {
-	return _DKGManager.Contract.GetCollectivePublicKey(&_DKGManager.CallOpts, roundId)
+// Solidity: function getCollectivePublicKey(bytes12 epochId) view returns((uint256,uint256))
+func (_DKGManager *DKGManagerCallerSession) GetCollectivePublicKey(epochId [12]byte) (DKGTypesPoint, error) {
+	return _DKGManager.Contract.GetCollectivePublicKey(&_DKGManager.CallOpts, epochId)
 }
 
-// GetCombinedDecryption is a free data retrieval call binding the contract method 0xfe234897.
+// GetCombinedDecryption is a free data retrieval call binding the contract method 0x9bbada67.
 //
-// Solidity: function getCombinedDecryption(bytes12 roundId, uint16 ciphertextIndex) view returns((uint16,bool,uint256))
-func (_DKGManager *DKGManagerCaller) GetCombinedDecryption(opts *bind.CallOpts, roundId [12]byte, ciphertextIndex uint16) (DKGTypesCombinedDecryptionRecord, error) {
+// Solidity: function getCombinedDecryption(bytes12 epochId, bytes32 aid, uint16 ciphertextIndex) view returns((uint16,bool,uint256))
+func (_DKGManager *DKGManagerCaller) GetCombinedDecryption(opts *bind.CallOpts, epochId [12]byte, aid [32]byte, ciphertextIndex uint16) (DKGTypesCombinedDecryptionRecord, error) {
 	var out []interface{}
-	err := _DKGManager.contract.Call(opts, &out, "getCombinedDecryption", roundId, ciphertextIndex)
+	err := _DKGManager.contract.Call(opts, &out, "getCombinedDecryption", epochId, aid, ciphertextIndex)
 
 	if err != nil {
 		return *new(DKGTypesCombinedDecryptionRecord), err
@@ -642,26 +691,26 @@ func (_DKGManager *DKGManagerCaller) GetCombinedDecryption(opts *bind.CallOpts, 
 
 }
 
-// GetCombinedDecryption is a free data retrieval call binding the contract method 0xfe234897.
+// GetCombinedDecryption is a free data retrieval call binding the contract method 0x9bbada67.
 //
-// Solidity: function getCombinedDecryption(bytes12 roundId, uint16 ciphertextIndex) view returns((uint16,bool,uint256))
-func (_DKGManager *DKGManagerSession) GetCombinedDecryption(roundId [12]byte, ciphertextIndex uint16) (DKGTypesCombinedDecryptionRecord, error) {
-	return _DKGManager.Contract.GetCombinedDecryption(&_DKGManager.CallOpts, roundId, ciphertextIndex)
+// Solidity: function getCombinedDecryption(bytes12 epochId, bytes32 aid, uint16 ciphertextIndex) view returns((uint16,bool,uint256))
+func (_DKGManager *DKGManagerSession) GetCombinedDecryption(epochId [12]byte, aid [32]byte, ciphertextIndex uint16) (DKGTypesCombinedDecryptionRecord, error) {
+	return _DKGManager.Contract.GetCombinedDecryption(&_DKGManager.CallOpts, epochId, aid, ciphertextIndex)
 }
 
-// GetCombinedDecryption is a free data retrieval call binding the contract method 0xfe234897.
+// GetCombinedDecryption is a free data retrieval call binding the contract method 0x9bbada67.
 //
-// Solidity: function getCombinedDecryption(bytes12 roundId, uint16 ciphertextIndex) view returns((uint16,bool,uint256))
-func (_DKGManager *DKGManagerCallerSession) GetCombinedDecryption(roundId [12]byte, ciphertextIndex uint16) (DKGTypesCombinedDecryptionRecord, error) {
-	return _DKGManager.Contract.GetCombinedDecryption(&_DKGManager.CallOpts, roundId, ciphertextIndex)
+// Solidity: function getCombinedDecryption(bytes12 epochId, bytes32 aid, uint16 ciphertextIndex) view returns((uint16,bool,uint256))
+func (_DKGManager *DKGManagerCallerSession) GetCombinedDecryption(epochId [12]byte, aid [32]byte, ciphertextIndex uint16) (DKGTypesCombinedDecryptionRecord, error) {
+	return _DKGManager.Contract.GetCombinedDecryption(&_DKGManager.CallOpts, epochId, aid, ciphertextIndex)
 }
 
 // GetContribution is a free data retrieval call binding the contract method 0xd3720aac.
 //
-// Solidity: function getContribution(bytes12 roundId, address contributor) view returns((address,uint16,bytes32,bytes32,bytes32,bool))
-func (_DKGManager *DKGManagerCaller) GetContribution(opts *bind.CallOpts, roundId [12]byte, contributor common.Address) (DKGTypesContributionRecord, error) {
+// Solidity: function getContribution(bytes12 epochId, address contributor) view returns((address,uint16,bytes32,bytes32,bytes32,bool))
+func (_DKGManager *DKGManagerCaller) GetContribution(opts *bind.CallOpts, epochId [12]byte, contributor common.Address) (DKGTypesContributionRecord, error) {
 	var out []interface{}
-	err := _DKGManager.contract.Call(opts, &out, "getContribution", roundId, contributor)
+	err := _DKGManager.contract.Call(opts, &out, "getContribution", epochId, contributor)
 
 	if err != nil {
 		return *new(DKGTypesContributionRecord), err
@@ -675,16 +724,16 @@ func (_DKGManager *DKGManagerCaller) GetContribution(opts *bind.CallOpts, roundI
 
 // GetContribution is a free data retrieval call binding the contract method 0xd3720aac.
 //
-// Solidity: function getContribution(bytes12 roundId, address contributor) view returns((address,uint16,bytes32,bytes32,bytes32,bool))
-func (_DKGManager *DKGManagerSession) GetContribution(roundId [12]byte, contributor common.Address) (DKGTypesContributionRecord, error) {
-	return _DKGManager.Contract.GetContribution(&_DKGManager.CallOpts, roundId, contributor)
+// Solidity: function getContribution(bytes12 epochId, address contributor) view returns((address,uint16,bytes32,bytes32,bytes32,bool))
+func (_DKGManager *DKGManagerSession) GetContribution(epochId [12]byte, contributor common.Address) (DKGTypesContributionRecord, error) {
+	return _DKGManager.Contract.GetContribution(&_DKGManager.CallOpts, epochId, contributor)
 }
 
 // GetContribution is a free data retrieval call binding the contract method 0xd3720aac.
 //
-// Solidity: function getContribution(bytes12 roundId, address contributor) view returns((address,uint16,bytes32,bytes32,bytes32,bool))
-func (_DKGManager *DKGManagerCallerSession) GetContribution(roundId [12]byte, contributor common.Address) (DKGTypesContributionRecord, error) {
-	return _DKGManager.Contract.GetContribution(&_DKGManager.CallOpts, roundId, contributor)
+// Solidity: function getContribution(bytes12 epochId, address contributor) view returns((address,uint16,bytes32,bytes32,bytes32,bool))
+func (_DKGManager *DKGManagerCallerSession) GetContribution(epochId [12]byte, contributor common.Address) (DKGTypesContributionRecord, error) {
+	return _DKGManager.Contract.GetContribution(&_DKGManager.CallOpts, epochId, contributor)
 }
 
 // GetContributionVerifierVKeyHash is a free data retrieval call binding the contract method 0x074a75e1.
@@ -751,10 +800,10 @@ func (_DKGManager *DKGManagerCallerSession) GetDecryptCombineVerifierVKeyHash() 
 
 // GetDecryptionPolicy is a free data retrieval call binding the contract method 0x4554c0be.
 //
-// Solidity: function getDecryptionPolicy(bytes12 roundId) view returns((bool,uint16,uint64,uint64,uint64,uint64))
-func (_DKGManager *DKGManagerCaller) GetDecryptionPolicy(opts *bind.CallOpts, roundId [12]byte) (DKGTypesDecryptionPolicy, error) {
+// Solidity: function getDecryptionPolicy(bytes12 epochId) view returns((bool,uint16,uint64,uint64,uint64,uint64))
+func (_DKGManager *DKGManagerCaller) GetDecryptionPolicy(opts *bind.CallOpts, epochId [12]byte) (DKGTypesDecryptionPolicy, error) {
 	var out []interface{}
-	err := _DKGManager.contract.Call(opts, &out, "getDecryptionPolicy", roundId)
+	err := _DKGManager.contract.Call(opts, &out, "getDecryptionPolicy", epochId)
 
 	if err != nil {
 		return *new(DKGTypesDecryptionPolicy), err
@@ -768,16 +817,47 @@ func (_DKGManager *DKGManagerCaller) GetDecryptionPolicy(opts *bind.CallOpts, ro
 
 // GetDecryptionPolicy is a free data retrieval call binding the contract method 0x4554c0be.
 //
-// Solidity: function getDecryptionPolicy(bytes12 roundId) view returns((bool,uint16,uint64,uint64,uint64,uint64))
-func (_DKGManager *DKGManagerSession) GetDecryptionPolicy(roundId [12]byte) (DKGTypesDecryptionPolicy, error) {
-	return _DKGManager.Contract.GetDecryptionPolicy(&_DKGManager.CallOpts, roundId)
+// Solidity: function getDecryptionPolicy(bytes12 epochId) view returns((bool,uint16,uint64,uint64,uint64,uint64))
+func (_DKGManager *DKGManagerSession) GetDecryptionPolicy(epochId [12]byte) (DKGTypesDecryptionPolicy, error) {
+	return _DKGManager.Contract.GetDecryptionPolicy(&_DKGManager.CallOpts, epochId)
 }
 
 // GetDecryptionPolicy is a free data retrieval call binding the contract method 0x4554c0be.
 //
-// Solidity: function getDecryptionPolicy(bytes12 roundId) view returns((bool,uint16,uint64,uint64,uint64,uint64))
-func (_DKGManager *DKGManagerCallerSession) GetDecryptionPolicy(roundId [12]byte) (DKGTypesDecryptionPolicy, error) {
-	return _DKGManager.Contract.GetDecryptionPolicy(&_DKGManager.CallOpts, roundId)
+// Solidity: function getDecryptionPolicy(bytes12 epochId) view returns((bool,uint16,uint64,uint64,uint64,uint64))
+func (_DKGManager *DKGManagerCallerSession) GetDecryptionPolicy(epochId [12]byte) (DKGTypesDecryptionPolicy, error) {
+	return _DKGManager.Contract.GetDecryptionPolicy(&_DKGManager.CallOpts, epochId)
+}
+
+// GetEpoch is a free data retrieval call binding the contract method 0xbe59b8ea.
+//
+// Solidity: function getEpoch(bytes12 epochId) view returns((address,(uint16,uint16,uint16,uint16,uint64,uint64,uint64),(bool,uint16,uint64,uint64,uint64,uint64),uint8,uint64,uint64,uint64,bytes32,uint256,uint16,uint16,uint16,uint16))
+func (_DKGManager *DKGManagerCaller) GetEpoch(opts *bind.CallOpts, epochId [12]byte) (IDKGManagerEpoch, error) {
+	var out []interface{}
+	err := _DKGManager.contract.Call(opts, &out, "getEpoch", epochId)
+
+	if err != nil {
+		return *new(IDKGManagerEpoch), err
+	}
+
+	out0 := *abi.ConvertType(out[0], new(IDKGManagerEpoch)).(*IDKGManagerEpoch)
+
+	return out0, err
+
+}
+
+// GetEpoch is a free data retrieval call binding the contract method 0xbe59b8ea.
+//
+// Solidity: function getEpoch(bytes12 epochId) view returns((address,(uint16,uint16,uint16,uint16,uint64,uint64,uint64),(bool,uint16,uint64,uint64,uint64,uint64),uint8,uint64,uint64,uint64,bytes32,uint256,uint16,uint16,uint16,uint16))
+func (_DKGManager *DKGManagerSession) GetEpoch(epochId [12]byte) (IDKGManagerEpoch, error) {
+	return _DKGManager.Contract.GetEpoch(&_DKGManager.CallOpts, epochId)
+}
+
+// GetEpoch is a free data retrieval call binding the contract method 0xbe59b8ea.
+//
+// Solidity: function getEpoch(bytes12 epochId) view returns((address,(uint16,uint16,uint16,uint16,uint64,uint64,uint64),(bool,uint16,uint64,uint64,uint64,uint64),uint8,uint64,uint64,uint64,bytes32,uint256,uint16,uint16,uint16,uint16))
+func (_DKGManager *DKGManagerCallerSession) GetEpoch(epochId [12]byte) (IDKGManagerEpoch, error) {
+	return _DKGManager.Contract.GetEpoch(&_DKGManager.CallOpts, epochId)
 }
 
 // GetFinalizeVerifierVKeyHash is a free data retrieval call binding the contract method 0x669a76a9.
@@ -842,12 +922,12 @@ func (_DKGManager *DKGManagerCallerSession) GetPartialDecryptVerifierVKeyHash() 
 	return _DKGManager.Contract.GetPartialDecryptVerifierVKeyHash(&_DKGManager.CallOpts)
 }
 
-// GetPartialDecryption is a free data retrieval call binding the contract method 0x70f2469b.
+// GetPartialDecryption is a free data retrieval call binding the contract method 0xbea5210d.
 //
-// Solidity: function getPartialDecryption(bytes12 roundId, address participant, uint16 ciphertextIndex) view returns((address,uint16,uint16,bytes32,(uint256,uint256),bool))
-func (_DKGManager *DKGManagerCaller) GetPartialDecryption(opts *bind.CallOpts, roundId [12]byte, participant common.Address, ciphertextIndex uint16) (DKGTypesPartialDecryptionRecord, error) {
+// Solidity: function getPartialDecryption(bytes12 epochId, bytes32 aid, uint16 participantIndex, uint16 ciphertextIndex) view returns((uint16,uint16,bytes32,bool))
+func (_DKGManager *DKGManagerCaller) GetPartialDecryption(opts *bind.CallOpts, epochId [12]byte, aid [32]byte, participantIndex uint16, ciphertextIndex uint16) (DKGTypesPartialDecryptionRecord, error) {
 	var out []interface{}
-	err := _DKGManager.contract.Call(opts, &out, "getPartialDecryption", roundId, participant, ciphertextIndex)
+	err := _DKGManager.contract.Call(opts, &out, "getPartialDecryption", epochId, aid, participantIndex, ciphertextIndex)
 
 	if err != nil {
 		return *new(DKGTypesPartialDecryptionRecord), err
@@ -859,26 +939,26 @@ func (_DKGManager *DKGManagerCaller) GetPartialDecryption(opts *bind.CallOpts, r
 
 }
 
-// GetPartialDecryption is a free data retrieval call binding the contract method 0x70f2469b.
+// GetPartialDecryption is a free data retrieval call binding the contract method 0xbea5210d.
 //
-// Solidity: function getPartialDecryption(bytes12 roundId, address participant, uint16 ciphertextIndex) view returns((address,uint16,uint16,bytes32,(uint256,uint256),bool))
-func (_DKGManager *DKGManagerSession) GetPartialDecryption(roundId [12]byte, participant common.Address, ciphertextIndex uint16) (DKGTypesPartialDecryptionRecord, error) {
-	return _DKGManager.Contract.GetPartialDecryption(&_DKGManager.CallOpts, roundId, participant, ciphertextIndex)
+// Solidity: function getPartialDecryption(bytes12 epochId, bytes32 aid, uint16 participantIndex, uint16 ciphertextIndex) view returns((uint16,uint16,bytes32,bool))
+func (_DKGManager *DKGManagerSession) GetPartialDecryption(epochId [12]byte, aid [32]byte, participantIndex uint16, ciphertextIndex uint16) (DKGTypesPartialDecryptionRecord, error) {
+	return _DKGManager.Contract.GetPartialDecryption(&_DKGManager.CallOpts, epochId, aid, participantIndex, ciphertextIndex)
 }
 
-// GetPartialDecryption is a free data retrieval call binding the contract method 0x70f2469b.
+// GetPartialDecryption is a free data retrieval call binding the contract method 0xbea5210d.
 //
-// Solidity: function getPartialDecryption(bytes12 roundId, address participant, uint16 ciphertextIndex) view returns((address,uint16,uint16,bytes32,(uint256,uint256),bool))
-func (_DKGManager *DKGManagerCallerSession) GetPartialDecryption(roundId [12]byte, participant common.Address, ciphertextIndex uint16) (DKGTypesPartialDecryptionRecord, error) {
-	return _DKGManager.Contract.GetPartialDecryption(&_DKGManager.CallOpts, roundId, participant, ciphertextIndex)
+// Solidity: function getPartialDecryption(bytes12 epochId, bytes32 aid, uint16 participantIndex, uint16 ciphertextIndex) view returns((uint16,uint16,bytes32,bool))
+func (_DKGManager *DKGManagerCallerSession) GetPartialDecryption(epochId [12]byte, aid [32]byte, participantIndex uint16, ciphertextIndex uint16) (DKGTypesPartialDecryptionRecord, error) {
+	return _DKGManager.Contract.GetPartialDecryption(&_DKGManager.CallOpts, epochId, aid, participantIndex, ciphertextIndex)
 }
 
-// GetPlaintext is a free data retrieval call binding the contract method 0x6759e0e1.
+// GetPlaintext is a free data retrieval call binding the contract method 0x5a8f2bb3.
 //
-// Solidity: function getPlaintext(bytes12 roundId, uint16 ciphertextIndex) view returns(uint256)
-func (_DKGManager *DKGManagerCaller) GetPlaintext(opts *bind.CallOpts, roundId [12]byte, ciphertextIndex uint16) (*big.Int, error) {
+// Solidity: function getPlaintext(bytes12 epochId, bytes32 aid, uint16 ciphertextIndex) view returns(uint256)
+func (_DKGManager *DKGManagerCaller) GetPlaintext(opts *bind.CallOpts, epochId [12]byte, aid [32]byte, ciphertextIndex uint16) (*big.Int, error) {
 	var out []interface{}
-	err := _DKGManager.contract.Call(opts, &out, "getPlaintext", roundId, ciphertextIndex)
+	err := _DKGManager.contract.Call(opts, &out, "getPlaintext", epochId, aid, ciphertextIndex)
 
 	if err != nil {
 		return *new(*big.Int), err
@@ -890,150 +970,26 @@ func (_DKGManager *DKGManagerCaller) GetPlaintext(opts *bind.CallOpts, roundId [
 
 }
 
-// GetPlaintext is a free data retrieval call binding the contract method 0x6759e0e1.
+// GetPlaintext is a free data retrieval call binding the contract method 0x5a8f2bb3.
 //
-// Solidity: function getPlaintext(bytes12 roundId, uint16 ciphertextIndex) view returns(uint256)
-func (_DKGManager *DKGManagerSession) GetPlaintext(roundId [12]byte, ciphertextIndex uint16) (*big.Int, error) {
-	return _DKGManager.Contract.GetPlaintext(&_DKGManager.CallOpts, roundId, ciphertextIndex)
+// Solidity: function getPlaintext(bytes12 epochId, bytes32 aid, uint16 ciphertextIndex) view returns(uint256)
+func (_DKGManager *DKGManagerSession) GetPlaintext(epochId [12]byte, aid [32]byte, ciphertextIndex uint16) (*big.Int, error) {
+	return _DKGManager.Contract.GetPlaintext(&_DKGManager.CallOpts, epochId, aid, ciphertextIndex)
 }
 
-// GetPlaintext is a free data retrieval call binding the contract method 0x6759e0e1.
+// GetPlaintext is a free data retrieval call binding the contract method 0x5a8f2bb3.
 //
-// Solidity: function getPlaintext(bytes12 roundId, uint16 ciphertextIndex) view returns(uint256)
-func (_DKGManager *DKGManagerCallerSession) GetPlaintext(roundId [12]byte, ciphertextIndex uint16) (*big.Int, error) {
-	return _DKGManager.Contract.GetPlaintext(&_DKGManager.CallOpts, roundId, ciphertextIndex)
-}
-
-// GetRevealShareVerifierVKeyHash is a free data retrieval call binding the contract method 0xc2440e16.
-//
-// Solidity: function getRevealShareVerifierVKeyHash() view returns(bytes32)
-func (_DKGManager *DKGManagerCaller) GetRevealShareVerifierVKeyHash(opts *bind.CallOpts) ([32]byte, error) {
-	var out []interface{}
-	err := _DKGManager.contract.Call(opts, &out, "getRevealShareVerifierVKeyHash")
-
-	if err != nil {
-		return *new([32]byte), err
-	}
-
-	out0 := *abi.ConvertType(out[0], new([32]byte)).(*[32]byte)
-
-	return out0, err
-
-}
-
-// GetRevealShareVerifierVKeyHash is a free data retrieval call binding the contract method 0xc2440e16.
-//
-// Solidity: function getRevealShareVerifierVKeyHash() view returns(bytes32)
-func (_DKGManager *DKGManagerSession) GetRevealShareVerifierVKeyHash() ([32]byte, error) {
-	return _DKGManager.Contract.GetRevealShareVerifierVKeyHash(&_DKGManager.CallOpts)
-}
-
-// GetRevealShareVerifierVKeyHash is a free data retrieval call binding the contract method 0xc2440e16.
-//
-// Solidity: function getRevealShareVerifierVKeyHash() view returns(bytes32)
-func (_DKGManager *DKGManagerCallerSession) GetRevealShareVerifierVKeyHash() ([32]byte, error) {
-	return _DKGManager.Contract.GetRevealShareVerifierVKeyHash(&_DKGManager.CallOpts)
-}
-
-// GetRevealSubmitVerifierVKeyHash is a free data retrieval call binding the contract method 0xb18730c2.
-//
-// Solidity: function getRevealSubmitVerifierVKeyHash() view returns(bytes32)
-func (_DKGManager *DKGManagerCaller) GetRevealSubmitVerifierVKeyHash(opts *bind.CallOpts) ([32]byte, error) {
-	var out []interface{}
-	err := _DKGManager.contract.Call(opts, &out, "getRevealSubmitVerifierVKeyHash")
-
-	if err != nil {
-		return *new([32]byte), err
-	}
-
-	out0 := *abi.ConvertType(out[0], new([32]byte)).(*[32]byte)
-
-	return out0, err
-
-}
-
-// GetRevealSubmitVerifierVKeyHash is a free data retrieval call binding the contract method 0xb18730c2.
-//
-// Solidity: function getRevealSubmitVerifierVKeyHash() view returns(bytes32)
-func (_DKGManager *DKGManagerSession) GetRevealSubmitVerifierVKeyHash() ([32]byte, error) {
-	return _DKGManager.Contract.GetRevealSubmitVerifierVKeyHash(&_DKGManager.CallOpts)
-}
-
-// GetRevealSubmitVerifierVKeyHash is a free data retrieval call binding the contract method 0xb18730c2.
-//
-// Solidity: function getRevealSubmitVerifierVKeyHash() view returns(bytes32)
-func (_DKGManager *DKGManagerCallerSession) GetRevealSubmitVerifierVKeyHash() ([32]byte, error) {
-	return _DKGManager.Contract.GetRevealSubmitVerifierVKeyHash(&_DKGManager.CallOpts)
-}
-
-// GetRevealedShare is a free data retrieval call binding the contract method 0x53d72184.
-//
-// Solidity: function getRevealedShare(bytes12 roundId, address participant) view returns((address,uint16,uint256,bytes32,bool))
-func (_DKGManager *DKGManagerCaller) GetRevealedShare(opts *bind.CallOpts, roundId [12]byte, participant common.Address) (DKGTypesRevealedShareRecord, error) {
-	var out []interface{}
-	err := _DKGManager.contract.Call(opts, &out, "getRevealedShare", roundId, participant)
-
-	if err != nil {
-		return *new(DKGTypesRevealedShareRecord), err
-	}
-
-	out0 := *abi.ConvertType(out[0], new(DKGTypesRevealedShareRecord)).(*DKGTypesRevealedShareRecord)
-
-	return out0, err
-
-}
-
-// GetRevealedShare is a free data retrieval call binding the contract method 0x53d72184.
-//
-// Solidity: function getRevealedShare(bytes12 roundId, address participant) view returns((address,uint16,uint256,bytes32,bool))
-func (_DKGManager *DKGManagerSession) GetRevealedShare(roundId [12]byte, participant common.Address) (DKGTypesRevealedShareRecord, error) {
-	return _DKGManager.Contract.GetRevealedShare(&_DKGManager.CallOpts, roundId, participant)
-}
-
-// GetRevealedShare is a free data retrieval call binding the contract method 0x53d72184.
-//
-// Solidity: function getRevealedShare(bytes12 roundId, address participant) view returns((address,uint16,uint256,bytes32,bool))
-func (_DKGManager *DKGManagerCallerSession) GetRevealedShare(roundId [12]byte, participant common.Address) (DKGTypesRevealedShareRecord, error) {
-	return _DKGManager.Contract.GetRevealedShare(&_DKGManager.CallOpts, roundId, participant)
-}
-
-// GetRound is a free data retrieval call binding the contract method 0xf4e34945.
-//
-// Solidity: function getRound(bytes12 roundId) view returns((address,(uint16,uint16,uint16,uint16,uint16,uint64,uint64,uint64,bool),(bool,uint16,uint64,uint64,uint64,uint64),uint8,uint64,uint64,bytes32,uint256,uint16,uint16,uint16,uint16,uint16))
-func (_DKGManager *DKGManagerCaller) GetRound(opts *bind.CallOpts, roundId [12]byte) (IDKGManagerRound, error) {
-	var out []interface{}
-	err := _DKGManager.contract.Call(opts, &out, "getRound", roundId)
-
-	if err != nil {
-		return *new(IDKGManagerRound), err
-	}
-
-	out0 := *abi.ConvertType(out[0], new(IDKGManagerRound)).(*IDKGManagerRound)
-
-	return out0, err
-
-}
-
-// GetRound is a free data retrieval call binding the contract method 0xf4e34945.
-//
-// Solidity: function getRound(bytes12 roundId) view returns((address,(uint16,uint16,uint16,uint16,uint16,uint64,uint64,uint64,bool),(bool,uint16,uint64,uint64,uint64,uint64),uint8,uint64,uint64,bytes32,uint256,uint16,uint16,uint16,uint16,uint16))
-func (_DKGManager *DKGManagerSession) GetRound(roundId [12]byte) (IDKGManagerRound, error) {
-	return _DKGManager.Contract.GetRound(&_DKGManager.CallOpts, roundId)
-}
-
-// GetRound is a free data retrieval call binding the contract method 0xf4e34945.
-//
-// Solidity: function getRound(bytes12 roundId) view returns((address,(uint16,uint16,uint16,uint16,uint16,uint64,uint64,uint64,bool),(bool,uint16,uint64,uint64,uint64,uint64),uint8,uint64,uint64,bytes32,uint256,uint16,uint16,uint16,uint16,uint16))
-func (_DKGManager *DKGManagerCallerSession) GetRound(roundId [12]byte) (IDKGManagerRound, error) {
-	return _DKGManager.Contract.GetRound(&_DKGManager.CallOpts, roundId)
+// Solidity: function getPlaintext(bytes12 epochId, bytes32 aid, uint16 ciphertextIndex) view returns(uint256)
+func (_DKGManager *DKGManagerCallerSession) GetPlaintext(epochId [12]byte, aid [32]byte, ciphertextIndex uint16) (*big.Int, error) {
+	return _DKGManager.Contract.GetPlaintext(&_DKGManager.CallOpts, epochId, aid, ciphertextIndex)
 }
 
 // GetShareCommitmentHash is a free data retrieval call binding the contract method 0x510ba2df.
 //
-// Solidity: function getShareCommitmentHash(bytes12 roundId, uint16 participantIndex) view returns(bytes32)
-func (_DKGManager *DKGManagerCaller) GetShareCommitmentHash(opts *bind.CallOpts, roundId [12]byte, participantIndex uint16) ([32]byte, error) {
+// Solidity: function getShareCommitmentHash(bytes12 epochId, uint16 participantIndex) view returns(bytes32)
+func (_DKGManager *DKGManagerCaller) GetShareCommitmentHash(opts *bind.CallOpts, epochId [12]byte, participantIndex uint16) ([32]byte, error) {
 	var out []interface{}
-	err := _DKGManager.contract.Call(opts, &out, "getShareCommitmentHash", roundId, participantIndex)
+	err := _DKGManager.contract.Call(opts, &out, "getShareCommitmentHash", epochId, participantIndex)
 
 	if err != nil {
 		return *new([32]byte), err
@@ -1047,24 +1003,24 @@ func (_DKGManager *DKGManagerCaller) GetShareCommitmentHash(opts *bind.CallOpts,
 
 // GetShareCommitmentHash is a free data retrieval call binding the contract method 0x510ba2df.
 //
-// Solidity: function getShareCommitmentHash(bytes12 roundId, uint16 participantIndex) view returns(bytes32)
-func (_DKGManager *DKGManagerSession) GetShareCommitmentHash(roundId [12]byte, participantIndex uint16) ([32]byte, error) {
-	return _DKGManager.Contract.GetShareCommitmentHash(&_DKGManager.CallOpts, roundId, participantIndex)
+// Solidity: function getShareCommitmentHash(bytes12 epochId, uint16 participantIndex) view returns(bytes32)
+func (_DKGManager *DKGManagerSession) GetShareCommitmentHash(epochId [12]byte, participantIndex uint16) ([32]byte, error) {
+	return _DKGManager.Contract.GetShareCommitmentHash(&_DKGManager.CallOpts, epochId, participantIndex)
 }
 
 // GetShareCommitmentHash is a free data retrieval call binding the contract method 0x510ba2df.
 //
-// Solidity: function getShareCommitmentHash(bytes12 roundId, uint16 participantIndex) view returns(bytes32)
-func (_DKGManager *DKGManagerCallerSession) GetShareCommitmentHash(roundId [12]byte, participantIndex uint16) ([32]byte, error) {
-	return _DKGManager.Contract.GetShareCommitmentHash(&_DKGManager.CallOpts, roundId, participantIndex)
+// Solidity: function getShareCommitmentHash(bytes12 epochId, uint16 participantIndex) view returns(bytes32)
+func (_DKGManager *DKGManagerCallerSession) GetShareCommitmentHash(epochId [12]byte, participantIndex uint16) ([32]byte, error) {
+	return _DKGManager.Contract.GetShareCommitmentHash(&_DKGManager.CallOpts, epochId, participantIndex)
 }
 
-// RoundNonce is a free data retrieval call binding the contract method 0x415a1b86.
+// LastEpochStartBlock is a free data retrieval call binding the contract method 0x04da5740.
 //
-// Solidity: function roundNonce() view returns(uint64)
-func (_DKGManager *DKGManagerCaller) RoundNonce(opts *bind.CallOpts) (uint64, error) {
+// Solidity: function lastEpochStartBlock() view returns(uint64)
+func (_DKGManager *DKGManagerCaller) LastEpochStartBlock(opts *bind.CallOpts) (uint64, error) {
 	var out []interface{}
-	err := _DKGManager.contract.Call(opts, &out, "roundNonce")
+	err := _DKGManager.contract.Call(opts, &out, "lastEpochStartBlock")
 
 	if err != nil {
 		return *new(uint64), err
@@ -1076,26 +1032,57 @@ func (_DKGManager *DKGManagerCaller) RoundNonce(opts *bind.CallOpts) (uint64, er
 
 }
 
-// RoundNonce is a free data retrieval call binding the contract method 0x415a1b86.
+// LastEpochStartBlock is a free data retrieval call binding the contract method 0x04da5740.
 //
-// Solidity: function roundNonce() view returns(uint64)
-func (_DKGManager *DKGManagerSession) RoundNonce() (uint64, error) {
-	return _DKGManager.Contract.RoundNonce(&_DKGManager.CallOpts)
+// Solidity: function lastEpochStartBlock() view returns(uint64)
+func (_DKGManager *DKGManagerSession) LastEpochStartBlock() (uint64, error) {
+	return _DKGManager.Contract.LastEpochStartBlock(&_DKGManager.CallOpts)
 }
 
-// RoundNonce is a free data retrieval call binding the contract method 0x415a1b86.
+// LastEpochStartBlock is a free data retrieval call binding the contract method 0x04da5740.
 //
-// Solidity: function roundNonce() view returns(uint64)
-func (_DKGManager *DKGManagerCallerSession) RoundNonce() (uint64, error) {
-	return _DKGManager.Contract.RoundNonce(&_DKGManager.CallOpts)
+// Solidity: function lastEpochStartBlock() view returns(uint64)
+func (_DKGManager *DKGManagerCallerSession) LastEpochStartBlock() (uint64, error) {
+	return _DKGManager.Contract.LastEpochStartBlock(&_DKGManager.CallOpts)
+}
+
+// NextEpochStartBlock is a free data retrieval call binding the contract method 0x268ae2a1.
+//
+// Solidity: function nextEpochStartBlock() view returns(uint64)
+func (_DKGManager *DKGManagerCaller) NextEpochStartBlock(opts *bind.CallOpts) (uint64, error) {
+	var out []interface{}
+	err := _DKGManager.contract.Call(opts, &out, "nextEpochStartBlock")
+
+	if err != nil {
+		return *new(uint64), err
+	}
+
+	out0 := *abi.ConvertType(out[0], new(uint64)).(*uint64)
+
+	return out0, err
+
+}
+
+// NextEpochStartBlock is a free data retrieval call binding the contract method 0x268ae2a1.
+//
+// Solidity: function nextEpochStartBlock() view returns(uint64)
+func (_DKGManager *DKGManagerSession) NextEpochStartBlock() (uint64, error) {
+	return _DKGManager.Contract.NextEpochStartBlock(&_DKGManager.CallOpts)
+}
+
+// NextEpochStartBlock is a free data retrieval call binding the contract method 0x268ae2a1.
+//
+// Solidity: function nextEpochStartBlock() view returns(uint64)
+func (_DKGManager *DKGManagerCallerSession) NextEpochStartBlock() (uint64, error) {
+	return _DKGManager.Contract.NextEpochStartBlock(&_DKGManager.CallOpts)
 }
 
 // SelectedParticipants is a free data retrieval call binding the contract method 0xca3c0458.
 //
-// Solidity: function selectedParticipants(bytes12 roundId) view returns(address[])
-func (_DKGManager *DKGManagerCaller) SelectedParticipants(opts *bind.CallOpts, roundId [12]byte) ([]common.Address, error) {
+// Solidity: function selectedParticipants(bytes12 epochId) view returns(address[])
+func (_DKGManager *DKGManagerCaller) SelectedParticipants(opts *bind.CallOpts, epochId [12]byte) ([]common.Address, error) {
 	var out []interface{}
-	err := _DKGManager.contract.Call(opts, &out, "selectedParticipants", roundId)
+	err := _DKGManager.contract.Call(opts, &out, "selectedParticipants", epochId)
 
 	if err != nil {
 		return *new([]common.Address), err
@@ -1109,247 +1096,205 @@ func (_DKGManager *DKGManagerCaller) SelectedParticipants(opts *bind.CallOpts, r
 
 // SelectedParticipants is a free data retrieval call binding the contract method 0xca3c0458.
 //
-// Solidity: function selectedParticipants(bytes12 roundId) view returns(address[])
-func (_DKGManager *DKGManagerSession) SelectedParticipants(roundId [12]byte) ([]common.Address, error) {
-	return _DKGManager.Contract.SelectedParticipants(&_DKGManager.CallOpts, roundId)
+// Solidity: function selectedParticipants(bytes12 epochId) view returns(address[])
+func (_DKGManager *DKGManagerSession) SelectedParticipants(epochId [12]byte) ([]common.Address, error) {
+	return _DKGManager.Contract.SelectedParticipants(&_DKGManager.CallOpts, epochId)
 }
 
 // SelectedParticipants is a free data retrieval call binding the contract method 0xca3c0458.
 //
-// Solidity: function selectedParticipants(bytes12 roundId) view returns(address[])
-func (_DKGManager *DKGManagerCallerSession) SelectedParticipants(roundId [12]byte) ([]common.Address, error) {
-	return _DKGManager.Contract.SelectedParticipants(&_DKGManager.CallOpts, roundId)
+// Solidity: function selectedParticipants(bytes12 epochId) view returns(address[])
+func (_DKGManager *DKGManagerCallerSession) SelectedParticipants(epochId [12]byte) ([]common.Address, error) {
+	return _DKGManager.Contract.SelectedParticipants(&_DKGManager.CallOpts, epochId)
 }
 
-// AbortRound is a paid mutator transaction binding the contract method 0x349181a2.
+// AbortEpoch is a paid mutator transaction binding the contract method 0x18287e5f.
 //
-// Solidity: function abortRound(bytes12 roundId) returns()
-func (_DKGManager *DKGManagerTransactor) AbortRound(opts *bind.TransactOpts, roundId [12]byte) (*types.Transaction, error) {
-	return _DKGManager.contract.Transact(opts, "abortRound", roundId)
+// Solidity: function abortEpoch(bytes12 epochId) returns()
+func (_DKGManager *DKGManagerTransactor) AbortEpoch(opts *bind.TransactOpts, epochId [12]byte) (*types.Transaction, error) {
+	return _DKGManager.contract.Transact(opts, "abortEpoch", epochId)
 }
 
-// AbortRound is a paid mutator transaction binding the contract method 0x349181a2.
+// AbortEpoch is a paid mutator transaction binding the contract method 0x18287e5f.
 //
-// Solidity: function abortRound(bytes12 roundId) returns()
-func (_DKGManager *DKGManagerSession) AbortRound(roundId [12]byte) (*types.Transaction, error) {
-	return _DKGManager.Contract.AbortRound(&_DKGManager.TransactOpts, roundId)
+// Solidity: function abortEpoch(bytes12 epochId) returns()
+func (_DKGManager *DKGManagerSession) AbortEpoch(epochId [12]byte) (*types.Transaction, error) {
+	return _DKGManager.Contract.AbortEpoch(&_DKGManager.TransactOpts, epochId)
 }
 
-// AbortRound is a paid mutator transaction binding the contract method 0x349181a2.
+// AbortEpoch is a paid mutator transaction binding the contract method 0x18287e5f.
 //
-// Solidity: function abortRound(bytes12 roundId) returns()
-func (_DKGManager *DKGManagerTransactorSession) AbortRound(roundId [12]byte) (*types.Transaction, error) {
-	return _DKGManager.Contract.AbortRound(&_DKGManager.TransactOpts, roundId)
-}
-
-// ClaimSlot is a paid mutator transaction binding the contract method 0xd9933767.
-//
-// Solidity: function claimSlot(bytes12 roundId) returns()
-func (_DKGManager *DKGManagerTransactor) ClaimSlot(opts *bind.TransactOpts, roundId [12]byte) (*types.Transaction, error) {
-	return _DKGManager.contract.Transact(opts, "claimSlot", roundId)
+// Solidity: function abortEpoch(bytes12 epochId) returns()
+func (_DKGManager *DKGManagerTransactorSession) AbortEpoch(epochId [12]byte) (*types.Transaction, error) {
+	return _DKGManager.Contract.AbortEpoch(&_DKGManager.TransactOpts, epochId)
 }
 
 // ClaimSlot is a paid mutator transaction binding the contract method 0xd9933767.
 //
-// Solidity: function claimSlot(bytes12 roundId) returns()
-func (_DKGManager *DKGManagerSession) ClaimSlot(roundId [12]byte) (*types.Transaction, error) {
-	return _DKGManager.Contract.ClaimSlot(&_DKGManager.TransactOpts, roundId)
+// Solidity: function claimSlot(bytes12 epochId) returns()
+func (_DKGManager *DKGManagerTransactor) ClaimSlot(opts *bind.TransactOpts, epochId [12]byte) (*types.Transaction, error) {
+	return _DKGManager.contract.Transact(opts, "claimSlot", epochId)
 }
 
 // ClaimSlot is a paid mutator transaction binding the contract method 0xd9933767.
 //
-// Solidity: function claimSlot(bytes12 roundId) returns()
-func (_DKGManager *DKGManagerTransactorSession) ClaimSlot(roundId [12]byte) (*types.Transaction, error) {
-	return _DKGManager.Contract.ClaimSlot(&_DKGManager.TransactOpts, roundId)
+// Solidity: function claimSlot(bytes12 epochId) returns()
+func (_DKGManager *DKGManagerSession) ClaimSlot(epochId [12]byte) (*types.Transaction, error) {
+	return _DKGManager.Contract.ClaimSlot(&_DKGManager.TransactOpts, epochId)
 }
 
-// CombineDecryption is a paid mutator transaction binding the contract method 0xb58aab90.
+// ClaimSlot is a paid mutator transaction binding the contract method 0xd9933767.
 //
-// Solidity: function combineDecryption(bytes12 roundId, uint16 ciphertextIndex, bytes32 combineHash, uint256 plaintext, bytes transcript, bytes proof, bytes input) returns()
-func (_DKGManager *DKGManagerTransactor) CombineDecryption(opts *bind.TransactOpts, roundId [12]byte, ciphertextIndex uint16, combineHash [32]byte, plaintext *big.Int, transcript []byte, proof []byte, input []byte) (*types.Transaction, error) {
-	return _DKGManager.contract.Transact(opts, "combineDecryption", roundId, ciphertextIndex, combineHash, plaintext, transcript, proof, input)
+// Solidity: function claimSlot(bytes12 epochId) returns()
+func (_DKGManager *DKGManagerTransactorSession) ClaimSlot(epochId [12]byte) (*types.Transaction, error) {
+	return _DKGManager.Contract.ClaimSlot(&_DKGManager.TransactOpts, epochId)
 }
 
-// CombineDecryption is a paid mutator transaction binding the contract method 0xb58aab90.
+// CombineDecryption is a paid mutator transaction binding the contract method 0x77235ee1.
 //
-// Solidity: function combineDecryption(bytes12 roundId, uint16 ciphertextIndex, bytes32 combineHash, uint256 plaintext, bytes transcript, bytes proof, bytes input) returns()
-func (_DKGManager *DKGManagerSession) CombineDecryption(roundId [12]byte, ciphertextIndex uint16, combineHash [32]byte, plaintext *big.Int, transcript []byte, proof []byte, input []byte) (*types.Transaction, error) {
-	return _DKGManager.Contract.CombineDecryption(&_DKGManager.TransactOpts, roundId, ciphertextIndex, combineHash, plaintext, transcript, proof, input)
+// Solidity: function combineDecryption(bytes12 epochId, bytes32 aid, uint16 ciphertextIndex, bytes32 combineHash, uint256 plaintext, bytes transcript, bytes proof, bytes input) returns()
+func (_DKGManager *DKGManagerTransactor) CombineDecryption(opts *bind.TransactOpts, epochId [12]byte, aid [32]byte, ciphertextIndex uint16, combineHash [32]byte, plaintext *big.Int, transcript []byte, proof []byte, input []byte) (*types.Transaction, error) {
+	return _DKGManager.contract.Transact(opts, "combineDecryption", epochId, aid, ciphertextIndex, combineHash, plaintext, transcript, proof, input)
 }
 
-// CombineDecryption is a paid mutator transaction binding the contract method 0xb58aab90.
+// CombineDecryption is a paid mutator transaction binding the contract method 0x77235ee1.
 //
-// Solidity: function combineDecryption(bytes12 roundId, uint16 ciphertextIndex, bytes32 combineHash, uint256 plaintext, bytes transcript, bytes proof, bytes input) returns()
-func (_DKGManager *DKGManagerTransactorSession) CombineDecryption(roundId [12]byte, ciphertextIndex uint16, combineHash [32]byte, plaintext *big.Int, transcript []byte, proof []byte, input []byte) (*types.Transaction, error) {
-	return _DKGManager.Contract.CombineDecryption(&_DKGManager.TransactOpts, roundId, ciphertextIndex, combineHash, plaintext, transcript, proof, input)
+// Solidity: function combineDecryption(bytes12 epochId, bytes32 aid, uint16 ciphertextIndex, bytes32 combineHash, uint256 plaintext, bytes transcript, bytes proof, bytes input) returns()
+func (_DKGManager *DKGManagerSession) CombineDecryption(epochId [12]byte, aid [32]byte, ciphertextIndex uint16, combineHash [32]byte, plaintext *big.Int, transcript []byte, proof []byte, input []byte) (*types.Transaction, error) {
+	return _DKGManager.Contract.CombineDecryption(&_DKGManager.TransactOpts, epochId, aid, ciphertextIndex, combineHash, plaintext, transcript, proof, input)
 }
 
-// CreateRound is a paid mutator transaction binding the contract method 0x3caf4487.
+// CombineDecryption is a paid mutator transaction binding the contract method 0x77235ee1.
 //
-// Solidity: function createRound(uint16 threshold, uint16 committeeSize, uint16 minValidContributions, uint16 lotteryAlphaBps, uint16 seedDelay, uint64 registrationDeadlineBlock, uint64 contributionDeadlineBlock, uint64 finalizeNotBeforeBlock, bool disclosureAllowed, (bool,uint16,uint64,uint64,uint64,uint64) decryptionPolicy) returns(bytes12)
-func (_DKGManager *DKGManagerTransactor) CreateRound(opts *bind.TransactOpts, threshold uint16, committeeSize uint16, minValidContributions uint16, lotteryAlphaBps uint16, seedDelay uint16, registrationDeadlineBlock uint64, contributionDeadlineBlock uint64, finalizeNotBeforeBlock uint64, disclosureAllowed bool, decryptionPolicy DKGTypesDecryptionPolicy) (*types.Transaction, error) {
-	return _DKGManager.contract.Transact(opts, "createRound", threshold, committeeSize, minValidContributions, lotteryAlphaBps, seedDelay, registrationDeadlineBlock, contributionDeadlineBlock, finalizeNotBeforeBlock, disclosureAllowed, decryptionPolicy)
+// Solidity: function combineDecryption(bytes12 epochId, bytes32 aid, uint16 ciphertextIndex, bytes32 combineHash, uint256 plaintext, bytes transcript, bytes proof, bytes input) returns()
+func (_DKGManager *DKGManagerTransactorSession) CombineDecryption(epochId [12]byte, aid [32]byte, ciphertextIndex uint16, combineHash [32]byte, plaintext *big.Int, transcript []byte, proof []byte, input []byte) (*types.Transaction, error) {
+	return _DKGManager.Contract.CombineDecryption(&_DKGManager.TransactOpts, epochId, aid, ciphertextIndex, combineHash, plaintext, transcript, proof, input)
 }
 
-// CreateRound is a paid mutator transaction binding the contract method 0x3caf4487.
+// CreateEpoch is a paid mutator transaction binding the contract method 0x143b4616.
 //
-// Solidity: function createRound(uint16 threshold, uint16 committeeSize, uint16 minValidContributions, uint16 lotteryAlphaBps, uint16 seedDelay, uint64 registrationDeadlineBlock, uint64 contributionDeadlineBlock, uint64 finalizeNotBeforeBlock, bool disclosureAllowed, (bool,uint16,uint64,uint64,uint64,uint64) decryptionPolicy) returns(bytes12)
-func (_DKGManager *DKGManagerSession) CreateRound(threshold uint16, committeeSize uint16, minValidContributions uint16, lotteryAlphaBps uint16, seedDelay uint16, registrationDeadlineBlock uint64, contributionDeadlineBlock uint64, finalizeNotBeforeBlock uint64, disclosureAllowed bool, decryptionPolicy DKGTypesDecryptionPolicy) (*types.Transaction, error) {
-	return _DKGManager.Contract.CreateRound(&_DKGManager.TransactOpts, threshold, committeeSize, minValidContributions, lotteryAlphaBps, seedDelay, registrationDeadlineBlock, contributionDeadlineBlock, finalizeNotBeforeBlock, disclosureAllowed, decryptionPolicy)
+// Solidity: function createEpoch(uint16 threshold, uint16 committeeSize, uint16 minValidContributions, uint16 lotteryAlphaBps, (bool,uint16,uint64,uint64,uint64,uint64) decryptionPolicy) returns(bytes12)
+func (_DKGManager *DKGManagerTransactor) CreateEpoch(opts *bind.TransactOpts, threshold uint16, committeeSize uint16, minValidContributions uint16, lotteryAlphaBps uint16, decryptionPolicy DKGTypesDecryptionPolicy) (*types.Transaction, error) {
+	return _DKGManager.contract.Transact(opts, "createEpoch", threshold, committeeSize, minValidContributions, lotteryAlphaBps, decryptionPolicy)
 }
 
-// CreateRound is a paid mutator transaction binding the contract method 0x3caf4487.
+// CreateEpoch is a paid mutator transaction binding the contract method 0x143b4616.
 //
-// Solidity: function createRound(uint16 threshold, uint16 committeeSize, uint16 minValidContributions, uint16 lotteryAlphaBps, uint16 seedDelay, uint64 registrationDeadlineBlock, uint64 contributionDeadlineBlock, uint64 finalizeNotBeforeBlock, bool disclosureAllowed, (bool,uint16,uint64,uint64,uint64,uint64) decryptionPolicy) returns(bytes12)
-func (_DKGManager *DKGManagerTransactorSession) CreateRound(threshold uint16, committeeSize uint16, minValidContributions uint16, lotteryAlphaBps uint16, seedDelay uint16, registrationDeadlineBlock uint64, contributionDeadlineBlock uint64, finalizeNotBeforeBlock uint64, disclosureAllowed bool, decryptionPolicy DKGTypesDecryptionPolicy) (*types.Transaction, error) {
-	return _DKGManager.Contract.CreateRound(&_DKGManager.TransactOpts, threshold, committeeSize, minValidContributions, lotteryAlphaBps, seedDelay, registrationDeadlineBlock, contributionDeadlineBlock, finalizeNotBeforeBlock, disclosureAllowed, decryptionPolicy)
+// Solidity: function createEpoch(uint16 threshold, uint16 committeeSize, uint16 minValidContributions, uint16 lotteryAlphaBps, (bool,uint16,uint64,uint64,uint64,uint64) decryptionPolicy) returns(bytes12)
+func (_DKGManager *DKGManagerSession) CreateEpoch(threshold uint16, committeeSize uint16, minValidContributions uint16, lotteryAlphaBps uint16, decryptionPolicy DKGTypesDecryptionPolicy) (*types.Transaction, error) {
+	return _DKGManager.Contract.CreateEpoch(&_DKGManager.TransactOpts, threshold, committeeSize, minValidContributions, lotteryAlphaBps, decryptionPolicy)
 }
 
-// ExtendRegistration is a paid mutator transaction binding the contract method 0x0b1451f0.
+// CreateEpoch is a paid mutator transaction binding the contract method 0x143b4616.
 //
-// Solidity: function extendRegistration(bytes12 roundId) returns()
-func (_DKGManager *DKGManagerTransactor) ExtendRegistration(opts *bind.TransactOpts, roundId [12]byte) (*types.Transaction, error) {
-	return _DKGManager.contract.Transact(opts, "extendRegistration", roundId)
+// Solidity: function createEpoch(uint16 threshold, uint16 committeeSize, uint16 minValidContributions, uint16 lotteryAlphaBps, (bool,uint16,uint64,uint64,uint64,uint64) decryptionPolicy) returns(bytes12)
+func (_DKGManager *DKGManagerTransactorSession) CreateEpoch(threshold uint16, committeeSize uint16, minValidContributions uint16, lotteryAlphaBps uint16, decryptionPolicy DKGTypesDecryptionPolicy) (*types.Transaction, error) {
+	return _DKGManager.Contract.CreateEpoch(&_DKGManager.TransactOpts, threshold, committeeSize, minValidContributions, lotteryAlphaBps, decryptionPolicy)
 }
 
-// ExtendRegistration is a paid mutator transaction binding the contract method 0x0b1451f0.
+// FinalizeEpoch is a paid mutator transaction binding the contract method 0x49c61a12.
 //
-// Solidity: function extendRegistration(bytes12 roundId) returns()
-func (_DKGManager *DKGManagerSession) ExtendRegistration(roundId [12]byte) (*types.Transaction, error) {
-	return _DKGManager.Contract.ExtendRegistration(&_DKGManager.TransactOpts, roundId)
+// Solidity: function finalizeEpoch(bytes12 epochId, bytes32 aggregateCommitmentsHash, bytes32 collectivePublicKeyHash, bytes32 shareCommitmentHash, bytes transcript, bytes proof, bytes input) returns()
+func (_DKGManager *DKGManagerTransactor) FinalizeEpoch(opts *bind.TransactOpts, epochId [12]byte, aggregateCommitmentsHash [32]byte, collectivePublicKeyHash [32]byte, shareCommitmentHash [32]byte, transcript []byte, proof []byte, input []byte) (*types.Transaction, error) {
+	return _DKGManager.contract.Transact(opts, "finalizeEpoch", epochId, aggregateCommitmentsHash, collectivePublicKeyHash, shareCommitmentHash, transcript, proof, input)
 }
 
-// ExtendRegistration is a paid mutator transaction binding the contract method 0x0b1451f0.
+// FinalizeEpoch is a paid mutator transaction binding the contract method 0x49c61a12.
 //
-// Solidity: function extendRegistration(bytes12 roundId) returns()
-func (_DKGManager *DKGManagerTransactorSession) ExtendRegistration(roundId [12]byte) (*types.Transaction, error) {
-	return _DKGManager.Contract.ExtendRegistration(&_DKGManager.TransactOpts, roundId)
+// Solidity: function finalizeEpoch(bytes12 epochId, bytes32 aggregateCommitmentsHash, bytes32 collectivePublicKeyHash, bytes32 shareCommitmentHash, bytes transcript, bytes proof, bytes input) returns()
+func (_DKGManager *DKGManagerSession) FinalizeEpoch(epochId [12]byte, aggregateCommitmentsHash [32]byte, collectivePublicKeyHash [32]byte, shareCommitmentHash [32]byte, transcript []byte, proof []byte, input []byte) (*types.Transaction, error) {
+	return _DKGManager.Contract.FinalizeEpoch(&_DKGManager.TransactOpts, epochId, aggregateCommitmentsHash, collectivePublicKeyHash, shareCommitmentHash, transcript, proof, input)
 }
 
-// FinalizeRound is a paid mutator transaction binding the contract method 0x058994a1.
+// FinalizeEpoch is a paid mutator transaction binding the contract method 0x49c61a12.
 //
-// Solidity: function finalizeRound(bytes12 roundId, bytes32 aggregateCommitmentsHash, bytes32 collectivePublicKeyHash, bytes32 shareCommitmentHash, bytes transcript, bytes proof, bytes input) returns()
-func (_DKGManager *DKGManagerTransactor) FinalizeRound(opts *bind.TransactOpts, roundId [12]byte, aggregateCommitmentsHash [32]byte, collectivePublicKeyHash [32]byte, shareCommitmentHash [32]byte, transcript []byte, proof []byte, input []byte) (*types.Transaction, error) {
-	return _DKGManager.contract.Transact(opts, "finalizeRound", roundId, aggregateCommitmentsHash, collectivePublicKeyHash, shareCommitmentHash, transcript, proof, input)
+// Solidity: function finalizeEpoch(bytes12 epochId, bytes32 aggregateCommitmentsHash, bytes32 collectivePublicKeyHash, bytes32 shareCommitmentHash, bytes transcript, bytes proof, bytes input) returns()
+func (_DKGManager *DKGManagerTransactorSession) FinalizeEpoch(epochId [12]byte, aggregateCommitmentsHash [32]byte, collectivePublicKeyHash [32]byte, shareCommitmentHash [32]byte, transcript []byte, proof []byte, input []byte) (*types.Transaction, error) {
+	return _DKGManager.Contract.FinalizeEpoch(&_DKGManager.TransactOpts, epochId, aggregateCommitmentsHash, collectivePublicKeyHash, shareCommitmentHash, transcript, proof, input)
 }
 
-// FinalizeRound is a paid mutator transaction binding the contract method 0x058994a1.
+// SetAppManager is a paid mutator transaction binding the contract method 0x6d16897d.
 //
-// Solidity: function finalizeRound(bytes12 roundId, bytes32 aggregateCommitmentsHash, bytes32 collectivePublicKeyHash, bytes32 shareCommitmentHash, bytes transcript, bytes proof, bytes input) returns()
-func (_DKGManager *DKGManagerSession) FinalizeRound(roundId [12]byte, aggregateCommitmentsHash [32]byte, collectivePublicKeyHash [32]byte, shareCommitmentHash [32]byte, transcript []byte, proof []byte, input []byte) (*types.Transaction, error) {
-	return _DKGManager.Contract.FinalizeRound(&_DKGManager.TransactOpts, roundId, aggregateCommitmentsHash, collectivePublicKeyHash, shareCommitmentHash, transcript, proof, input)
+// Solidity: function setAppManager(address a) returns()
+func (_DKGManager *DKGManagerTransactor) SetAppManager(opts *bind.TransactOpts, a common.Address) (*types.Transaction, error) {
+	return _DKGManager.contract.Transact(opts, "setAppManager", a)
 }
 
-// FinalizeRound is a paid mutator transaction binding the contract method 0x058994a1.
+// SetAppManager is a paid mutator transaction binding the contract method 0x6d16897d.
 //
-// Solidity: function finalizeRound(bytes12 roundId, bytes32 aggregateCommitmentsHash, bytes32 collectivePublicKeyHash, bytes32 shareCommitmentHash, bytes transcript, bytes proof, bytes input) returns()
-func (_DKGManager *DKGManagerTransactorSession) FinalizeRound(roundId [12]byte, aggregateCommitmentsHash [32]byte, collectivePublicKeyHash [32]byte, shareCommitmentHash [32]byte, transcript []byte, proof []byte, input []byte) (*types.Transaction, error) {
-	return _DKGManager.Contract.FinalizeRound(&_DKGManager.TransactOpts, roundId, aggregateCommitmentsHash, collectivePublicKeyHash, shareCommitmentHash, transcript, proof, input)
+// Solidity: function setAppManager(address a) returns()
+func (_DKGManager *DKGManagerSession) SetAppManager(a common.Address) (*types.Transaction, error) {
+	return _DKGManager.Contract.SetAppManager(&_DKGManager.TransactOpts, a)
 }
 
-// ReconstructSecret is a paid mutator transaction binding the contract method 0x0e2c53f7.
+// SetAppManager is a paid mutator transaction binding the contract method 0x6d16897d.
 //
-// Solidity: function reconstructSecret(bytes12 roundId, bytes32 disclosureHash, bytes32 reconstructedSecretHash, bytes transcript, bytes proof, bytes input) returns()
-func (_DKGManager *DKGManagerTransactor) ReconstructSecret(opts *bind.TransactOpts, roundId [12]byte, disclosureHash [32]byte, reconstructedSecretHash [32]byte, transcript []byte, proof []byte, input []byte) (*types.Transaction, error) {
-	return _DKGManager.contract.Transact(opts, "reconstructSecret", roundId, disclosureHash, reconstructedSecretHash, transcript, proof, input)
+// Solidity: function setAppManager(address a) returns()
+func (_DKGManager *DKGManagerTransactorSession) SetAppManager(a common.Address) (*types.Transaction, error) {
+	return _DKGManager.Contract.SetAppManager(&_DKGManager.TransactOpts, a)
 }
 
-// ReconstructSecret is a paid mutator transaction binding the contract method 0x0e2c53f7.
+// SubmitCiphertext is a paid mutator transaction binding the contract method 0x2648f567.
 //
-// Solidity: function reconstructSecret(bytes12 roundId, bytes32 disclosureHash, bytes32 reconstructedSecretHash, bytes transcript, bytes proof, bytes input) returns()
-func (_DKGManager *DKGManagerSession) ReconstructSecret(roundId [12]byte, disclosureHash [32]byte, reconstructedSecretHash [32]byte, transcript []byte, proof []byte, input []byte) (*types.Transaction, error) {
-	return _DKGManager.Contract.ReconstructSecret(&_DKGManager.TransactOpts, roundId, disclosureHash, reconstructedSecretHash, transcript, proof, input)
+// Solidity: function submitCiphertext(bytes12 epochId, bytes32 aid, uint16 ciphertextIndex, uint256 c1x, uint256 c1y, uint256 c2x, uint256 c2y) returns()
+func (_DKGManager *DKGManagerTransactor) SubmitCiphertext(opts *bind.TransactOpts, epochId [12]byte, aid [32]byte, ciphertextIndex uint16, c1x *big.Int, c1y *big.Int, c2x *big.Int, c2y *big.Int) (*types.Transaction, error) {
+	return _DKGManager.contract.Transact(opts, "submitCiphertext", epochId, aid, ciphertextIndex, c1x, c1y, c2x, c2y)
 }
 
-// ReconstructSecret is a paid mutator transaction binding the contract method 0x0e2c53f7.
+// SubmitCiphertext is a paid mutator transaction binding the contract method 0x2648f567.
 //
-// Solidity: function reconstructSecret(bytes12 roundId, bytes32 disclosureHash, bytes32 reconstructedSecretHash, bytes transcript, bytes proof, bytes input) returns()
-func (_DKGManager *DKGManagerTransactorSession) ReconstructSecret(roundId [12]byte, disclosureHash [32]byte, reconstructedSecretHash [32]byte, transcript []byte, proof []byte, input []byte) (*types.Transaction, error) {
-	return _DKGManager.Contract.ReconstructSecret(&_DKGManager.TransactOpts, roundId, disclosureHash, reconstructedSecretHash, transcript, proof, input)
+// Solidity: function submitCiphertext(bytes12 epochId, bytes32 aid, uint16 ciphertextIndex, uint256 c1x, uint256 c1y, uint256 c2x, uint256 c2y) returns()
+func (_DKGManager *DKGManagerSession) SubmitCiphertext(epochId [12]byte, aid [32]byte, ciphertextIndex uint16, c1x *big.Int, c1y *big.Int, c2x *big.Int, c2y *big.Int) (*types.Transaction, error) {
+	return _DKGManager.Contract.SubmitCiphertext(&_DKGManager.TransactOpts, epochId, aid, ciphertextIndex, c1x, c1y, c2x, c2y)
 }
 
-// SubmitCiphertext is a paid mutator transaction binding the contract method 0xa9c4b25f.
+// SubmitCiphertext is a paid mutator transaction binding the contract method 0x2648f567.
 //
-// Solidity: function submitCiphertext(bytes12 roundId, uint16 ciphertextIndex, uint256 c1x, uint256 c1y, uint256 c2x, uint256 c2y) returns()
-func (_DKGManager *DKGManagerTransactor) SubmitCiphertext(opts *bind.TransactOpts, roundId [12]byte, ciphertextIndex uint16, c1x *big.Int, c1y *big.Int, c2x *big.Int, c2y *big.Int) (*types.Transaction, error) {
-	return _DKGManager.contract.Transact(opts, "submitCiphertext", roundId, ciphertextIndex, c1x, c1y, c2x, c2y)
+// Solidity: function submitCiphertext(bytes12 epochId, bytes32 aid, uint16 ciphertextIndex, uint256 c1x, uint256 c1y, uint256 c2x, uint256 c2y) returns()
+func (_DKGManager *DKGManagerTransactorSession) SubmitCiphertext(epochId [12]byte, aid [32]byte, ciphertextIndex uint16, c1x *big.Int, c1y *big.Int, c2x *big.Int, c2y *big.Int) (*types.Transaction, error) {
+	return _DKGManager.Contract.SubmitCiphertext(&_DKGManager.TransactOpts, epochId, aid, ciphertextIndex, c1x, c1y, c2x, c2y)
 }
 
-// SubmitCiphertext is a paid mutator transaction binding the contract method 0xa9c4b25f.
+// SubmitContribution is a paid mutator transaction binding the contract method 0xb7bca615.
 //
-// Solidity: function submitCiphertext(bytes12 roundId, uint16 ciphertextIndex, uint256 c1x, uint256 c1y, uint256 c2x, uint256 c2y) returns()
-func (_DKGManager *DKGManagerSession) SubmitCiphertext(roundId [12]byte, ciphertextIndex uint16, c1x *big.Int, c1y *big.Int, c2x *big.Int, c2y *big.Int) (*types.Transaction, error) {
-	return _DKGManager.Contract.SubmitCiphertext(&_DKGManager.TransactOpts, roundId, ciphertextIndex, c1x, c1y, c2x, c2y)
+// Solidity: function submitContribution(bytes12 epochId, uint16 contributorIndex, bytes32 commitmentsHash, bytes32 encryptedSharesHash, bytes transcript, bytes proof, bytes input) returns()
+func (_DKGManager *DKGManagerTransactor) SubmitContribution(opts *bind.TransactOpts, epochId [12]byte, contributorIndex uint16, commitmentsHash [32]byte, encryptedSharesHash [32]byte, transcript []byte, proof []byte, input []byte) (*types.Transaction, error) {
+	return _DKGManager.contract.Transact(opts, "submitContribution", epochId, contributorIndex, commitmentsHash, encryptedSharesHash, transcript, proof, input)
 }
 
-// SubmitCiphertext is a paid mutator transaction binding the contract method 0xa9c4b25f.
+// SubmitContribution is a paid mutator transaction binding the contract method 0xb7bca615.
 //
-// Solidity: function submitCiphertext(bytes12 roundId, uint16 ciphertextIndex, uint256 c1x, uint256 c1y, uint256 c2x, uint256 c2y) returns()
-func (_DKGManager *DKGManagerTransactorSession) SubmitCiphertext(roundId [12]byte, ciphertextIndex uint16, c1x *big.Int, c1y *big.Int, c2x *big.Int, c2y *big.Int) (*types.Transaction, error) {
-	return _DKGManager.Contract.SubmitCiphertext(&_DKGManager.TransactOpts, roundId, ciphertextIndex, c1x, c1y, c2x, c2y)
+// Solidity: function submitContribution(bytes12 epochId, uint16 contributorIndex, bytes32 commitmentsHash, bytes32 encryptedSharesHash, bytes transcript, bytes proof, bytes input) returns()
+func (_DKGManager *DKGManagerSession) SubmitContribution(epochId [12]byte, contributorIndex uint16, commitmentsHash [32]byte, encryptedSharesHash [32]byte, transcript []byte, proof []byte, input []byte) (*types.Transaction, error) {
+	return _DKGManager.Contract.SubmitContribution(&_DKGManager.TransactOpts, epochId, contributorIndex, commitmentsHash, encryptedSharesHash, transcript, proof, input)
 }
 
-// SubmitContribution is a paid mutator transaction binding the contract method 0xd6c29c9e.
+// SubmitContribution is a paid mutator transaction binding the contract method 0xb7bca615.
 //
-// Solidity: function submitContribution(bytes12 roundId, uint16 contributorIndex, bytes32 commitmentsHash, bytes32 encryptedSharesHash, uint256 commitment0X, uint256 commitment0Y, bytes transcript, bytes proof, bytes input) returns()
-func (_DKGManager *DKGManagerTransactor) SubmitContribution(opts *bind.TransactOpts, roundId [12]byte, contributorIndex uint16, commitmentsHash [32]byte, encryptedSharesHash [32]byte, commitment0X *big.Int, commitment0Y *big.Int, transcript []byte, proof []byte, input []byte) (*types.Transaction, error) {
-	return _DKGManager.contract.Transact(opts, "submitContribution", roundId, contributorIndex, commitmentsHash, encryptedSharesHash, commitment0X, commitment0Y, transcript, proof, input)
+// Solidity: function submitContribution(bytes12 epochId, uint16 contributorIndex, bytes32 commitmentsHash, bytes32 encryptedSharesHash, bytes transcript, bytes proof, bytes input) returns()
+func (_DKGManager *DKGManagerTransactorSession) SubmitContribution(epochId [12]byte, contributorIndex uint16, commitmentsHash [32]byte, encryptedSharesHash [32]byte, transcript []byte, proof []byte, input []byte) (*types.Transaction, error) {
+	return _DKGManager.Contract.SubmitContribution(&_DKGManager.TransactOpts, epochId, contributorIndex, commitmentsHash, encryptedSharesHash, transcript, proof, input)
 }
 
-// SubmitContribution is a paid mutator transaction binding the contract method 0xd6c29c9e.
+// SubmitPartialDecryption is a paid mutator transaction binding the contract method 0xa305e0f3.
 //
-// Solidity: function submitContribution(bytes12 roundId, uint16 contributorIndex, bytes32 commitmentsHash, bytes32 encryptedSharesHash, uint256 commitment0X, uint256 commitment0Y, bytes transcript, bytes proof, bytes input) returns()
-func (_DKGManager *DKGManagerSession) SubmitContribution(roundId [12]byte, contributorIndex uint16, commitmentsHash [32]byte, encryptedSharesHash [32]byte, commitment0X *big.Int, commitment0Y *big.Int, transcript []byte, proof []byte, input []byte) (*types.Transaction, error) {
-	return _DKGManager.Contract.SubmitContribution(&_DKGManager.TransactOpts, roundId, contributorIndex, commitmentsHash, encryptedSharesHash, commitment0X, commitment0Y, transcript, proof, input)
+// Solidity: function submitPartialDecryption(bytes12 epochId, bytes32 aid, uint16 participantIndex, uint16 ciphertextIndex, uint256 c1x, uint256 c1y, uint256 c2x, uint256 c2y, bytes32 deltaHash, bytes proof, bytes input) returns()
+func (_DKGManager *DKGManagerTransactor) SubmitPartialDecryption(opts *bind.TransactOpts, epochId [12]byte, aid [32]byte, participantIndex uint16, ciphertextIndex uint16, c1x *big.Int, c1y *big.Int, c2x *big.Int, c2y *big.Int, deltaHash [32]byte, proof []byte, input []byte) (*types.Transaction, error) {
+	return _DKGManager.contract.Transact(opts, "submitPartialDecryption", epochId, aid, participantIndex, ciphertextIndex, c1x, c1y, c2x, c2y, deltaHash, proof, input)
 }
 
-// SubmitContribution is a paid mutator transaction binding the contract method 0xd6c29c9e.
+// SubmitPartialDecryption is a paid mutator transaction binding the contract method 0xa305e0f3.
 //
-// Solidity: function submitContribution(bytes12 roundId, uint16 contributorIndex, bytes32 commitmentsHash, bytes32 encryptedSharesHash, uint256 commitment0X, uint256 commitment0Y, bytes transcript, bytes proof, bytes input) returns()
-func (_DKGManager *DKGManagerTransactorSession) SubmitContribution(roundId [12]byte, contributorIndex uint16, commitmentsHash [32]byte, encryptedSharesHash [32]byte, commitment0X *big.Int, commitment0Y *big.Int, transcript []byte, proof []byte, input []byte) (*types.Transaction, error) {
-	return _DKGManager.Contract.SubmitContribution(&_DKGManager.TransactOpts, roundId, contributorIndex, commitmentsHash, encryptedSharesHash, commitment0X, commitment0Y, transcript, proof, input)
+// Solidity: function submitPartialDecryption(bytes12 epochId, bytes32 aid, uint16 participantIndex, uint16 ciphertextIndex, uint256 c1x, uint256 c1y, uint256 c2x, uint256 c2y, bytes32 deltaHash, bytes proof, bytes input) returns()
+func (_DKGManager *DKGManagerSession) SubmitPartialDecryption(epochId [12]byte, aid [32]byte, participantIndex uint16, ciphertextIndex uint16, c1x *big.Int, c1y *big.Int, c2x *big.Int, c2y *big.Int, deltaHash [32]byte, proof []byte, input []byte) (*types.Transaction, error) {
+	return _DKGManager.Contract.SubmitPartialDecryption(&_DKGManager.TransactOpts, epochId, aid, participantIndex, ciphertextIndex, c1x, c1y, c2x, c2y, deltaHash, proof, input)
 }
 
-// SubmitPartialDecryption is a paid mutator transaction binding the contract method 0x802ae231.
+// SubmitPartialDecryption is a paid mutator transaction binding the contract method 0xa305e0f3.
 //
-// Solidity: function submitPartialDecryption(bytes12 roundId, uint16 participantIndex, uint16 ciphertextIndex, bytes32 deltaHash, bytes proof, bytes input) returns()
-func (_DKGManager *DKGManagerTransactor) SubmitPartialDecryption(opts *bind.TransactOpts, roundId [12]byte, participantIndex uint16, ciphertextIndex uint16, deltaHash [32]byte, proof []byte, input []byte) (*types.Transaction, error) {
-	return _DKGManager.contract.Transact(opts, "submitPartialDecryption", roundId, participantIndex, ciphertextIndex, deltaHash, proof, input)
-}
-
-// SubmitPartialDecryption is a paid mutator transaction binding the contract method 0x802ae231.
-//
-// Solidity: function submitPartialDecryption(bytes12 roundId, uint16 participantIndex, uint16 ciphertextIndex, bytes32 deltaHash, bytes proof, bytes input) returns()
-func (_DKGManager *DKGManagerSession) SubmitPartialDecryption(roundId [12]byte, participantIndex uint16, ciphertextIndex uint16, deltaHash [32]byte, proof []byte, input []byte) (*types.Transaction, error) {
-	return _DKGManager.Contract.SubmitPartialDecryption(&_DKGManager.TransactOpts, roundId, participantIndex, ciphertextIndex, deltaHash, proof, input)
-}
-
-// SubmitPartialDecryption is a paid mutator transaction binding the contract method 0x802ae231.
-//
-// Solidity: function submitPartialDecryption(bytes12 roundId, uint16 participantIndex, uint16 ciphertextIndex, bytes32 deltaHash, bytes proof, bytes input) returns()
-func (_DKGManager *DKGManagerTransactorSession) SubmitPartialDecryption(roundId [12]byte, participantIndex uint16, ciphertextIndex uint16, deltaHash [32]byte, proof []byte, input []byte) (*types.Transaction, error) {
-	return _DKGManager.Contract.SubmitPartialDecryption(&_DKGManager.TransactOpts, roundId, participantIndex, ciphertextIndex, deltaHash, proof, input)
-}
-
-// SubmitRevealedShare is a paid mutator transaction binding the contract method 0xc9396bf0.
-//
-// Solidity: function submitRevealedShare(bytes12 roundId, uint16 participantIndex, uint256 shareValue, bytes proof, bytes input) returns()
-func (_DKGManager *DKGManagerTransactor) SubmitRevealedShare(opts *bind.TransactOpts, roundId [12]byte, participantIndex uint16, shareValue *big.Int, proof []byte, input []byte) (*types.Transaction, error) {
-	return _DKGManager.contract.Transact(opts, "submitRevealedShare", roundId, participantIndex, shareValue, proof, input)
-}
-
-// SubmitRevealedShare is a paid mutator transaction binding the contract method 0xc9396bf0.
-//
-// Solidity: function submitRevealedShare(bytes12 roundId, uint16 participantIndex, uint256 shareValue, bytes proof, bytes input) returns()
-func (_DKGManager *DKGManagerSession) SubmitRevealedShare(roundId [12]byte, participantIndex uint16, shareValue *big.Int, proof []byte, input []byte) (*types.Transaction, error) {
-	return _DKGManager.Contract.SubmitRevealedShare(&_DKGManager.TransactOpts, roundId, participantIndex, shareValue, proof, input)
-}
-
-// SubmitRevealedShare is a paid mutator transaction binding the contract method 0xc9396bf0.
-//
-// Solidity: function submitRevealedShare(bytes12 roundId, uint16 participantIndex, uint256 shareValue, bytes proof, bytes input) returns()
-func (_DKGManager *DKGManagerTransactorSession) SubmitRevealedShare(roundId [12]byte, participantIndex uint16, shareValue *big.Int, proof []byte, input []byte) (*types.Transaction, error) {
-	return _DKGManager.Contract.SubmitRevealedShare(&_DKGManager.TransactOpts, roundId, participantIndex, shareValue, proof, input)
+// Solidity: function submitPartialDecryption(bytes12 epochId, bytes32 aid, uint16 participantIndex, uint16 ciphertextIndex, uint256 c1x, uint256 c1y, uint256 c2x, uint256 c2y, bytes32 deltaHash, bytes proof, bytes input) returns()
+func (_DKGManager *DKGManagerTransactorSession) SubmitPartialDecryption(epochId [12]byte, aid [32]byte, participantIndex uint16, ciphertextIndex uint16, c1x *big.Int, c1y *big.Int, c2x *big.Int, c2y *big.Int, deltaHash [32]byte, proof []byte, input []byte) (*types.Transaction, error) {
+	return _DKGManager.Contract.SubmitPartialDecryption(&_DKGManager.TransactOpts, epochId, aid, participantIndex, ciphertextIndex, c1x, c1y, c2x, c2y, deltaHash, proof, input)
 }
 
 // DKGManagerCiphertextSubmittedIterator is returned from FilterCiphertextSubmitted and is used to iterate over the raw logs and unpacked data for CiphertextSubmitted events raised by the DKGManager contract.
@@ -1421,7 +1366,8 @@ func (it *DKGManagerCiphertextSubmittedIterator) Close() error {
 
 // DKGManagerCiphertextSubmitted represents a CiphertextSubmitted event raised by the DKGManager contract.
 type DKGManagerCiphertextSubmitted struct {
-	RoundId         [12]byte
+	EpochId         [12]byte
+	Aid             [32]byte
 	CiphertextIndex uint16
 	Submitter       common.Address
 	C1x             *big.Int
@@ -1431,50 +1377,50 @@ type DKGManagerCiphertextSubmitted struct {
 	Raw             types.Log // Blockchain specific contextual infos
 }
 
-// FilterCiphertextSubmitted is a free log retrieval operation binding the contract event 0xa5a7194c3409f675784ea2429410513d4d52c73d5fd751d44ed21da06cc643cf.
+// FilterCiphertextSubmitted is a free log retrieval operation binding the contract event 0x1c8665e7b6ffd238f0d8ba92b2923fbcdc5eccb9dc9c138d5614eb279484ddfc.
 //
-// Solidity: event CiphertextSubmitted(bytes12 indexed roundId, uint16 indexed ciphertextIndex, address indexed submitter, uint256 c1x, uint256 c1y, uint256 c2x, uint256 c2y)
-func (_DKGManager *DKGManagerFilterer) FilterCiphertextSubmitted(opts *bind.FilterOpts, roundId [][12]byte, ciphertextIndex []uint16, submitter []common.Address) (*DKGManagerCiphertextSubmittedIterator, error) {
+// Solidity: event CiphertextSubmitted(bytes12 indexed epochId, bytes32 indexed aid, uint16 indexed ciphertextIndex, address submitter, uint256 c1x, uint256 c1y, uint256 c2x, uint256 c2y)
+func (_DKGManager *DKGManagerFilterer) FilterCiphertextSubmitted(opts *bind.FilterOpts, epochId [][12]byte, aid [][32]byte, ciphertextIndex []uint16) (*DKGManagerCiphertextSubmittedIterator, error) {
 
-	var roundIdRule []interface{}
-	for _, roundIdItem := range roundId {
-		roundIdRule = append(roundIdRule, roundIdItem)
+	var epochIdRule []interface{}
+	for _, epochIdItem := range epochId {
+		epochIdRule = append(epochIdRule, epochIdItem)
+	}
+	var aidRule []interface{}
+	for _, aidItem := range aid {
+		aidRule = append(aidRule, aidItem)
 	}
 	var ciphertextIndexRule []interface{}
 	for _, ciphertextIndexItem := range ciphertextIndex {
 		ciphertextIndexRule = append(ciphertextIndexRule, ciphertextIndexItem)
 	}
-	var submitterRule []interface{}
-	for _, submitterItem := range submitter {
-		submitterRule = append(submitterRule, submitterItem)
-	}
 
-	logs, sub, err := _DKGManager.contract.FilterLogs(opts, "CiphertextSubmitted", roundIdRule, ciphertextIndexRule, submitterRule)
+	logs, sub, err := _DKGManager.contract.FilterLogs(opts, "CiphertextSubmitted", epochIdRule, aidRule, ciphertextIndexRule)
 	if err != nil {
 		return nil, err
 	}
 	return &DKGManagerCiphertextSubmittedIterator{contract: _DKGManager.contract, event: "CiphertextSubmitted", logs: logs, sub: sub}, nil
 }
 
-// WatchCiphertextSubmitted is a free log subscription operation binding the contract event 0xa5a7194c3409f675784ea2429410513d4d52c73d5fd751d44ed21da06cc643cf.
+// WatchCiphertextSubmitted is a free log subscription operation binding the contract event 0x1c8665e7b6ffd238f0d8ba92b2923fbcdc5eccb9dc9c138d5614eb279484ddfc.
 //
-// Solidity: event CiphertextSubmitted(bytes12 indexed roundId, uint16 indexed ciphertextIndex, address indexed submitter, uint256 c1x, uint256 c1y, uint256 c2x, uint256 c2y)
-func (_DKGManager *DKGManagerFilterer) WatchCiphertextSubmitted(opts *bind.WatchOpts, sink chan<- *DKGManagerCiphertextSubmitted, roundId [][12]byte, ciphertextIndex []uint16, submitter []common.Address) (event.Subscription, error) {
+// Solidity: event CiphertextSubmitted(bytes12 indexed epochId, bytes32 indexed aid, uint16 indexed ciphertextIndex, address submitter, uint256 c1x, uint256 c1y, uint256 c2x, uint256 c2y)
+func (_DKGManager *DKGManagerFilterer) WatchCiphertextSubmitted(opts *bind.WatchOpts, sink chan<- *DKGManagerCiphertextSubmitted, epochId [][12]byte, aid [][32]byte, ciphertextIndex []uint16) (event.Subscription, error) {
 
-	var roundIdRule []interface{}
-	for _, roundIdItem := range roundId {
-		roundIdRule = append(roundIdRule, roundIdItem)
+	var epochIdRule []interface{}
+	for _, epochIdItem := range epochId {
+		epochIdRule = append(epochIdRule, epochIdItem)
+	}
+	var aidRule []interface{}
+	for _, aidItem := range aid {
+		aidRule = append(aidRule, aidItem)
 	}
 	var ciphertextIndexRule []interface{}
 	for _, ciphertextIndexItem := range ciphertextIndex {
 		ciphertextIndexRule = append(ciphertextIndexRule, ciphertextIndexItem)
 	}
-	var submitterRule []interface{}
-	for _, submitterItem := range submitter {
-		submitterRule = append(submitterRule, submitterItem)
-	}
 
-	logs, sub, err := _DKGManager.contract.WatchLogs(opts, "CiphertextSubmitted", roundIdRule, ciphertextIndexRule, submitterRule)
+	logs, sub, err := _DKGManager.contract.WatchLogs(opts, "CiphertextSubmitted", epochIdRule, aidRule, ciphertextIndexRule)
 	if err != nil {
 		return nil, err
 	}
@@ -1506,9 +1452,9 @@ func (_DKGManager *DKGManagerFilterer) WatchCiphertextSubmitted(opts *bind.Watch
 	}), nil
 }
 
-// ParseCiphertextSubmitted is a log parse operation binding the contract event 0xa5a7194c3409f675784ea2429410513d4d52c73d5fd751d44ed21da06cc643cf.
+// ParseCiphertextSubmitted is a log parse operation binding the contract event 0x1c8665e7b6ffd238f0d8ba92b2923fbcdc5eccb9dc9c138d5614eb279484ddfc.
 //
-// Solidity: event CiphertextSubmitted(bytes12 indexed roundId, uint16 indexed ciphertextIndex, address indexed submitter, uint256 c1x, uint256 c1y, uint256 c2x, uint256 c2y)
+// Solidity: event CiphertextSubmitted(bytes12 indexed epochId, bytes32 indexed aid, uint16 indexed ciphertextIndex, address submitter, uint256 c1x, uint256 c1y, uint256 c2x, uint256 c2y)
 func (_DKGManager *DKGManagerFilterer) ParseCiphertextSubmitted(log types.Log) (*DKGManagerCiphertextSubmitted, error) {
 	event := new(DKGManagerCiphertextSubmitted)
 	if err := _DKGManager.contract.UnpackLog(event, "CiphertextSubmitted", log); err != nil {
@@ -1587,7 +1533,7 @@ func (it *DKGManagerContributionSubmittedIterator) Close() error {
 
 // DKGManagerContributionSubmitted represents a ContributionSubmitted event raised by the DKGManager contract.
 type DKGManagerContributionSubmitted struct {
-	RoundId             [12]byte
+	EpochId             [12]byte
 	Contributor         common.Address
 	ContributorIndex    uint16
 	CommitmentsHash     [32]byte
@@ -1597,19 +1543,19 @@ type DKGManagerContributionSubmitted struct {
 
 // FilterContributionSubmitted is a free log retrieval operation binding the contract event 0x8f25a636f27af2671bfd0f5c59da52b0495e5415d2e605b2d0994830aba13fb5.
 //
-// Solidity: event ContributionSubmitted(bytes12 indexed roundId, address indexed contributor, uint16 contributorIndex, bytes32 commitmentsHash, bytes32 encryptedSharesHash)
-func (_DKGManager *DKGManagerFilterer) FilterContributionSubmitted(opts *bind.FilterOpts, roundId [][12]byte, contributor []common.Address) (*DKGManagerContributionSubmittedIterator, error) {
+// Solidity: event ContributionSubmitted(bytes12 indexed epochId, address indexed contributor, uint16 contributorIndex, bytes32 commitmentsHash, bytes32 encryptedSharesHash)
+func (_DKGManager *DKGManagerFilterer) FilterContributionSubmitted(opts *bind.FilterOpts, epochId [][12]byte, contributor []common.Address) (*DKGManagerContributionSubmittedIterator, error) {
 
-	var roundIdRule []interface{}
-	for _, roundIdItem := range roundId {
-		roundIdRule = append(roundIdRule, roundIdItem)
+	var epochIdRule []interface{}
+	for _, epochIdItem := range epochId {
+		epochIdRule = append(epochIdRule, epochIdItem)
 	}
 	var contributorRule []interface{}
 	for _, contributorItem := range contributor {
 		contributorRule = append(contributorRule, contributorItem)
 	}
 
-	logs, sub, err := _DKGManager.contract.FilterLogs(opts, "ContributionSubmitted", roundIdRule, contributorRule)
+	logs, sub, err := _DKGManager.contract.FilterLogs(opts, "ContributionSubmitted", epochIdRule, contributorRule)
 	if err != nil {
 		return nil, err
 	}
@@ -1618,19 +1564,19 @@ func (_DKGManager *DKGManagerFilterer) FilterContributionSubmitted(opts *bind.Fi
 
 // WatchContributionSubmitted is a free log subscription operation binding the contract event 0x8f25a636f27af2671bfd0f5c59da52b0495e5415d2e605b2d0994830aba13fb5.
 //
-// Solidity: event ContributionSubmitted(bytes12 indexed roundId, address indexed contributor, uint16 contributorIndex, bytes32 commitmentsHash, bytes32 encryptedSharesHash)
-func (_DKGManager *DKGManagerFilterer) WatchContributionSubmitted(opts *bind.WatchOpts, sink chan<- *DKGManagerContributionSubmitted, roundId [][12]byte, contributor []common.Address) (event.Subscription, error) {
+// Solidity: event ContributionSubmitted(bytes12 indexed epochId, address indexed contributor, uint16 contributorIndex, bytes32 commitmentsHash, bytes32 encryptedSharesHash)
+func (_DKGManager *DKGManagerFilterer) WatchContributionSubmitted(opts *bind.WatchOpts, sink chan<- *DKGManagerContributionSubmitted, epochId [][12]byte, contributor []common.Address) (event.Subscription, error) {
 
-	var roundIdRule []interface{}
-	for _, roundIdItem := range roundId {
-		roundIdRule = append(roundIdRule, roundIdItem)
+	var epochIdRule []interface{}
+	for _, epochIdItem := range epochId {
+		epochIdRule = append(epochIdRule, epochIdItem)
 	}
 	var contributorRule []interface{}
 	for _, contributorItem := range contributor {
 		contributorRule = append(contributorRule, contributorItem)
 	}
 
-	logs, sub, err := _DKGManager.contract.WatchLogs(opts, "ContributionSubmitted", roundIdRule, contributorRule)
+	logs, sub, err := _DKGManager.contract.WatchLogs(opts, "ContributionSubmitted", epochIdRule, contributorRule)
 	if err != nil {
 		return nil, err
 	}
@@ -1664,7 +1610,7 @@ func (_DKGManager *DKGManagerFilterer) WatchContributionSubmitted(opts *bind.Wat
 
 // ParseContributionSubmitted is a log parse operation binding the contract event 0x8f25a636f27af2671bfd0f5c59da52b0495e5415d2e605b2d0994830aba13fb5.
 //
-// Solidity: event ContributionSubmitted(bytes12 indexed roundId, address indexed contributor, uint16 contributorIndex, bytes32 commitmentsHash, bytes32 encryptedSharesHash)
+// Solidity: event ContributionSubmitted(bytes12 indexed epochId, address indexed contributor, uint16 contributorIndex, bytes32 commitmentsHash, bytes32 encryptedSharesHash)
 func (_DKGManager *DKGManagerFilterer) ParseContributionSubmitted(log types.Log) (*DKGManagerContributionSubmitted, error) {
 	event := new(DKGManagerContributionSubmitted)
 	if err := _DKGManager.contract.UnpackLog(event, "ContributionSubmitted", log); err != nil {
@@ -1743,49 +1689,58 @@ func (it *DKGManagerDecryptionCombinedIterator) Close() error {
 
 // DKGManagerDecryptionCombined represents a DecryptionCombined event raised by the DKGManager contract.
 type DKGManagerDecryptionCombined struct {
-	RoundId         [12]byte
+	EpochId         [12]byte
+	Aid             [32]byte
 	CiphertextIndex uint16
 	CombineHash     [32]byte
 	Plaintext       *big.Int
 	Raw             types.Log // Blockchain specific contextual infos
 }
 
-// FilterDecryptionCombined is a free log retrieval operation binding the contract event 0xf00fbf9d648ee3274fc53f9f2eb67f1f6218a6bbc046de320813cdd0244b7336.
+// FilterDecryptionCombined is a free log retrieval operation binding the contract event 0x4c7dcb60e78f05c6d275f7243d256bbbd80718bd70167d6625266614573e1ae1.
 //
-// Solidity: event DecryptionCombined(bytes12 indexed roundId, uint16 indexed ciphertextIndex, bytes32 combineHash, uint256 plaintext)
-func (_DKGManager *DKGManagerFilterer) FilterDecryptionCombined(opts *bind.FilterOpts, roundId [][12]byte, ciphertextIndex []uint16) (*DKGManagerDecryptionCombinedIterator, error) {
+// Solidity: event DecryptionCombined(bytes12 indexed epochId, bytes32 indexed aid, uint16 indexed ciphertextIndex, bytes32 combineHash, uint256 plaintext)
+func (_DKGManager *DKGManagerFilterer) FilterDecryptionCombined(opts *bind.FilterOpts, epochId [][12]byte, aid [][32]byte, ciphertextIndex []uint16) (*DKGManagerDecryptionCombinedIterator, error) {
 
-	var roundIdRule []interface{}
-	for _, roundIdItem := range roundId {
-		roundIdRule = append(roundIdRule, roundIdItem)
+	var epochIdRule []interface{}
+	for _, epochIdItem := range epochId {
+		epochIdRule = append(epochIdRule, epochIdItem)
+	}
+	var aidRule []interface{}
+	for _, aidItem := range aid {
+		aidRule = append(aidRule, aidItem)
 	}
 	var ciphertextIndexRule []interface{}
 	for _, ciphertextIndexItem := range ciphertextIndex {
 		ciphertextIndexRule = append(ciphertextIndexRule, ciphertextIndexItem)
 	}
 
-	logs, sub, err := _DKGManager.contract.FilterLogs(opts, "DecryptionCombined", roundIdRule, ciphertextIndexRule)
+	logs, sub, err := _DKGManager.contract.FilterLogs(opts, "DecryptionCombined", epochIdRule, aidRule, ciphertextIndexRule)
 	if err != nil {
 		return nil, err
 	}
 	return &DKGManagerDecryptionCombinedIterator{contract: _DKGManager.contract, event: "DecryptionCombined", logs: logs, sub: sub}, nil
 }
 
-// WatchDecryptionCombined is a free log subscription operation binding the contract event 0xf00fbf9d648ee3274fc53f9f2eb67f1f6218a6bbc046de320813cdd0244b7336.
+// WatchDecryptionCombined is a free log subscription operation binding the contract event 0x4c7dcb60e78f05c6d275f7243d256bbbd80718bd70167d6625266614573e1ae1.
 //
-// Solidity: event DecryptionCombined(bytes12 indexed roundId, uint16 indexed ciphertextIndex, bytes32 combineHash, uint256 plaintext)
-func (_DKGManager *DKGManagerFilterer) WatchDecryptionCombined(opts *bind.WatchOpts, sink chan<- *DKGManagerDecryptionCombined, roundId [][12]byte, ciphertextIndex []uint16) (event.Subscription, error) {
+// Solidity: event DecryptionCombined(bytes12 indexed epochId, bytes32 indexed aid, uint16 indexed ciphertextIndex, bytes32 combineHash, uint256 plaintext)
+func (_DKGManager *DKGManagerFilterer) WatchDecryptionCombined(opts *bind.WatchOpts, sink chan<- *DKGManagerDecryptionCombined, epochId [][12]byte, aid [][32]byte, ciphertextIndex []uint16) (event.Subscription, error) {
 
-	var roundIdRule []interface{}
-	for _, roundIdItem := range roundId {
-		roundIdRule = append(roundIdRule, roundIdItem)
+	var epochIdRule []interface{}
+	for _, epochIdItem := range epochId {
+		epochIdRule = append(epochIdRule, epochIdItem)
+	}
+	var aidRule []interface{}
+	for _, aidItem := range aid {
+		aidRule = append(aidRule, aidItem)
 	}
 	var ciphertextIndexRule []interface{}
 	for _, ciphertextIndexItem := range ciphertextIndex {
 		ciphertextIndexRule = append(ciphertextIndexRule, ciphertextIndexItem)
 	}
 
-	logs, sub, err := _DKGManager.contract.WatchLogs(opts, "DecryptionCombined", roundIdRule, ciphertextIndexRule)
+	logs, sub, err := _DKGManager.contract.WatchLogs(opts, "DecryptionCombined", epochIdRule, aidRule, ciphertextIndexRule)
 	if err != nil {
 		return nil, err
 	}
@@ -1817,12 +1772,603 @@ func (_DKGManager *DKGManagerFilterer) WatchDecryptionCombined(opts *bind.WatchO
 	}), nil
 }
 
-// ParseDecryptionCombined is a log parse operation binding the contract event 0xf00fbf9d648ee3274fc53f9f2eb67f1f6218a6bbc046de320813cdd0244b7336.
+// ParseDecryptionCombined is a log parse operation binding the contract event 0x4c7dcb60e78f05c6d275f7243d256bbbd80718bd70167d6625266614573e1ae1.
 //
-// Solidity: event DecryptionCombined(bytes12 indexed roundId, uint16 indexed ciphertextIndex, bytes32 combineHash, uint256 plaintext)
+// Solidity: event DecryptionCombined(bytes12 indexed epochId, bytes32 indexed aid, uint16 indexed ciphertextIndex, bytes32 combineHash, uint256 plaintext)
 func (_DKGManager *DKGManagerFilterer) ParseDecryptionCombined(log types.Log) (*DKGManagerDecryptionCombined, error) {
 	event := new(DKGManagerDecryptionCombined)
 	if err := _DKGManager.contract.UnpackLog(event, "DecryptionCombined", log); err != nil {
+		return nil, err
+	}
+	event.Raw = log
+	return event, nil
+}
+
+// DKGManagerEpochAbortedIterator is returned from FilterEpochAborted and is used to iterate over the raw logs and unpacked data for EpochAborted events raised by the DKGManager contract.
+type DKGManagerEpochAbortedIterator struct {
+	Event *DKGManagerEpochAborted // Event containing the contract specifics and raw log
+
+	contract *bind.BoundContract // Generic contract to use for unpacking event data
+	event    string              // Event name to use for unpacking event data
+
+	logs chan types.Log        // Log channel receiving the found contract events
+	sub  ethereum.Subscription // Subscription for errors, completion and termination
+	done bool                  // Whether the subscription completed delivering logs
+	fail error                 // Occurred error to stop iteration
+}
+
+// Next advances the iterator to the subsequent event, returning whether there
+// are any more events found. In case of a retrieval or parsing error, false is
+// returned and Error() can be queried for the exact failure.
+func (it *DKGManagerEpochAbortedIterator) Next() bool {
+	// If the iterator failed, stop iterating
+	if it.fail != nil {
+		return false
+	}
+	// If the iterator completed, deliver directly whatever's available
+	if it.done {
+		select {
+		case log := <-it.logs:
+			it.Event = new(DKGManagerEpochAborted)
+			if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
+				it.fail = err
+				return false
+			}
+			it.Event.Raw = log
+			return true
+
+		default:
+			return false
+		}
+	}
+	// Iterator still in progress, wait for either a data or an error event
+	select {
+	case log := <-it.logs:
+		it.Event = new(DKGManagerEpochAborted)
+		if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
+			it.fail = err
+			return false
+		}
+		it.Event.Raw = log
+		return true
+
+	case err := <-it.sub.Err():
+		it.done = true
+		it.fail = err
+		return it.Next()
+	}
+}
+
+// Error returns any retrieval or parsing error occurred during filtering.
+func (it *DKGManagerEpochAbortedIterator) Error() error {
+	return it.fail
+}
+
+// Close terminates the iteration process, releasing any pending underlying
+// resources.
+func (it *DKGManagerEpochAbortedIterator) Close() error {
+	it.sub.Unsubscribe()
+	return nil
+}
+
+// DKGManagerEpochAborted represents a EpochAborted event raised by the DKGManager contract.
+type DKGManagerEpochAborted struct {
+	EpochId [12]byte
+	Raw     types.Log // Blockchain specific contextual infos
+}
+
+// FilterEpochAborted is a free log retrieval operation binding the contract event 0x379d6214174fba4ddb78deda3bc869bf16579e3ecef2dc0e55d6f688f66e44be.
+//
+// Solidity: event EpochAborted(bytes12 indexed epochId)
+func (_DKGManager *DKGManagerFilterer) FilterEpochAborted(opts *bind.FilterOpts, epochId [][12]byte) (*DKGManagerEpochAbortedIterator, error) {
+
+	var epochIdRule []interface{}
+	for _, epochIdItem := range epochId {
+		epochIdRule = append(epochIdRule, epochIdItem)
+	}
+
+	logs, sub, err := _DKGManager.contract.FilterLogs(opts, "EpochAborted", epochIdRule)
+	if err != nil {
+		return nil, err
+	}
+	return &DKGManagerEpochAbortedIterator{contract: _DKGManager.contract, event: "EpochAborted", logs: logs, sub: sub}, nil
+}
+
+// WatchEpochAborted is a free log subscription operation binding the contract event 0x379d6214174fba4ddb78deda3bc869bf16579e3ecef2dc0e55d6f688f66e44be.
+//
+// Solidity: event EpochAborted(bytes12 indexed epochId)
+func (_DKGManager *DKGManagerFilterer) WatchEpochAborted(opts *bind.WatchOpts, sink chan<- *DKGManagerEpochAborted, epochId [][12]byte) (event.Subscription, error) {
+
+	var epochIdRule []interface{}
+	for _, epochIdItem := range epochId {
+		epochIdRule = append(epochIdRule, epochIdItem)
+	}
+
+	logs, sub, err := _DKGManager.contract.WatchLogs(opts, "EpochAborted", epochIdRule)
+	if err != nil {
+		return nil, err
+	}
+	return event.NewSubscription(func(quit <-chan struct{}) error {
+		defer sub.Unsubscribe()
+		for {
+			select {
+			case log := <-logs:
+				// New log arrived, parse the event and forward to the user
+				event := new(DKGManagerEpochAborted)
+				if err := _DKGManager.contract.UnpackLog(event, "EpochAborted", log); err != nil {
+					return err
+				}
+				event.Raw = log
+
+				select {
+				case sink <- event:
+				case err := <-sub.Err():
+					return err
+				case <-quit:
+					return nil
+				}
+			case err := <-sub.Err():
+				return err
+			case <-quit:
+				return nil
+			}
+		}
+	}), nil
+}
+
+// ParseEpochAborted is a log parse operation binding the contract event 0x379d6214174fba4ddb78deda3bc869bf16579e3ecef2dc0e55d6f688f66e44be.
+//
+// Solidity: event EpochAborted(bytes12 indexed epochId)
+func (_DKGManager *DKGManagerFilterer) ParseEpochAborted(log types.Log) (*DKGManagerEpochAborted, error) {
+	event := new(DKGManagerEpochAborted)
+	if err := _DKGManager.contract.UnpackLog(event, "EpochAborted", log); err != nil {
+		return nil, err
+	}
+	event.Raw = log
+	return event, nil
+}
+
+// DKGManagerEpochCreatedIterator is returned from FilterEpochCreated and is used to iterate over the raw logs and unpacked data for EpochCreated events raised by the DKGManager contract.
+type DKGManagerEpochCreatedIterator struct {
+	Event *DKGManagerEpochCreated // Event containing the contract specifics and raw log
+
+	contract *bind.BoundContract // Generic contract to use for unpacking event data
+	event    string              // Event name to use for unpacking event data
+
+	logs chan types.Log        // Log channel receiving the found contract events
+	sub  ethereum.Subscription // Subscription for errors, completion and termination
+	done bool                  // Whether the subscription completed delivering logs
+	fail error                 // Occurred error to stop iteration
+}
+
+// Next advances the iterator to the subsequent event, returning whether there
+// are any more events found. In case of a retrieval or parsing error, false is
+// returned and Error() can be queried for the exact failure.
+func (it *DKGManagerEpochCreatedIterator) Next() bool {
+	// If the iterator failed, stop iterating
+	if it.fail != nil {
+		return false
+	}
+	// If the iterator completed, deliver directly whatever's available
+	if it.done {
+		select {
+		case log := <-it.logs:
+			it.Event = new(DKGManagerEpochCreated)
+			if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
+				it.fail = err
+				return false
+			}
+			it.Event.Raw = log
+			return true
+
+		default:
+			return false
+		}
+	}
+	// Iterator still in progress, wait for either a data or an error event
+	select {
+	case log := <-it.logs:
+		it.Event = new(DKGManagerEpochCreated)
+		if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
+			it.fail = err
+			return false
+		}
+		it.Event.Raw = log
+		return true
+
+	case err := <-it.sub.Err():
+		it.done = true
+		it.fail = err
+		return it.Next()
+	}
+}
+
+// Error returns any retrieval or parsing error occurred during filtering.
+func (it *DKGManagerEpochCreatedIterator) Error() error {
+	return it.fail
+}
+
+// Close terminates the iteration process, releasing any pending underlying
+// resources.
+func (it *DKGManagerEpochCreatedIterator) Close() error {
+	it.sub.Unsubscribe()
+	return nil
+}
+
+// DKGManagerEpochCreated represents a EpochCreated event raised by the DKGManager contract.
+type DKGManagerEpochCreated struct {
+	EpochId          [12]byte
+	Organizer        common.Address
+	StartBlock       uint64
+	SeedBlock        uint64
+	LotteryThreshold *big.Int
+	Raw              types.Log // Blockchain specific contextual infos
+}
+
+// FilterEpochCreated is a free log retrieval operation binding the contract event 0x1bd7dbfb91d6bbeee799f81d11452e0d0d87712734cbf66805ed6041d7d17a4d.
+//
+// Solidity: event EpochCreated(bytes12 indexed epochId, address indexed organizer, uint64 startBlock, uint64 seedBlock, uint256 lotteryThreshold)
+func (_DKGManager *DKGManagerFilterer) FilterEpochCreated(opts *bind.FilterOpts, epochId [][12]byte, organizer []common.Address) (*DKGManagerEpochCreatedIterator, error) {
+
+	var epochIdRule []interface{}
+	for _, epochIdItem := range epochId {
+		epochIdRule = append(epochIdRule, epochIdItem)
+	}
+	var organizerRule []interface{}
+	for _, organizerItem := range organizer {
+		organizerRule = append(organizerRule, organizerItem)
+	}
+
+	logs, sub, err := _DKGManager.contract.FilterLogs(opts, "EpochCreated", epochIdRule, organizerRule)
+	if err != nil {
+		return nil, err
+	}
+	return &DKGManagerEpochCreatedIterator{contract: _DKGManager.contract, event: "EpochCreated", logs: logs, sub: sub}, nil
+}
+
+// WatchEpochCreated is a free log subscription operation binding the contract event 0x1bd7dbfb91d6bbeee799f81d11452e0d0d87712734cbf66805ed6041d7d17a4d.
+//
+// Solidity: event EpochCreated(bytes12 indexed epochId, address indexed organizer, uint64 startBlock, uint64 seedBlock, uint256 lotteryThreshold)
+func (_DKGManager *DKGManagerFilterer) WatchEpochCreated(opts *bind.WatchOpts, sink chan<- *DKGManagerEpochCreated, epochId [][12]byte, organizer []common.Address) (event.Subscription, error) {
+
+	var epochIdRule []interface{}
+	for _, epochIdItem := range epochId {
+		epochIdRule = append(epochIdRule, epochIdItem)
+	}
+	var organizerRule []interface{}
+	for _, organizerItem := range organizer {
+		organizerRule = append(organizerRule, organizerItem)
+	}
+
+	logs, sub, err := _DKGManager.contract.WatchLogs(opts, "EpochCreated", epochIdRule, organizerRule)
+	if err != nil {
+		return nil, err
+	}
+	return event.NewSubscription(func(quit <-chan struct{}) error {
+		defer sub.Unsubscribe()
+		for {
+			select {
+			case log := <-logs:
+				// New log arrived, parse the event and forward to the user
+				event := new(DKGManagerEpochCreated)
+				if err := _DKGManager.contract.UnpackLog(event, "EpochCreated", log); err != nil {
+					return err
+				}
+				event.Raw = log
+
+				select {
+				case sink <- event:
+				case err := <-sub.Err():
+					return err
+				case <-quit:
+					return nil
+				}
+			case err := <-sub.Err():
+				return err
+			case <-quit:
+				return nil
+			}
+		}
+	}), nil
+}
+
+// ParseEpochCreated is a log parse operation binding the contract event 0x1bd7dbfb91d6bbeee799f81d11452e0d0d87712734cbf66805ed6041d7d17a4d.
+//
+// Solidity: event EpochCreated(bytes12 indexed epochId, address indexed organizer, uint64 startBlock, uint64 seedBlock, uint256 lotteryThreshold)
+func (_DKGManager *DKGManagerFilterer) ParseEpochCreated(log types.Log) (*DKGManagerEpochCreated, error) {
+	event := new(DKGManagerEpochCreated)
+	if err := _DKGManager.contract.UnpackLog(event, "EpochCreated", log); err != nil {
+		return nil, err
+	}
+	event.Raw = log
+	return event, nil
+}
+
+// DKGManagerEpochEvictedIterator is returned from FilterEpochEvicted and is used to iterate over the raw logs and unpacked data for EpochEvicted events raised by the DKGManager contract.
+type DKGManagerEpochEvictedIterator struct {
+	Event *DKGManagerEpochEvicted // Event containing the contract specifics and raw log
+
+	contract *bind.BoundContract // Generic contract to use for unpacking event data
+	event    string              // Event name to use for unpacking event data
+
+	logs chan types.Log        // Log channel receiving the found contract events
+	sub  ethereum.Subscription // Subscription for errors, completion and termination
+	done bool                  // Whether the subscription completed delivering logs
+	fail error                 // Occurred error to stop iteration
+}
+
+// Next advances the iterator to the subsequent event, returning whether there
+// are any more events found. In case of a retrieval or parsing error, false is
+// returned and Error() can be queried for the exact failure.
+func (it *DKGManagerEpochEvictedIterator) Next() bool {
+	// If the iterator failed, stop iterating
+	if it.fail != nil {
+		return false
+	}
+	// If the iterator completed, deliver directly whatever's available
+	if it.done {
+		select {
+		case log := <-it.logs:
+			it.Event = new(DKGManagerEpochEvicted)
+			if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
+				it.fail = err
+				return false
+			}
+			it.Event.Raw = log
+			return true
+
+		default:
+			return false
+		}
+	}
+	// Iterator still in progress, wait for either a data or an error event
+	select {
+	case log := <-it.logs:
+		it.Event = new(DKGManagerEpochEvicted)
+		if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
+			it.fail = err
+			return false
+		}
+		it.Event.Raw = log
+		return true
+
+	case err := <-it.sub.Err():
+		it.done = true
+		it.fail = err
+		return it.Next()
+	}
+}
+
+// Error returns any retrieval or parsing error occurred during filtering.
+func (it *DKGManagerEpochEvictedIterator) Error() error {
+	return it.fail
+}
+
+// Close terminates the iteration process, releasing any pending underlying
+// resources.
+func (it *DKGManagerEpochEvictedIterator) Close() error {
+	it.sub.Unsubscribe()
+	return nil
+}
+
+// DKGManagerEpochEvicted represents a EpochEvicted event raised by the DKGManager contract.
+type DKGManagerEpochEvicted struct {
+	EpochId [12]byte
+	Raw     types.Log // Blockchain specific contextual infos
+}
+
+// FilterEpochEvicted is a free log retrieval operation binding the contract event 0x457d47cb94f548852cc20fd99e9450eecfcf65ea0e2547389681f2e4bab9c996.
+//
+// Solidity: event EpochEvicted(bytes12 indexed epochId)
+func (_DKGManager *DKGManagerFilterer) FilterEpochEvicted(opts *bind.FilterOpts, epochId [][12]byte) (*DKGManagerEpochEvictedIterator, error) {
+
+	var epochIdRule []interface{}
+	for _, epochIdItem := range epochId {
+		epochIdRule = append(epochIdRule, epochIdItem)
+	}
+
+	logs, sub, err := _DKGManager.contract.FilterLogs(opts, "EpochEvicted", epochIdRule)
+	if err != nil {
+		return nil, err
+	}
+	return &DKGManagerEpochEvictedIterator{contract: _DKGManager.contract, event: "EpochEvicted", logs: logs, sub: sub}, nil
+}
+
+// WatchEpochEvicted is a free log subscription operation binding the contract event 0x457d47cb94f548852cc20fd99e9450eecfcf65ea0e2547389681f2e4bab9c996.
+//
+// Solidity: event EpochEvicted(bytes12 indexed epochId)
+func (_DKGManager *DKGManagerFilterer) WatchEpochEvicted(opts *bind.WatchOpts, sink chan<- *DKGManagerEpochEvicted, epochId [][12]byte) (event.Subscription, error) {
+
+	var epochIdRule []interface{}
+	for _, epochIdItem := range epochId {
+		epochIdRule = append(epochIdRule, epochIdItem)
+	}
+
+	logs, sub, err := _DKGManager.contract.WatchLogs(opts, "EpochEvicted", epochIdRule)
+	if err != nil {
+		return nil, err
+	}
+	return event.NewSubscription(func(quit <-chan struct{}) error {
+		defer sub.Unsubscribe()
+		for {
+			select {
+			case log := <-logs:
+				// New log arrived, parse the event and forward to the user
+				event := new(DKGManagerEpochEvicted)
+				if err := _DKGManager.contract.UnpackLog(event, "EpochEvicted", log); err != nil {
+					return err
+				}
+				event.Raw = log
+
+				select {
+				case sink <- event:
+				case err := <-sub.Err():
+					return err
+				case <-quit:
+					return nil
+				}
+			case err := <-sub.Err():
+				return err
+			case <-quit:
+				return nil
+			}
+		}
+	}), nil
+}
+
+// ParseEpochEvicted is a log parse operation binding the contract event 0x457d47cb94f548852cc20fd99e9450eecfcf65ea0e2547389681f2e4bab9c996.
+//
+// Solidity: event EpochEvicted(bytes12 indexed epochId)
+func (_DKGManager *DKGManagerFilterer) ParseEpochEvicted(log types.Log) (*DKGManagerEpochEvicted, error) {
+	event := new(DKGManagerEpochEvicted)
+	if err := _DKGManager.contract.UnpackLog(event, "EpochEvicted", log); err != nil {
+		return nil, err
+	}
+	event.Raw = log
+	return event, nil
+}
+
+// DKGManagerEpochFinalizedIterator is returned from FilterEpochFinalized and is used to iterate over the raw logs and unpacked data for EpochFinalized events raised by the DKGManager contract.
+type DKGManagerEpochFinalizedIterator struct {
+	Event *DKGManagerEpochFinalized // Event containing the contract specifics and raw log
+
+	contract *bind.BoundContract // Generic contract to use for unpacking event data
+	event    string              // Event name to use for unpacking event data
+
+	logs chan types.Log        // Log channel receiving the found contract events
+	sub  ethereum.Subscription // Subscription for errors, completion and termination
+	done bool                  // Whether the subscription completed delivering logs
+	fail error                 // Occurred error to stop iteration
+}
+
+// Next advances the iterator to the subsequent event, returning whether there
+// are any more events found. In case of a retrieval or parsing error, false is
+// returned and Error() can be queried for the exact failure.
+func (it *DKGManagerEpochFinalizedIterator) Next() bool {
+	// If the iterator failed, stop iterating
+	if it.fail != nil {
+		return false
+	}
+	// If the iterator completed, deliver directly whatever's available
+	if it.done {
+		select {
+		case log := <-it.logs:
+			it.Event = new(DKGManagerEpochFinalized)
+			if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
+				it.fail = err
+				return false
+			}
+			it.Event.Raw = log
+			return true
+
+		default:
+			return false
+		}
+	}
+	// Iterator still in progress, wait for either a data or an error event
+	select {
+	case log := <-it.logs:
+		it.Event = new(DKGManagerEpochFinalized)
+		if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
+			it.fail = err
+			return false
+		}
+		it.Event.Raw = log
+		return true
+
+	case err := <-it.sub.Err():
+		it.done = true
+		it.fail = err
+		return it.Next()
+	}
+}
+
+// Error returns any retrieval or parsing error occurred during filtering.
+func (it *DKGManagerEpochFinalizedIterator) Error() error {
+	return it.fail
+}
+
+// Close terminates the iteration process, releasing any pending underlying
+// resources.
+func (it *DKGManagerEpochFinalizedIterator) Close() error {
+	it.sub.Unsubscribe()
+	return nil
+}
+
+// DKGManagerEpochFinalized represents a EpochFinalized event raised by the DKGManager contract.
+type DKGManagerEpochFinalized struct {
+	EpochId                  [12]byte
+	AggregateCommitmentsHash [32]byte
+	CollectivePublicKeyHash  [32]byte
+	ShareCommitmentHash      [32]byte
+	Raw                      types.Log // Blockchain specific contextual infos
+}
+
+// FilterEpochFinalized is a free log retrieval operation binding the contract event 0x4626ec91a37d133f9027eadd556f820c54a05b0da238327825d5e5983696a472.
+//
+// Solidity: event EpochFinalized(bytes12 indexed epochId, bytes32 aggregateCommitmentsHash, bytes32 collectivePublicKeyHash, bytes32 shareCommitmentHash)
+func (_DKGManager *DKGManagerFilterer) FilterEpochFinalized(opts *bind.FilterOpts, epochId [][12]byte) (*DKGManagerEpochFinalizedIterator, error) {
+
+	var epochIdRule []interface{}
+	for _, epochIdItem := range epochId {
+		epochIdRule = append(epochIdRule, epochIdItem)
+	}
+
+	logs, sub, err := _DKGManager.contract.FilterLogs(opts, "EpochFinalized", epochIdRule)
+	if err != nil {
+		return nil, err
+	}
+	return &DKGManagerEpochFinalizedIterator{contract: _DKGManager.contract, event: "EpochFinalized", logs: logs, sub: sub}, nil
+}
+
+// WatchEpochFinalized is a free log subscription operation binding the contract event 0x4626ec91a37d133f9027eadd556f820c54a05b0da238327825d5e5983696a472.
+//
+// Solidity: event EpochFinalized(bytes12 indexed epochId, bytes32 aggregateCommitmentsHash, bytes32 collectivePublicKeyHash, bytes32 shareCommitmentHash)
+func (_DKGManager *DKGManagerFilterer) WatchEpochFinalized(opts *bind.WatchOpts, sink chan<- *DKGManagerEpochFinalized, epochId [][12]byte) (event.Subscription, error) {
+
+	var epochIdRule []interface{}
+	for _, epochIdItem := range epochId {
+		epochIdRule = append(epochIdRule, epochIdItem)
+	}
+
+	logs, sub, err := _DKGManager.contract.WatchLogs(opts, "EpochFinalized", epochIdRule)
+	if err != nil {
+		return nil, err
+	}
+	return event.NewSubscription(func(quit <-chan struct{}) error {
+		defer sub.Unsubscribe()
+		for {
+			select {
+			case log := <-logs:
+				// New log arrived, parse the event and forward to the user
+				event := new(DKGManagerEpochFinalized)
+				if err := _DKGManager.contract.UnpackLog(event, "EpochFinalized", log); err != nil {
+					return err
+				}
+				event.Raw = log
+
+				select {
+				case sink <- event:
+				case err := <-sub.Err():
+					return err
+				case <-quit:
+					return nil
+				}
+			case err := <-sub.Err():
+				return err
+			case <-quit:
+				return nil
+			}
+		}
+	}), nil
+}
+
+// ParseEpochFinalized is a log parse operation binding the contract event 0x4626ec91a37d133f9027eadd556f820c54a05b0da238327825d5e5983696a472.
+//
+// Solidity: event EpochFinalized(bytes12 indexed epochId, bytes32 aggregateCommitmentsHash, bytes32 collectivePublicKeyHash, bytes32 shareCommitmentHash)
+func (_DKGManager *DKGManagerFilterer) ParseEpochFinalized(log types.Log) (*DKGManagerEpochFinalized, error) {
+	event := new(DKGManagerEpochFinalized)
+	if err := _DKGManager.contract.UnpackLog(event, "EpochFinalized", log); err != nil {
 		return nil, err
 	}
 	event.Raw = log
@@ -1898,50 +2444,60 @@ func (it *DKGManagerPartialDecryptionSubmittedIterator) Close() error {
 
 // DKGManagerPartialDecryptionSubmitted represents a PartialDecryptionSubmitted event raised by the DKGManager contract.
 type DKGManagerPartialDecryptionSubmitted struct {
-	RoundId          [12]byte
+	EpochId          [12]byte
+	Aid              [32]byte
 	Participant      common.Address
 	ParticipantIndex uint16
 	CiphertextIndex  uint16
-	DeltaHash        [32]byte
+	DeltaX           *big.Int
+	DeltaY           *big.Int
 	Raw              types.Log // Blockchain specific contextual infos
 }
 
-// FilterPartialDecryptionSubmitted is a free log retrieval operation binding the contract event 0x39e01752de5471ef06952341613214369ee48b9bf21f57f7d6fcf9239f397f22.
+// FilterPartialDecryptionSubmitted is a free log retrieval operation binding the contract event 0x22adff6e28e87e60c01f5d89cee122b88fbe9a7eb000159cd38220075a22a302.
 //
-// Solidity: event PartialDecryptionSubmitted(bytes12 indexed roundId, address indexed participant, uint16 participantIndex, uint16 ciphertextIndex, bytes32 deltaHash)
-func (_DKGManager *DKGManagerFilterer) FilterPartialDecryptionSubmitted(opts *bind.FilterOpts, roundId [][12]byte, participant []common.Address) (*DKGManagerPartialDecryptionSubmittedIterator, error) {
+// Solidity: event PartialDecryptionSubmitted(bytes12 indexed epochId, bytes32 indexed aid, address indexed participant, uint16 participantIndex, uint16 ciphertextIndex, uint256 deltaX, uint256 deltaY)
+func (_DKGManager *DKGManagerFilterer) FilterPartialDecryptionSubmitted(opts *bind.FilterOpts, epochId [][12]byte, aid [][32]byte, participant []common.Address) (*DKGManagerPartialDecryptionSubmittedIterator, error) {
 
-	var roundIdRule []interface{}
-	for _, roundIdItem := range roundId {
-		roundIdRule = append(roundIdRule, roundIdItem)
+	var epochIdRule []interface{}
+	for _, epochIdItem := range epochId {
+		epochIdRule = append(epochIdRule, epochIdItem)
+	}
+	var aidRule []interface{}
+	for _, aidItem := range aid {
+		aidRule = append(aidRule, aidItem)
 	}
 	var participantRule []interface{}
 	for _, participantItem := range participant {
 		participantRule = append(participantRule, participantItem)
 	}
 
-	logs, sub, err := _DKGManager.contract.FilterLogs(opts, "PartialDecryptionSubmitted", roundIdRule, participantRule)
+	logs, sub, err := _DKGManager.contract.FilterLogs(opts, "PartialDecryptionSubmitted", epochIdRule, aidRule, participantRule)
 	if err != nil {
 		return nil, err
 	}
 	return &DKGManagerPartialDecryptionSubmittedIterator{contract: _DKGManager.contract, event: "PartialDecryptionSubmitted", logs: logs, sub: sub}, nil
 }
 
-// WatchPartialDecryptionSubmitted is a free log subscription operation binding the contract event 0x39e01752de5471ef06952341613214369ee48b9bf21f57f7d6fcf9239f397f22.
+// WatchPartialDecryptionSubmitted is a free log subscription operation binding the contract event 0x22adff6e28e87e60c01f5d89cee122b88fbe9a7eb000159cd38220075a22a302.
 //
-// Solidity: event PartialDecryptionSubmitted(bytes12 indexed roundId, address indexed participant, uint16 participantIndex, uint16 ciphertextIndex, bytes32 deltaHash)
-func (_DKGManager *DKGManagerFilterer) WatchPartialDecryptionSubmitted(opts *bind.WatchOpts, sink chan<- *DKGManagerPartialDecryptionSubmitted, roundId [][12]byte, participant []common.Address) (event.Subscription, error) {
+// Solidity: event PartialDecryptionSubmitted(bytes12 indexed epochId, bytes32 indexed aid, address indexed participant, uint16 participantIndex, uint16 ciphertextIndex, uint256 deltaX, uint256 deltaY)
+func (_DKGManager *DKGManagerFilterer) WatchPartialDecryptionSubmitted(opts *bind.WatchOpts, sink chan<- *DKGManagerPartialDecryptionSubmitted, epochId [][12]byte, aid [][32]byte, participant []common.Address) (event.Subscription, error) {
 
-	var roundIdRule []interface{}
-	for _, roundIdItem := range roundId {
-		roundIdRule = append(roundIdRule, roundIdItem)
+	var epochIdRule []interface{}
+	for _, epochIdItem := range epochId {
+		epochIdRule = append(epochIdRule, epochIdItem)
+	}
+	var aidRule []interface{}
+	for _, aidItem := range aid {
+		aidRule = append(aidRule, aidItem)
 	}
 	var participantRule []interface{}
 	for _, participantItem := range participant {
 		participantRule = append(participantRule, participantItem)
 	}
 
-	logs, sub, err := _DKGManager.contract.WatchLogs(opts, "PartialDecryptionSubmitted", roundIdRule, participantRule)
+	logs, sub, err := _DKGManager.contract.WatchLogs(opts, "PartialDecryptionSubmitted", epochIdRule, aidRule, participantRule)
 	if err != nil {
 		return nil, err
 	}
@@ -1973,9 +2529,9 @@ func (_DKGManager *DKGManagerFilterer) WatchPartialDecryptionSubmitted(opts *bin
 	}), nil
 }
 
-// ParsePartialDecryptionSubmitted is a log parse operation binding the contract event 0x39e01752de5471ef06952341613214369ee48b9bf21f57f7d6fcf9239f397f22.
+// ParsePartialDecryptionSubmitted is a log parse operation binding the contract event 0x22adff6e28e87e60c01f5d89cee122b88fbe9a7eb000159cd38220075a22a302.
 //
-// Solidity: event PartialDecryptionSubmitted(bytes12 indexed roundId, address indexed participant, uint16 participantIndex, uint16 ciphertextIndex, bytes32 deltaHash)
+// Solidity: event PartialDecryptionSubmitted(bytes12 indexed epochId, bytes32 indexed aid, address indexed participant, uint16 participantIndex, uint16 ciphertextIndex, uint256 deltaX, uint256 deltaY)
 func (_DKGManager *DKGManagerFilterer) ParsePartialDecryptionSubmitted(log types.Log) (*DKGManagerPartialDecryptionSubmitted, error) {
 	event := new(DKGManagerPartialDecryptionSubmitted)
 	if err := _DKGManager.contract.UnpackLog(event, "PartialDecryptionSubmitted", log); err != nil {
@@ -2054,21 +2610,21 @@ func (it *DKGManagerRegistrationClosedIterator) Close() error {
 
 // DKGManagerRegistrationClosed represents a RegistrationClosed event raised by the DKGManager contract.
 type DKGManagerRegistrationClosed struct {
-	RoundId [12]byte
+	EpochId [12]byte
 	Raw     types.Log // Blockchain specific contextual infos
 }
 
 // FilterRegistrationClosed is a free log retrieval operation binding the contract event 0xca89d7e15807c1ba6a0622215afe84b083f061c44c2e78e6e226709a8f5f1358.
 //
-// Solidity: event RegistrationClosed(bytes12 indexed roundId)
-func (_DKGManager *DKGManagerFilterer) FilterRegistrationClosed(opts *bind.FilterOpts, roundId [][12]byte) (*DKGManagerRegistrationClosedIterator, error) {
+// Solidity: event RegistrationClosed(bytes12 indexed epochId)
+func (_DKGManager *DKGManagerFilterer) FilterRegistrationClosed(opts *bind.FilterOpts, epochId [][12]byte) (*DKGManagerRegistrationClosedIterator, error) {
 
-	var roundIdRule []interface{}
-	for _, roundIdItem := range roundId {
-		roundIdRule = append(roundIdRule, roundIdItem)
+	var epochIdRule []interface{}
+	for _, epochIdItem := range epochId {
+		epochIdRule = append(epochIdRule, epochIdItem)
 	}
 
-	logs, sub, err := _DKGManager.contract.FilterLogs(opts, "RegistrationClosed", roundIdRule)
+	logs, sub, err := _DKGManager.contract.FilterLogs(opts, "RegistrationClosed", epochIdRule)
 	if err != nil {
 		return nil, err
 	}
@@ -2077,15 +2633,15 @@ func (_DKGManager *DKGManagerFilterer) FilterRegistrationClosed(opts *bind.Filte
 
 // WatchRegistrationClosed is a free log subscription operation binding the contract event 0xca89d7e15807c1ba6a0622215afe84b083f061c44c2e78e6e226709a8f5f1358.
 //
-// Solidity: event RegistrationClosed(bytes12 indexed roundId)
-func (_DKGManager *DKGManagerFilterer) WatchRegistrationClosed(opts *bind.WatchOpts, sink chan<- *DKGManagerRegistrationClosed, roundId [][12]byte) (event.Subscription, error) {
+// Solidity: event RegistrationClosed(bytes12 indexed epochId)
+func (_DKGManager *DKGManagerFilterer) WatchRegistrationClosed(opts *bind.WatchOpts, sink chan<- *DKGManagerRegistrationClosed, epochId [][12]byte) (event.Subscription, error) {
 
-	var roundIdRule []interface{}
-	for _, roundIdItem := range roundId {
-		roundIdRule = append(roundIdRule, roundIdItem)
+	var epochIdRule []interface{}
+	for _, epochIdItem := range epochId {
+		epochIdRule = append(epochIdRule, epochIdItem)
 	}
 
-	logs, sub, err := _DKGManager.contract.WatchLogs(opts, "RegistrationClosed", roundIdRule)
+	logs, sub, err := _DKGManager.contract.WatchLogs(opts, "RegistrationClosed", epochIdRule)
 	if err != nil {
 		return nil, err
 	}
@@ -2119,1047 +2675,10 @@ func (_DKGManager *DKGManagerFilterer) WatchRegistrationClosed(opts *bind.WatchO
 
 // ParseRegistrationClosed is a log parse operation binding the contract event 0xca89d7e15807c1ba6a0622215afe84b083f061c44c2e78e6e226709a8f5f1358.
 //
-// Solidity: event RegistrationClosed(bytes12 indexed roundId)
+// Solidity: event RegistrationClosed(bytes12 indexed epochId)
 func (_DKGManager *DKGManagerFilterer) ParseRegistrationClosed(log types.Log) (*DKGManagerRegistrationClosed, error) {
 	event := new(DKGManagerRegistrationClosed)
 	if err := _DKGManager.contract.UnpackLog(event, "RegistrationClosed", log); err != nil {
-		return nil, err
-	}
-	event.Raw = log
-	return event, nil
-}
-
-// DKGManagerRegistrationExtendedIterator is returned from FilterRegistrationExtended and is used to iterate over the raw logs and unpacked data for RegistrationExtended events raised by the DKGManager contract.
-type DKGManagerRegistrationExtendedIterator struct {
-	Event *DKGManagerRegistrationExtended // Event containing the contract specifics and raw log
-
-	contract *bind.BoundContract // Generic contract to use for unpacking event data
-	event    string              // Event name to use for unpacking event data
-
-	logs chan types.Log        // Log channel receiving the found contract events
-	sub  ethereum.Subscription // Subscription for errors, completion and termination
-	done bool                  // Whether the subscription completed delivering logs
-	fail error                 // Occurred error to stop iteration
-}
-
-// Next advances the iterator to the subsequent event, returning whether there
-// are any more events found. In case of a retrieval or parsing error, false is
-// returned and Error() can be queried for the exact failure.
-func (it *DKGManagerRegistrationExtendedIterator) Next() bool {
-	// If the iterator failed, stop iterating
-	if it.fail != nil {
-		return false
-	}
-	// If the iterator completed, deliver directly whatever's available
-	if it.done {
-		select {
-		case log := <-it.logs:
-			it.Event = new(DKGManagerRegistrationExtended)
-			if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
-				it.fail = err
-				return false
-			}
-			it.Event.Raw = log
-			return true
-
-		default:
-			return false
-		}
-	}
-	// Iterator still in progress, wait for either a data or an error event
-	select {
-	case log := <-it.logs:
-		it.Event = new(DKGManagerRegistrationExtended)
-		if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
-			it.fail = err
-			return false
-		}
-		it.Event.Raw = log
-		return true
-
-	case err := <-it.sub.Err():
-		it.done = true
-		it.fail = err
-		return it.Next()
-	}
-}
-
-// Error returns any retrieval or parsing error occurred during filtering.
-func (it *DKGManagerRegistrationExtendedIterator) Error() error {
-	return it.fail
-}
-
-// Close terminates the iteration process, releasing any pending underlying
-// resources.
-func (it *DKGManagerRegistrationExtendedIterator) Close() error {
-	it.sub.Unsubscribe()
-	return nil
-}
-
-// DKGManagerRegistrationExtended represents a RegistrationExtended event raised by the DKGManager contract.
-type DKGManagerRegistrationExtended struct {
-	RoundId                 [12]byte
-	NewSeedBlock            uint64
-	NewRegistrationDeadline uint64
-	Raw                     types.Log // Blockchain specific contextual infos
-}
-
-// FilterRegistrationExtended is a free log retrieval operation binding the contract event 0x9f2b9abf7edf3bc2ca127de52d5e6f818ee43f02fa41ffd5ef9d24e45130cb9c.
-//
-// Solidity: event RegistrationExtended(bytes12 indexed roundId, uint64 newSeedBlock, uint64 newRegistrationDeadline)
-func (_DKGManager *DKGManagerFilterer) FilterRegistrationExtended(opts *bind.FilterOpts, roundId [][12]byte) (*DKGManagerRegistrationExtendedIterator, error) {
-
-	var roundIdRule []interface{}
-	for _, roundIdItem := range roundId {
-		roundIdRule = append(roundIdRule, roundIdItem)
-	}
-
-	logs, sub, err := _DKGManager.contract.FilterLogs(opts, "RegistrationExtended", roundIdRule)
-	if err != nil {
-		return nil, err
-	}
-	return &DKGManagerRegistrationExtendedIterator{contract: _DKGManager.contract, event: "RegistrationExtended", logs: logs, sub: sub}, nil
-}
-
-// WatchRegistrationExtended is a free log subscription operation binding the contract event 0x9f2b9abf7edf3bc2ca127de52d5e6f818ee43f02fa41ffd5ef9d24e45130cb9c.
-//
-// Solidity: event RegistrationExtended(bytes12 indexed roundId, uint64 newSeedBlock, uint64 newRegistrationDeadline)
-func (_DKGManager *DKGManagerFilterer) WatchRegistrationExtended(opts *bind.WatchOpts, sink chan<- *DKGManagerRegistrationExtended, roundId [][12]byte) (event.Subscription, error) {
-
-	var roundIdRule []interface{}
-	for _, roundIdItem := range roundId {
-		roundIdRule = append(roundIdRule, roundIdItem)
-	}
-
-	logs, sub, err := _DKGManager.contract.WatchLogs(opts, "RegistrationExtended", roundIdRule)
-	if err != nil {
-		return nil, err
-	}
-	return event.NewSubscription(func(quit <-chan struct{}) error {
-		defer sub.Unsubscribe()
-		for {
-			select {
-			case log := <-logs:
-				// New log arrived, parse the event and forward to the user
-				event := new(DKGManagerRegistrationExtended)
-				if err := _DKGManager.contract.UnpackLog(event, "RegistrationExtended", log); err != nil {
-					return err
-				}
-				event.Raw = log
-
-				select {
-				case sink <- event:
-				case err := <-sub.Err():
-					return err
-				case <-quit:
-					return nil
-				}
-			case err := <-sub.Err():
-				return err
-			case <-quit:
-				return nil
-			}
-		}
-	}), nil
-}
-
-// ParseRegistrationExtended is a log parse operation binding the contract event 0x9f2b9abf7edf3bc2ca127de52d5e6f818ee43f02fa41ffd5ef9d24e45130cb9c.
-//
-// Solidity: event RegistrationExtended(bytes12 indexed roundId, uint64 newSeedBlock, uint64 newRegistrationDeadline)
-func (_DKGManager *DKGManagerFilterer) ParseRegistrationExtended(log types.Log) (*DKGManagerRegistrationExtended, error) {
-	event := new(DKGManagerRegistrationExtended)
-	if err := _DKGManager.contract.UnpackLog(event, "RegistrationExtended", log); err != nil {
-		return nil, err
-	}
-	event.Raw = log
-	return event, nil
-}
-
-// DKGManagerRevealedShareSubmittedIterator is returned from FilterRevealedShareSubmitted and is used to iterate over the raw logs and unpacked data for RevealedShareSubmitted events raised by the DKGManager contract.
-type DKGManagerRevealedShareSubmittedIterator struct {
-	Event *DKGManagerRevealedShareSubmitted // Event containing the contract specifics and raw log
-
-	contract *bind.BoundContract // Generic contract to use for unpacking event data
-	event    string              // Event name to use for unpacking event data
-
-	logs chan types.Log        // Log channel receiving the found contract events
-	sub  ethereum.Subscription // Subscription for errors, completion and termination
-	done bool                  // Whether the subscription completed delivering logs
-	fail error                 // Occurred error to stop iteration
-}
-
-// Next advances the iterator to the subsequent event, returning whether there
-// are any more events found. In case of a retrieval or parsing error, false is
-// returned and Error() can be queried for the exact failure.
-func (it *DKGManagerRevealedShareSubmittedIterator) Next() bool {
-	// If the iterator failed, stop iterating
-	if it.fail != nil {
-		return false
-	}
-	// If the iterator completed, deliver directly whatever's available
-	if it.done {
-		select {
-		case log := <-it.logs:
-			it.Event = new(DKGManagerRevealedShareSubmitted)
-			if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
-				it.fail = err
-				return false
-			}
-			it.Event.Raw = log
-			return true
-
-		default:
-			return false
-		}
-	}
-	// Iterator still in progress, wait for either a data or an error event
-	select {
-	case log := <-it.logs:
-		it.Event = new(DKGManagerRevealedShareSubmitted)
-		if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
-			it.fail = err
-			return false
-		}
-		it.Event.Raw = log
-		return true
-
-	case err := <-it.sub.Err():
-		it.done = true
-		it.fail = err
-		return it.Next()
-	}
-}
-
-// Error returns any retrieval or parsing error occurred during filtering.
-func (it *DKGManagerRevealedShareSubmittedIterator) Error() error {
-	return it.fail
-}
-
-// Close terminates the iteration process, releasing any pending underlying
-// resources.
-func (it *DKGManagerRevealedShareSubmittedIterator) Close() error {
-	it.sub.Unsubscribe()
-	return nil
-}
-
-// DKGManagerRevealedShareSubmitted represents a RevealedShareSubmitted event raised by the DKGManager contract.
-type DKGManagerRevealedShareSubmitted struct {
-	RoundId          [12]byte
-	Participant      common.Address
-	ParticipantIndex uint16
-	ShareHash        [32]byte
-	Raw              types.Log // Blockchain specific contextual infos
-}
-
-// FilterRevealedShareSubmitted is a free log retrieval operation binding the contract event 0x5f16f25c2c3e0004ddf0924462825a82df1cd393546962d8a9757d1e71dc1dac.
-//
-// Solidity: event RevealedShareSubmitted(bytes12 indexed roundId, address indexed participant, uint16 participantIndex, bytes32 shareHash)
-func (_DKGManager *DKGManagerFilterer) FilterRevealedShareSubmitted(opts *bind.FilterOpts, roundId [][12]byte, participant []common.Address) (*DKGManagerRevealedShareSubmittedIterator, error) {
-
-	var roundIdRule []interface{}
-	for _, roundIdItem := range roundId {
-		roundIdRule = append(roundIdRule, roundIdItem)
-	}
-	var participantRule []interface{}
-	for _, participantItem := range participant {
-		participantRule = append(participantRule, participantItem)
-	}
-
-	logs, sub, err := _DKGManager.contract.FilterLogs(opts, "RevealedShareSubmitted", roundIdRule, participantRule)
-	if err != nil {
-		return nil, err
-	}
-	return &DKGManagerRevealedShareSubmittedIterator{contract: _DKGManager.contract, event: "RevealedShareSubmitted", logs: logs, sub: sub}, nil
-}
-
-// WatchRevealedShareSubmitted is a free log subscription operation binding the contract event 0x5f16f25c2c3e0004ddf0924462825a82df1cd393546962d8a9757d1e71dc1dac.
-//
-// Solidity: event RevealedShareSubmitted(bytes12 indexed roundId, address indexed participant, uint16 participantIndex, bytes32 shareHash)
-func (_DKGManager *DKGManagerFilterer) WatchRevealedShareSubmitted(opts *bind.WatchOpts, sink chan<- *DKGManagerRevealedShareSubmitted, roundId [][12]byte, participant []common.Address) (event.Subscription, error) {
-
-	var roundIdRule []interface{}
-	for _, roundIdItem := range roundId {
-		roundIdRule = append(roundIdRule, roundIdItem)
-	}
-	var participantRule []interface{}
-	for _, participantItem := range participant {
-		participantRule = append(participantRule, participantItem)
-	}
-
-	logs, sub, err := _DKGManager.contract.WatchLogs(opts, "RevealedShareSubmitted", roundIdRule, participantRule)
-	if err != nil {
-		return nil, err
-	}
-	return event.NewSubscription(func(quit <-chan struct{}) error {
-		defer sub.Unsubscribe()
-		for {
-			select {
-			case log := <-logs:
-				// New log arrived, parse the event and forward to the user
-				event := new(DKGManagerRevealedShareSubmitted)
-				if err := _DKGManager.contract.UnpackLog(event, "RevealedShareSubmitted", log); err != nil {
-					return err
-				}
-				event.Raw = log
-
-				select {
-				case sink <- event:
-				case err := <-sub.Err():
-					return err
-				case <-quit:
-					return nil
-				}
-			case err := <-sub.Err():
-				return err
-			case <-quit:
-				return nil
-			}
-		}
-	}), nil
-}
-
-// ParseRevealedShareSubmitted is a log parse operation binding the contract event 0x5f16f25c2c3e0004ddf0924462825a82df1cd393546962d8a9757d1e71dc1dac.
-//
-// Solidity: event RevealedShareSubmitted(bytes12 indexed roundId, address indexed participant, uint16 participantIndex, bytes32 shareHash)
-func (_DKGManager *DKGManagerFilterer) ParseRevealedShareSubmitted(log types.Log) (*DKGManagerRevealedShareSubmitted, error) {
-	event := new(DKGManagerRevealedShareSubmitted)
-	if err := _DKGManager.contract.UnpackLog(event, "RevealedShareSubmitted", log); err != nil {
-		return nil, err
-	}
-	event.Raw = log
-	return event, nil
-}
-
-// DKGManagerRoundAbortedIterator is returned from FilterRoundAborted and is used to iterate over the raw logs and unpacked data for RoundAborted events raised by the DKGManager contract.
-type DKGManagerRoundAbortedIterator struct {
-	Event *DKGManagerRoundAborted // Event containing the contract specifics and raw log
-
-	contract *bind.BoundContract // Generic contract to use for unpacking event data
-	event    string              // Event name to use for unpacking event data
-
-	logs chan types.Log        // Log channel receiving the found contract events
-	sub  ethereum.Subscription // Subscription for errors, completion and termination
-	done bool                  // Whether the subscription completed delivering logs
-	fail error                 // Occurred error to stop iteration
-}
-
-// Next advances the iterator to the subsequent event, returning whether there
-// are any more events found. In case of a retrieval or parsing error, false is
-// returned and Error() can be queried for the exact failure.
-func (it *DKGManagerRoundAbortedIterator) Next() bool {
-	// If the iterator failed, stop iterating
-	if it.fail != nil {
-		return false
-	}
-	// If the iterator completed, deliver directly whatever's available
-	if it.done {
-		select {
-		case log := <-it.logs:
-			it.Event = new(DKGManagerRoundAborted)
-			if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
-				it.fail = err
-				return false
-			}
-			it.Event.Raw = log
-			return true
-
-		default:
-			return false
-		}
-	}
-	// Iterator still in progress, wait for either a data or an error event
-	select {
-	case log := <-it.logs:
-		it.Event = new(DKGManagerRoundAborted)
-		if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
-			it.fail = err
-			return false
-		}
-		it.Event.Raw = log
-		return true
-
-	case err := <-it.sub.Err():
-		it.done = true
-		it.fail = err
-		return it.Next()
-	}
-}
-
-// Error returns any retrieval or parsing error occurred during filtering.
-func (it *DKGManagerRoundAbortedIterator) Error() error {
-	return it.fail
-}
-
-// Close terminates the iteration process, releasing any pending underlying
-// resources.
-func (it *DKGManagerRoundAbortedIterator) Close() error {
-	it.sub.Unsubscribe()
-	return nil
-}
-
-// DKGManagerRoundAborted represents a RoundAborted event raised by the DKGManager contract.
-type DKGManagerRoundAborted struct {
-	RoundId [12]byte
-	Raw     types.Log // Blockchain specific contextual infos
-}
-
-// FilterRoundAborted is a free log retrieval operation binding the contract event 0x97d5ddda8e4d1dcdb9643b144637aeef99ca0f2efe328a2b8e2620776cf1e410.
-//
-// Solidity: event RoundAborted(bytes12 indexed roundId)
-func (_DKGManager *DKGManagerFilterer) FilterRoundAborted(opts *bind.FilterOpts, roundId [][12]byte) (*DKGManagerRoundAbortedIterator, error) {
-
-	var roundIdRule []interface{}
-	for _, roundIdItem := range roundId {
-		roundIdRule = append(roundIdRule, roundIdItem)
-	}
-
-	logs, sub, err := _DKGManager.contract.FilterLogs(opts, "RoundAborted", roundIdRule)
-	if err != nil {
-		return nil, err
-	}
-	return &DKGManagerRoundAbortedIterator{contract: _DKGManager.contract, event: "RoundAborted", logs: logs, sub: sub}, nil
-}
-
-// WatchRoundAborted is a free log subscription operation binding the contract event 0x97d5ddda8e4d1dcdb9643b144637aeef99ca0f2efe328a2b8e2620776cf1e410.
-//
-// Solidity: event RoundAborted(bytes12 indexed roundId)
-func (_DKGManager *DKGManagerFilterer) WatchRoundAborted(opts *bind.WatchOpts, sink chan<- *DKGManagerRoundAborted, roundId [][12]byte) (event.Subscription, error) {
-
-	var roundIdRule []interface{}
-	for _, roundIdItem := range roundId {
-		roundIdRule = append(roundIdRule, roundIdItem)
-	}
-
-	logs, sub, err := _DKGManager.contract.WatchLogs(opts, "RoundAborted", roundIdRule)
-	if err != nil {
-		return nil, err
-	}
-	return event.NewSubscription(func(quit <-chan struct{}) error {
-		defer sub.Unsubscribe()
-		for {
-			select {
-			case log := <-logs:
-				// New log arrived, parse the event and forward to the user
-				event := new(DKGManagerRoundAborted)
-				if err := _DKGManager.contract.UnpackLog(event, "RoundAborted", log); err != nil {
-					return err
-				}
-				event.Raw = log
-
-				select {
-				case sink <- event:
-				case err := <-sub.Err():
-					return err
-				case <-quit:
-					return nil
-				}
-			case err := <-sub.Err():
-				return err
-			case <-quit:
-				return nil
-			}
-		}
-	}), nil
-}
-
-// ParseRoundAborted is a log parse operation binding the contract event 0x97d5ddda8e4d1dcdb9643b144637aeef99ca0f2efe328a2b8e2620776cf1e410.
-//
-// Solidity: event RoundAborted(bytes12 indexed roundId)
-func (_DKGManager *DKGManagerFilterer) ParseRoundAborted(log types.Log) (*DKGManagerRoundAborted, error) {
-	event := new(DKGManagerRoundAborted)
-	if err := _DKGManager.contract.UnpackLog(event, "RoundAborted", log); err != nil {
-		return nil, err
-	}
-	event.Raw = log
-	return event, nil
-}
-
-// DKGManagerRoundCreatedIterator is returned from FilterRoundCreated and is used to iterate over the raw logs and unpacked data for RoundCreated events raised by the DKGManager contract.
-type DKGManagerRoundCreatedIterator struct {
-	Event *DKGManagerRoundCreated // Event containing the contract specifics and raw log
-
-	contract *bind.BoundContract // Generic contract to use for unpacking event data
-	event    string              // Event name to use for unpacking event data
-
-	logs chan types.Log        // Log channel receiving the found contract events
-	sub  ethereum.Subscription // Subscription for errors, completion and termination
-	done bool                  // Whether the subscription completed delivering logs
-	fail error                 // Occurred error to stop iteration
-}
-
-// Next advances the iterator to the subsequent event, returning whether there
-// are any more events found. In case of a retrieval or parsing error, false is
-// returned and Error() can be queried for the exact failure.
-func (it *DKGManagerRoundCreatedIterator) Next() bool {
-	// If the iterator failed, stop iterating
-	if it.fail != nil {
-		return false
-	}
-	// If the iterator completed, deliver directly whatever's available
-	if it.done {
-		select {
-		case log := <-it.logs:
-			it.Event = new(DKGManagerRoundCreated)
-			if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
-				it.fail = err
-				return false
-			}
-			it.Event.Raw = log
-			return true
-
-		default:
-			return false
-		}
-	}
-	// Iterator still in progress, wait for either a data or an error event
-	select {
-	case log := <-it.logs:
-		it.Event = new(DKGManagerRoundCreated)
-		if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
-			it.fail = err
-			return false
-		}
-		it.Event.Raw = log
-		return true
-
-	case err := <-it.sub.Err():
-		it.done = true
-		it.fail = err
-		return it.Next()
-	}
-}
-
-// Error returns any retrieval or parsing error occurred during filtering.
-func (it *DKGManagerRoundCreatedIterator) Error() error {
-	return it.fail
-}
-
-// Close terminates the iteration process, releasing any pending underlying
-// resources.
-func (it *DKGManagerRoundCreatedIterator) Close() error {
-	it.sub.Unsubscribe()
-	return nil
-}
-
-// DKGManagerRoundCreated represents a RoundCreated event raised by the DKGManager contract.
-type DKGManagerRoundCreated struct {
-	RoundId          [12]byte
-	Organizer        common.Address
-	SeedBlock        uint64
-	LotteryThreshold *big.Int
-	Raw              types.Log // Blockchain specific contextual infos
-}
-
-// FilterRoundCreated is a free log retrieval operation binding the contract event 0xcba424d4ca0c24cfd724662848b8cf062529c48daf9734f804ebcfa51f5ea8d7.
-//
-// Solidity: event RoundCreated(bytes12 indexed roundId, address indexed organizer, uint64 seedBlock, uint256 lotteryThreshold)
-func (_DKGManager *DKGManagerFilterer) FilterRoundCreated(opts *bind.FilterOpts, roundId [][12]byte, organizer []common.Address) (*DKGManagerRoundCreatedIterator, error) {
-
-	var roundIdRule []interface{}
-	for _, roundIdItem := range roundId {
-		roundIdRule = append(roundIdRule, roundIdItem)
-	}
-	var organizerRule []interface{}
-	for _, organizerItem := range organizer {
-		organizerRule = append(organizerRule, organizerItem)
-	}
-
-	logs, sub, err := _DKGManager.contract.FilterLogs(opts, "RoundCreated", roundIdRule, organizerRule)
-	if err != nil {
-		return nil, err
-	}
-	return &DKGManagerRoundCreatedIterator{contract: _DKGManager.contract, event: "RoundCreated", logs: logs, sub: sub}, nil
-}
-
-// WatchRoundCreated is a free log subscription operation binding the contract event 0xcba424d4ca0c24cfd724662848b8cf062529c48daf9734f804ebcfa51f5ea8d7.
-//
-// Solidity: event RoundCreated(bytes12 indexed roundId, address indexed organizer, uint64 seedBlock, uint256 lotteryThreshold)
-func (_DKGManager *DKGManagerFilterer) WatchRoundCreated(opts *bind.WatchOpts, sink chan<- *DKGManagerRoundCreated, roundId [][12]byte, organizer []common.Address) (event.Subscription, error) {
-
-	var roundIdRule []interface{}
-	for _, roundIdItem := range roundId {
-		roundIdRule = append(roundIdRule, roundIdItem)
-	}
-	var organizerRule []interface{}
-	for _, organizerItem := range organizer {
-		organizerRule = append(organizerRule, organizerItem)
-	}
-
-	logs, sub, err := _DKGManager.contract.WatchLogs(opts, "RoundCreated", roundIdRule, organizerRule)
-	if err != nil {
-		return nil, err
-	}
-	return event.NewSubscription(func(quit <-chan struct{}) error {
-		defer sub.Unsubscribe()
-		for {
-			select {
-			case log := <-logs:
-				// New log arrived, parse the event and forward to the user
-				event := new(DKGManagerRoundCreated)
-				if err := _DKGManager.contract.UnpackLog(event, "RoundCreated", log); err != nil {
-					return err
-				}
-				event.Raw = log
-
-				select {
-				case sink <- event:
-				case err := <-sub.Err():
-					return err
-				case <-quit:
-					return nil
-				}
-			case err := <-sub.Err():
-				return err
-			case <-quit:
-				return nil
-			}
-		}
-	}), nil
-}
-
-// ParseRoundCreated is a log parse operation binding the contract event 0xcba424d4ca0c24cfd724662848b8cf062529c48daf9734f804ebcfa51f5ea8d7.
-//
-// Solidity: event RoundCreated(bytes12 indexed roundId, address indexed organizer, uint64 seedBlock, uint256 lotteryThreshold)
-func (_DKGManager *DKGManagerFilterer) ParseRoundCreated(log types.Log) (*DKGManagerRoundCreated, error) {
-	event := new(DKGManagerRoundCreated)
-	if err := _DKGManager.contract.UnpackLog(event, "RoundCreated", log); err != nil {
-		return nil, err
-	}
-	event.Raw = log
-	return event, nil
-}
-
-// DKGManagerRoundEvictedIterator is returned from FilterRoundEvicted and is used to iterate over the raw logs and unpacked data for RoundEvicted events raised by the DKGManager contract.
-type DKGManagerRoundEvictedIterator struct {
-	Event *DKGManagerRoundEvicted // Event containing the contract specifics and raw log
-
-	contract *bind.BoundContract // Generic contract to use for unpacking event data
-	event    string              // Event name to use for unpacking event data
-
-	logs chan types.Log        // Log channel receiving the found contract events
-	sub  ethereum.Subscription // Subscription for errors, completion and termination
-	done bool                  // Whether the subscription completed delivering logs
-	fail error                 // Occurred error to stop iteration
-}
-
-// Next advances the iterator to the subsequent event, returning whether there
-// are any more events found. In case of a retrieval or parsing error, false is
-// returned and Error() can be queried for the exact failure.
-func (it *DKGManagerRoundEvictedIterator) Next() bool {
-	// If the iterator failed, stop iterating
-	if it.fail != nil {
-		return false
-	}
-	// If the iterator completed, deliver directly whatever's available
-	if it.done {
-		select {
-		case log := <-it.logs:
-			it.Event = new(DKGManagerRoundEvicted)
-			if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
-				it.fail = err
-				return false
-			}
-			it.Event.Raw = log
-			return true
-
-		default:
-			return false
-		}
-	}
-	// Iterator still in progress, wait for either a data or an error event
-	select {
-	case log := <-it.logs:
-		it.Event = new(DKGManagerRoundEvicted)
-		if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
-			it.fail = err
-			return false
-		}
-		it.Event.Raw = log
-		return true
-
-	case err := <-it.sub.Err():
-		it.done = true
-		it.fail = err
-		return it.Next()
-	}
-}
-
-// Error returns any retrieval or parsing error occurred during filtering.
-func (it *DKGManagerRoundEvictedIterator) Error() error {
-	return it.fail
-}
-
-// Close terminates the iteration process, releasing any pending underlying
-// resources.
-func (it *DKGManagerRoundEvictedIterator) Close() error {
-	it.sub.Unsubscribe()
-	return nil
-}
-
-// DKGManagerRoundEvicted represents a RoundEvicted event raised by the DKGManager contract.
-type DKGManagerRoundEvicted struct {
-	RoundId [12]byte
-	Raw     types.Log // Blockchain specific contextual infos
-}
-
-// FilterRoundEvicted is a free log retrieval operation binding the contract event 0x98a9ec8a25ae28f42f24e68ce0e89786ac50d95191ef5bbd9a4aef2a7eeaef26.
-//
-// Solidity: event RoundEvicted(bytes12 indexed roundId)
-func (_DKGManager *DKGManagerFilterer) FilterRoundEvicted(opts *bind.FilterOpts, roundId [][12]byte) (*DKGManagerRoundEvictedIterator, error) {
-
-	var roundIdRule []interface{}
-	for _, roundIdItem := range roundId {
-		roundIdRule = append(roundIdRule, roundIdItem)
-	}
-
-	logs, sub, err := _DKGManager.contract.FilterLogs(opts, "RoundEvicted", roundIdRule)
-	if err != nil {
-		return nil, err
-	}
-	return &DKGManagerRoundEvictedIterator{contract: _DKGManager.contract, event: "RoundEvicted", logs: logs, sub: sub}, nil
-}
-
-// WatchRoundEvicted is a free log subscription operation binding the contract event 0x98a9ec8a25ae28f42f24e68ce0e89786ac50d95191ef5bbd9a4aef2a7eeaef26.
-//
-// Solidity: event RoundEvicted(bytes12 indexed roundId)
-func (_DKGManager *DKGManagerFilterer) WatchRoundEvicted(opts *bind.WatchOpts, sink chan<- *DKGManagerRoundEvicted, roundId [][12]byte) (event.Subscription, error) {
-
-	var roundIdRule []interface{}
-	for _, roundIdItem := range roundId {
-		roundIdRule = append(roundIdRule, roundIdItem)
-	}
-
-	logs, sub, err := _DKGManager.contract.WatchLogs(opts, "RoundEvicted", roundIdRule)
-	if err != nil {
-		return nil, err
-	}
-	return event.NewSubscription(func(quit <-chan struct{}) error {
-		defer sub.Unsubscribe()
-		for {
-			select {
-			case log := <-logs:
-				// New log arrived, parse the event and forward to the user
-				event := new(DKGManagerRoundEvicted)
-				if err := _DKGManager.contract.UnpackLog(event, "RoundEvicted", log); err != nil {
-					return err
-				}
-				event.Raw = log
-
-				select {
-				case sink <- event:
-				case err := <-sub.Err():
-					return err
-				case <-quit:
-					return nil
-				}
-			case err := <-sub.Err():
-				return err
-			case <-quit:
-				return nil
-			}
-		}
-	}), nil
-}
-
-// ParseRoundEvicted is a log parse operation binding the contract event 0x98a9ec8a25ae28f42f24e68ce0e89786ac50d95191ef5bbd9a4aef2a7eeaef26.
-//
-// Solidity: event RoundEvicted(bytes12 indexed roundId)
-func (_DKGManager *DKGManagerFilterer) ParseRoundEvicted(log types.Log) (*DKGManagerRoundEvicted, error) {
-	event := new(DKGManagerRoundEvicted)
-	if err := _DKGManager.contract.UnpackLog(event, "RoundEvicted", log); err != nil {
-		return nil, err
-	}
-	event.Raw = log
-	return event, nil
-}
-
-// DKGManagerRoundFinalizedIterator is returned from FilterRoundFinalized and is used to iterate over the raw logs and unpacked data for RoundFinalized events raised by the DKGManager contract.
-type DKGManagerRoundFinalizedIterator struct {
-	Event *DKGManagerRoundFinalized // Event containing the contract specifics and raw log
-
-	contract *bind.BoundContract // Generic contract to use for unpacking event data
-	event    string              // Event name to use for unpacking event data
-
-	logs chan types.Log        // Log channel receiving the found contract events
-	sub  ethereum.Subscription // Subscription for errors, completion and termination
-	done bool                  // Whether the subscription completed delivering logs
-	fail error                 // Occurred error to stop iteration
-}
-
-// Next advances the iterator to the subsequent event, returning whether there
-// are any more events found. In case of a retrieval or parsing error, false is
-// returned and Error() can be queried for the exact failure.
-func (it *DKGManagerRoundFinalizedIterator) Next() bool {
-	// If the iterator failed, stop iterating
-	if it.fail != nil {
-		return false
-	}
-	// If the iterator completed, deliver directly whatever's available
-	if it.done {
-		select {
-		case log := <-it.logs:
-			it.Event = new(DKGManagerRoundFinalized)
-			if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
-				it.fail = err
-				return false
-			}
-			it.Event.Raw = log
-			return true
-
-		default:
-			return false
-		}
-	}
-	// Iterator still in progress, wait for either a data or an error event
-	select {
-	case log := <-it.logs:
-		it.Event = new(DKGManagerRoundFinalized)
-		if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
-			it.fail = err
-			return false
-		}
-		it.Event.Raw = log
-		return true
-
-	case err := <-it.sub.Err():
-		it.done = true
-		it.fail = err
-		return it.Next()
-	}
-}
-
-// Error returns any retrieval or parsing error occurred during filtering.
-func (it *DKGManagerRoundFinalizedIterator) Error() error {
-	return it.fail
-}
-
-// Close terminates the iteration process, releasing any pending underlying
-// resources.
-func (it *DKGManagerRoundFinalizedIterator) Close() error {
-	it.sub.Unsubscribe()
-	return nil
-}
-
-// DKGManagerRoundFinalized represents a RoundFinalized event raised by the DKGManager contract.
-type DKGManagerRoundFinalized struct {
-	RoundId                  [12]byte
-	AggregateCommitmentsHash [32]byte
-	CollectivePublicKeyHash  [32]byte
-	ShareCommitmentHash      [32]byte
-	Raw                      types.Log // Blockchain specific contextual infos
-}
-
-// FilterRoundFinalized is a free log retrieval operation binding the contract event 0x5f329a28ec91a18b4e7904324a3c08646c7c3d433fe5e4a36c788af074a72455.
-//
-// Solidity: event RoundFinalized(bytes12 indexed roundId, bytes32 aggregateCommitmentsHash, bytes32 collectivePublicKeyHash, bytes32 shareCommitmentHash)
-func (_DKGManager *DKGManagerFilterer) FilterRoundFinalized(opts *bind.FilterOpts, roundId [][12]byte) (*DKGManagerRoundFinalizedIterator, error) {
-
-	var roundIdRule []interface{}
-	for _, roundIdItem := range roundId {
-		roundIdRule = append(roundIdRule, roundIdItem)
-	}
-
-	logs, sub, err := _DKGManager.contract.FilterLogs(opts, "RoundFinalized", roundIdRule)
-	if err != nil {
-		return nil, err
-	}
-	return &DKGManagerRoundFinalizedIterator{contract: _DKGManager.contract, event: "RoundFinalized", logs: logs, sub: sub}, nil
-}
-
-// WatchRoundFinalized is a free log subscription operation binding the contract event 0x5f329a28ec91a18b4e7904324a3c08646c7c3d433fe5e4a36c788af074a72455.
-//
-// Solidity: event RoundFinalized(bytes12 indexed roundId, bytes32 aggregateCommitmentsHash, bytes32 collectivePublicKeyHash, bytes32 shareCommitmentHash)
-func (_DKGManager *DKGManagerFilterer) WatchRoundFinalized(opts *bind.WatchOpts, sink chan<- *DKGManagerRoundFinalized, roundId [][12]byte) (event.Subscription, error) {
-
-	var roundIdRule []interface{}
-	for _, roundIdItem := range roundId {
-		roundIdRule = append(roundIdRule, roundIdItem)
-	}
-
-	logs, sub, err := _DKGManager.contract.WatchLogs(opts, "RoundFinalized", roundIdRule)
-	if err != nil {
-		return nil, err
-	}
-	return event.NewSubscription(func(quit <-chan struct{}) error {
-		defer sub.Unsubscribe()
-		for {
-			select {
-			case log := <-logs:
-				// New log arrived, parse the event and forward to the user
-				event := new(DKGManagerRoundFinalized)
-				if err := _DKGManager.contract.UnpackLog(event, "RoundFinalized", log); err != nil {
-					return err
-				}
-				event.Raw = log
-
-				select {
-				case sink <- event:
-				case err := <-sub.Err():
-					return err
-				case <-quit:
-					return nil
-				}
-			case err := <-sub.Err():
-				return err
-			case <-quit:
-				return nil
-			}
-		}
-	}), nil
-}
-
-// ParseRoundFinalized is a log parse operation binding the contract event 0x5f329a28ec91a18b4e7904324a3c08646c7c3d433fe5e4a36c788af074a72455.
-//
-// Solidity: event RoundFinalized(bytes12 indexed roundId, bytes32 aggregateCommitmentsHash, bytes32 collectivePublicKeyHash, bytes32 shareCommitmentHash)
-func (_DKGManager *DKGManagerFilterer) ParseRoundFinalized(log types.Log) (*DKGManagerRoundFinalized, error) {
-	event := new(DKGManagerRoundFinalized)
-	if err := _DKGManager.contract.UnpackLog(event, "RoundFinalized", log); err != nil {
-		return nil, err
-	}
-	event.Raw = log
-	return event, nil
-}
-
-// DKGManagerSecretReconstructedIterator is returned from FilterSecretReconstructed and is used to iterate over the raw logs and unpacked data for SecretReconstructed events raised by the DKGManager contract.
-type DKGManagerSecretReconstructedIterator struct {
-	Event *DKGManagerSecretReconstructed // Event containing the contract specifics and raw log
-
-	contract *bind.BoundContract // Generic contract to use for unpacking event data
-	event    string              // Event name to use for unpacking event data
-
-	logs chan types.Log        // Log channel receiving the found contract events
-	sub  ethereum.Subscription // Subscription for errors, completion and termination
-	done bool                  // Whether the subscription completed delivering logs
-	fail error                 // Occurred error to stop iteration
-}
-
-// Next advances the iterator to the subsequent event, returning whether there
-// are any more events found. In case of a retrieval or parsing error, false is
-// returned and Error() can be queried for the exact failure.
-func (it *DKGManagerSecretReconstructedIterator) Next() bool {
-	// If the iterator failed, stop iterating
-	if it.fail != nil {
-		return false
-	}
-	// If the iterator completed, deliver directly whatever's available
-	if it.done {
-		select {
-		case log := <-it.logs:
-			it.Event = new(DKGManagerSecretReconstructed)
-			if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
-				it.fail = err
-				return false
-			}
-			it.Event.Raw = log
-			return true
-
-		default:
-			return false
-		}
-	}
-	// Iterator still in progress, wait for either a data or an error event
-	select {
-	case log := <-it.logs:
-		it.Event = new(DKGManagerSecretReconstructed)
-		if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
-			it.fail = err
-			return false
-		}
-		it.Event.Raw = log
-		return true
-
-	case err := <-it.sub.Err():
-		it.done = true
-		it.fail = err
-		return it.Next()
-	}
-}
-
-// Error returns any retrieval or parsing error occurred during filtering.
-func (it *DKGManagerSecretReconstructedIterator) Error() error {
-	return it.fail
-}
-
-// Close terminates the iteration process, releasing any pending underlying
-// resources.
-func (it *DKGManagerSecretReconstructedIterator) Close() error {
-	it.sub.Unsubscribe()
-	return nil
-}
-
-// DKGManagerSecretReconstructed represents a SecretReconstructed event raised by the DKGManager contract.
-type DKGManagerSecretReconstructed struct {
-	RoundId                 [12]byte
-	DisclosureHash          [32]byte
-	ReconstructedSecretHash [32]byte
-	Raw                     types.Log // Blockchain specific contextual infos
-}
-
-// FilterSecretReconstructed is a free log retrieval operation binding the contract event 0xbc874c1da78f7646af98f19f16267e99af67534204f56955055f5a5a2d73b482.
-//
-// Solidity: event SecretReconstructed(bytes12 indexed roundId, bytes32 disclosureHash, bytes32 reconstructedSecretHash)
-func (_DKGManager *DKGManagerFilterer) FilterSecretReconstructed(opts *bind.FilterOpts, roundId [][12]byte) (*DKGManagerSecretReconstructedIterator, error) {
-
-	var roundIdRule []interface{}
-	for _, roundIdItem := range roundId {
-		roundIdRule = append(roundIdRule, roundIdItem)
-	}
-
-	logs, sub, err := _DKGManager.contract.FilterLogs(opts, "SecretReconstructed", roundIdRule)
-	if err != nil {
-		return nil, err
-	}
-	return &DKGManagerSecretReconstructedIterator{contract: _DKGManager.contract, event: "SecretReconstructed", logs: logs, sub: sub}, nil
-}
-
-// WatchSecretReconstructed is a free log subscription operation binding the contract event 0xbc874c1da78f7646af98f19f16267e99af67534204f56955055f5a5a2d73b482.
-//
-// Solidity: event SecretReconstructed(bytes12 indexed roundId, bytes32 disclosureHash, bytes32 reconstructedSecretHash)
-func (_DKGManager *DKGManagerFilterer) WatchSecretReconstructed(opts *bind.WatchOpts, sink chan<- *DKGManagerSecretReconstructed, roundId [][12]byte) (event.Subscription, error) {
-
-	var roundIdRule []interface{}
-	for _, roundIdItem := range roundId {
-		roundIdRule = append(roundIdRule, roundIdItem)
-	}
-
-	logs, sub, err := _DKGManager.contract.WatchLogs(opts, "SecretReconstructed", roundIdRule)
-	if err != nil {
-		return nil, err
-	}
-	return event.NewSubscription(func(quit <-chan struct{}) error {
-		defer sub.Unsubscribe()
-		for {
-			select {
-			case log := <-logs:
-				// New log arrived, parse the event and forward to the user
-				event := new(DKGManagerSecretReconstructed)
-				if err := _DKGManager.contract.UnpackLog(event, "SecretReconstructed", log); err != nil {
-					return err
-				}
-				event.Raw = log
-
-				select {
-				case sink <- event:
-				case err := <-sub.Err():
-					return err
-				case <-quit:
-					return nil
-				}
-			case err := <-sub.Err():
-				return err
-			case <-quit:
-				return nil
-			}
-		}
-	}), nil
-}
-
-// ParseSecretReconstructed is a log parse operation binding the contract event 0xbc874c1da78f7646af98f19f16267e99af67534204f56955055f5a5a2d73b482.
-//
-// Solidity: event SecretReconstructed(bytes12 indexed roundId, bytes32 disclosureHash, bytes32 reconstructedSecretHash)
-func (_DKGManager *DKGManagerFilterer) ParseSecretReconstructed(log types.Log) (*DKGManagerSecretReconstructed, error) {
-	event := new(DKGManagerSecretReconstructed)
-	if err := _DKGManager.contract.UnpackLog(event, "SecretReconstructed", log); err != nil {
 		return nil, err
 	}
 	event.Raw = log
@@ -3235,22 +2754,22 @@ func (it *DKGManagerSeedResolvedIterator) Close() error {
 
 // DKGManagerSeedResolved represents a SeedResolved event raised by the DKGManager contract.
 type DKGManagerSeedResolved struct {
-	RoundId [12]byte
+	EpochId [12]byte
 	Seed    [32]byte
 	Raw     types.Log // Blockchain specific contextual infos
 }
 
 // FilterSeedResolved is a free log retrieval operation binding the contract event 0xc16e97da5706abead845583dfc2e6126862a0c07801be8ac6027010b50139652.
 //
-// Solidity: event SeedResolved(bytes12 indexed roundId, bytes32 seed)
-func (_DKGManager *DKGManagerFilterer) FilterSeedResolved(opts *bind.FilterOpts, roundId [][12]byte) (*DKGManagerSeedResolvedIterator, error) {
+// Solidity: event SeedResolved(bytes12 indexed epochId, bytes32 seed)
+func (_DKGManager *DKGManagerFilterer) FilterSeedResolved(opts *bind.FilterOpts, epochId [][12]byte) (*DKGManagerSeedResolvedIterator, error) {
 
-	var roundIdRule []interface{}
-	for _, roundIdItem := range roundId {
-		roundIdRule = append(roundIdRule, roundIdItem)
+	var epochIdRule []interface{}
+	for _, epochIdItem := range epochId {
+		epochIdRule = append(epochIdRule, epochIdItem)
 	}
 
-	logs, sub, err := _DKGManager.contract.FilterLogs(opts, "SeedResolved", roundIdRule)
+	logs, sub, err := _DKGManager.contract.FilterLogs(opts, "SeedResolved", epochIdRule)
 	if err != nil {
 		return nil, err
 	}
@@ -3259,15 +2778,15 @@ func (_DKGManager *DKGManagerFilterer) FilterSeedResolved(opts *bind.FilterOpts,
 
 // WatchSeedResolved is a free log subscription operation binding the contract event 0xc16e97da5706abead845583dfc2e6126862a0c07801be8ac6027010b50139652.
 //
-// Solidity: event SeedResolved(bytes12 indexed roundId, bytes32 seed)
-func (_DKGManager *DKGManagerFilterer) WatchSeedResolved(opts *bind.WatchOpts, sink chan<- *DKGManagerSeedResolved, roundId [][12]byte) (event.Subscription, error) {
+// Solidity: event SeedResolved(bytes12 indexed epochId, bytes32 seed)
+func (_DKGManager *DKGManagerFilterer) WatchSeedResolved(opts *bind.WatchOpts, sink chan<- *DKGManagerSeedResolved, epochId [][12]byte) (event.Subscription, error) {
 
-	var roundIdRule []interface{}
-	for _, roundIdItem := range roundId {
-		roundIdRule = append(roundIdRule, roundIdItem)
+	var epochIdRule []interface{}
+	for _, epochIdItem := range epochId {
+		epochIdRule = append(epochIdRule, epochIdItem)
 	}
 
-	logs, sub, err := _DKGManager.contract.WatchLogs(opts, "SeedResolved", roundIdRule)
+	logs, sub, err := _DKGManager.contract.WatchLogs(opts, "SeedResolved", epochIdRule)
 	if err != nil {
 		return nil, err
 	}
@@ -3301,7 +2820,7 @@ func (_DKGManager *DKGManagerFilterer) WatchSeedResolved(opts *bind.WatchOpts, s
 
 // ParseSeedResolved is a log parse operation binding the contract event 0xc16e97da5706abead845583dfc2e6126862a0c07801be8ac6027010b50139652.
 //
-// Solidity: event SeedResolved(bytes12 indexed roundId, bytes32 seed)
+// Solidity: event SeedResolved(bytes12 indexed epochId, bytes32 seed)
 func (_DKGManager *DKGManagerFilterer) ParseSeedResolved(log types.Log) (*DKGManagerSeedResolved, error) {
 	event := new(DKGManagerSeedResolved)
 	if err := _DKGManager.contract.UnpackLog(event, "SeedResolved", log); err != nil {
@@ -3380,7 +2899,7 @@ func (it *DKGManagerSlotClaimedIterator) Close() error {
 
 // DKGManagerSlotClaimed represents a SlotClaimed event raised by the DKGManager contract.
 type DKGManagerSlotClaimed struct {
-	RoundId [12]byte
+	EpochId [12]byte
 	Claimer common.Address
 	Slot    uint16
 	Raw     types.Log // Blockchain specific contextual infos
@@ -3388,19 +2907,19 @@ type DKGManagerSlotClaimed struct {
 
 // FilterSlotClaimed is a free log retrieval operation binding the contract event 0x80d59d7599daf0493f96a2d1016163c29d85f5e4a8b59f3001f6e9a115a6c96b.
 //
-// Solidity: event SlotClaimed(bytes12 indexed roundId, address indexed claimer, uint16 slot)
-func (_DKGManager *DKGManagerFilterer) FilterSlotClaimed(opts *bind.FilterOpts, roundId [][12]byte, claimer []common.Address) (*DKGManagerSlotClaimedIterator, error) {
+// Solidity: event SlotClaimed(bytes12 indexed epochId, address indexed claimer, uint16 slot)
+func (_DKGManager *DKGManagerFilterer) FilterSlotClaimed(opts *bind.FilterOpts, epochId [][12]byte, claimer []common.Address) (*DKGManagerSlotClaimedIterator, error) {
 
-	var roundIdRule []interface{}
-	for _, roundIdItem := range roundId {
-		roundIdRule = append(roundIdRule, roundIdItem)
+	var epochIdRule []interface{}
+	for _, epochIdItem := range epochId {
+		epochIdRule = append(epochIdRule, epochIdItem)
 	}
 	var claimerRule []interface{}
 	for _, claimerItem := range claimer {
 		claimerRule = append(claimerRule, claimerItem)
 	}
 
-	logs, sub, err := _DKGManager.contract.FilterLogs(opts, "SlotClaimed", roundIdRule, claimerRule)
+	logs, sub, err := _DKGManager.contract.FilterLogs(opts, "SlotClaimed", epochIdRule, claimerRule)
 	if err != nil {
 		return nil, err
 	}
@@ -3409,19 +2928,19 @@ func (_DKGManager *DKGManagerFilterer) FilterSlotClaimed(opts *bind.FilterOpts, 
 
 // WatchSlotClaimed is a free log subscription operation binding the contract event 0x80d59d7599daf0493f96a2d1016163c29d85f5e4a8b59f3001f6e9a115a6c96b.
 //
-// Solidity: event SlotClaimed(bytes12 indexed roundId, address indexed claimer, uint16 slot)
-func (_DKGManager *DKGManagerFilterer) WatchSlotClaimed(opts *bind.WatchOpts, sink chan<- *DKGManagerSlotClaimed, roundId [][12]byte, claimer []common.Address) (event.Subscription, error) {
+// Solidity: event SlotClaimed(bytes12 indexed epochId, address indexed claimer, uint16 slot)
+func (_DKGManager *DKGManagerFilterer) WatchSlotClaimed(opts *bind.WatchOpts, sink chan<- *DKGManagerSlotClaimed, epochId [][12]byte, claimer []common.Address) (event.Subscription, error) {
 
-	var roundIdRule []interface{}
-	for _, roundIdItem := range roundId {
-		roundIdRule = append(roundIdRule, roundIdItem)
+	var epochIdRule []interface{}
+	for _, epochIdItem := range epochId {
+		epochIdRule = append(epochIdRule, epochIdItem)
 	}
 	var claimerRule []interface{}
 	for _, claimerItem := range claimer {
 		claimerRule = append(claimerRule, claimerItem)
 	}
 
-	logs, sub, err := _DKGManager.contract.WatchLogs(opts, "SlotClaimed", roundIdRule, claimerRule)
+	logs, sub, err := _DKGManager.contract.WatchLogs(opts, "SlotClaimed", epochIdRule, claimerRule)
 	if err != nil {
 		return nil, err
 	}
@@ -3455,7 +2974,7 @@ func (_DKGManager *DKGManagerFilterer) WatchSlotClaimed(opts *bind.WatchOpts, si
 
 // ParseSlotClaimed is a log parse operation binding the contract event 0x80d59d7599daf0493f96a2d1016163c29d85f5e4a8b59f3001f6e9a115a6c96b.
 //
-// Solidity: event SlotClaimed(bytes12 indexed roundId, address indexed claimer, uint16 slot)
+// Solidity: event SlotClaimed(bytes12 indexed epochId, address indexed claimer, uint16 slot)
 func (_DKGManager *DKGManagerFilterer) ParseSlotClaimed(log types.Log) (*DKGManagerSlotClaimed, error) {
 	event := new(DKGManagerSlotClaimed)
 	if err := _DKGManager.contract.UnpackLog(event, "SlotClaimed", log); err != nil {

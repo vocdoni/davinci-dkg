@@ -13,7 +13,12 @@ var decryptCombineTranscriptDomain = ethcrypto.Keccak256Hash([]byte("davinci-dkg
 
 // PublicInputs is the native representation of the decrypt-combine public inputs.
 type PublicInputs struct {
-	RoundHash            *big.Int
+	RoundHash            *big.Int // semantically: eid
+	Aid                  *big.Int
+	CtIdx                *big.Int
+	Mode                 *big.Int
+	S                    *big.Int
+	DeltaOrg             types.CurvePoint
 	Threshold            *big.Int
 	ShareCount           *big.Int
 	CombineHash          *big.Int
@@ -34,6 +39,29 @@ func BuildWitness(a Assignment) (*DecryptCombineCircuit, *PublicInputs, error) {
 
 	threshold := big.NewInt(int64(a.Threshold))
 	shareCount := big.NewInt(int64(len(a.ParticipantIndexes)))
+	// Default per-application correction fields to zero / identity / mode 0
+	// when callers don't supply them — preserves the legacy combine path
+	// (T = 0·C_1 = O, identity addend in the C_2 equation).
+	aid := new(big.Int)
+	if a.Aid != nil {
+		aid.Set(a.Aid)
+	}
+	ctIdx := new(big.Int)
+	if a.CtIdx != nil {
+		ctIdx.Set(a.CtIdx)
+	}
+	mode := new(big.Int)
+	if a.Mode != nil {
+		mode.Set(a.Mode)
+	}
+	s := new(big.Int)
+	if a.S != nil {
+		s.Set(a.S)
+	}
+	deltaOrg := types.CurvePoint{X: big.NewInt(0), Y: big.NewInt(1)}
+	if a.DeltaOrg.X != nil && a.DeltaOrg.Y != nil {
+		deltaOrg = a.DeltaOrg
+	}
 	participantIndexes := ccommon.Uint16sToBigInts(a.ParticipantIndexes)
 	participantIndexes, err := ccommon.PadBigInts(participantIndexes, MaxShares)
 	if err != nil {
@@ -53,7 +81,13 @@ func BuildWitness(a Assignment) (*DecryptCombineCircuit, *PublicInputs, error) {
 	}
 
 	hashInputs := []*big.Int{
-		a.RoundHash,
+		a.RoundHash, // eid
+		aid,
+		ctIdx,
+		mode,
+		s,
+		deltaOrg.X,
+		deltaOrg.Y,
 		threshold,
 		shareCount,
 		a.CiphertextC1.X,
@@ -121,6 +155,11 @@ func BuildWitness(a Assignment) (*DecryptCombineCircuit, *PublicInputs, error) {
 
 	witness := &DecryptCombineCircuit{
 		RoundHash:            new(big.Int).Set(a.RoundHash),
+		Aid:                  new(big.Int).Set(aid),
+		CtIdx:                new(big.Int).Set(ctIdx),
+		Mode:                 new(big.Int).Set(mode),
+		S:                    new(big.Int).Set(s),
+		DeltaOrg:             ccommon.CircuitPoint(deltaOrg),
 		Threshold:            threshold,
 		ShareCount:           shareCount,
 		CombineHash:          combineHash,
@@ -139,6 +178,11 @@ func BuildWitness(a Assignment) (*DecryptCombineCircuit, *PublicInputs, error) {
 
 	publicInputs := &PublicInputs{
 		RoundHash:            new(big.Int).Set(a.RoundHash),
+		Aid:                  new(big.Int).Set(aid),
+		CtIdx:                new(big.Int).Set(ctIdx),
+		Mode:                 new(big.Int).Set(mode),
+		S:                    new(big.Int).Set(s),
+		DeltaOrg:             deltaOrg,
 		Threshold:            new(big.Int).Set(threshold),
 		ShareCount:           new(big.Int).Set(shareCount),
 		CombineHash:          new(big.Int).Set(combineHash),
@@ -157,6 +201,11 @@ func BuildWitness(a Assignment) (*DecryptCombineCircuit, *PublicInputs, error) {
 func (p PublicInputs) PublicWitness() *DecryptCombineCircuit {
 	witness := &DecryptCombineCircuit{
 		RoundHash:            p.RoundHash,
+		Aid:                  p.Aid,
+		CtIdx:                p.CtIdx,
+		Mode:                 p.Mode,
+		S:                    p.S,
+		DeltaOrg:             ccommon.CircuitPoint(p.DeltaOrg),
 		Threshold:            p.Threshold,
 		ShareCount:           p.ShareCount,
 		CombineHash:          p.CombineHash,
@@ -171,6 +220,12 @@ func (p PublicInputs) PublicWitness() *DecryptCombineCircuit {
 func (p PublicInputs) Scalars() []*big.Int {
 	return []*big.Int{
 		p.RoundHash,
+		p.Aid,
+		p.CtIdx,
+		p.Mode,
+		p.S,
+		p.DeltaOrg.X,
+		p.DeltaOrg.Y,
 		p.Threshold,
 		p.ShareCount,
 		p.CombineHash,

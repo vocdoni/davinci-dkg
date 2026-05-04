@@ -8,36 +8,35 @@ export { DKGClient } from './client.js';
 export { DKGWriter } from './writer.js';
 
 export {
-  RoundStatus,
+  EpochPhase,
   NodeStatus,
   OpenDecryptionPolicy,
   roundStatusLabel,
-  type RoundStatusValue,
+  type EpochPhaseValue,
   type NodeStatusValue,
-  type RoundPolicy,
+  type EpochPolicy,
   type DecryptionPolicy,
-  type Round,
+  type Epoch,
   type ContributionRecord,
   type PartialDecryptionRecord,
   type CombinedDecryptionRecord,
-  type RevealedShareRecord,
   type NodeKey,
   type DKGConfig,
   type DKGWriterConfig,
   type BabyJubPoint,
   type ElGamalCiphertext,
   type PollOptions,
-  type RoundEvent,
-  type RoundEntry,
+  type EpochEvent,
+  type EpochEntry,
 } from './types.js';
 
 export { dkgManagerAbi, dkgRegistryAbi } from './abi.js';
-export { buildRoundId, parseRoundId } from './utils.js';
+export { buildEpochId, parseEpochId } from './utils.js';
 export {
-  waitForRoundStatus,
+  waitForEpochPhase,
   waitForDecryption,
   watchNewRounds,
-  watchRoundFinalized,
+  watchEpochFinalized,
   watchDecryptionCombined,
   watchCiphertextSubmitted,
   networkSummary,

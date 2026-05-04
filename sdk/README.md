@@ -21,9 +21,9 @@ import {
   DKGClient,
   DKGWriter,
   buildElGamal,
-  waitForRoundStatus,
-  RoundStatus,
-  buildRoundId,
+  waitForEpochPhase,
+  EpochPhase,
+  buildEpochId,
 } from '@vocdoni/davinci-dkg-sdk';
 
 const chain = defineChain({ id: 1337, name: 'Anvil', nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 }, rpcUrls: { default: { http: ['http://localhost:8545'] } } });
@@ -126,10 +126,10 @@ await writer.abortRound(roundId);
 ## Monitoring rounds
 
 ```ts
-import { waitForRoundStatus, waitForDecryption, watchNewRounds } from '@vocdoni/davinci-dkg-sdk';
+import { waitForEpochPhase, waitForDecryption, watchNewRounds } from '@vocdoni/davinci-dkg-sdk';
 
 // Poll until a round reaches Finalized status
-await waitForRoundStatus(client, roundId, RoundStatus.Finalized, {
+await waitForEpochPhase(client, roundId, EpochPhase.Finalized, {
   intervalMs: 2000,
   timeoutMs:  120_000,
 });
@@ -232,7 +232,7 @@ In the DKG protocol the private key is never held by a single party. To decrypt 
 [Anyone]    getPlaintext(roundId, idx)               ← plaintext is on-chain
 ```
 
-> **Collective public key:** The contract accumulates the key incrementally as contributions are accepted — each contributor's `commitment[0]` point is added on-chain during `submitContribution`. The `(x, y)` coordinates are available at any time via `client.getCollectivePublicKey(roundId)`, a simple view-call that requires no calldata parsing. `RoundFinalized` emits `collectivePublicKeyHash` (keccak256 of the final key) for integrity verification.
+> **Collective public key:** The contract accumulates the key incrementally as contributions are accepted — each contributor's `commitment[0]` point is added on-chain during `submitContribution`. The `(x, y)` coordinates are available at any time via `client.getCollectivePublicKey(roundId)`, a simple view-call that requires no calldata parsing. `EpochFinalized` emits `collectivePublicKeyHash` (keccak256 of the final key) for integrity verification.
 
 ## API reference
 
@@ -257,11 +257,11 @@ In the DKG protocol the private key is never held by a single party. To decrypt 
 | `blockNumber()` | Current block |
 | `roundNonce()` | Next round nonce |
 | `buildRoundId(nonce)` | Derive round ID from nonce |
-| `getRoundCreatedEvents(opts?)` | Historical RoundCreated logs |
-| `getRoundFinalizedEvents(roundId)` | Historical RoundFinalized logs (includes `transactionHash`) |
+| `getEpochCreatedEvents(opts?)` | Historical EpochCreated logs |
+| `getEpochFinalizedEvents(roundId)` | Historical EpochFinalized logs (includes `transactionHash`) |
 | `getCollectivePublicKey(roundId)` | Fetch the collective public key `(x, y)` from the on-chain accumulator (available after the first contribution is accepted) |
-| `getAllRoundEvents(roundId, fromBlock?)` | All DKGManager events for a specific round |
-| `getRecentRounds(limit?)` | Most recent N rounds (default 20) as `RoundEntry[]` |
+| `getAllEpochEvents(roundId, fromBlock?)` | All DKGManager events for a specific round |
+| `getRecentRounds(limit?)` | Most recent N rounds (default 20) as `EpochEntry[]` |
 | `getRegistryNodes(fromBlock?)` | All registered nodes via NodeRegistered events |
 | `roundPrefix()` | Fetch the immutable ROUND_PREFIX constant |
 | `watchManagerEvents(handler)` | Live event stream (returns unsubscribe fn) |
@@ -296,10 +296,10 @@ All `DKGClient` methods plus:
 
 | Export | Description |
 |--------|-------------|
-| `waitForRoundStatus(client, roundId, status, opts?)` | Poll until round status reached |
+| `waitForEpochPhase(client, roundId, status, opts?)` | Poll until round status reached |
 | `waitForDecryption(client, roundId, idx, opts?)` | Poll until decryption complete |
 | `watchNewRounds(client, onRound, fromBlock?)` | Subscribe to new rounds |
-| `watchRoundFinalized(client, roundId, onFinalized)` | Subscribe to finalization |
+| `watchEpochFinalized(client, roundId, onFinalized)` | Subscribe to finalization |
 | `watchDecryptionCombined(client, roundId, idx, onCombined)` | Subscribe to decryption |
 | `networkSummary(client)` | Block, node counts, round nonce |
 

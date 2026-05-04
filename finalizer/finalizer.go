@@ -1,8 +1,8 @@
-// Package finalizer builds and submits the finalizeRound transaction for a
-// DKG round. It collects accepted contributions from on-chain calldata,
+// Package finalizer builds and submits the finalizeEpoch transaction for a
+// DKG epoch. It collects accepted contributions from on-chain calldata,
 // generates the finalize ZK proof off-chain, and broadcasts the tx.
 //
-// Used by both the dkg-runner orchestrator and the davinci-dkg-node daemon
+// Used by the davinci-dkg-node daemon
 // (the latter via its auto-finalize stagger).
 package finalizer
 
@@ -35,7 +35,7 @@ type Result struct {
 }
 
 // BuildAndSubmit reads accepted contributions from on-chain calldata, builds
-// the finalize ZK proof, and submits finalizeRound. It returns the recovered
+// the finalize ZK proof, and submits finalizeEpoch. It returns the recovered
 // per-participant share commitments on success.
 //
 // The caller is responsible for ensuring block.number >=
@@ -46,36 +46,36 @@ func BuildAndSubmit(
 	c *web3.Contracts,
 	m *gtypes.DKGManager,
 	txm *txmanager.Manager,
-	roundID [12]byte,
+	epochID [12]byte,
 	t, n uint16,
 	committee []common.Address,
 ) (*Result, error) {
 	callOpts := &bind.CallOpts{Context: ctx}
 
-	// Bound the event-log scan to blocks since this round was created. Using
-	// the round's SeedBlock as a lower bound keeps the FilterLogs cheap even
+	// Bound the event-log scan to blocks since this epoch was created. Using
+	// the epoch's SeedBlock as a lower bound keeps the FilterLogs cheap even
 	// on long-lived deployments. We back off by 1 block to be safe against
 	// any off-by-one in the seed-block emission relative to the contribution
 	// submission window (contributions can only land after registration
 	// closes, which is after seedBlock, so this is conservative).
-	round, err := c.GetRound(ctx, roundID)
+	epoch, err := c.GetEpoch(ctx, epochID)
 	if err != nil {
-		return nil, fmt.Errorf("get round for log scan range: %w", err)
+		return nil, fmt.Errorf("get epoch for log scan range: %w", err)
 	}
 	startBlock := uint64(0)
-	if round.SeedBlock > 0 {
-		startBlock = uint64(round.SeedBlock) - 1
+	if epoch.SeedBlock > 0 {
+		startBlock = uint64(epoch.SeedBlock) - 1
 	}
 
 	acceptedIdxs := make([]uint16, 0, n)
 	allPoints := make([][]nodetypes.CurvePoint, 0, n)
 
 	for i, addr := range committee {
-		rec, err := m.GetContribution(callOpts, roundID, addr)
+		rec, err := m.GetContribution(callOpts, epochID, addr)
 		if err != nil || !rec.Accepted {
 			continue
 		}
-		pts, err := commitmentPointsFromCalldata(ctx, c, m, roundID, addr, startBlock, t)
+		pts, err := commitmentPointsFromCalldata(ctx, c, m, epochID, addr, startBlock, t)
 		if err != nil {
 			return nil, fmt.Errorf("commitment points for %s: %w", addr, err)
 		}
@@ -86,7 +86,7 @@ func BuildAndSubmit(
 		return nil, fmt.Errorf("only %d/%d accepted contributions", len(acceptedIdxs), t)
 	}
 
-	roundHash := new(big.Int).SetBytes(roundID[:])
+	roundHash := new(big.Int).SetBytes(epochID[:])
 	asgn := finalize.CommitmentPointsAssignment{
 		RoundHash:          roundHash,
 		Threshold:          t,
@@ -123,7 +123,7 @@ func BuildAndSubmit(
 	if err != nil {
 		return nil, err
 	}
-	tx, err := m.FinalizeRound(auth, roundID,
+	tx, err := m.FinalizeEpoch(auth, epochID,
 		common.BigToHash(pi.AggregateHash),
 		common.BigToHash(pi.CollectivePublicKey),
 		common.BigToHash(pi.ShareCommitmentHash),
@@ -138,14 +138,14 @@ func BuildAndSubmit(
 	res := &Result{ShareCommitments: pi.ShareCommitments}
 	if receipt, err := c.Client().TransactionReceipt(ctx, tx.Hash()); err == nil {
 		res.GasUsed = receipt.GasUsed
-		log.Infow("finalizeRound tx mined", "tx", tx.Hash().Hex(), "gas", receipt.GasUsed)
+		log.Infow("finalizeEpoch tx mined", "tx", tx.Hash().Hex(), "gas", receipt.GasUsed)
 	}
 	return res, nil
 }
 
 // commitmentPointsFromCalldata locates the submitContribution tx from
-// `contributor` for the given round via the ContributionSubmitted event log
-// (indexed by roundId + contributor), then fetches that single transaction
+// `contributor` for the given epoch via the ContributionSubmitted event log
+// (indexed by epochId + contributor), then fetches that single transaction
 // and parses its t Feldman commitment points from the calldata transcript.
 //
 // This replaces an earlier implementation that scanned the last ~2000 blocks
@@ -157,7 +157,7 @@ func commitmentPointsFromCalldata(
 	ctx context.Context,
 	c *web3.Contracts,
 	m *gtypes.DKGManager,
-	roundID [12]byte,
+	epochID [12]byte,
 	contributor common.Address,
 	startBlock uint64,
 	t uint16,
@@ -175,7 +175,7 @@ func commitmentPointsFromCalldata(
 	}
 	it, err := m.FilterContributionSubmitted(
 		filterOpts,
-		[][12]byte{roundID},
+		[][12]byte{epochID},
 		[]common.Address{contributor},
 	)
 	if err != nil {
@@ -187,8 +187,8 @@ func commitmentPointsFromCalldata(
 		if err := it.Error(); err != nil {
 			return nil, fmt.Errorf("iterate ContributionSubmitted: %w", err)
 		}
-		return nil, fmt.Errorf("no ContributionSubmitted event for %s in round %x (range %d..%d)",
-			contributor, roundID, startBlock, latest)
+		return nil, fmt.Errorf("no ContributionSubmitted event for %s in epoch %x (range %d..%d)",
+			contributor, epochID, startBlock, latest)
 	}
 
 	txHash := it.Event.Raw.TxHash
@@ -210,12 +210,14 @@ func parseCommitmentPoints(data []byte, t uint16) ([]nodetypes.CurvePoint, error
 		return nil, fmt.Errorf("data too short")
 	}
 	payload := data[4:]
-	// transcript is the 7th parameter (index 6, after commitment0X and commitment0Y),
-	// offset is at head bytes 192..223.
+	// submitContribution(epochId, contributorIndex, commitmentsHash,
+	// encryptedSharesHash, transcript, proof, input) — 7 params, head is
+	// 7×32 = 224 bytes. transcript is param index 4 (zero-based), so its
+	// head offset slot is bytes 128..160.
 	if len(payload) < 224 {
 		return nil, fmt.Errorf("payload head too short")
 	}
-	tOffset := int64(new(big.Int).SetBytes(pad32(payload[192:224])).Uint64())
+	tOffset := int64(new(big.Int).SetBytes(pad32(payload[128:160])).Uint64())
 	if int(tOffset)+32 > len(payload) {
 		return nil, fmt.Errorf("transcript offset out of bounds")
 	}

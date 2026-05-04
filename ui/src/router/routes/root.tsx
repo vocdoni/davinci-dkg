@@ -9,8 +9,8 @@ import { ErrorElement } from '~elements/error'
 // home page implemented doesn't pay the bundle cost of the (yet-unwritten)
 // playground or registry chunks.
 const Home = lazy(() => import('~elements/home').then((m) => ({ default: m.Home })))
-const RoundsList = lazy(() => import('~elements/rounds/index').then((m) => ({ default: m.RoundsList })))
-const RoundView = lazy(() => import('~elements/rounds/view').then((m) => ({ default: m.RoundView })))
+const RoundsList = lazy(() => import('~elements/epochs/index').then((m) => ({ default: m.RoundsList })))
+const EpochView = lazy(() => import('~elements/epochs/view').then((m) => ({ default: m.EpochView })))
 const Registry = lazy(() => import('~elements/registry').then((m) => ({ default: m.Registry })))
 const Playground = lazy(() => import('~elements/playground').then((m) => ({ default: m.Playground })))
 const RunNode = lazy(() => import('~elements/run-a-node').then((m) => ({ default: m.RunNode })))
@@ -32,7 +32,7 @@ export const router = createBrowserRouter([
         ),
       },
       {
-        path: Routes.rounds,
+        path: Routes.epochs,
         element: (
           <SuspenseLoader>
             <RoundsList />
@@ -40,10 +40,10 @@ export const router = createBrowserRouter([
         ),
       },
       {
-        path: Routes.round,
+        path: Routes.epoch,
         element: (
           <SuspenseLoader>
-            <RoundView />
+            <EpochView />
           </SuspenseLoader>
         ),
       },

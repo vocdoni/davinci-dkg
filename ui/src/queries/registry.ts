@@ -34,11 +34,11 @@ export function useRegistryNodes() {
   })
 }
 
-export function useRoundCount() {
+export function useEpochCount() {
   const { dkg } = useDkgClient()
   return useQuery({
-    queryKey: ['chain', 'roundNonce'],
-    queryFn: () => dkg.roundNonce(),
+    queryKey: ['chain', 'epochNonce'],
+    queryFn: () => dkg.epochNonce(),
     refetchInterval: Polling.default,
   })
 }

@@ -23,10 +23,16 @@ echo "Building contracts..."
 forge build --quiet
 
 echo "Deploying contracts..."
+# PoseidonT3/T5/T6 are well above EIP-170's 24,576-byte ceiling — that's
+# the whole point of the precompile-style approach (they're called via
+# DELEGATECALL from much smaller wrappers). Anvil disables the runtime
+# check via `--disable-code-size-limit`; we pass the matching forge flag
+# here to keep the script from refusing to broadcast at simulation time.
 forge script script/DeployAll.s.sol:DeployAllScript \
   --chain "$CHAIN_ID" \
   --rpc-url "$RPC_URL" \
   --private-key "$PRIVATE_KEY" \
+  --code-size-limit 200000 \
   --broadcast \
   --quiet
 

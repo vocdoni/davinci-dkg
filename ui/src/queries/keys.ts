@@ -8,13 +8,13 @@ export const QueryKeys = {
   chain: ['chain'] as const,
   blockNumber: ['chain', 'blockNumber'] as const,
 
-  roundsRecent: (limit: number) => ['rounds', 'recent', limit] as const,
-  round: (id: `0x${string}`) => ['rounds', id] as const,
-  roundEvents: (id: `0x${string}`, fromBlock?: bigint) =>
-    ['rounds', id, 'events', fromBlock?.toString() ?? 'all'] as const,
+  epochsRecent: (limit: number) => ['epochs', 'recent', limit] as const,
+  epoch: (id: `0x${string}`) => ['epochs', id] as const,
+  epochEvents: (id: `0x${string}`, fromBlock?: bigint) =>
+    ['epochs', id, 'events', fromBlock?.toString() ?? 'all'] as const,
 
   registryNodes: ['registry', 'nodes'] as const,
   registryStats: ['registry', 'stats'] as const,
 
-  decryption: (id: `0x${string}`, ix: number) => ['rounds', id, 'decryption', ix] as const,
+  decryption: (id: `0x${string}`, ix: number) => ['epochs', id, 'decryption', ix] as const,
 } as const

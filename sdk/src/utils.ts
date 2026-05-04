@@ -1,26 +1,27 @@
 import type { Hex } from 'viem';
 
 /**
- * Build a bytes12 round ID from its two parts.
+ * Build a bytes12 epoch ID from its two parts.
  *
  * Layout (big-endian on chain):
- *   [0..3]  uint32 ROUND_PREFIX (= chain ID)
+ *   [0..3]  uint32 EPOCH_PREFIX = uint32(keccak256(chainId, manager))
+ *           (see solidity/src/libraries/DKGIdLib.sol::getPrefix)
  *   [4..11] uint64 nonce
  *
- * @param prefix  The ROUND_PREFIX constant from the DKGManager contract
- * @param nonce   The nonce returned by roundNonce() at round creation time
+ * @param prefix  The EPOCH_PREFIX value read from DKGManager (NOT the chain ID)
+ * @param nonce   The nonce returned by epochNonce() at epoch creation time
  */
-export function buildRoundId(prefix: number | bigint, nonce: bigint): Hex {
+export function buildEpochId(prefix: number | bigint, nonce: bigint): Hex {
   const p = BigInt(prefix);
   return `0x${p.toString(16).padStart(8, '0')}${nonce.toString(16).padStart(16, '0')}` as Hex;
 }
 
 /**
- * Parse a bytes12 round ID back into its components.
+ * Parse a bytes12 epoch ID back into its components.
  */
-export function parseRoundId(roundId: Hex): { prefix: number; nonce: bigint } {
-  const hex = roundId.startsWith('0x') ? roundId.slice(2) : roundId;
-  if (hex.length !== 24) throw new Error(`Invalid roundId length: ${roundId}`);
+export function parseEpochId(epochId: Hex): { prefix: number; nonce: bigint } {
+  const hex = epochId.startsWith('0x') ? epochId.slice(2) : epochId;
+  if (hex.length !== 24) throw new Error(`Invalid epochId length: ${epochId}`);
   const prefix = parseInt(hex.slice(0, 8), 16);
   const nonce = BigInt('0x' + hex.slice(8, 24));
   return { prefix, nonce };

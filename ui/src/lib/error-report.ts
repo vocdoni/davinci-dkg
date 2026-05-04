@@ -7,7 +7,7 @@ export interface ErrorReportContext {
   chainId?: number
   chainName?: string
   walletAddress?: string
-  roundId?: string
+  epochId?: string
   blockNumber?: string | bigint | number
   buildVersion?: string
 }
@@ -27,7 +27,7 @@ export function buildErrorReport(error: unknown, ctx: ErrorReportContext = {}): 
       ? `- chain: ${ctx.chainName ?? '(unknown)'} (id ${ctx.chainId ?? '?'})`
       : null,
     ctx.walletAddress ? `- wallet: ${ctx.walletAddress}` : null,
-    ctx.roundId ? `- round: ${ctx.roundId}` : null,
+    ctx.epochId ? `- epoch: ${ctx.epochId}` : null,
     ctx.blockNumber != null ? `- block: ${ctx.blockNumber.toString()}` : null,
     ctx.buildVersion ? `- build: ${ctx.buildVersion}` : null,
     `- user agent: ${ua}`,

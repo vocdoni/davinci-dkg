@@ -12,6 +12,10 @@ import (
 const (
 	MaxCoefficients = ccommon.MaxN
 	MaxParticipants = ccommon.MaxN
+	// xMaxBits = ⌈log₂(MaxParticipants)⌉. See contribution circuit and
+	// CommitmentPolynomialValue for the +1 boundary explanation
+	// (one-based indexes go from 1 to MaxN inclusive).
+	xMaxBits = 5 // covers MaxParticipants up to 32 (one-based 1..32)
 )
 
 // Assignment is the native input model used to build a finalize witness.
@@ -26,7 +30,7 @@ type Assignment struct {
 // Validate checks that the assignment fits the current circuit bounds.
 func (a Assignment) Validate() error {
 	if a.RoundHash == nil {
-		return fmt.Errorf("round hash is required")
+		return fmt.Errorf("epoch hash is required")
 	}
 	if a.Threshold == 0 || a.CommitteeSize == 0 {
 		return fmt.Errorf("threshold and committee size are required")
@@ -50,10 +54,22 @@ func (a Assignment) Validate() error {
 			len(a.ParticipantIndexes),
 		)
 	}
+	// Reject duplicate participant indexes so local
+	// tooling cannot accidentally produce a finalize set that the contract
+	// would reject (and that a malicious prover could otherwise exploit to
+	// finalize an aggregate disjoint from the on-chain accumulated key).
+	seen := make(map[uint16]struct{}, len(a.ParticipantIndexes))
 	for i, index := range a.ParticipantIndexes {
 		if index == 0 {
 			return fmt.Errorf("participant index %d is zero", i)
 		}
+		if index > a.CommitteeSize {
+			return fmt.Errorf("participant index %d exceeds committee size %d", index, a.CommitteeSize)
+		}
+		if _, dup := seen[index]; dup {
+			return fmt.Errorf("duplicate participant index %d", index)
+		}
+		seen[index] = struct{}{}
 	}
 	for i, contribution := range a.ContributionCoefficients {
 		if len(contribution) != int(a.Threshold) {

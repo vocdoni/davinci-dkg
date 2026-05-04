@@ -5,8 +5,8 @@ library BRLC {
     uint256 internal constant FR_MODULUS =
         21888242871839275222246405745257275088548364400416034343698204186575808495617;
 
-    function deriveChallenge(bytes12 roundId, bytes32 domain, bytes32 anchor) internal pure returns (uint256) {
-        return uint256(keccak256(abi.encodePacked(roundId, domain, anchor))) % FR_MODULUS;
+    function deriveChallenge(bytes12 epochId, bytes32 domain, bytes32 anchor) internal pure returns (uint256) {
+        return uint256(keccak256(abi.encodePacked(epochId, domain, anchor))) % FR_MODULUS;
     }
 
     function commit(uint256 challenge, uint256[] memory values) internal pure returns (uint256 acc) {

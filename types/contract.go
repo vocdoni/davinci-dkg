@@ -10,12 +10,11 @@ import (
 type ContractAddresses struct {
 	Registry               common.Address
 	Manager                common.Address
+	AppManager             common.Address
 	ContributionVerifier   common.Address
 	FinalizeVerifier       common.Address
 	PartialDecryptVerifier common.Address
 	DecryptCombineVerifier common.Address
-	RevealSubmitVerifier   common.Address
-	RevealShareVerifier    common.Address
 }
 
 // Validate checks that the address book contains the mandatory deployments.
@@ -36,12 +35,6 @@ func (c ContractAddresses) Validate() error {
 	}
 	if c.DecryptCombineVerifier == (common.Address{}) {
 		return fmt.Errorf("decrypt combine verifier address is required")
-	}
-	if c.RevealSubmitVerifier == (common.Address{}) {
-		return fmt.Errorf("reveal submit verifier address is required")
-	}
-	if c.RevealShareVerifier == (common.Address{}) {
-		return fmt.Errorf("reveal share verifier address is required")
 	}
 	return nil
 }

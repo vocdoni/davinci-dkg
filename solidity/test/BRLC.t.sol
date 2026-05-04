@@ -5,8 +5,8 @@ import {Test} from "forge-std/Test.sol";
 import {BRLC} from "../src/libraries/BRLC.sol";
 
 contract BRLCHarness {
-    function deriveChallenge(bytes12 roundId, bytes32 domain, bytes32 anchor) external pure returns (uint256) {
-        return BRLC.deriveChallenge(roundId, domain, anchor);
+    function deriveChallenge(bytes12 epochId, bytes32 domain, bytes32 anchor) external pure returns (uint256) {
+        return BRLC.deriveChallenge(epochId, domain, anchor);
     }
 
     function commit(uint256 challenge, uint256[] memory values) external pure returns (uint256) {
@@ -22,12 +22,12 @@ contract BRLCTest is Test {
     }
 
     function test_DeriveChallenge_IsDeterministic() public view {
-        bytes12 roundId = bytes12("round-000001");
+        bytes12 epochId = bytes12("epoch-000001");
         bytes32 domain = keccak256("contribution");
         bytes32 anchor = bytes32(uint256(0x1234));
 
-        uint256 first = harness.deriveChallenge(roundId, domain, anchor);
-        uint256 second = harness.deriveChallenge(roundId, domain, anchor);
+        uint256 first = harness.deriveChallenge(epochId, domain, anchor);
+        uint256 second = harness.deriveChallenge(epochId, domain, anchor);
 
         assertEq(first, second);
     }

@@ -4,9 +4,8 @@ package common
 // across every DKG circuit. It governs MaxCoefficients, MaxRecipients,
 // MaxParticipants and MaxShares — they are all aliases of the same value.
 //
-// To change the maximum committee size, edit this one constant and then
-// recompile every circuit (which regenerates proving keys, verifying keys
-// and the corresponding Solidity verifier wrappers). The Solidity contract
-// reads `MAX_N` from `solidity/src/DKGManager.sol`, which must be set to the
-// same number; the test `TestSolidityMaxNMatchesGoMaxN` enforces this.
+// To change the maximum committee size, edit this one constant and the
+// matching `MAX_N` in `solidity/src/libraries/Sizes.sol`, then run
+// `make circuits` (recompiles every circuit, regenerates proving / verifying
+// keys, the Solidity verifier wrappers, and the Go bindings).
 const MaxN = 32

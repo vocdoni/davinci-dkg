@@ -6,7 +6,7 @@ import (
 )
 
 type PendingFinalize struct {
-	RoundID              string
+	EpochID              string
 	ContributionCount    int
 	RequiredContributors uint16
 }
@@ -19,23 +19,23 @@ func NewFinalizer(st *storage.Storage) *Finalizer {
 	return &Finalizer{storage: serviceStorage(st)}
 }
 
-func (f *Finalizer) PendingFinalize(roundID string) (*PendingFinalize, error) {
-	round, err := f.storage.Round(roundID)
+func (f *Finalizer) PendingFinalize(epochID string) (*PendingFinalize, error) {
+	epoch, err := f.storage.Epoch(epochID)
 	if err != nil {
 		return nil, err
 	}
-	if round.Phase != types.RoundPhaseContribution {
+	if epoch.Phase != types.EpochPhaseContribution {
 		return nil, nil
 	}
 
-	contributions := f.storage.Contributions(roundID)
-	if len(contributions) < int(round.Policy.MinValidContributions) {
+	contributions := f.storage.Contributions(epochID)
+	if len(contributions) < int(epoch.Policy.MinValidContributions) {
 		return nil, nil
 	}
 
 	return &PendingFinalize{
-		RoundID:              roundID,
+		EpochID:              epochID,
 		ContributionCount:    len(contributions),
-		RequiredContributors: round.Policy.MinValidContributions,
+		RequiredContributors: epoch.Policy.MinValidContributions,
 	}, nil
 }

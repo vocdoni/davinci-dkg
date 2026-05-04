@@ -11,12 +11,12 @@ import (
 func TestDeriveBRLCChallengeDeterministic(t *testing.T) {
 	c := qt.New(t)
 
-	var roundID [12]byte
-	copy(roundID[:], []byte("round-000001"))
+	var epochID [12]byte
+	copy(epochID[:], []byte("epoch-000001"))
 	anchor := common.HexToHash("0x1234")
 
-	first := DeriveBRLCChallenge(roundID, "contribution", anchor)
-	second := DeriveBRLCChallenge(roundID, "contribution", anchor)
+	first := DeriveBRLCChallenge(epochID, "contribution", anchor)
+	second := DeriveBRLCChallenge(epochID, "contribution", anchor)
 
 	c.Assert(first.Cmp(second), qt.Equals, 0)
 }

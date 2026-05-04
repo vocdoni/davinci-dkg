@@ -55,8 +55,6 @@ func TestVerifierKeyHashes(t *testing.T) {
 		FinalizeVerifier:       common.HexToAddress("0x4000000000000000000000000000000000000004"),
 		PartialDecryptVerifier: common.HexToAddress("0x5000000000000000000000000000000000000005"),
 		DecryptCombineVerifier: common.HexToAddress("0x6000000000000000000000000000000000000006"),
-		RevealSubmitVerifier:   common.HexToAddress("0x7000000000000000000000000000000000000007"),
-		RevealShareVerifier:    common.HexToAddress("0x8000000000000000000000000000000000000008"),
 	})
 	c.Assert(err, qt.IsNil)
 
@@ -75,13 +73,9 @@ func TestVerifierKeyHashes(t *testing.T) {
 	decryptCombineHash, err := contracts.GetDecryptCombineVerifierVKeyHash(context.Background())
 	c.Assert(err, qt.IsNil)
 	c.Assert(decryptCombineHash, qt.Equals, common.HexToHash("0xdef0"))
-
-	revealShareHash, err := contracts.GetRevealShareVerifierVKeyHash(context.Background())
-	c.Assert(err, qt.IsNil)
-	c.Assert(revealShareHash, qt.Equals, common.HexToHash("0x2468"))
 }
 
-func TestGetNodeAndRoundViews(t *testing.T) {
+func TestGetNodeAndEpochViews(t *testing.T) {
 	c := qt.New(t)
 
 	server := testRPCServer()
@@ -94,8 +88,6 @@ func TestGetNodeAndRoundViews(t *testing.T) {
 		FinalizeVerifier:       common.HexToAddress("0x4000000000000000000000000000000000000004"),
 		PartialDecryptVerifier: common.HexToAddress("0x5000000000000000000000000000000000000005"),
 		DecryptCombineVerifier: common.HexToAddress("0x6000000000000000000000000000000000000006"),
-		RevealSubmitVerifier:   common.HexToAddress("0x7000000000000000000000000000000000000007"),
-		RevealShareVerifier:    common.HexToAddress("0x8000000000000000000000000000000000000008"),
 	})
 	c.Assert(err, qt.IsNil)
 
@@ -105,38 +97,30 @@ func TestGetNodeAndRoundViews(t *testing.T) {
 	c.Assert(node.PubX.Cmp(big.NewInt(11)), qt.Equals, 0)
 	c.Assert(node.Status, qt.Equals, uint8(1))
 
-	var roundID [12]byte
-	copy(roundID[:], []byte("round-1"))
+	var epochID [12]byte
+	copy(epochID[:], []byte("epoch-1"))
 
-	round, err := contracts.GetRound(context.Background(), roundID)
+	epoch, err := contracts.GetEpoch(context.Background(), epochID)
 	c.Assert(err, qt.IsNil)
-	c.Assert(round.Organizer, qt.Equals, common.HexToAddress("0x5000000000000000000000000000000000000005"))
-	c.Assert(round.Policy.Threshold, qt.Equals, uint16(2))
-	c.Assert(round.Status, qt.Equals, uint8(3))
-	c.Assert(round.ContributionCount, qt.Equals, uint16(2))
-	c.Assert(round.RevealedShareCount, qt.Equals, uint16(1))
+	c.Assert(epoch.Organizer, qt.Equals, common.HexToAddress("0x5000000000000000000000000000000000000005"))
+	c.Assert(epoch.Policy.Threshold, qt.Equals, uint16(2))
+	c.Assert(epoch.Status, qt.Equals, uint8(3))
+	c.Assert(epoch.ContributionCount, qt.Equals, uint16(2))
 	// The five hash fields are no longer in storage — consumers read them from
-	// RoundFinalized / SecretReconstructed events instead.
+	// the EpochFinalized event instead.
 
-	selected, err := contracts.SelectedParticipants(context.Background(), roundID)
+	selected, err := contracts.SelectedParticipants(context.Background(), epochID)
 	c.Assert(err, qt.IsNil)
 	c.Assert(selected, qt.DeepEquals, []common.Address{
 		common.HexToAddress("0x5000000000000000000000000000000000000005"),
 		common.HexToAddress("0x6000000000000000000000000000000000000006"),
 	})
 
-	combined, err := contracts.GetCombinedDecryption(context.Background(), roundID, 1)
+	combined, err := contracts.GetCombinedDecryption(context.Background(), epochID, [32]byte{}, 1)
 	c.Assert(err, qt.IsNil)
 	c.Assert(combined.CiphertextIndex, qt.Equals, uint16(1))
 	c.Assert(combined.Completed, qt.IsTrue)
 	c.Assert(combined.Plaintext.Cmp(big.NewInt(39321)), qt.Equals, 0) // 0x9999 = 39321
-
-	revealed, err := contracts.GetRevealedShare(context.Background(), roundID, common.HexToAddress("0x5000000000000000000000000000000000000005"))
-	c.Assert(err, qt.IsNil)
-	c.Assert(revealed.Participant, qt.Equals, common.HexToAddress("0x5000000000000000000000000000000000000005"))
-	c.Assert(revealed.ParticipantIndex, qt.Equals, uint16(1))
-	c.Assert(revealed.ShareHash, qt.Equals, common.HexToHash("0xaaaa"))
-	c.Assert(revealed.Accepted, qt.IsTrue)
 }
 
 func testRPCServer() *httptest.Server {
@@ -178,12 +162,10 @@ func testRPCServer() *httptest.Server {
 			finalizeSelector := "0x" + hex.EncodeToString(managerABI.Methods["getFinalizeVerifierVKeyHash"].ID)
 			partialSelector := "0x" + hex.EncodeToString(managerABI.Methods["getPartialDecryptVerifierVKeyHash"].ID)
 			decryptCombineSelector := "0x" + hex.EncodeToString(managerABI.Methods["getDecryptCombineVerifierVKeyHash"].ID)
-			revealShareSelector := "0x" + hex.EncodeToString(managerABI.Methods["getRevealShareVerifierVKeyHash"].ID)
 			getNodeSelector := "0x" + hex.EncodeToString(registryABI.Methods["getNode"].ID)
-			getRoundSelector := "0x" + hex.EncodeToString(managerABI.Methods["getRound"].ID)
+			getRoundSelector := "0x" + hex.EncodeToString(managerABI.Methods["getEpoch"].ID)
 			selectedParticipantsSelector := "0x" + hex.EncodeToString(managerABI.Methods["selectedParticipants"].ID)
 			getCombinedDecryptionSelector := "0x" + hex.EncodeToString(managerABI.Methods["getCombinedDecryption"].ID)
-			getRevealedShareSelector := "0x" + hex.EncodeToString(managerABI.Methods["getRevealedShare"].ID)
 			switch {
 			case strings.HasPrefix(callData, contributionSelector):
 				resp.Result = "0x" + strings.Repeat("0", 60) + "1234"
@@ -193,8 +175,6 @@ func testRPCServer() *httptest.Server {
 				resp.Result = "0x" + strings.Repeat("0", 60) + "5678"
 			case strings.HasPrefix(callData, decryptCombineSelector):
 				resp.Result = "0x" + strings.Repeat("0", 60) + "def0"
-			case strings.HasPrefix(callData, revealShareSelector):
-				resp.Result = "0x" + strings.Repeat("0", 60) + "2468"
 			case strings.HasPrefix(callData, getNodeSelector):
 				output, _ := registryABI.Methods["getNode"].Outputs.Pack(
 					common.HexToAddress("0x4000000000000000000000000000000000000004"),
@@ -216,11 +196,9 @@ func testRPCServer() *httptest.Server {
 					CommitteeSize             uint16 `json:"committeeSize"`
 					MinValidContributions     uint16 `json:"minValidContributions"`
 					LotteryAlphaBps           uint16 `json:"lotteryAlphaBps"`
-					SeedDelay                 uint16 `json:"seedDelay"`
 					RegistrationDeadlineBlock uint64 `json:"registrationDeadlineBlock"`
 					ContributionDeadlineBlock uint64 `json:"contributionDeadlineBlock"`
 					FinalizeNotBeforeBlock    uint64 `json:"finalizeNotBeforeBlock"`
-					DisclosureAllowed         bool   `json:"disclosureAllowed"`
 				}
 				type dpTuple struct {
 					OwnerOnly          bool   `json:"ownerOnly"`
@@ -230,29 +208,27 @@ func testRPCServer() *httptest.Server {
 					NotAfterBlock      uint64 `json:"notAfterBlock"`
 					NotAfterTimestamp  uint64 `json:"notAfterTimestamp"`
 				}
-				output, _ := managerABI.Methods["getRound"].Outputs.Pack(
+				output, _ := managerABI.Methods["getEpoch"].Outputs.Pack(
 					common.HexToAddress("0x5000000000000000000000000000000000000005"),
 					policyTuple{
 						Threshold:                 2,
 						CommitteeSize:             2,
 						MinValidContributions:     2,
 						LotteryAlphaBps:           20000,
-						SeedDelay:                 4,
 						RegistrationDeadlineBlock: 10,
 						ContributionDeadlineBlock: 20,
 						FinalizeNotBeforeBlock:    21,
-						DisclosureAllowed:         false,
 					},
 					dpTuple{},                  // decryptionPolicy — all zero (no gate)
 					uint8(3),                   // status
 					uint64(1),                  // nonce
+					uint64(7),                  // startBlock
 					uint64(8),                  // seedBlock
 					common.HexToHash("0x5555"), // seed
 					big.NewInt(1234567890),     // lotteryThreshold
 					uint16(2),                  // claimedCount
 					uint16(2),                  // contributionCount
 					uint16(1),                  // partialDecryptionCount
-					uint16(1),                  // revealedShareCount
 					uint16(0),                  // ciphertextCount
 				)
 				resp.Result = "0x" + hex.EncodeToString(output)
@@ -267,15 +243,6 @@ func testRPCServer() *httptest.Server {
 					uint16(1),
 					true,
 					big.NewInt(39321), // 0x9999
-				)
-				resp.Result = "0x" + hex.EncodeToString(output)
-			case strings.HasPrefix(callData, getRevealedShareSelector):
-				output, _ := managerABI.Methods["getRevealedShare"].Outputs.Pack(
-					common.HexToAddress("0x5000000000000000000000000000000000000005"),
-					uint16(1),
-					big.NewInt(7),
-					common.HexToHash("0xaaaa"),
-					true,
 				)
 				resp.Result = "0x" + hex.EncodeToString(output)
 			default:

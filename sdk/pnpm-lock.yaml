@@ -11,6 +11,9 @@ importers:
       '@zk-kit/baby-jubjub':
         specifier: ^1.0.3
         version: 1.0.3
+      poseidon-lite:
+        specifier: ^0.3.0
+        version: 0.3.0
       viem:
         specifier: ^2.21.55
         version: 2.47.17(typescript@5.9.3)
@@ -519,6 +522,9 @@ packages:
   picomatch@4.0.4:
     resolution: {integrity: sha512-QP88BAKvMam/3NxH6vj2o21R6MjxZUAd6nlwAS/pnGvN9IVLocLHxGYIzFhg6fUQ+5th6P4dv4eW9jX3DSIj7A==}
     engines: {node: '>=12'}
+
+  poseidon-lite@0.3.0:
+    resolution: {integrity: sha512-ilJj4MIve4uBEG7SrtPqUUNkvpJ/pLVbndxa0WvebcQqeIhe+h72JR4g0EvwchUzm9sOQDlOjiDNmRAgxNZl4A==}
 
   postcss@8.5.9:
     resolution: {integrity: sha512-7a70Nsot+EMX9fFU3064K/kdHWZqGVY+BADLyXc8Dfv+mTLLVl6JzJpPaCZ2kQL9gIJvKXSLMHhqdRRjwQeFtw==}
@@ -1033,6 +1039,8 @@ snapshots:
   picocolors@1.1.1: {}
 
   picomatch@4.0.4: {}
+
+  poseidon-lite@0.3.0: {}
 
   postcss@8.5.9:
     dependencies:

@@ -22,20 +22,19 @@ func TestContributionRejectsMalformedProof(t *testing.T) {
 	head, err := services.Contracts.Client().BlockNumber(ctx)
 	c.Assert(err, qt.IsNil)
 
-	policy := types.RoundPolicy{
+	policy := types.EpochPolicy{
 		Threshold:                 1,
 		CommitteeSize:             1,
 		MinValidContributions:     1,
 		RegistrationDeadlineBlock: head + 25,
 		ContributionDeadlineBlock: head + 50,
 		FinalizeNotBeforeBlock:    head + 51,
-		DisclosureAllowed:         false,
 	}
 
-	roundID, err := helpers.CreateContributionRound(ctx, services, policy)
+	epochID, err := helpers.CreateContributionRound(ctx, services, policy)
 	c.Assert(err, qt.IsNil)
 
-	submission, err := helpers.BuildContributionSubmission(ctx, services, roundID, 1, 1, 1, []*big.Int{big.NewInt(21)}, []uint16{1})
+	submission, err := helpers.BuildContributionSubmission(ctx, services, epochID, 1, 1, 1, []*big.Int{big.NewInt(21)}, []uint16{1})
 	c.Assert(err, qt.IsNil)
 	submission.Proof = submission.Proof[:len(submission.Proof)-32]
 
@@ -43,13 +42,10 @@ func TestContributionRejectsMalformedProof(t *testing.T) {
 	c.Assert(err, qt.IsNil)
 	tx, err := services.Manager.SubmitContribution(
 		auth,
-		roundID,
+		epochID,
 		1,
 		submission.CommitmentsHash,
-		submission.EncryptedSharesHash,
-		submission.Commitment0X,
-		submission.Commitment0Y,
-		submission.Transcript,
+		submission.EncryptedSharesHash, submission.Transcript,
 		submission.Proof,
 		submission.Input,
 	)
@@ -61,7 +57,7 @@ func TestContributionRejectsMalformedProof(t *testing.T) {
 }
 
 // TestFinalizeRejectsBeforeFinalizeNotBeforeBlock verifies the on-chain
-// finalize gate. With contributions in place AND threshold met, finalizeRound
+// finalize gate. With contributions in place AND threshold met, finalizeEpoch
 // must still revert until block.number reaches policy.finalizeNotBeforeBlock.
 func TestFinalizeRejectsBeforeFinalizeNotBeforeBlock(t *testing.T) {
 	if !helpers.IsIntegrationEnabled() {
@@ -77,39 +73,37 @@ func TestFinalizeRejectsBeforeFinalizeNotBeforeBlock(t *testing.T) {
 
 	// Wide gap so the gate is comfortably in the future when we attempt
 	// finalize the first time.
-	policy := types.RoundPolicy{
+	policy := types.EpochPolicy{
 		Threshold:                 1,
 		CommitteeSize:             1,
 		MinValidContributions:     1,
 		RegistrationDeadlineBlock: head + 25,
 		ContributionDeadlineBlock: head + 50,
 		FinalizeNotBeforeBlock:    head + 200,
-		DisclosureAllowed:         false,
 	}
-	roundID, err := helpers.CreateContributionRound(ctx, services, policy)
+	epochID, err := helpers.CreateContributionRound(ctx, services, policy)
 	c.Assert(err, qt.IsNil)
 
 	// Submit a single accepted contribution so the threshold is met.
-	submission, err := helpers.BuildContributionSubmission(ctx, services, roundID, 1, 1, 1, []*big.Int{big.NewInt(11)}, []uint16{1})
+	submission, err := helpers.BuildContributionSubmission(ctx, services, epochID, 1, 1, 1, []*big.Int{big.NewInt(11)}, []uint16{1})
 	c.Assert(err, qt.IsNil)
 	auth, err := services.TxManager.NewTransactOpts(ctx)
 	c.Assert(err, qt.IsNil)
 	tx, err := services.Manager.SubmitContribution(
-		auth, roundID, 1,
+		auth, epochID, 1,
 		submission.CommitmentsHash, submission.EncryptedSharesHash,
-		submission.Commitment0X, submission.Commitment0Y,
 		submission.Transcript, submission.Proof, submission.Input,
 	)
 	c.Assert(err, qt.IsNil)
 	c.Assert(services.TxManager.WaitTxByHash(tx.Hash(), helpers.DefaultTxTimeout), qt.IsNil)
 
 	// Try to finalize NOW, before reaching finalizeNotBeforeBlock.
-	output, err := helpers.BuildFinalizeRoundOutput(ctx, roundID, 1, 1, []uint16{1}, [][]*big.Int{{big.NewInt(11)}})
+	output, err := helpers.BuildFinalizeEpochOutput(ctx, epochID, 1, 1, []uint16{1}, [][]*big.Int{{big.NewInt(11)}})
 	c.Assert(err, qt.IsNil)
 	authEarly, err := services.TxManager.NewTransactOpts(ctx)
 	c.Assert(err, qt.IsNil)
-	earlyTx, err := services.Manager.FinalizeRound(
-		authEarly, roundID,
+	earlyTx, err := services.Manager.FinalizeEpoch(
+		authEarly, epochID,
 		output.AggregateCommitmentsHash, output.CollectivePublicKeyHash, output.ShareCommitmentHash,
 		output.Transcript, output.Proof, output.Input,
 	)
@@ -121,20 +115,20 @@ func TestFinalizeRejectsBeforeFinalizeNotBeforeBlock(t *testing.T) {
 	}
 
 	// Roll past the gate and finalize successfully.
-	c.Assert(helpers.WaitForFinalizeGate(ctx, services, roundID), qt.IsNil)
+	c.Assert(helpers.WaitForFinalizeGate(ctx, services, epochID), qt.IsNil)
 	authLate, err := services.TxManager.NewTransactOpts(ctx)
 	c.Assert(err, qt.IsNil)
-	lateTx, err := services.Manager.FinalizeRound(
-		authLate, roundID,
+	lateTx, err := services.Manager.FinalizeEpoch(
+		authLate, epochID,
 		output.AggregateCommitmentsHash, output.CollectivePublicKeyHash, output.ShareCommitmentHash,
 		output.Transcript, output.Proof, output.Input,
 	)
 	c.Assert(err, qt.IsNil)
 	c.Assert(services.TxManager.WaitTxByHash(lateTx.Hash(), helpers.DefaultTxTimeout), qt.IsNil)
 
-	round, err := services.Contracts.GetRound(ctx, roundID)
+	epoch, err := services.Contracts.GetEpoch(ctx, epochID)
 	c.Assert(err, qt.IsNil)
-	c.Assert(round.Status, qt.Equals, uint8(3))
+	c.Assert(epoch.Status, qt.Equals, uint8(3))
 }
 
 func TestFinalizeRejectsMissingContribution(t *testing.T) {
@@ -149,29 +143,28 @@ func TestFinalizeRejectsMissingContribution(t *testing.T) {
 	head, err := services.Contracts.Client().BlockNumber(ctx)
 	c.Assert(err, qt.IsNil)
 
-	policy := types.RoundPolicy{
+	policy := types.EpochPolicy{
 		Threshold:                 1,
 		CommitteeSize:             1,
 		MinValidContributions:     1,
 		RegistrationDeadlineBlock: head + 25,
 		ContributionDeadlineBlock: head + 50,
 		FinalizeNotBeforeBlock:    head + 51,
-		DisclosureAllowed:         false,
 	}
 
-	roundID, err := helpers.CreateContributionRound(ctx, services, policy)
+	epochID, err := helpers.CreateContributionRound(ctx, services, policy)
 	c.Assert(err, qt.IsNil)
 
-	output, err := helpers.BuildFinalizeRoundOutput(ctx, roundID, 1, 1, []uint16{1}, [][]*big.Int{{big.NewInt(1)}})
+	output, err := helpers.BuildFinalizeEpochOutput(ctx, epochID, 1, 1, []uint16{1}, [][]*big.Int{{big.NewInt(1)}})
 	c.Assert(err, qt.IsNil)
 
-	c.Assert(helpers.WaitForFinalizeGate(ctx, services, roundID), qt.IsNil)
+	c.Assert(helpers.WaitForFinalizeGate(ctx, services, epochID), qt.IsNil)
 
 	auth, err := services.TxManager.NewTransactOpts(ctx)
 	c.Assert(err, qt.IsNil)
-	tx, err := services.Manager.FinalizeRound(
+	tx, err := services.Manager.FinalizeEpoch(
 		auth,
-		roundID,
+		epochID,
 		output.AggregateCommitmentsHash,
 		output.CollectivePublicKeyHash,
 		output.ShareCommitmentHash,
@@ -198,31 +191,37 @@ func TestPartialDecryptRejectsMalformedProof(t *testing.T) {
 	head, err := services.Contracts.Client().BlockNumber(ctx)
 	c.Assert(err, qt.IsNil)
 
-	policy := types.RoundPolicy{
+	policy := types.EpochPolicy{
 		Threshold:                 1,
 		CommitteeSize:             1,
 		MinValidContributions:     1,
 		RegistrationDeadlineBlock: head + 25,
 		ContributionDeadlineBlock: head + 50,
 		FinalizeNotBeforeBlock:    head + 51,
-		DisclosureAllowed:         false,
 	}
 	coefficients := []*big.Int{big.NewInt(17)}
 
 	result, err := helpers.CreateFinalizedSingleParticipantRound(ctx, services, policy, coefficients)
 	c.Assert(err, qt.IsNil)
 
-	partial, err := helpers.BuildPartialDecryptionSubmission(ctx, result.RoundID, 1, big.NewInt(3), coefficients[0], big.NewInt(4))
+	partial, err := helpers.BuildPartialDecryptionSubmission(ctx, result.EpochID, 1, 1, big.NewInt(3), coefficients[0], big.NewInt(4))
 	c.Assert(err, qt.IsNil)
 	partial.Input = partial.Input[:len(partial.Input)-32]
 
+	// This test deliberately tampers `partial.Input`, so the proof
+	// verifier rejects regardless of whether the on-chain ciphertext
+	// gate fires first. We pass identity coords; the gate may revert
+	// with CiphertextNotSubmitted before the verifier sees the bad
+	// proof, but either revert path satisfies the assertion below.
 	auth, err := services.TxManager.NewTransactOpts(ctx)
 	c.Assert(err, qt.IsNil)
 	tx, err := services.Manager.SubmitPartialDecryption(
 		auth,
-		result.RoundID,
+		result.EpochID,
+		[32]byte{}, // legacy per-epoch path: zero aid
 		1,
 		1,
+		big.NewInt(0), big.NewInt(1), big.NewInt(0), big.NewInt(1),
 		partial.DeltaHash,
 		partial.Proof,
 		partial.Input,
@@ -251,37 +250,35 @@ func TestRoundCanFinalizeWithMissingContributorWhenPolicyPermits(t *testing.T) {
 	head, err := services.Contracts.Client().BlockNumber(ctx)
 	c.Assert(err, qt.IsNil)
 
-	policy := types.RoundPolicy{
+	policy := types.EpochPolicy{
 		Threshold:                 2,
 		CommitteeSize:             3,
 		MinValidContributions:     2,
 		LotteryAlphaBps:           helpers.DefaultLotteryAlphaBps,
-		SeedDelay:                 helpers.DefaultSeedDelay,
 		RegistrationDeadlineBlock: head + 25,
 		ContributionDeadlineBlock: head + 50,
 		FinalizeNotBeforeBlock:    head + 51,
-		DisclosureAllowed:         false,
 	}
 
-	roundID, err := helpers.CreateRound(ctx, services, policy)
+	epochID, err := helpers.CreateEpoch(ctx, services, policy)
 	c.Assert(err, qt.IsNil)
-	c.Assert(helpers.MineBlocks(ctx, services, uint64(policy.SeedDelay)+1), qt.IsNil)
-	c.Assert(helpers.ClaimSlot(ctx, services, roundID), qt.IsNil)
-	c.Assert(helpers.ClaimSlotAs(ctx, actor1, roundID), qt.IsNil)
-	c.Assert(helpers.ClaimSlotAs(ctx, actor2, roundID), qt.IsNil)
+	c.Assert(helpers.MineBlocks(ctx, services, helpers.DefaultSeedDelay+1), qt.IsNil)
+	c.Assert(helpers.ClaimSlot(ctx, services, epochID), qt.IsNil)
+	c.Assert(helpers.ClaimSlotAs(ctx, actor1, epochID), qt.IsNil)
+	c.Assert(helpers.ClaimSlotAs(ctx, actor2, epochID), qt.IsNil)
 
-	submission0, err := helpers.BuildContributionSubmission(ctx, services, roundID, 2, 3, 1, []*big.Int{big.NewInt(3), big.NewInt(1)}, []uint16{1, 2, 3})
+	submission0, err := helpers.BuildContributionSubmission(ctx, services, epochID, 2, 3, 1, []*big.Int{big.NewInt(3), big.NewInt(1)}, []uint16{1, 2, 3})
 	c.Assert(err, qt.IsNil)
-	submission1, err := helpers.BuildContributionSubmission(ctx, services, roundID, 2, 3, 2, []*big.Int{big.NewInt(5), big.NewInt(2)}, []uint16{1, 2, 3})
+	submission1, err := helpers.BuildContributionSubmission(ctx, services, epochID, 2, 3, 2, []*big.Int{big.NewInt(5), big.NewInt(2)}, []uint16{1, 2, 3})
 	c.Assert(err, qt.IsNil)
 
 	selfActor := &helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager}
-	c.Assert(helpers.SubmitContributionAs(ctx, selfActor, roundID, 1, submission0.CommitmentsHash, submission0.EncryptedSharesHash, submission0.Commitment0X, submission0.Commitment0Y, submission0.Transcript, submission0.Proof, submission0.Input), qt.IsNil)
-	c.Assert(helpers.SubmitContributionAs(ctx, actor1, roundID, 2, submission1.CommitmentsHash, submission1.EncryptedSharesHash, submission1.Commitment0X, submission1.Commitment0Y, submission1.Transcript, submission1.Proof, submission1.Input), qt.IsNil)
+	c.Assert(helpers.SubmitContributionAs(ctx, selfActor, epochID, 1, submission0.CommitmentsHash, submission0.EncryptedSharesHash, submission0.Transcript, submission0.Proof, submission0.Input), qt.IsNil)
+	c.Assert(helpers.SubmitContributionAs(ctx, actor1, epochID, 2, submission1.CommitmentsHash, submission1.EncryptedSharesHash, submission1.Transcript, submission1.Proof, submission1.Input), qt.IsNil)
 
-	output, err := helpers.BuildFinalizeRoundOutput(
+	output, err := helpers.BuildFinalizeEpochOutput(
 		ctx,
-		roundID,
+		epochID,
 		2,
 		3,
 		[]uint16{1, 2},
@@ -289,13 +286,13 @@ func TestRoundCanFinalizeWithMissingContributorWhenPolicyPermits(t *testing.T) {
 	)
 	c.Assert(err, qt.IsNil)
 
-	c.Assert(helpers.WaitForFinalizeGate(ctx, services, roundID), qt.IsNil)
+	c.Assert(helpers.WaitForFinalizeGate(ctx, services, epochID), qt.IsNil)
 
 	auth, err := services.TxManager.NewTransactOpts(ctx)
 	c.Assert(err, qt.IsNil)
-	tx, err := services.Manager.FinalizeRound(
+	tx, err := services.Manager.FinalizeEpoch(
 		auth,
-		roundID,
+		epochID,
 		output.AggregateCommitmentsHash,
 		output.CollectivePublicKeyHash,
 		output.ShareCommitmentHash,
@@ -306,8 +303,8 @@ func TestRoundCanFinalizeWithMissingContributorWhenPolicyPermits(t *testing.T) {
 	c.Assert(err, qt.IsNil)
 	c.Assert(services.TxManager.WaitTxByHash(tx.Hash(), helpers.DefaultTxTimeout), qt.IsNil)
 
-	round, err := services.Contracts.GetRound(ctx, roundID)
+	epoch, err := services.Contracts.GetEpoch(ctx, epochID)
 	c.Assert(err, qt.IsNil)
-	c.Assert(round.Status, qt.Equals, uint8(3))
-	c.Assert(round.ContributionCount, qt.Equals, uint16(2))
+	c.Assert(epoch.Status, qt.Equals, uint8(3))
+	c.Assert(epoch.ContributionCount, qt.Equals, uint16(2))
 }

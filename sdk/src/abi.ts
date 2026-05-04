@@ -5,18 +5,13 @@ export const dkgManagerAbi = [
   // ── write functions ───────────────────────────────────────────────────────
   {
     type: 'function',
-    name: 'createRound',
+    name: 'createEpoch',
     stateMutability: 'nonpayable',
     inputs: [
       { name: 'threshold', type: 'uint16' },
       { name: 'committeeSize', type: 'uint16' },
       { name: 'minValidContributions', type: 'uint16' },
       { name: 'lotteryAlphaBps', type: 'uint16' },
-      { name: 'seedDelay', type: 'uint16' },
-      { name: 'registrationDeadlineBlock', type: 'uint64' },
-      { name: 'contributionDeadlineBlock', type: 'uint64' },
-      { name: 'finalizeNotBeforeBlock', type: 'uint64' },
-      { name: 'disclosureAllowed', type: 'bool' },
       {
         name: 'decryptionPolicy',
         type: 'tuple',
@@ -34,10 +29,39 @@ export const dkgManagerAbi = [
   },
   {
     type: 'function',
+    name: 'nextEpochStartBlock',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'uint64' }],
+  },
+  {
+    type: 'function',
+    name: 'epochDurationBlocks',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'lastEpochStartBlock',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'uint64' }],
+  },
+  {
+    type: 'function',
+    name: 'EPOCH_DURATION_BLOCKS',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'uint256' }],
+  },
+  {
+    type: 'function',
     name: 'submitCiphertext',
     stateMutability: 'nonpayable',
     inputs: [
-      { name: 'roundId', type: 'bytes12' },
+      { name: 'epochId', type: 'bytes12' },
+      { name: 'aid', type: 'bytes32' },
       { name: 'ciphertextIndex', type: 'uint16' },
       { name: 'c1x', type: 'uint256' },
       { name: 'c1y', type: 'uint256' },
@@ -50,27 +74,19 @@ export const dkgManagerAbi = [
     type: 'function',
     name: 'claimSlot',
     stateMutability: 'nonpayable',
-    inputs: [{ name: 'roundId', type: 'bytes12' }],
+    inputs: [{ name: 'epochId', type: 'bytes12' }],
     outputs: [],
   },
-  {
-    type: 'function',
-    name: 'extendRegistration',
-    stateMutability: 'nonpayable',
-    inputs: [{ name: 'roundId', type: 'bytes12' }],
-    outputs: [],
-  },
+  // `extendRegistration` was removed in the auto-cadence refactor.
   {
     type: 'function',
     name: 'submitContribution',
     stateMutability: 'nonpayable',
     inputs: [
-      { name: 'roundId', type: 'bytes12' },
+      { name: 'epochId', type: 'bytes12' },
       { name: 'contributorIndex', type: 'uint16' },
       { name: 'commitmentsHash', type: 'bytes32' },
       { name: 'encryptedSharesHash', type: 'bytes32' },
-      { name: 'commitment0X', type: 'uint256' },
-      { name: 'commitment0Y', type: 'uint256' },
       { name: 'transcript', type: 'bytes' },
       { name: 'proof', type: 'bytes' },
       { name: 'input', type: 'bytes' },
@@ -81,7 +97,7 @@ export const dkgManagerAbi = [
     type: 'function',
     name: 'getCollectivePublicKey',
     stateMutability: 'view',
-    inputs: [{ name: 'roundId', type: 'bytes12' }],
+    inputs: [{ name: 'epochId', type: 'bytes12' }],
     outputs: [
       {
         name: '',
@@ -95,10 +111,10 @@ export const dkgManagerAbi = [
   },
   {
     type: 'function',
-    name: 'finalizeRound',
+    name: 'finalizeEpoch',
     stateMutability: 'nonpayable',
     inputs: [
-      { name: 'roundId', type: 'bytes12' },
+      { name: 'epochId', type: 'bytes12' },
       { name: 'aggregateCommitmentsHash', type: 'bytes32' },
       { name: 'collectivePublicKeyHash', type: 'bytes32' },
       { name: 'shareCommitmentHash', type: 'bytes32' },
@@ -113,9 +129,14 @@ export const dkgManagerAbi = [
     name: 'submitPartialDecryption',
     stateMutability: 'nonpayable',
     inputs: [
-      { name: 'roundId', type: 'bytes12' },
+      { name: 'epochId', type: 'bytes12' },
+      { name: 'aid', type: 'bytes32' },
       { name: 'participantIndex', type: 'uint16' },
       { name: 'ciphertextIndex', type: 'uint16' },
+      { name: 'c1x', type: 'uint256' },
+      { name: 'c1y', type: 'uint256' },
+      { name: 'c2x', type: 'uint256' },
+      { name: 'c2y', type: 'uint256' },
       { name: 'deltaHash', type: 'bytes32' },
       { name: 'proof', type: 'bytes' },
       { name: 'input', type: 'bytes' },
@@ -127,7 +148,8 @@ export const dkgManagerAbi = [
     name: 'combineDecryption',
     stateMutability: 'nonpayable',
     inputs: [
-      { name: 'roundId', type: 'bytes12' },
+      { name: 'epochId', type: 'bytes12' },
+      { name: 'aid', type: 'bytes32' },
       { name: 'ciphertextIndex', type: 'uint16' },
       { name: 'combineHash', type: 'bytes32' },
       { name: 'plaintext', type: 'uint256' },
@@ -139,43 +161,16 @@ export const dkgManagerAbi = [
   },
   {
     type: 'function',
-    name: 'submitRevealedShare',
+    name: 'abortEpoch',
     stateMutability: 'nonpayable',
-    inputs: [
-      { name: 'roundId', type: 'bytes12' },
-      { name: 'participantIndex', type: 'uint16' },
-      { name: 'shareValue', type: 'uint256' },
-      { name: 'proof', type: 'bytes' },
-      { name: 'input', type: 'bytes' },
-    ],
-    outputs: [],
-  },
-  {
-    type: 'function',
-    name: 'reconstructSecret',
-    stateMutability: 'nonpayable',
-    inputs: [
-      { name: 'roundId', type: 'bytes12' },
-      { name: 'disclosureHash', type: 'bytes32' },
-      { name: 'reconstructedSecretHash', type: 'bytes32' },
-      { name: 'transcript', type: 'bytes' },
-      { name: 'proof', type: 'bytes' },
-      { name: 'input', type: 'bytes' },
-    ],
-    outputs: [],
-  },
-  {
-    type: 'function',
-    name: 'abortRound',
-    stateMutability: 'nonpayable',
-    inputs: [{ name: 'roundId', type: 'bytes12' }],
+    inputs: [{ name: 'epochId', type: 'bytes12' }],
     outputs: [],
   },
 
   // ── view functions ────────────────────────────────────────────────────────
   {
     type: 'function',
-    name: 'roundNonce',
+    name: 'epochNonce',
     stateMutability: 'view',
     inputs: [],
     outputs: [{ name: '', type: 'uint64' }],
@@ -189,7 +184,7 @@ export const dkgManagerAbi = [
   },
   {
     type: 'function',
-    name: 'ROUND_PREFIX',
+    name: 'EPOCH_PREFIX',
     stateMutability: 'view',
     inputs: [],
     outputs: [{ name: '', type: 'uint32' }],
@@ -203,9 +198,16 @@ export const dkgManagerAbi = [
   },
   {
     type: 'function',
-    name: 'getRound',
+    name: 'appManager',
     stateMutability: 'view',
-    inputs: [{ name: 'roundId', type: 'bytes12' }],
+    inputs: [],
+    outputs: [{ name: '', type: 'address' }],
+  },
+  {
+    type: 'function',
+    name: 'getEpoch',
+    stateMutability: 'view',
+    inputs: [{ name: 'epochId', type: 'bytes12' }],
     outputs: [
       {
         name: '',
@@ -220,11 +222,9 @@ export const dkgManagerAbi = [
               { name: 'committeeSize', type: 'uint16' },
               { name: 'minValidContributions', type: 'uint16' },
               { name: 'lotteryAlphaBps', type: 'uint16' },
-              { name: 'seedDelay', type: 'uint16' },
               { name: 'registrationDeadlineBlock', type: 'uint64' },
               { name: 'contributionDeadlineBlock', type: 'uint64' },
               { name: 'finalizeNotBeforeBlock', type: 'uint64' },
-              { name: 'disclosureAllowed', type: 'bool' },
             ],
           },
           {
@@ -241,13 +241,13 @@ export const dkgManagerAbi = [
           },
           { name: 'status', type: 'uint8' },
           { name: 'nonce', type: 'uint64' },
+          { name: 'startBlock', type: 'uint64' },
           { name: 'seedBlock', type: 'uint64' },
           { name: 'seed', type: 'bytes32' },
           { name: 'lotteryThreshold', type: 'uint256' },
           { name: 'claimedCount', type: 'uint16' },
           { name: 'contributionCount', type: 'uint16' },
           { name: 'partialDecryptionCount', type: 'uint16' },
-          { name: 'revealedShareCount', type: 'uint16' },
           { name: 'ciphertextCount', type: 'uint16' },
         ],
       },
@@ -257,7 +257,7 @@ export const dkgManagerAbi = [
     type: 'function',
     name: 'selectedParticipants',
     stateMutability: 'view',
-    inputs: [{ name: 'roundId', type: 'bytes12' }],
+    inputs: [{ name: 'epochId', type: 'bytes12' }],
     outputs: [{ name: '', type: 'address[]' }],
   },
   {
@@ -265,7 +265,7 @@ export const dkgManagerAbi = [
     name: 'getContribution',
     stateMutability: 'view',
     inputs: [
-      { name: 'roundId', type: 'bytes12' },
+      { name: 'epochId', type: 'bytes12' },
       { name: 'contributor', type: 'address' },
     ],
     outputs: [
@@ -288,8 +288,9 @@ export const dkgManagerAbi = [
     name: 'getPartialDecryption',
     stateMutability: 'view',
     inputs: [
-      { name: 'roundId', type: 'bytes12' },
-      { name: 'participant', type: 'address' },
+      { name: 'epochId', type: 'bytes12' },
+      { name: 'aid', type: 'bytes32' },
+      { name: 'participantIndex', type: 'uint16' },
       { name: 'ciphertextIndex', type: 'uint16' },
     ],
     outputs: [
@@ -297,18 +298,9 @@ export const dkgManagerAbi = [
         name: '',
         type: 'tuple',
         components: [
-          { name: 'participant', type: 'address' },
           { name: 'participantIndex', type: 'uint16' },
           { name: 'ciphertextIndex', type: 'uint16' },
           { name: 'deltaHash', type: 'bytes32' },
-          {
-            name: 'delta',
-            type: 'tuple',
-            components: [
-              { name: 'x', type: 'uint256' },
-              { name: 'y', type: 'uint256' },
-            ],
-          },
           { name: 'accepted', type: 'bool' },
         ],
       },
@@ -319,7 +311,8 @@ export const dkgManagerAbi = [
     name: 'getCombinedDecryption',
     stateMutability: 'view',
     inputs: [
-      { name: 'roundId', type: 'bytes12' },
+      { name: 'epochId', type: 'bytes12' },
+      { name: 'aid', type: 'bytes32' },
       { name: 'ciphertextIndex', type: 'uint16' },
     ],
     outputs: [
@@ -339,7 +332,8 @@ export const dkgManagerAbi = [
     name: 'getCiphertextHash',
     stateMutability: 'view',
     inputs: [
-      { name: 'roundId', type: 'bytes12' },
+      { name: 'epochId', type: 'bytes12' },
+      { name: 'aid', type: 'bytes32' },
       { name: 'ciphertextIndex', type: 'uint16' },
     ],
     outputs: [{ name: '', type: 'bytes32' }],
@@ -349,7 +343,8 @@ export const dkgManagerAbi = [
     name: 'getPlaintext',
     stateMutability: 'view',
     inputs: [
-      { name: 'roundId', type: 'bytes12' },
+      { name: 'epochId', type: 'bytes12' },
+      { name: 'aid', type: 'bytes32' },
       { name: 'ciphertextIndex', type: 'uint16' },
     ],
     outputs: [{ name: '', type: 'uint256' }],
@@ -358,7 +353,7 @@ export const dkgManagerAbi = [
     type: 'function',
     name: 'getDecryptionPolicy',
     stateMutability: 'view',
-    inputs: [{ name: 'roundId', type: 'bytes12' }],
+    inputs: [{ name: 'epochId', type: 'bytes12' }],
     outputs: [
       {
         name: '',
@@ -376,32 +371,10 @@ export const dkgManagerAbi = [
   },
   {
     type: 'function',
-    name: 'getRevealedShare',
-    stateMutability: 'view',
-    inputs: [
-      { name: 'roundId', type: 'bytes12' },
-      { name: 'participant', type: 'address' },
-    ],
-    outputs: [
-      {
-        name: '',
-        type: 'tuple',
-        components: [
-          { name: 'participant', type: 'address' },
-          { name: 'participantIndex', type: 'uint16' },
-          { name: 'shareValue', type: 'uint256' },
-          { name: 'shareHash', type: 'bytes32' },
-          { name: 'accepted', type: 'bool' },
-        ],
-      },
-    ],
-  },
-  {
-    type: 'function',
     name: 'getShareCommitmentHash',
     stateMutability: 'view',
     inputs: [
-      { name: 'roundId', type: 'bytes12' },
+      { name: 'epochId', type: 'bytes12' },
       { name: 'participantIndex', type: 'uint16' },
     ],
     outputs: [{ name: '', type: 'bytes32' }],
@@ -434,28 +407,15 @@ export const dkgManagerAbi = [
     inputs: [],
     outputs: [{ name: '', type: 'bytes32' }],
   },
-  {
-    type: 'function',
-    name: 'getRevealSubmitVerifierVKeyHash',
-    stateMutability: 'view',
-    inputs: [],
-    outputs: [{ name: '', type: 'bytes32' }],
-  },
-  {
-    type: 'function',
-    name: 'getRevealShareVerifierVKeyHash',
-    stateMutability: 'view',
-    inputs: [],
-    outputs: [{ name: '', type: 'bytes32' }],
-  },
 
   // ── events ────────────────────────────────────────────────────────────────
   {
     type: 'event',
-    name: 'RoundCreated',
+    name: 'EpochCreated',
     inputs: [
-      { name: 'roundId', type: 'bytes12', indexed: true },
+      { name: 'epochId', type: 'bytes12', indexed: true },
       { name: 'organizer', type: 'address', indexed: true },
+      { name: 'startBlock', type: 'uint64', indexed: false },
       { name: 'seedBlock', type: 'uint64', indexed: false },
       { name: 'lotteryThreshold', type: 'uint256', indexed: false },
     ],
@@ -464,7 +424,7 @@ export const dkgManagerAbi = [
     type: 'event',
     name: 'SeedResolved',
     inputs: [
-      { name: 'roundId', type: 'bytes12', indexed: true },
+      { name: 'epochId', type: 'bytes12', indexed: true },
       { name: 'seed', type: 'bytes32', indexed: false },
     ],
   },
@@ -472,7 +432,7 @@ export const dkgManagerAbi = [
     type: 'event',
     name: 'SlotClaimed',
     inputs: [
-      { name: 'roundId', type: 'bytes12', indexed: true },
+      { name: 'epochId', type: 'bytes12', indexed: true },
       { name: 'claimer', type: 'address', indexed: true },
       { name: 'slot', type: 'uint16', indexed: false },
     ],
@@ -480,13 +440,13 @@ export const dkgManagerAbi = [
   {
     type: 'event',
     name: 'RegistrationClosed',
-    inputs: [{ name: 'roundId', type: 'bytes12', indexed: true }],
+    inputs: [{ name: 'epochId', type: 'bytes12', indexed: true }],
   },
   {
     type: 'event',
     name: 'ContributionSubmitted',
     inputs: [
-      { name: 'roundId', type: 'bytes12', indexed: true },
+      { name: 'epochId', type: 'bytes12', indexed: true },
       { name: 'contributor', type: 'address', indexed: true },
       { name: 'contributorIndex', type: 'uint16', indexed: false },
       { name: 'commitmentsHash', type: 'bytes32', indexed: false },
@@ -495,9 +455,9 @@ export const dkgManagerAbi = [
   },
   {
     type: 'event',
-    name: 'RoundFinalized',
+    name: 'EpochFinalized',
     inputs: [
-      { name: 'roundId', type: 'bytes12', indexed: true },
+      { name: 'epochId', type: 'bytes12', indexed: true },
       { name: 'aggregateCommitmentsHash', type: 'bytes32', indexed: false },
       { name: 'collectivePublicKeyHash', type: 'bytes32', indexed: false },
       { name: 'shareCommitmentHash', type: 'bytes32', indexed: false },
@@ -507,20 +467,23 @@ export const dkgManagerAbi = [
     type: 'event',
     name: 'PartialDecryptionSubmitted',
     inputs: [
-      { name: 'roundId', type: 'bytes12', indexed: true },
+      { name: 'epochId', type: 'bytes12', indexed: true },
+      { name: 'aid', type: 'bytes32', indexed: true },
       { name: 'participant', type: 'address', indexed: true },
       { name: 'participantIndex', type: 'uint16', indexed: false },
       { name: 'ciphertextIndex', type: 'uint16', indexed: false },
-      { name: 'deltaHash', type: 'bytes32', indexed: false },
+      { name: 'deltaX', type: 'uint256', indexed: false },
+      { name: 'deltaY', type: 'uint256', indexed: false },
     ],
   },
   {
     type: 'event',
     name: 'CiphertextSubmitted',
     inputs: [
-      { name: 'roundId', type: 'bytes12', indexed: true },
+      { name: 'epochId', type: 'bytes12', indexed: true },
+      { name: 'aid', type: 'bytes32', indexed: true },
       { name: 'ciphertextIndex', type: 'uint16', indexed: true },
-      { name: 'submitter', type: 'address', indexed: true },
+      { name: 'submitter', type: 'address', indexed: false },
       { name: 'c1x', type: 'uint256', indexed: false },
       { name: 'c1y', type: 'uint256', indexed: false },
       { name: 'c2x', type: 'uint256', indexed: false },
@@ -531,7 +494,8 @@ export const dkgManagerAbi = [
     type: 'event',
     name: 'DecryptionCombined',
     inputs: [
-      { name: 'roundId', type: 'bytes12', indexed: true },
+      { name: 'epochId', type: 'bytes12', indexed: true },
+      { name: 'aid', type: 'bytes32', indexed: true },
       { name: 'ciphertextIndex', type: 'uint16', indexed: true },
       { name: 'combineHash', type: 'bytes32', indexed: false },
       { name: 'plaintext', type: 'uint256', indexed: false },
@@ -539,37 +503,18 @@ export const dkgManagerAbi = [
   },
   {
     type: 'event',
-    name: 'RevealedShareSubmitted',
-    inputs: [
-      { name: 'roundId', type: 'bytes12', indexed: true },
-      { name: 'participant', type: 'address', indexed: true },
-      { name: 'participantIndex', type: 'uint16', indexed: false },
-      { name: 'shareHash', type: 'bytes32', indexed: false },
-    ],
+    name: 'EpochEvicted',
+    inputs: [{ name: 'epochId', type: 'bytes12', indexed: true }],
   },
   {
     type: 'event',
-    name: 'SecretReconstructed',
-    inputs: [
-      { name: 'roundId', type: 'bytes12', indexed: true },
-      { name: 'disclosureHash', type: 'bytes32', indexed: false },
-      { name: 'reconstructedSecretHash', type: 'bytes32', indexed: false },
-    ],
-  },
-  {
-    type: 'event',
-    name: 'RoundEvicted',
-    inputs: [{ name: 'roundId', type: 'bytes12', indexed: true }],
-  },
-  {
-    type: 'event',
-    name: 'RoundAborted',
-    inputs: [{ name: 'roundId', type: 'bytes12', indexed: true }],
+    name: 'EpochAborted',
+    inputs: [{ name: 'epochId', type: 'bytes12', indexed: true }],
   },
 
   // ── errors ────────────────────────────────────────────────────────────────
   { type: 'error', name: 'InvalidPolicy', inputs: [] },
-  { type: 'error', name: 'InvalidRound', inputs: [] },
+  { type: 'error', name: 'InvalidEpoch', inputs: [] },
   { type: 'error', name: 'InvalidPhase', inputs: [] },
   { type: 'error', name: 'NotEligible', inputs: [] },
   { type: 'error', name: 'AlreadyClaimed', inputs: [] },
@@ -589,13 +534,8 @@ export const dkgManagerAbi = [
   { type: 'error', name: 'InvalidVerifier', inputs: [] },
   { type: 'error', name: 'Unauthorized', inputs: [] },
   { type: 'error', name: 'AlreadyCombined', inputs: [] },
-  { type: 'error', name: 'AlreadyRevealed', inputs: [] },
   { type: 'error', name: 'InvalidCombinedDecryption', inputs: [] },
-  { type: 'error', name: 'InvalidRevealedShare', inputs: [] },
-  { type: 'error', name: 'InvalidReconstruction', inputs: [] },
   { type: 'error', name: 'InsufficientPartialDecryptions', inputs: [] },
-  { type: 'error', name: 'InsufficientRevealedShares', inputs: [] },
-  { type: 'error', name: 'DisclosureDisabled', inputs: [] },
   { type: 'error', name: 'InvalidProofInput', inputs: [] },
   { type: 'error', name: 'NotOwner', inputs: [] },
   { type: 'error', name: 'InvalidDecryptionPolicy', inputs: [] },
@@ -616,6 +556,9 @@ export const dkgRegistryAbi = [
     inputs: [
       { name: 'pubX', type: 'uint256' },
       { name: 'pubY', type: 'uint256' },
+      { name: 'schnorrAx', type: 'uint256' },
+      { name: 'schnorrAy', type: 'uint256' },
+      { name: 'schnorrZ', type: 'uint256' },
     ],
     outputs: [],
   },
@@ -626,6 +569,9 @@ export const dkgRegistryAbi = [
     inputs: [
       { name: 'pubX', type: 'uint256' },
       { name: 'pubY', type: 'uint256' },
+      { name: 'schnorrAx', type: 'uint256' },
+      { name: 'schnorrAy', type: 'uint256' },
+      { name: 'schnorrZ', type: 'uint256' },
     ],
     outputs: [],
   },
@@ -770,4 +716,179 @@ export const dkgRegistryAbi = [
   { type: 'error', name: 'NotActive', inputs: [] },
   { type: 'error', name: 'StillActive', inputs: [] },
   { type: 'error', name: 'NotInactive', inputs: [] },
+] as const;
+
+export const dkgAppManagerAbi = [
+  // ── write functions ───────────────────────────────────────────────────────
+  {
+    type: 'function',
+    name: 'registerApplication',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'epochId', type: 'bytes12' },
+      { name: 'aid', type: 'bytes32' },
+      {
+        name: 'policy',
+        type: 'tuple',
+        components: [
+          { name: 'authorizedSubmitter', type: 'address' },
+          { name: 'maxCiphertexts', type: 'uint16' },
+          { name: 'notBeforeBlock', type: 'uint64' },
+          { name: 'notAfterBlock', type: 'uint64' },
+        ],
+      },
+    ],
+    outputs: [],
+  },
+  {
+    type: 'function',
+    name: 'registerApplicationCoDec',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'epochId', type: 'bytes12' },
+      { name: 'aid', type: 'bytes32' },
+      {
+        name: 'policy',
+        type: 'tuple',
+        components: [
+          { name: 'authorizedSubmitter', type: 'address' },
+          { name: 'maxCiphertexts', type: 'uint16' },
+          { name: 'notBeforeBlock', type: 'uint64' },
+          { name: 'notAfterBlock', type: 'uint64' },
+        ],
+      },
+      { name: 'pkOrgX', type: 'uint256' },
+      { name: 'pkOrgY', type: 'uint256' },
+      { name: 'schnorrAx', type: 'uint256' },
+      { name: 'schnorrAy', type: 'uint256' },
+      { name: 'schnorrZ', type: 'uint256' },
+    ],
+    outputs: [],
+  },
+  {
+    type: 'function',
+    name: 'submitOrganizerShare',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'epochId', type: 'bytes12' },
+      { name: 'aid', type: 'bytes32' },
+      { name: 'ciphertextIndex', type: 'uint16' },
+      { name: 'c1x', type: 'uint256' },
+      { name: 'c1y', type: 'uint256' },
+      { name: 'c2x', type: 'uint256' },
+      { name: 'c2y', type: 'uint256' },
+      { name: 'deltaOrgX', type: 'uint256' },
+      { name: 'deltaOrgY', type: 'uint256' },
+      { name: 'dleqProof', type: 'bytes' },
+      { name: 'dleqInput', type: 'bytes' },
+    ],
+    outputs: [],
+  },
+
+  // ── view functions ────────────────────────────────────────────────────────
+  {
+    type: 'function',
+    name: 'getApplication',
+    stateMutability: 'view',
+    inputs: [
+      { name: 'epochId', type: 'bytes12' },
+      { name: 'aid', type: 'bytes32' },
+    ],
+    outputs: [
+      {
+        name: '',
+        type: 'tuple',
+        components: [
+          { name: 'creator', type: 'address' },
+          { name: 'mode', type: 'uint8' },
+          { name: 'derivationS', type: 'uint256' },
+          {
+            name: 'organizerPK',
+            type: 'tuple',
+            components: [
+              { name: 'x', type: 'uint256' },
+              { name: 'y', type: 'uint256' },
+            ],
+          },
+          {
+            name: 'policy',
+            type: 'tuple',
+            components: [
+              { name: 'authorizedSubmitter', type: 'address' },
+              { name: 'maxCiphertexts', type: 'uint16' },
+              { name: 'notBeforeBlock', type: 'uint64' },
+              { name: 'notAfterBlock', type: 'uint64' },
+            ],
+          },
+          { name: 'createdAtBlock', type: 'uint64' },
+          { name: 'exists', type: 'bool' },
+        ],
+      },
+    ],
+  },
+  {
+    type: 'function',
+    name: 'getRegisteredAids',
+    stateMutability: 'view',
+    inputs: [{ name: 'epochId', type: 'bytes12' }],
+    outputs: [{ name: '', type: 'bytes32[]' }],
+  },
+  {
+    type: 'function',
+    name: 'MANAGER',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'address' }],
+  },
+  {
+    type: 'function',
+    name: 'PARTIAL_DECRYPT_VERIFIER',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'address' }],
+  },
+
+  // ── events ────────────────────────────────────────────────────────────────
+  {
+    type: 'event',
+    name: 'ApplicationRegistered',
+    inputs: [
+      { name: 'epochId', type: 'bytes12', indexed: true },
+      { name: 'aid', type: 'bytes32', indexed: true },
+      { name: 'creator', type: 'address', indexed: true },
+      { name: 'mode', type: 'uint8', indexed: false },
+      { name: 'derivationS', type: 'uint256', indexed: false },
+      { name: 'organizerPKx', type: 'uint256', indexed: false },
+      { name: 'organizerPKy', type: 'uint256', indexed: false },
+    ],
+  },
+  {
+    type: 'event',
+    name: 'OrganizerShareSubmitted',
+    inputs: [
+      { name: 'epochId', type: 'bytes12', indexed: true },
+      { name: 'aid', type: 'bytes32', indexed: true },
+      { name: 'ciphertextIndex', type: 'uint16', indexed: true },
+      { name: 'deltaOrgX', type: 'uint256', indexed: false },
+      { name: 'deltaOrgY', type: 'uint256', indexed: false },
+    ],
+  },
+
+  // ── errors ────────────────────────────────────────────────────────────────
+  { type: 'error', name: 'InvalidApplication', inputs: [] },
+  { type: 'error', name: 'ApplicationAlreadyExists', inputs: [] },
+  { type: 'error', name: 'InvalidSchnorrProof', inputs: [] },
+  { type: 'error', name: 'InvalidEpoch', inputs: [] },
+  { type: 'error', name: 'InvalidPhase', inputs: [] },
+  { type: 'error', name: 'InvalidAddress', inputs: [] },
+  { type: 'error', name: 'InvalidVerifier', inputs: [] },
+  { type: 'error', name: 'InvalidCiphertext', inputs: [] },
+  { type: 'error', name: 'CiphertextNotSubmitted', inputs: [] },
+  { type: 'error', name: 'AlreadyPartiallyDecrypted', inputs: [] },
+  { type: 'error', name: 'InvalidProofInput', inputs: [] },
+  { type: 'error', name: 'NotOwner', inputs: [] },
+  { type: 'error', name: 'DecryptionNotYetAllowed', inputs: [] },
+  { type: 'error', name: 'DecryptionExpired', inputs: [] },
+  { type: 'error', name: 'DecryptionLimitReached', inputs: [] },
+  { type: 'error', name: 'InsufficientPartialDecryptions', inputs: [] },
 ] as const;

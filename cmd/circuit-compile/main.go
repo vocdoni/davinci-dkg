@@ -18,8 +18,6 @@ import (
 	"github.com/vocdoni/davinci-dkg/circuits/decryptcombine"
 	"github.com/vocdoni/davinci-dkg/circuits/finalize"
 	"github.com/vocdoni/davinci-dkg/circuits/partialdecrypt"
-	"github.com/vocdoni/davinci-dkg/circuits/revealshare"
-	"github.com/vocdoni/davinci-dkg/circuits/revealsubmit"
 	"github.com/vocdoni/davinci-dkg/log"
 	"github.com/vocdoni/davinci-dkg/prover"
 )
@@ -88,18 +86,6 @@ func main() {
 			Artifacts:     decryptcombine.Artifacts,
 			Compile:       decryptcombine.Compile,
 			VerifierLabel: "decryptcombine_vkey.sol",
-		},
-		{
-			Name:          "revealsubmit",
-			Artifacts:     revealsubmit.Artifacts,
-			Compile:       revealsubmit.Compile,
-			VerifierLabel: "revealsubmit_vkey.sol",
-		},
-		{
-			Name:          "revealshare",
-			Artifacts:     revealshare.Artifacts,
-			Compile:       revealshare.Compile,
-			VerifierLabel: "revealshare_vkey.sol",
 		},
 	}
 

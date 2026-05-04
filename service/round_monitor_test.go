@@ -11,13 +11,13 @@ import (
 	"github.com/vocdoni/davinci-dkg/web3"
 )
 
-func TestRoundMonitorSyncRound(t *testing.T) {
+func TestEpochMonitorSyncEpoch(t *testing.T) {
 	c := qt.New(t)
 
 	contracts := &mockContracts{
-		round: web3.RoundView{
+		epoch: web3.EpochView{
 			Organizer: common.HexToAddress("0x1000000000000000000000000000000000000001"),
-			Policy: web3.RoundPolicy{
+			Policy: web3.EpochPolicy{
 				Threshold:                 2,
 				CommitteeSize:             2,
 				MinValidContributions:     2,
@@ -33,28 +33,28 @@ func TestRoundMonitorSyncRound(t *testing.T) {
 		},
 	}
 	st := storage.New()
-	monitor := NewRoundMonitor(contracts, st)
+	monitor := NewEpochMonitor(contracts, st)
 
-	var roundID [12]byte
-	copy(roundID[:], []byte("round-1"))
+	var epochID [12]byte
+	copy(epochID[:], []byte("epoch-1"))
 
-	err := monitor.SyncRound(context.Background(), roundID)
+	err := monitor.SyncEpoch(context.Background(), epochID)
 	c.Assert(err, qt.IsNil)
 
-	round, err := st.Round("round-1")
+	epoch, err := st.Epoch("epoch-1")
 	c.Assert(err, qt.IsNil)
-	c.Assert(round.Organizer, qt.Equals, contracts.round.Organizer)
-	c.Assert(round.Phase, qt.Equals, types.RoundPhaseContribution)
-	c.Assert(round.SelectedParticipants, qt.DeepEquals, contracts.selected)
+	c.Assert(epoch.Organizer, qt.Equals, contracts.epoch.Organizer)
+	c.Assert(epoch.Phase, qt.Equals, types.EpochPhaseContribution)
+	c.Assert(epoch.SelectedParticipants, qt.DeepEquals, contracts.selected)
 }
 
-func TestRoundMonitorSyncRoundUpdatesExistingSnapshot(t *testing.T) {
+func TestEpochMonitorSyncEpochUpdatesExistingSnapshot(t *testing.T) {
 	c := qt.New(t)
 
 	contracts := &mockContracts{
-		round: web3.RoundView{
+		epoch: web3.EpochView{
 			Organizer: common.HexToAddress("0x1000000000000000000000000000000000000001"),
-			Policy: web3.RoundPolicy{
+			Policy: web3.EpochPolicy{
 				Threshold:                 2,
 				CommitteeSize:             2,
 				MinValidContributions:     2,
@@ -69,47 +69,47 @@ func TestRoundMonitorSyncRoundUpdatesExistingSnapshot(t *testing.T) {
 		},
 	}
 	st := storage.New()
-	monitor := NewRoundMonitor(contracts, st)
+	monitor := NewEpochMonitor(contracts, st)
 
-	var roundID [12]byte
-	copy(roundID[:], []byte("round-1"))
+	var epochID [12]byte
+	copy(epochID[:], []byte("epoch-1"))
 
-	c.Assert(monitor.SyncRound(context.Background(), roundID), qt.IsNil)
+	c.Assert(monitor.SyncEpoch(context.Background(), epochID), qt.IsNil)
 
-	contracts.round.Status = 3
+	contracts.epoch.Status = 3
 	contracts.selected = []common.Address{
 		common.HexToAddress("0x2000000000000000000000000000000000000002"),
 		common.HexToAddress("0x3000000000000000000000000000000000000003"),
 	}
 
-	c.Assert(monitor.SyncRound(context.Background(), roundID), qt.IsNil)
+	c.Assert(monitor.SyncEpoch(context.Background(), epochID), qt.IsNil)
 
-	round, err := st.Round("round-1")
+	epoch, err := st.Epoch("epoch-1")
 	c.Assert(err, qt.IsNil)
-	c.Assert(round.Phase, qt.Equals, types.RoundPhaseFinalized)
-	c.Assert(round.SelectedParticipants, qt.DeepEquals, contracts.selected)
+	c.Assert(epoch.Phase, qt.Equals, types.EpochPhaseFinalized)
+	c.Assert(epoch.SelectedParticipants, qt.DeepEquals, contracts.selected)
 }
 
 type mockContracts struct {
-	round    web3.RoundView
+	epoch    web3.EpochView
 	selected []common.Address
 }
 
-func TestMapRoundPhase(t *testing.T) {
+func TestMapEpochPhase(t *testing.T) {
 	c := qt.New(t)
 
-	// Solidity DKGTypes.RoundStatus: None=0, Readiness=1, Contribution=2, Finalized=3, Aborted=4, Completed=5
-	c.Assert(mapRoundPhase(0), qt.Equals, types.RoundPhaseUnknown)
-	c.Assert(mapRoundPhase(1), qt.Equals, types.RoundPhaseRegistration)
-	c.Assert(mapRoundPhase(2), qt.Equals, types.RoundPhaseContribution)
-	c.Assert(mapRoundPhase(3), qt.Equals, types.RoundPhaseFinalized)
-	c.Assert(mapRoundPhase(4), qt.Equals, types.RoundPhaseAborted)
-	c.Assert(mapRoundPhase(5), qt.Equals, types.RoundPhaseCompleted)
-	c.Assert(mapRoundPhase(99), qt.Equals, types.RoundPhaseUnknown)
+	// Solidity DKGTypes.EpochPhase: None=0, Readiness=1, Contribution=2, Finalized=3, Aborted=4, Completed=5
+	c.Assert(mapEpochPhase(0), qt.Equals, types.EpochPhaseUnknown)
+	c.Assert(mapEpochPhase(1), qt.Equals, types.EpochPhaseRegistration)
+	c.Assert(mapEpochPhase(2), qt.Equals, types.EpochPhaseContribution)
+	c.Assert(mapEpochPhase(3), qt.Equals, types.EpochPhaseFinalized)
+	c.Assert(mapEpochPhase(4), qt.Equals, types.EpochPhaseAborted)
+	c.Assert(mapEpochPhase(5), qt.Equals, types.EpochPhaseCompleted)
+	c.Assert(mapEpochPhase(99), qt.Equals, types.EpochPhaseUnknown)
 }
 
-func (m *mockContracts) GetRound(_ context.Context, _ [12]byte) (web3.RoundView, error) {
-	return m.round, nil
+func (m *mockContracts) GetEpoch(_ context.Context, _ [12]byte) (web3.EpochView, error) {
+	return m.epoch, nil
 }
 
 func (m *mockContracts) SelectedParticipants(_ context.Context, _ [12]byte) ([]common.Address, error) {

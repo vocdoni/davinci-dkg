@@ -95,7 +95,7 @@ func initBSGSTable() {
 
 // dlogBSGS recovers a scalar `a` such that a·G = target with 0 ≤ a <
 // MaxDLogPlaintext. Returns an error when the search exhausts the
-// configured range — that's a hard signal that the round produced a
+// configured range — that's a hard signal that the epoch produced a
 // plaintext outside the documented domain and the result is unrecoverable
 // without a different algorithm.
 //

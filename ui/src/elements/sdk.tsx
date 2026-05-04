@@ -57,54 +57,54 @@ const publicClient = createPublicClient({
 
 export const dkg = new DKGClient({
   publicClient,
-  managerAddress: '0x01ee71fdce1705c8823f9f8b2f312100165fdd70',
+  managerAddress: '0x6683f889ce518945053f7d01abef7da842283078',
 })`}
         </CodeBlock>
       </Section>
 
-      <Section heading='Reading a round'>
+      <Section heading='Reading a epoch'>
         <Text fontSize='sm' color='ink.2'>
-          Round identifiers are 12-byte values formed from a 4-byte chain prefix and an 8-byte
-          nonce. Build one with <Code>buildRoundId</Code> or pass a known one as a hex string.
+          Epoch identifiers are 12-byte values formed from a 4-byte chain prefix and an 8-byte
+          nonce. Build one with <Code>buildEpochId</Code> or pass a known one as a hex string.
         </Text>
         <CodeBlock language='tsx'>
-          {`import { buildRoundId, RoundStatus, roundStatusLabel } from '@vocdoni/davinci-dkg-sdk'
+          {`import { buildEpochId, EpochPhase, roundStatusLabel } from '@vocdoni/davinci-dkg-sdk'
 
-// Latest round on the chain.
-const nonce  = await dkg.roundNonce()
+// Latest epoch on the chain.
+const nonce  = await dkg.epochNonce()
 const prefix = await dkg.roundPrefix()
-const roundId = buildRoundId(prefix, nonce - 1n)
+const epochId = buildEpochId(prefix, nonce - 1n)
 
-const round = await dkg.getRound(roundId)
+const epoch = await dkg.getEpoch(epochId)
 console.log({
-  status: roundStatusLabel(round.status),
-  threshold: \`\${round.policy.threshold} of \${round.policy.committeeSize}\`,
-  contributions: \`\${round.contributionCount} / \${round.policy.minValidContributions}\`,
+  status: roundStatusLabel(epoch.status),
+  threshold: \`\${epoch.policy.threshold} of \${epoch.policy.committeeSize}\`,
+  contributions: \`\${epoch.contributionCount} / \${epoch.policy.minValidContributions}\`,
 })
 
 // Once finalized, the public key is exposed on-chain:
-if (round.status === RoundStatus.Finalized) {
-  const pk = await dkg.getCollectivePublicKey(roundId)
+if (epoch.status === EpochPhase.Finalized) {
+  const pk = await dkg.getCollectivePublicKey(epochId)
   console.log('shared key', pk.x.toString(16), pk.y.toString(16))
 }`}
         </CodeBlock>
       </Section>
 
-      <Section heading='Watching new rounds'>
+      <Section heading='Watching new epochs'>
         <Text fontSize='sm' color='ink.2'>
           The monitor helpers wrap react-query–friendly polling and viem event logs. Use them in a
           long-running process or a backend job.
         </Text>
         <CodeBlock language='tsx'>
-          {`import { watchNewRounds, watchRoundFinalized } from '@vocdoni/davinci-dkg-sdk'
+          {`import { watchNewRounds, watchEpochFinalized } from '@vocdoni/davinci-dkg-sdk'
 
 const stop = watchNewRounds(dkg, (entry) => {
-  console.log('new round', entry.id, entry.round.policy.threshold,
-              'of', entry.round.policy.committeeSize)
+  console.log('new epoch', entry.id, entry.epoch.policy.threshold,
+              'of', entry.epoch.policy.committeeSize)
 })
 
-watchRoundFinalized(dkg, '0x82...0001', (event) => {
-  console.log('round finalized; key hash:', event.collectivePublicKeyHash)
+watchEpochFinalized(dkg, '0x82...0001', (event) => {
+  console.log('epoch finalized; key hash:', event.collectivePublicKeyHash)
 })
 
 // Later, to clean up:
@@ -114,18 +114,18 @@ stop()`}
 
       <Section heading='Encrypting for the committee'>
         <Text fontSize='sm' color='ink.2'>
-          Once a round is finalized, anyone can encrypt for it. ElGamal on BabyJubJub is provided
+          Once a epoch is finalized, anyone can encrypt for it. ElGamal on BabyJubJub is provided
           by <Code>buildElGamal</Code> and operates entirely client-side.
         </Text>
         <CodeBlock language='tsx'>
           {`import { buildElGamal } from '@vocdoni/davinci-dkg-sdk'
 
 const eg = await buildElGamal()
-const pk = await dkg.getCollectivePublicKey(roundId)
+const pk = await dkg.getCollectivePublicKey(epochId)
 
 // 'message' must be a non-negative integer strictly below 2^50 (≈ 1.13e15).
 // That's the upper bound the committee's BSGS dlog can recover; submitting
-// anything larger leaves the round unrecoverable.
+// anything larger leaves the epoch unrecoverable.
 const ciphertext = eg.encrypt(42n, [pk.x, pk.y])
 // ciphertext = { c1: [x, y], c2: [x, y] } — both points on BabyJubJub`}
         </CodeBlock>
@@ -141,7 +141,7 @@ const ciphertext = eg.encrypt(42n, [pk.x, pk.y])
         <Text fontSize='sm' color='ink.2'>
           Chain-writing operations require a viem <Code>WalletClient</Code>. Wrap it with{' '}
           <Code>DKGWriter</Code>, which extends <Code>DKGClient</Code> with{' '}
-          <Code>createRound</Code>, <Code>submitCiphertext</Code>, and <Code>abortRound</Code>.
+          <Code>createEpoch</Code>, <Code>submitCiphertext</Code>, and <Code>abortEpoch</Code>.
         </Text>
         <CodeBlock language='tsx'>
           {`import { createWalletClient, http } from 'viem'
@@ -159,11 +159,12 @@ const walletClient = createWalletClient({
 const writer = new DKGWriter({
   publicClient,
   walletClient,
-  managerAddress: '0x01ee71fdce1705c8823f9f8b2f312100165fdd70',
+  managerAddress: '0x6683f889ce518945053f7d01abef7da842283078',
 })
 
+const ZERO_AID = '0x' + '00'.repeat(32)
 const txHash = await writer.submitCiphertext(
-  roundId, /* ciphertextIndex */ 1,
+  epochId, ZERO_AID, /* ciphertextIndex */ 1,
   ciphertext.c1[0], ciphertext.c1[1],
   ciphertext.c2[0], ciphertext.c2[1],
 )
@@ -180,7 +181,7 @@ await writer.waitForTransaction(txHash)`}
         <CodeBlock language='tsx'>
           {`import { waitForCombinedDecryption } from '@vocdoni/davinci-dkg-sdk'
 
-const record = await waitForCombinedDecryption(dkg, roundId, 1, {
+const record = await waitForCombinedDecryption(dkg, epochId, 1, {
   intervalMs: 3000,
   timeoutMs: 5 * 60_000,
 })

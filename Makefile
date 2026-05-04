@@ -124,6 +124,15 @@ solidity-bind: ## Regenerate Go ABI bindings from compiled Solidity artifacts
 	@echo "Generating Go ABI bindings ..."
 	@cd solidity && bash go_bind.sh
 
+vectors: ## Regenerate cross-impl test vectors under tests/vectors/
+	@echo "Regenerating cross-impl vectors ..."
+	@go run ./cmd/protocol-vectors -dir tests/vectors
+
+vectors-check: ## Regenerate vectors and fail if anything changed (CI guard)
+	@go run ./cmd/protocol-vectors -dir tests/vectors
+	@git diff --exit-code -- tests/vectors/ \
+		|| (echo "tests/vectors/ is out of date — run 'make vectors' and commit." && exit 1)
+
 solidity-deploy: ## Deploy contracts (set RPC_URL, CHAIN_ID, PRIVATE_KEY)
 	@# The script also loads RPC_URL / CHAIN_ID / PRIVATE_KEY / ETHERSCAN_API_KEY
 	@# from a repo-root .env file when present, so the Makefile only enforces
@@ -165,13 +174,11 @@ testnet-up: ## Start the testnet with N nodes
 	DKG_NODE_COUNT=$(DKG_NODE_COUNT) \
 	docker compose up -d --scale dkg-node=$(DKG_NODE_COUNT) --build
 
-testnet-run: ## Run the DKG orchestration scenario
-	@echo "Running DKG scenario (nodes=$(DKG_NODE_COUNT), threshold=$(DKG_THRESHOLD), disclosure=$(DKG_DISCLOSURE_ALLOWED))..."
-	@cd testnet && \
-	DKG_RUNNER_NODES=$(DKG_NODE_COUNT) \
-	DKG_RUNNER_THRESHOLD=$(DKG_THRESHOLD) \
-	DKG_RUNNER_DISCLOSURE_ALLOWED=$(DKG_DISCLOSURE_ALLOWED) \
-	docker compose run --rm dkg-runner
+testnet-run: ## (Deprecated alias) Wait for the running dkg-node fleet to auto-create + drive an epoch
+	@echo "The dkg-runner orchestrator was removed; davinci-dkg-node now"
+	@echo "auto-creates epochs by default (--auto-create-epochs=true)."
+	@echo "Bring the fleet up with 'make testnet-up' and tail logs with"
+	@echo "'make testnet-logs' to watch the schedule."
 
 testnet-logs: ## Tail logs for the DKG nodes
 	@cd testnet && docker compose logs -f dkg-node

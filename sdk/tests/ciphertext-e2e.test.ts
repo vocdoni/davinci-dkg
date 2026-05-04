@@ -1,18 +1,18 @@
 // SDK end-to-end ciphertext test.
 //
-// Drives the full ElGamal round-trip against a live Anvil + finalized DKG
-// round, exercising the BabyJubJub form-conversion plumbing that the
+// Drives the full ElGamal epoch-trip against a live Anvil + finalized DKG
+// epoch, exercising the BabyJubJub form-conversion plumbing that the
 // monitor / writer / client expose for SDK consumers:
 //
 //   1. Go fixture (`sdk-test-fixture --action=create`) creates a finalized
-//      single-participant round (committee=1, threshold=1, share=11).
-//   2. SDK reads `getCollectivePublicKey(roundId)` → returned in TE form.
+//      single-participant epoch (committee=1, threshold=1, share=11).
+//   2. SDK reads `getCollectivePublicKey(epochId)` → returned in TE form.
 //   3. SDK encrypts a small plaintext with `buildElGamal().encrypt()`.
 //   4. SDK calls `writer.submitCiphertext(...)` — internally converts c1/c2
 //      from TE → RTE so the contract's `_isOnBabyJubJub` check accepts them.
 //   5. Go fixture (`sdk-test-fixture --action=decrypt --share=11 ...`) drives
 //      partial decryption + combine on-chain.
-//   6. SDK reads `getPlaintext(roundId, idx)` and asserts the recovered
+//   6. SDK reads `getPlaintext(epochId, idx)` and asserts the recovered
 //      value equals the original plaintext.
 //
 // This test is what would have caught the InvalidCiphertext() production bug:
@@ -47,7 +47,7 @@ function useHarness() {
 }
 
 interface FixtureCreateResult {
-  roundId: `0x${string}`;
+  epochId: `0x${string}`;
   collectivePublicKeyHash: `0x${string}`;
   share: string; // decimal
 }
@@ -101,7 +101,7 @@ describe('SDK ciphertext end-to-end (encrypt → submit → combine → getPlain
       managerAddress,
     });
 
-    console.log('[ciphertext-e2e] Running Go fixture (create) to set up a finalized round…');
+    console.log('[ciphertext-e2e] Running Go fixture (create) to set up a finalized epoch…');
     const createOut = await runGoFixture(['--rpc-url', rpcUrl, '--addresses-file', addressesFile, '--action=create']);
     if (!createOut || createOut.status !== 0) {
       console.warn('[ciphertext-e2e] fixture create failed — skipping. stderr:', createOut?.stderr.slice(0, 500));
@@ -113,7 +113,7 @@ describe('SDK ciphertext end-to-end (encrypt → submit → combine → getPlain
       return;
     }
     fixture = parsed;
-    console.log(`[ciphertext-e2e] Fixture round: ${fixture.roundId}, share=${fixture.share}`);
+    console.log(`[ciphertext-e2e] Fixture epoch: ${fixture.epochId}, share=${fixture.share}`);
   });
 
   it('SDK encrypt → submitCiphertext → combine → getPlaintext recovers plaintext', async () => {
@@ -122,7 +122,7 @@ describe('SDK ciphertext end-to-end (encrypt → submit → combine → getPlain
 
     // 1. Read the on-chain collective public key (returned in TE form thanks
     //    to the SDK's RTE→TE conversion in client.getCollectivePublicKey).
-    const pk = await client.getCollectivePublicKey(fixture.roundId);
+    const pk = await client.getCollectivePublicKey(fixture.epochId);
     expect(pk.x).not.toBe(0n);
     // y == 1 with x == 0 would be the identity, i.e. no contributions accepted yet.
     expect(!(pk.x === 0n && pk.y === 1n)).toBe(true);
@@ -135,8 +135,10 @@ describe('SDK ciphertext end-to-end (encrypt → submit → combine → getPlain
     // 3. Submit to chain. The writer converts TE→RTE internally before sending,
     //    so the contract's `_isOnBabyJubJub` (RTE) check passes.
     const ciphertextIndex = 1;
+    const zeroAid = ('0x' + '0'.repeat(64)) as `0x${string}`;
     const submitTx = await writer.submitCiphertext(
-      fixture.roundId,
+      fixture.epochId,
+      zeroAid,
       ciphertextIndex,
       ciphertext.c1[0], ciphertext.c1[1],
       ciphertext.c2[0], ciphertext.c2[1],
@@ -145,7 +147,7 @@ describe('SDK ciphertext end-to-end (encrypt → submit → combine → getPlain
     await writer.publicClient.waitForTransactionReceipt({ hash: submitTx });
 
     // Sanity: the contract now stores a non-zero ciphertext hash for this index.
-    const ctHash = await client.getCiphertextHash(fixture.roundId, ciphertextIndex);
+    const ctHash = await client.getCiphertextHash(fixture.epochId, zeroAid, ciphertextIndex);
     expect(ctHash).not.toBe('0x' + '0'.repeat(64));
 
     // 4. Drive the on-chain decryption flow via the Go fixture (it builds the
@@ -155,7 +157,7 @@ describe('SDK ciphertext end-to-end (encrypt → submit → combine → getPlain
       '--rpc-url', rpcUrl,
       '--addresses-file', addressesFile,
       '--action=decrypt',
-      '--round-id', fixture.roundId,
+      '--epoch-id', fixture.epochId,
       '--ciphertext-index', String(ciphertextIndex),
       '--share', fixture.share,
     ]);
@@ -166,7 +168,7 @@ describe('SDK ciphertext end-to-end (encrypt → submit → combine → getPlain
     expect(decryptParsed?.ok).toBe(true);
 
     // 5. Read the recovered plaintext from chain — must match what we sent.
-    const recovered = await client.getPlaintext(fixture.roundId, ciphertextIndex);
+    const recovered = await client.getPlaintext(fixture.epochId, zeroAid, ciphertextIndex);
     expect(recovered).toBe(plaintext);
   }, 900_000);
 });
