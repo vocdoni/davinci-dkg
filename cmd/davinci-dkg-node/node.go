@@ -741,11 +741,11 @@ func (n *Node) doClaimSlot(ctx context.Context, epochID [12]byte, epoch web3.Epo
 
 	// Pre-flight: check registration deadline before sending any tx.
 	if headErr == nil {
-		if head >= epoch.Policy.RegistrationDeadlineBlock {
+		if head >= epoch.Policy.CommitteeSelectionDeadlineBlock {
 			log.Warnw("registration deadline already passed — skipping slot claim",
 				"epoch", roundHex(epochID),
 				"head", head,
-				"deadline", epoch.Policy.RegistrationDeadlineBlock)
+				"deadline", epoch.Policy.CommitteeSelectionDeadlineBlock)
 			n.signaled[epochID] = true
 			return nil
 		}
@@ -822,11 +822,11 @@ func (n *Node) doContribution(
 	if err != nil {
 		log.Warnw("doContribution: failed to read block number", "epoch", roundHex(epochID), "err", err)
 		// Proceed optimistically; worst case the tx reverts and we catch it below.
-	} else if head >= epoch.Policy.ContributionDeadlineBlock {
+	} else if head >= epoch.Policy.KeyAssemblyDeadlineBlock {
 		log.Warnw("contribution deadline already passed — skipping epoch",
 			"epoch", roundHex(epochID),
 			"head", head,
-			"deadline", epoch.Policy.ContributionDeadlineBlock)
+			"deadline", epoch.Policy.KeyAssemblyDeadlineBlock)
 		n.contributed[epochID] = true
 		return nil
 	}
@@ -895,7 +895,7 @@ func (n *Node) doContribution(
 		"index", idx,
 		"threshold", threshold,
 		"committeeSize", committeeSize,
-		"deadline", epoch.Policy.ContributionDeadlineBlock,
+		"deadline", epoch.Policy.KeyAssemblyDeadlineBlock,
 		"head", head,
 	)
 
@@ -1037,7 +1037,7 @@ func (n *Node) tryAutoFinalize(
 	// Derive the rotation start index from the lottery seed so it varies per epoch.
 	startSlot := new(big.Int).Mod(new(big.Int).SetBytes(epoch.Seed[:]), big.NewInt(int64(committeeSize))).Uint64()
 	mySlot := (uint64(myIdx-1) - startSlot + uint64(committeeSize)) % uint64(committeeSize)
-	waitUntil := epoch.Policy.FinalizeNotBeforeBlock + mySlot*staggerBlocks
+	waitUntil := epoch.Policy.LiveNotBeforeBlock + mySlot*staggerBlocks
 
 	head, err := n.contracts.Client().BlockNumber(ctx)
 	if err != nil {
@@ -1065,7 +1065,7 @@ func (n *Node) tryAutoFinalize(
 		"startSlot", startSlot,
 		"mySlot", mySlot,
 		"head", head,
-		"finalizeNotBefore", epoch.Policy.FinalizeNotBeforeBlock,
+		"finalizeNotBefore", epoch.Policy.LiveNotBeforeBlock,
 	)
 
 	committeeSizePolicy := epoch.Policy.CommitteeSize
@@ -1340,7 +1340,7 @@ func (n *Node) buildPrivateShare(
 // and decrypts the share slot destined for myIdx.
 //
 // fromBlock is the earliest block to scan. Pass the epoch's
-// registrationDeadlineBlock so the scan starts at the earliest plausible point
+// committeeSelectionDeadlineBlock so the scan starts at the earliest plausible point
 // instead of walking back an arbitrary fixed number of blocks from the head.
 func (n *Node) recoverShareFrom(
 	ctx context.Context,

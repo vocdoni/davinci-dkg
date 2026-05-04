@@ -23,12 +23,12 @@ func TestContributionRejectsMalformedProof(t *testing.T) {
 	c.Assert(err, qt.IsNil)
 
 	policy := types.EpochPolicy{
-		Threshold:                 1,
-		CommitteeSize:             1,
-		MinValidContributions:     1,
-		RegistrationDeadlineBlock: head + 25,
-		ContributionDeadlineBlock: head + 50,
-		FinalizeNotBeforeBlock:    head + 51,
+		Threshold:                       1,
+		CommitteeSize:                   1,
+		MinValidContributions:           1,
+		CommitteeSelectionDeadlineBlock: head + 25,
+		KeyAssemblyDeadlineBlock:        head + 50,
+		LiveNotBeforeBlock:              head + 51,
 	}
 
 	epochID, err := helpers.CreateContributionRound(ctx, services, policy)
@@ -56,10 +56,10 @@ func TestContributionRejectsMalformedProof(t *testing.T) {
 	}
 }
 
-// TestFinalizeRejectsBeforeFinalizeNotBeforeBlock verifies the on-chain
+// TestFinalizeRejectsBeforeLiveNotBeforeBlock verifies the on-chain
 // finalize gate. With contributions in place AND threshold met, finalizeEpoch
-// must still revert until block.number reaches policy.finalizeNotBeforeBlock.
-func TestFinalizeRejectsBeforeFinalizeNotBeforeBlock(t *testing.T) {
+// must still revert until block.number reaches policy.liveNotBeforeBlock.
+func TestFinalizeRejectsBeforeLiveNotBeforeBlock(t *testing.T) {
 	if !helpers.IsIntegrationEnabled() {
 		t.Skip("integration tests disabled")
 	}
@@ -74,12 +74,12 @@ func TestFinalizeRejectsBeforeFinalizeNotBeforeBlock(t *testing.T) {
 	// Wide gap so the gate is comfortably in the future when we attempt
 	// finalize the first time.
 	policy := types.EpochPolicy{
-		Threshold:                 1,
-		CommitteeSize:             1,
-		MinValidContributions:     1,
-		RegistrationDeadlineBlock: head + 25,
-		ContributionDeadlineBlock: head + 50,
-		FinalizeNotBeforeBlock:    head + 200,
+		Threshold:                       1,
+		CommitteeSize:                   1,
+		MinValidContributions:           1,
+		CommitteeSelectionDeadlineBlock: head + 25,
+		KeyAssemblyDeadlineBlock:        head + 50,
+		LiveNotBeforeBlock:              head + 200,
 	}
 	epochID, err := helpers.CreateContributionRound(ctx, services, policy)
 	c.Assert(err, qt.IsNil)
@@ -97,7 +97,7 @@ func TestFinalizeRejectsBeforeFinalizeNotBeforeBlock(t *testing.T) {
 	c.Assert(err, qt.IsNil)
 	c.Assert(services.TxManager.WaitTxByHash(tx.Hash(), helpers.DefaultTxTimeout), qt.IsNil)
 
-	// Try to finalize NOW, before reaching finalizeNotBeforeBlock.
+	// Try to finalize NOW, before reaching liveNotBeforeBlock.
 	output, err := helpers.BuildFinalizeEpochOutput(ctx, epochID, 1, 1, []uint16{1}, [][]*big.Int{{big.NewInt(11)}})
 	c.Assert(err, qt.IsNil)
 	authEarly, err := services.TxManager.NewTransactOpts(ctx)
@@ -109,7 +109,7 @@ func TestFinalizeRejectsBeforeFinalizeNotBeforeBlock(t *testing.T) {
 	)
 	if err == nil {
 		c.Assert(services.TxManager.WaitTxByHash(earlyTx.Hash(), helpers.DefaultTxTimeout), qt.IsNotNil,
-			qt.Commentf("finalize should have reverted because finalizeNotBeforeBlock not reached"))
+			qt.Commentf("finalize should have reverted because liveNotBeforeBlock not reached"))
 	} else {
 		c.Assert(err.Error(), qt.Contains, "execution reverted")
 	}
@@ -144,12 +144,12 @@ func TestFinalizeRejectsMissingContribution(t *testing.T) {
 	c.Assert(err, qt.IsNil)
 
 	policy := types.EpochPolicy{
-		Threshold:                 1,
-		CommitteeSize:             1,
-		MinValidContributions:     1,
-		RegistrationDeadlineBlock: head + 25,
-		ContributionDeadlineBlock: head + 50,
-		FinalizeNotBeforeBlock:    head + 51,
+		Threshold:                       1,
+		CommitteeSize:                   1,
+		MinValidContributions:           1,
+		CommitteeSelectionDeadlineBlock: head + 25,
+		KeyAssemblyDeadlineBlock:        head + 50,
+		LiveNotBeforeBlock:              head + 51,
 	}
 
 	epochID, err := helpers.CreateContributionRound(ctx, services, policy)
@@ -192,12 +192,12 @@ func TestPartialDecryptRejectsMalformedProof(t *testing.T) {
 	c.Assert(err, qt.IsNil)
 
 	policy := types.EpochPolicy{
-		Threshold:                 1,
-		CommitteeSize:             1,
-		MinValidContributions:     1,
-		RegistrationDeadlineBlock: head + 25,
-		ContributionDeadlineBlock: head + 50,
-		FinalizeNotBeforeBlock:    head + 51,
+		Threshold:                       1,
+		CommitteeSize:                   1,
+		MinValidContributions:           1,
+		CommitteeSelectionDeadlineBlock: head + 25,
+		KeyAssemblyDeadlineBlock:        head + 50,
+		LiveNotBeforeBlock:              head + 51,
 	}
 	coefficients := []*big.Int{big.NewInt(17)}
 
@@ -251,13 +251,13 @@ func TestRoundCanFinalizeWithMissingContributorWhenPolicyPermits(t *testing.T) {
 	c.Assert(err, qt.IsNil)
 
 	policy := types.EpochPolicy{
-		Threshold:                 2,
-		CommitteeSize:             3,
-		MinValidContributions:     2,
-		LotteryAlphaBps:           helpers.DefaultLotteryAlphaBps,
-		RegistrationDeadlineBlock: head + 25,
-		ContributionDeadlineBlock: head + 50,
-		FinalizeNotBeforeBlock:    head + 51,
+		Threshold:                       2,
+		CommitteeSize:                   3,
+		MinValidContributions:           2,
+		LotteryAlphaBps:                 helpers.DefaultLotteryAlphaBps,
+		CommitteeSelectionDeadlineBlock: head + 25,
+		KeyAssemblyDeadlineBlock:        head + 50,
+		LiveNotBeforeBlock:              head + 51,
 	}
 
 	epochID, err := helpers.CreateEpoch(ctx, services, policy)

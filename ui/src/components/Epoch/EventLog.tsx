@@ -16,7 +16,7 @@ function eventSummary(ev: EpochEvent): string {
       return 'Committee member claimed a slot.'
     case 'ContributionSubmitted':
       return 'Contribution submitted and accepted.'
-    case 'EpochFinalized':
+    case 'EpochLive':
       return 'Epoch finalized — collective public key locked in.'
     case 'CiphertextSubmitted':
       return 'Ciphertext submitted for threshold decryption.'

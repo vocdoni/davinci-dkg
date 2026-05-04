@@ -111,10 +111,10 @@ export const watchNewRounds = watchNewEpochs;
 
 /**
  * Watch for a epoch being finalized.
- * Calls `onFinalized` once when the EpochFinalized event fires.
+ * Calls `onFinalized` once when the EpochLive event fires.
  * Returns an unsubscribe function.
  */
-export function watchEpochFinalized(
+export function watchEpochLive(
   client: DKGClient,
   epochId: `0x${string}`,
   onFinalized: (collectivePublicKeyHash: `0x${string}`) => void,
@@ -124,7 +124,7 @@ export function watchEpochFinalized(
     abi: [
       {
         type: 'event',
-        name: 'EpochFinalized',
+        name: 'EpochLive',
         inputs: [
           { name: 'epochId', type: 'bytes12', indexed: true },
           { name: 'aggregateCommitmentsHash', type: 'bytes32', indexed: false },
@@ -133,7 +133,7 @@ export function watchEpochFinalized(
         ],
       },
     ] as const,
-    eventName: 'EpochFinalized',
+    eventName: 'EpochLive',
     args: { epochId: epochId as any },
     onLogs: (logs) => {
       for (const log of logs) {

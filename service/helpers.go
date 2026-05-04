@@ -41,5 +41,5 @@ func hasPartialDecryption(st *storage.Storage, epochID string, operator common.A
 }
 
 func allowsDecryption(phase types.EpochPhase) bool {
-	return phase == types.EpochPhaseFinalized || phase == types.EpochPhaseDecryption
+	return phase == types.EpochPhaseLive || phase == types.EpochPhaseDecryption
 }

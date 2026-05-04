@@ -37,7 +37,7 @@ export interface CollectivePublicKey {
 
 /**
  * Wait until a epoch is Finalized, then return the collective public key hash
- * (keccak256 of the key point, emitted in the EpochFinalized event).
+ * (keccak256 of the key point, emitted in the EpochLive event).
  *
  * To get the actual curve point (x, y) call `client.getCollectivePublicKey(epochId)` —
  * a simple view-call that returns the key accumulated on-chain during contribution.
@@ -47,10 +47,10 @@ export async function waitForCollectivePublicKeyHash(
   epochId: `0x${string}`,
   options?: { intervalMs?: number; timeoutMs?: number },
 ): Promise<`0x${string}`> {
-  await waitForEpochPhase(client, epochId, EpochPhase.Finalized, options);
-  const events = await client.getEpochFinalizedEvents(epochId);
+  await waitForEpochPhase(client, epochId, EpochPhase.Live, options);
+  const events = await client.getEpochLiveEvents(epochId);
   if (events.length === 0) {
-    throw new Error(`No EpochFinalized event found for epoch ${epochId}`);
+    throw new Error(`No EpochLive event found for epoch ${epochId}`);
   }
   return events[events.length - 1].collectivePublicKeyHash;
 }

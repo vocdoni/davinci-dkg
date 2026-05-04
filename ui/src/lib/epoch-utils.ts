@@ -1,19 +1,25 @@
 import { EpochPhase, type Epoch } from '@vocdoni/davinci-dkg-sdk'
 
-// Plain-English summaries and phase math for a Epoch. Pure functions so they
+// Plain-English summaries and phase math for an Epoch. Pure functions so they
 // can drive both the epochs-list cards and the epoch-detail header without
 // duplicating logic.
 
-export type EpochPhase = 'registration' | 'contribution' | 'finalized' | 'completed' | 'aborted' | 'unknown'
+export type EpochPhase =
+  | 'committee-selection'
+  | 'key-assembly'
+  | 'live'
+  | 'completed'
+  | 'aborted'
+  | 'unknown'
 
 export function roundPhase(epoch: Epoch): EpochPhase {
   switch (epoch.status) {
-    case EpochPhase.Registration:
-      return 'registration'
-    case EpochPhase.Contribution:
-      return 'contribution'
-    case EpochPhase.Finalized:
-      return 'finalized'
+    case EpochPhase.CommitteeSelection:
+      return 'committee-selection'
+    case EpochPhase.KeyAssembly:
+      return 'key-assembly'
+    case EpochPhase.Live:
+      return 'live'
     case EpochPhase.Completed:
       return 'completed'
     case EpochPhase.Aborted:
@@ -26,12 +32,12 @@ export function roundPhase(epoch: Epoch): EpochPhase {
 /** Human-readable label per epoch phase. */
 export function roundPhaseLabel(phase: EpochPhase): string {
   switch (phase) {
-    case 'registration':
-      return 'Registration'
-    case 'contribution':
-      return 'Contribution'
-    case 'finalized':
-      return 'Finalized'
+    case 'committee-selection':
+      return 'Committee Selection'
+    case 'key-assembly':
+      return 'Key Assembly'
+    case 'live':
+      return 'Live'
     case 'completed':
       return 'Completed'
     case 'aborted':
@@ -44,24 +50,24 @@ export function roundPhaseLabel(phase: EpochPhase): string {
 /** One-sentence "what is this epoch waiting for" for the epoch detail header. */
 export function roundSummary(epoch: Epoch, currentBlock: bigint | null): string {
   switch (epoch.status) {
-    case EpochPhase.Registration: {
-      const remaining = currentBlock ? Number(epoch.policy.registrationDeadlineBlock - currentBlock) : null
+    case EpochPhase.CommitteeSelection: {
+      const remaining = currentBlock ? Number(epoch.policy.committeeSelectionDeadlineBlock - currentBlock) : null
       const claimed = epoch.claimedCount
       const size = epoch.policy.committeeSize
       const blocks = remaining != null && remaining > 0 ? ` (closes in ~${remaining} blocks)` : ''
       return `Waiting for nodes to claim committee slots — ${claimed}/${size} claimed${blocks}.`
     }
-    case EpochPhase.Contribution: {
+    case EpochPhase.KeyAssembly: {
       const need = epoch.policy.minValidContributions
       const have = epoch.contributionCount
       if (have >= need) {
-        const block = epoch.policy.finalizeNotBeforeBlock
-        return `Threshold met (${have}/${need}). Finalize unlocks at block #${block.toString()}.`
+        const block = epoch.policy.liveNotBeforeBlock
+        return `Threshold met (${have}/${need}). Epoch goes Live at block #${block.toString()}.`
       }
       return `Awaiting contributions — ${have}/${need} accepted so far.`
     }
-    case EpochPhase.Finalized:
-      return 'Epoch finalized. Collective public key is live; awaiting ciphertext submissions.'
+    case EpochPhase.Live:
+      return 'Collective public key is live; apps can register and ciphertexts can be decrypted.'
     case EpochPhase.Completed:
       return 'Epoch completed. All ciphertexts have been threshold-decrypted.'
     case EpochPhase.Aborted:
@@ -74,11 +80,11 @@ export function roundSummary(epoch: Epoch, currentBlock: bigint | null): string 
 /** Color palette key for the StatusBadge per phase. Keeps Chakra colour choices centralised. */
 export function roundPhaseColor(phase: EpochPhase): string {
   switch (phase) {
-    case 'registration':
+    case 'committee-selection':
       return 'yellow'
-    case 'contribution':
+    case 'key-assembly':
       return 'blue'
-    case 'finalized':
+    case 'live':
       return 'cyan'
     case 'completed':
       return 'green'
@@ -90,10 +96,10 @@ export function roundPhaseColor(phase: EpochPhase): string {
 }
 
 /** Steps in the canonical phase timeline, in order. Drives PhaseTimeline rendering. */
-export const phaseSequence: EpochPhase[] = ['registration', 'contribution', 'finalized', 'completed']
+export const phaseSequence: EpochPhase[] = ['committee-selection', 'key-assembly', 'live', 'completed']
 
 /**
- * A epoch has effectively failed when its current phase deadline has passed
+ * An epoch has effectively failed when its current phase deadline has passed
  * without enough nodes participating to make the next phase viable. The
  * contract doesn't auto-flip the epoch to Aborted in this case — it just
  * sits stuck — so the UI has to recognise it and surface the failure.
@@ -103,22 +109,22 @@ export const phaseSequence: EpochPhase[] = ['registration', 'contribution', 'fin
 export function roundFailure(
   epoch: Epoch,
   currentBlock: bigint | null
-): { kind: 'registration' | 'contribution'; have: number; need: number; total: number } | null {
+): { kind: 'committee-selection' | 'key-assembly'; have: number; need: number; total: number } | null {
   if (currentBlock == null) return null
-  if (epoch.status === EpochPhase.Registration) {
-    if (currentBlock > epoch.policy.registrationDeadlineBlock) {
+  if (epoch.status === EpochPhase.CommitteeSelection) {
+    if (currentBlock > epoch.policy.committeeSelectionDeadlineBlock) {
       const have = epoch.claimedCount
       const need = epoch.policy.minValidContributions
       if (have < need) {
-        return { kind: 'registration', have, need, total: epoch.policy.committeeSize }
+        return { kind: 'committee-selection', have, need, total: epoch.policy.committeeSize }
       }
     }
-  } else if (epoch.status === EpochPhase.Contribution) {
-    if (currentBlock > epoch.policy.contributionDeadlineBlock) {
+  } else if (epoch.status === EpochPhase.KeyAssembly) {
+    if (currentBlock > epoch.policy.keyAssemblyDeadlineBlock) {
       const have = epoch.contributionCount
       const need = epoch.policy.minValidContributions
       if (have < need) {
-        return { kind: 'contribution', have, need, total: epoch.policy.committeeSize }
+        return { kind: 'key-assembly', have, need, total: epoch.policy.committeeSize }
       }
     }
   }

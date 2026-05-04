@@ -58,13 +58,13 @@ func (c *Contracts) GetEpoch(ctx context.Context, epochID [12]byte) (EpochView, 
 		return EpochView{}, fmt.Errorf("unexpected output count for getEpoch: %d", len(values))
 	}
 	policy, ok := values[1].(struct {
-		Threshold                 uint16 `json:"threshold"`
-		CommitteeSize             uint16 `json:"committeeSize"`
-		MinValidContributions     uint16 `json:"minValidContributions"`
-		LotteryAlphaBps           uint16 `json:"lotteryAlphaBps"`
-		RegistrationDeadlineBlock uint64 `json:"registrationDeadlineBlock"`
-		ContributionDeadlineBlock uint64 `json:"contributionDeadlineBlock"`
-		FinalizeNotBeforeBlock    uint64 `json:"finalizeNotBeforeBlock"`
+		Threshold                       uint16 `json:"threshold"`
+		CommitteeSize                   uint16 `json:"committeeSize"`
+		MinValidContributions           uint16 `json:"minValidContributions"`
+		LotteryAlphaBps                 uint16 `json:"lotteryAlphaBps"`
+		CommitteeSelectionDeadlineBlock uint64 `json:"committeeSelectionDeadlineBlock"`
+		KeyAssemblyDeadlineBlock        uint64 `json:"keyAssemblyDeadlineBlock"`
+		LiveNotBeforeBlock              uint64 `json:"liveNotBeforeBlock"`
 	})
 	if !ok {
 		return EpochView{}, fmt.Errorf("unexpected policy tuple shape")
@@ -73,13 +73,13 @@ func (c *Contracts) GetEpoch(ctx context.Context, epochID [12]byte) (EpochView, 
 	return EpochView{
 		Organizer: values[0].(common.Address),
 		Policy: EpochPolicy{
-			Threshold:                 policy.Threshold,
-			CommitteeSize:             policy.CommitteeSize,
-			MinValidContributions:     policy.MinValidContributions,
-			LotteryAlphaBps:           policy.LotteryAlphaBps,
-			RegistrationDeadlineBlock: policy.RegistrationDeadlineBlock,
-			ContributionDeadlineBlock: policy.ContributionDeadlineBlock,
-			FinalizeNotBeforeBlock:    policy.FinalizeNotBeforeBlock,
+			Threshold:                       policy.Threshold,
+			CommitteeSize:                   policy.CommitteeSize,
+			MinValidContributions:           policy.MinValidContributions,
+			LotteryAlphaBps:                 policy.LotteryAlphaBps,
+			CommitteeSelectionDeadlineBlock: policy.CommitteeSelectionDeadlineBlock,
+			KeyAssemblyDeadlineBlock:        policy.KeyAssemblyDeadlineBlock,
+			LiveNotBeforeBlock:              policy.LiveNotBeforeBlock,
 		},
 		Status:                 values[3].(uint8),
 		Nonce:                  values[4].(uint64),

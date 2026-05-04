@@ -57,7 +57,7 @@ const nonce       = await client.roundNonce();
 
 // Round details
 const round = await client.getRound(roundId);
-console.log(round.status);           // 1=Registration, 2=Contribution, 3=Finalized …
+console.log(round.status);           // 1=CommitteeSelection, 2=KeyAssembly, 3=Live …
 console.log(round.policy.threshold);
 
 // Participants and contributions
@@ -85,9 +85,9 @@ const hash = await writer.createRound(
     minValidContributions:     2,
     lotteryAlphaBps:           15000,   // 1.5× over-subscription
     seedDelay:                 1,        // blocks before seed is available
-    registrationDeadlineBlock: currentBlock + 25n,
-    contributionDeadlineBlock: currentBlock + 50n,
-    finalizeNotBeforeBlock:    currentBlock + 51n, // must be > contributionDeadlineBlock
+    committeeSelectionDeadlineBlock: currentBlock + 25n,
+    keyAssemblyDeadlineBlock: currentBlock + 50n,
+    liveNotBeforeBlock:    currentBlock + 51n, // must be > keyAssemblyDeadlineBlock
     disclosureAllowed:         false,
   },
   {
@@ -111,7 +111,7 @@ await writer.registerKey(pubX, pubY);
 // Claim a slot (DKG node role — after seedDelay blocks have passed)
 await writer.claimSlot(roundId);
 
-// Publish a ciphertext for threshold decryption (once the round is Finalized
+// Publish a ciphertext for threshold decryption (once the round is Live
 // and the decryption policy allows it).
 await writer.submitCiphertext(roundId, 1, c1x, c1y, c2x, c2y);
 
@@ -128,8 +128,8 @@ await writer.abortRound(roundId);
 ```ts
 import { waitForEpochPhase, waitForDecryption, watchNewRounds } from '@vocdoni/davinci-dkg-sdk';
 
-// Poll until a round reaches Finalized status
-await waitForEpochPhase(client, roundId, EpochPhase.Finalized, {
+// Poll until a round reaches the Live status
+await waitForEpochPhase(client, roundId, EpochPhase.Live, {
   intervalMs: 2000,
   timeoutMs:  120_000,
 });
@@ -213,7 +213,7 @@ In the DKG protocol the private key is never held by a single party. To decrypt 
                │                            stagger derived from the lottery seed,
                │                            so only one node submits per round.
                │                            collectivePublicKeyHash emitted.
-               ▼  Round.status = Finalized
+               ▼  Round.status = Live
 [Anyone]    getCollectivePublicKey(roundId) → {x, y}   ← simple contract read
                │
                ▼
@@ -232,7 +232,7 @@ In the DKG protocol the private key is never held by a single party. To decrypt 
 [Anyone]    getPlaintext(roundId, idx)               ← plaintext is on-chain
 ```
 
-> **Collective public key:** The contract accumulates the key incrementally as contributions are accepted — each contributor's `commitment[0]` point is added on-chain during `submitContribution`. The `(x, y)` coordinates are available at any time via `client.getCollectivePublicKey(roundId)`, a simple view-call that requires no calldata parsing. `EpochFinalized` emits `collectivePublicKeyHash` (keccak256 of the final key) for integrity verification.
+> **Collective public key:** The contract accumulates the key incrementally as contributions are accepted — each contributor's `commitment[0]` point is added on-chain during `submitContribution`. The `(x, y)` coordinates are available at any time via `client.getCollectivePublicKey(roundId)`, a simple view-call that requires no calldata parsing. `EpochLive` emits `collectivePublicKeyHash` (keccak256 of the final key) for integrity verification.
 
 ## API reference
 
@@ -258,7 +258,7 @@ In the DKG protocol the private key is never held by a single party. To decrypt 
 | `roundNonce()` | Next round nonce |
 | `buildRoundId(nonce)` | Derive round ID from nonce |
 | `getEpochCreatedEvents(opts?)` | Historical EpochCreated logs |
-| `getEpochFinalizedEvents(roundId)` | Historical EpochFinalized logs (includes `transactionHash`) |
+| `getEpochLiveEvents(roundId)` | Historical EpochLive logs (includes `transactionHash`) |
 | `getCollectivePublicKey(roundId)` | Fetch the collective public key `(x, y)` from the on-chain accumulator (available after the first contribution is accepted) |
 | `getAllEpochEvents(roundId, fromBlock?)` | All DKGManager events for a specific round |
 | `getRecentRounds(limit?)` | Most recent N rounds (default 20) as `EpochEntry[]` |
@@ -299,7 +299,7 @@ All `DKGClient` methods plus:
 | `waitForEpochPhase(client, roundId, status, opts?)` | Poll until round status reached |
 | `waitForDecryption(client, roundId, idx, opts?)` | Poll until decryption complete |
 | `watchNewRounds(client, onRound, fromBlock?)` | Subscribe to new rounds |
-| `watchEpochFinalized(client, roundId, onFinalized)` | Subscribe to finalization |
+| `watchEpochLive(client, roundId, onFinalized)` | Subscribe to finalization |
 | `watchDecryptionCombined(client, roundId, idx, onCombined)` | Subscribe to decryption |
 | `networkSummary(client)` | Block, node counts, round nonce |
 

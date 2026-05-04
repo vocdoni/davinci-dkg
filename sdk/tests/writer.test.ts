@@ -76,9 +76,9 @@ describe('DKGWriter', () => {
       minValidContributions:     1,
       lotteryAlphaBps:           15000,
       seedDelay:                 1,
-      registrationDeadlineBlock: currentBlock + 25n,
-      contributionDeadlineBlock: currentBlock + 50n,
-      finalizeNotBeforeBlock:    currentBlock + 51n,
+      committeeSelectionDeadlineBlock: currentBlock + 25n,
+      keyAssemblyDeadlineBlock: currentBlock + 50n,
+      liveNotBeforeBlock:    currentBlock + 51n,
     });
     const receipt = await writer.waitForTransaction(hash);
     expect(receipt.status).toBe('success');
@@ -92,7 +92,7 @@ describe('DKGWriter', () => {
     const epochId = buildEpochId(prefix, nonceBefore + 1n);
 
     const epoch = await writer.getEpoch(epochId);
-    expect(epoch.status).toBe(EpochPhase.Registration);
+    expect(epoch.status).toBe(EpochPhase.CommitteeSelection);
     expect(epoch.policy.threshold).toBe(1);
     expect(epoch.policy.committeeSize).toBe(1);
   });
@@ -133,9 +133,9 @@ describe('DKGWriter', () => {
       minValidContributions:     1,
       lotteryAlphaBps:           15000,
       seedDelay,
-      registrationDeadlineBlock: currentBlock + 30n,
-      contributionDeadlineBlock: currentBlock + 60n,
-      finalizeNotBeforeBlock:    currentBlock + 61n,
+      committeeSelectionDeadlineBlock: currentBlock + 30n,
+      keyAssemblyDeadlineBlock: currentBlock + 60n,
+      liveNotBeforeBlock:    currentBlock + 61n,
     });
     await writer.waitForTransaction(createHash);
 
@@ -154,7 +154,7 @@ describe('DKGWriter', () => {
 
     // Epoch should now be in Contribution phase
     const updated = await writer.getEpoch(epochId);
-    expect(updated.status).toBe(EpochPhase.Contribution);
+    expect(updated.status).toBe(EpochPhase.KeyAssembly);
 
     // Our address should be in selectedParticipants
     const participants = await writer.selectedParticipants(epochId);

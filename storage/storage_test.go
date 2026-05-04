@@ -20,14 +20,14 @@ func TestSaveAndGetEpoch(t *testing.T) {
 		ID:        testEpochID,
 		Organizer: common.HexToAddress("0x1000000000000000000000000000000000000001"),
 		Policy: types.EpochPolicy{
-			Threshold:                 3,
-			CommitteeSize:             5,
-			MinValidContributions:     3,
-			RegistrationDeadlineBlock: 10,
-			ContributionDeadlineBlock: 20,
-			FinalizeNotBeforeBlock:    21,
+			Threshold:                       3,
+			CommitteeSize:                   5,
+			MinValidContributions:           3,
+			CommitteeSelectionDeadlineBlock: 10,
+			KeyAssemblyDeadlineBlock:        20,
+			LiveNotBeforeBlock:              21,
 		},
-		Phase: types.EpochPhaseRegistration,
+		Phase: types.EpochPhaseCommitteeSelection,
 	}
 
 	err := st.SaveEpoch(epoch)
@@ -37,7 +37,7 @@ func TestSaveAndGetEpoch(t *testing.T) {
 	c.Assert(err, qt.IsNil)
 	c.Assert(got.ID, qt.Equals, epoch.ID)
 	c.Assert(got.Organizer, qt.Equals, epoch.Organizer)
-	c.Assert(got.Phase, qt.Equals, types.EpochPhaseRegistration)
+	c.Assert(got.Phase, qt.Equals, types.EpochPhaseCommitteeSelection)
 }
 
 func TestMarkReadyTracksDistinctParticipants(t *testing.T) {
@@ -48,14 +48,14 @@ func TestMarkReadyTracksDistinctParticipants(t *testing.T) {
 		ID:        testEpochID,
 		Organizer: common.HexToAddress("0x1000000000000000000000000000000000000001"),
 		Policy: types.EpochPolicy{
-			Threshold:                 3,
-			CommitteeSize:             5,
-			MinValidContributions:     3,
-			RegistrationDeadlineBlock: 10,
-			ContributionDeadlineBlock: 20,
-			FinalizeNotBeforeBlock:    21,
+			Threshold:                       3,
+			CommitteeSize:                   5,
+			MinValidContributions:           3,
+			CommitteeSelectionDeadlineBlock: 10,
+			KeyAssemblyDeadlineBlock:        20,
+			LiveNotBeforeBlock:              21,
 		},
-		Phase: types.EpochPhaseRegistration,
+		Phase: types.EpochPhaseCommitteeSelection,
 	}
 	c.Assert(st.SaveEpoch(epoch), qt.IsNil)
 
@@ -77,14 +77,14 @@ func TestSetSelectedParticipants(t *testing.T) {
 		ID:        testEpochID,
 		Organizer: common.HexToAddress("0x1000000000000000000000000000000000000001"),
 		Policy: types.EpochPolicy{
-			Threshold:                 2,
-			CommitteeSize:             2,
-			MinValidContributions:     2,
-			RegistrationDeadlineBlock: 10,
-			ContributionDeadlineBlock: 20,
-			FinalizeNotBeforeBlock:    21,
+			Threshold:                       2,
+			CommitteeSize:                   2,
+			MinValidContributions:           2,
+			CommitteeSelectionDeadlineBlock: 10,
+			KeyAssemblyDeadlineBlock:        20,
+			LiveNotBeforeBlock:              21,
 		},
-		Phase: types.EpochPhaseRegistration,
+		Phase: types.EpochPhaseCommitteeSelection,
 	}
 	c.Assert(st.SaveEpoch(epoch), qt.IsNil)
 
@@ -98,7 +98,7 @@ func TestSetSelectedParticipants(t *testing.T) {
 
 	got, err := st.Epoch(epoch.ID)
 	c.Assert(err, qt.IsNil)
-	c.Assert(got.Phase, qt.Equals, types.EpochPhaseContribution)
+	c.Assert(got.Phase, qt.Equals, types.EpochPhaseKeyAssembly)
 	c.Assert(got.SelectedParticipants, qt.DeepEquals, participants)
 }
 
@@ -110,14 +110,14 @@ func TestSaveContribution(t *testing.T) {
 		ID:        testEpochID,
 		Organizer: common.HexToAddress("0x1000000000000000000000000000000000000001"),
 		Policy: types.EpochPolicy{
-			Threshold:                 2,
-			CommitteeSize:             2,
-			MinValidContributions:     2,
-			RegistrationDeadlineBlock: 10,
-			ContributionDeadlineBlock: 20,
-			FinalizeNotBeforeBlock:    21,
+			Threshold:                       2,
+			CommitteeSize:                   2,
+			MinValidContributions:           2,
+			CommitteeSelectionDeadlineBlock: 10,
+			KeyAssemblyDeadlineBlock:        20,
+			LiveNotBeforeBlock:              21,
 		},
-		Phase: types.EpochPhaseContribution,
+		Phase: types.EpochPhaseKeyAssembly,
 	}
 	c.Assert(st.SaveEpoch(epoch), qt.IsNil)
 
@@ -150,12 +150,12 @@ func TestSavePartialDecryption_AllowsDistinctCiphertextsForSameParticipant(t *te
 	epoch := types.Epoch{
 		ID: "epoch-2",
 		Policy: types.EpochPolicy{
-			Threshold:                 2,
-			CommitteeSize:             2,
-			MinValidContributions:     2,
-			RegistrationDeadlineBlock: 10,
-			ContributionDeadlineBlock: 20,
-			FinalizeNotBeforeBlock:    21,
+			Threshold:                       2,
+			CommitteeSize:                   2,
+			MinValidContributions:           2,
+			CommitteeSelectionDeadlineBlock: 10,
+			KeyAssemblyDeadlineBlock:        20,
+			LiveNotBeforeBlock:              21,
 		},
 	}
 	c.Assert(st.SaveEpoch(epoch), qt.IsNil)
@@ -194,14 +194,14 @@ func TestPebbleBackedStorageRoundAndContribution(t *testing.T) {
 		ID:        testEpochID,
 		Organizer: common.HexToAddress("0x1000000000000000000000000000000000000001"),
 		Policy: types.EpochPolicy{
-			Threshold:                 2,
-			CommitteeSize:             2,
-			MinValidContributions:     2,
-			RegistrationDeadlineBlock: 10,
-			ContributionDeadlineBlock: 20,
-			FinalizeNotBeforeBlock:    21,
+			Threshold:                       2,
+			CommitteeSize:                   2,
+			MinValidContributions:           2,
+			CommitteeSelectionDeadlineBlock: 10,
+			KeyAssemblyDeadlineBlock:        20,
+			LiveNotBeforeBlock:              21,
 		},
-		Phase: types.EpochPhaseContribution,
+		Phase: types.EpochPhaseKeyAssembly,
 	}
 	c.Assert(st.SaveEpoch(epoch), qt.IsNil)
 

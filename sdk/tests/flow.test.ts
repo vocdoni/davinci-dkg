@@ -7,7 +7,7 @@
 //
 // What is tested:
 //   • DKGClient reads a Finalized epoch correctly
-//   • getEpochFinalizedEvents returns the expected event
+//   • getEpochLiveEvents returns the expected event
 //   • waitForEpochPhase resolves immediately for an already-finalized epoch
 //   • getContribution / getShareCommitmentHash return accepted records
 //   • ElGamal encrypt/decrypt roundtrip using a synthetic key pair
@@ -139,7 +139,7 @@ describe('Full DKG flow (via Go fixture)', () => {
     if (!enabled || !fixture) return;
 
     const epoch = await client.getEpoch(fixture.epochId);
-    expect(epoch.status).toBe(EpochPhase.Finalized);
+    expect(epoch.status).toBe(EpochPhase.Live);
     expect(epoch.policy.threshold).toBe(1);
   });
 
@@ -147,17 +147,17 @@ describe('Full DKG flow (via Go fixture)', () => {
     const { enabled } = useHarness();
     if (!enabled || !fixture) return;
 
-    await waitForEpochPhase(client, fixture.epochId, EpochPhase.Finalized, {
+    await waitForEpochPhase(client, fixture.epochId, EpochPhase.Live, {
       intervalMs: 500,
       timeoutMs:  10_000,
     });
   });
 
-  it('getEpochFinalizedEvents returns the finalization event', async () => {
+  it('getEpochLiveEvents returns the finalization event', async () => {
     const { enabled } = useHarness();
     if (!enabled || !fixture) return;
 
-    const events = await client.getEpochFinalizedEvents(fixture.epochId);
+    const events = await client.getEpochLiveEvents(fixture.epochId);
     expect(events.length).toBeGreaterThan(0);
 
     const ev = events[0];

@@ -10,7 +10,7 @@ function mkRound(overrides: Partial<Epoch> = {}): Epoch {
     startBlock: 99n,
     seedBlock: 100n,
     lotteryThreshold: 0n,
-    status: EpochPhase.Registration,
+    status: EpochPhase.CommitteeSelection,
     claimedCount: 0,
     contributionCount: 0,
     partialDecryptionCount: 0,
@@ -20,9 +20,9 @@ function mkRound(overrides: Partial<Epoch> = {}): Epoch {
       committeeSize: 3,
       minValidContributions: 2,
       lotteryAlphaBps: 15000,
-      registrationDeadlineBlock: 200n,
-      contributionDeadlineBlock: 300n,
-      finalizeNotBeforeBlock: 305n,
+      committeeSelectionDeadlineBlock: 200n,
+      keyAssemblyDeadlineBlock: 300n,
+      liveNotBeforeBlock: 305n,
     },
     decryptionPolicy: {
       ownerOnly: false,
@@ -38,9 +38,9 @@ function mkRound(overrides: Partial<Epoch> = {}): Epoch {
 
 describe('roundPhase + label + color', () => {
   it('maps each known status to its phase', () => {
-    expect(roundPhase(mkRound({ status: EpochPhase.Registration }))).toBe('registration')
-    expect(roundPhase(mkRound({ status: EpochPhase.Contribution }))).toBe('contribution')
-    expect(roundPhase(mkRound({ status: EpochPhase.Finalized }))).toBe('finalized')
+    expect(roundPhase(mkRound({ status: EpochPhase.CommitteeSelection }))).toBe('committee-selection')
+    expect(roundPhase(mkRound({ status: EpochPhase.KeyAssembly }))).toBe('key-assembly')
+    expect(roundPhase(mkRound({ status: EpochPhase.Live }))).toBe('live')
     expect(roundPhase(mkRound({ status: EpochPhase.Completed }))).toBe('completed')
     expect(roundPhase(mkRound({ status: EpochPhase.Aborted }))).toBe('aborted')
   })
@@ -53,30 +53,30 @@ describe('roundPhase + label + color', () => {
   })
 
   it('phase sequence is the canonical four-step timeline', () => {
-    expect(phaseSequence).toEqual(['registration', 'contribution', 'finalized', 'completed'])
+    expect(phaseSequence).toEqual(['committee-selection', 'key-assembly', 'live', 'completed'])
   })
 })
 
 describe('roundSummary', () => {
-  it('mentions the registration deadline when in Registration', () => {
-    const r = mkRound({ status: EpochPhase.Registration, claimedCount: 1 })
+  it('mentions claiming during CommitteeSelection', () => {
+    const r = mkRound({ status: EpochPhase.CommitteeSelection, claimedCount: 1 })
     const out = roundSummary(r, 100n)
     expect(out).toMatch(/1\/3/)
-    expect(out).toMatch(/Registration|claim/i)
+    expect(out).toMatch(/committee|claim/i)
   })
 
-  it('reports threshold-met during Contribution', () => {
-    const r = mkRound({ status: EpochPhase.Contribution, contributionCount: 2 })
+  it('reports threshold-met during KeyAssembly', () => {
+    const r = mkRound({ status: EpochPhase.KeyAssembly, contributionCount: 2 })
     expect(roundSummary(r, 100n)).toMatch(/Threshold met/i)
   })
 
   it('reports awaiting contributions when below threshold', () => {
-    const r = mkRound({ status: EpochPhase.Contribution, contributionCount: 0 })
+    const r = mkRound({ status: EpochPhase.KeyAssembly, contributionCount: 0 })
     expect(roundSummary(r, 100n)).toMatch(/Awaiting contributions/i)
   })
 
-  it('says finalized when in Finalized', () => {
-    expect(roundSummary(mkRound({ status: EpochPhase.Finalized }), 100n)).toMatch(/finalized/i)
+  it('says live when in Live', () => {
+    expect(roundSummary(mkRound({ status: EpochPhase.Live }), 100n)).toMatch(/live/i)
   })
 
   it('says aborted when in Aborted', () => {

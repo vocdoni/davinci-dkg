@@ -17,16 +17,16 @@ type PhaseCapabilities struct {
 //
 // The Finalized on-chain status persists throughout decryption operations;
 // the Go-only EpochPhaseDecryption phase is used for local state
-// refinement and carries the same capabilities as EpochPhaseFinalized.
+// refinement and carries the same capabilities as EpochPhaseLive.
 func CapabilitiesForPhase(phase types.EpochPhase, contributionCount int, minValidContributions uint16) PhaseCapabilities {
 	caps := PhaseCapabilities{}
 	switch phase {
-	case types.EpochPhaseContribution:
+	case types.EpochPhaseKeyAssembly:
 		caps.Contribution = true
 		if contributionCount >= int(minValidContributions) {
 			caps.Finalize = true
 		}
-	case types.EpochPhaseFinalized, types.EpochPhaseDecryption:
+	case types.EpochPhaseLive, types.EpochPhaseDecryption:
 		caps.Decrypt = true
 		// EpochPhaseAborted and EpochPhaseCompleted are terminal states.
 		// No further capabilities are granted.

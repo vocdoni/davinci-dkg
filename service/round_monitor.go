@@ -44,13 +44,13 @@ func (m *EpochMonitor) SyncEpoch(ctx context.Context, epochID [12]byte) error {
 		ID:        strings.TrimRight(string(epochID[:]), "\x00"),
 		Organizer: roundView.Organizer,
 		Policy: types.EpochPolicy{
-			Threshold:                 roundView.Policy.Threshold,
-			CommitteeSize:             roundView.Policy.CommitteeSize,
-			MinValidContributions:     roundView.Policy.MinValidContributions,
-			LotteryAlphaBps:           roundView.Policy.LotteryAlphaBps,
-			RegistrationDeadlineBlock: roundView.Policy.RegistrationDeadlineBlock,
-			ContributionDeadlineBlock: roundView.Policy.ContributionDeadlineBlock,
-			FinalizeNotBeforeBlock:    roundView.Policy.FinalizeNotBeforeBlock,
+			Threshold:                       roundView.Policy.Threshold,
+			CommitteeSize:                   roundView.Policy.CommitteeSize,
+			MinValidContributions:           roundView.Policy.MinValidContributions,
+			LotteryAlphaBps:                 roundView.Policy.LotteryAlphaBps,
+			CommitteeSelectionDeadlineBlock: roundView.Policy.CommitteeSelectionDeadlineBlock,
+			KeyAssemblyDeadlineBlock:        roundView.Policy.KeyAssemblyDeadlineBlock,
+			LiveNotBeforeBlock:              roundView.Policy.LiveNotBeforeBlock,
 		},
 		Phase:                mapEpochPhase(roundView.Status),
 		SelectedParticipants: selected,
@@ -69,11 +69,11 @@ func (m *EpochMonitor) SyncEpoch(ctx context.Context, epochID [12]byte) error {
 func mapEpochPhase(status uint8) types.EpochPhase {
 	switch status {
 	case 1:
-		return types.EpochPhaseRegistration
+		return types.EpochPhaseCommitteeSelection
 	case 2:
-		return types.EpochPhaseContribution
+		return types.EpochPhaseKeyAssembly
 	case 3:
-		return types.EpochPhaseFinalized
+		return types.EpochPhaseLive
 	case 4:
 		return types.EpochPhaseAborted
 	case 5:

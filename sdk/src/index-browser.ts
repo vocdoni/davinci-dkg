@@ -36,7 +36,7 @@ export {
   waitForEpochPhase,
   waitForDecryption,
   watchNewRounds,
-  watchEpochFinalized,
+  watchEpochLive,
   watchDecryptionCombined,
   watchCiphertextSubmitted,
   networkSummary,

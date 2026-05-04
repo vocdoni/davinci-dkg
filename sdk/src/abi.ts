@@ -222,9 +222,9 @@ export const dkgManagerAbi = [
               { name: 'committeeSize', type: 'uint16' },
               { name: 'minValidContributions', type: 'uint16' },
               { name: 'lotteryAlphaBps', type: 'uint16' },
-              { name: 'registrationDeadlineBlock', type: 'uint64' },
-              { name: 'contributionDeadlineBlock', type: 'uint64' },
-              { name: 'finalizeNotBeforeBlock', type: 'uint64' },
+              { name: 'committeeSelectionDeadlineBlock', type: 'uint64' },
+              { name: 'keyAssemblyDeadlineBlock', type: 'uint64' },
+              { name: 'liveNotBeforeBlock', type: 'uint64' },
             ],
           },
           {
@@ -439,7 +439,7 @@ export const dkgManagerAbi = [
   },
   {
     type: 'event',
-    name: 'RegistrationClosed',
+    name: 'CommitteeFilled',
     inputs: [{ name: 'epochId', type: 'bytes12', indexed: true }],
   },
   {
@@ -455,7 +455,7 @@ export const dkgManagerAbi = [
   },
   {
     type: 'event',
-    name: 'EpochFinalized',
+    name: 'EpochLive',
     inputs: [
       { name: 'epochId', type: 'bytes12', indexed: true },
       { name: 'aggregateCommitmentsHash', type: 'bytes32', indexed: false },

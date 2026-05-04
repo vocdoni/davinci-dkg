@@ -31,7 +31,7 @@ export function KeyAvailableStep({ status, epochId, onKeyReady, log }: Props) {
 
   const isFinalized =
     epoch.data &&
-    (epoch.data.epoch.status === EpochPhase.Finalized || epoch.data.epoch.status === EpochPhase.Completed)
+    (epoch.data.epoch.status === EpochPhase.Live || epoch.data.epoch.status === EpochPhase.Completed)
 
   useEffect(() => {
     if (!epochId || !isFinalized || key || loading) return
@@ -67,7 +67,7 @@ export function KeyAvailableStep({ status, epochId, onKeyReady, log }: Props) {
             soon as the epoch finalizes.
           </Text>
           <Countdown
-            target={epoch.data.epoch.policy.finalizeNotBeforeBlock}
+            target={epoch.data.epoch.policy.liveNotBeforeBlock}
             label='until finalize unlocks'
           />
           <HowItWorks

@@ -186,19 +186,19 @@ func testRPCServer() *httptest.Server {
 			case strings.HasPrefix(callData, getRoundSelector):
 				// New lottery layout: 18 elements
 				//  organizer, threshold, committeeSize, minValidContributions,
-				//  lotteryAlphaBps, seedDelay, registrationDeadlineBlock,
-				//  contributionDeadlineBlock, disclosureAllowed,
+				//  lotteryAlphaBps, seedDelay, committeeSelectionDeadlineBlock,
+				//  keyAssemblyDeadlineBlock, disclosureAllowed,
 				//  status, nonce, seedBlock, seed, lotteryThreshold,
 				//  claimedCount, contributionCount, partialDecryptionCount,
 				//  revealedShareCount.
 				type policyTuple struct {
-					Threshold                 uint16 `json:"threshold"`
-					CommitteeSize             uint16 `json:"committeeSize"`
-					MinValidContributions     uint16 `json:"minValidContributions"`
-					LotteryAlphaBps           uint16 `json:"lotteryAlphaBps"`
-					RegistrationDeadlineBlock uint64 `json:"registrationDeadlineBlock"`
-					ContributionDeadlineBlock uint64 `json:"contributionDeadlineBlock"`
-					FinalizeNotBeforeBlock    uint64 `json:"finalizeNotBeforeBlock"`
+					Threshold                       uint16 `json:"threshold"`
+					CommitteeSize                   uint16 `json:"committeeSize"`
+					MinValidContributions           uint16 `json:"minValidContributions"`
+					LotteryAlphaBps                 uint16 `json:"lotteryAlphaBps"`
+					CommitteeSelectionDeadlineBlock uint64 `json:"committeeSelectionDeadlineBlock"`
+					KeyAssemblyDeadlineBlock        uint64 `json:"keyAssemblyDeadlineBlock"`
+					LiveNotBeforeBlock              uint64 `json:"liveNotBeforeBlock"`
 				}
 				type dpTuple struct {
 					OwnerOnly          bool   `json:"ownerOnly"`
@@ -211,13 +211,13 @@ func testRPCServer() *httptest.Server {
 				output, _ := managerABI.Methods["getEpoch"].Outputs.Pack(
 					common.HexToAddress("0x5000000000000000000000000000000000000005"),
 					policyTuple{
-						Threshold:                 2,
-						CommitteeSize:             2,
-						MinValidContributions:     2,
-						LotteryAlphaBps:           20000,
-						RegistrationDeadlineBlock: 10,
-						ContributionDeadlineBlock: 20,
-						FinalizeNotBeforeBlock:    21,
+						Threshold:                       2,
+						CommitteeSize:                   2,
+						MinValidContributions:           2,
+						LotteryAlphaBps:                 20000,
+						CommitteeSelectionDeadlineBlock: 10,
+						KeyAssemblyDeadlineBlock:        20,
+						LiveNotBeforeBlock:              21,
 					},
 					dpTuple{},                  // decryptionPolicy — all zero (no gate)
 					uint8(3),                   // status

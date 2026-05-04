@@ -7,9 +7,9 @@ type EpochPhase uint8
 
 const (
 	EpochPhaseUnknown EpochPhase = iota
-	EpochPhaseRegistration
-	EpochPhaseContribution
-	EpochPhaseFinalized
+	EpochPhaseCommitteeSelection
+	EpochPhaseKeyAssembly
+	EpochPhaseLive
 	EpochPhaseDecryption
 	EpochPhaseAborted
 	EpochPhaseCompleted
@@ -17,11 +17,11 @@ const (
 
 func (p EpochPhase) String() string {
 	switch p {
-	case EpochPhaseRegistration:
+	case EpochPhaseCommitteeSelection:
 		return "registration"
-	case EpochPhaseContribution:
+	case EpochPhaseKeyAssembly:
 		return "contribution"
-	case EpochPhaseFinalized:
+	case EpochPhaseLive:
 		return "finalized"
 	case EpochPhaseDecryption:
 		return "decryption"
@@ -47,14 +47,14 @@ func (p EpochPhase) String() string {
 // fill the per-phase blocks from the on-chain `getEpoch` view after
 // creation.
 type EpochPolicy struct {
-	Threshold                 uint16
-	CommitteeSize             uint16
-	MinValidContributions     uint16
-	LotteryAlphaBps           uint16
-	RegistrationDeadlineBlock uint64
-	ContributionDeadlineBlock uint64
-	FinalizeNotBeforeBlock    uint64
-	DecryptionPolicy          DecryptionPolicy
+	Threshold                       uint16
+	CommitteeSize                   uint16
+	MinValidContributions           uint16
+	LotteryAlphaBps                 uint16
+	CommitteeSelectionDeadlineBlock uint64
+	KeyAssemblyDeadlineBlock        uint64
+	LiveNotBeforeBlock              uint64
+	DecryptionPolicy                DecryptionPolicy
 }
 
 // DecryptionPolicy mirrors the on-chain DKGTypes.DecryptionPolicy struct and
@@ -85,8 +85,8 @@ func (p EpochPolicy) Validate() error {
 	}
 	// Phase deadlines are derived on-chain — no client-side validation beyond
 	// the threshold/committee-size invariants above. (Pre-refactor versions of
-	// this struct also validated SeedDelay / RegistrationDeadlineBlock /
-	// ContributionDeadlineBlock / FinalizeNotBeforeBlock; those fields are
+	// this struct also validated SeedDelay / CommitteeSelectionDeadlineBlock /
+	// KeyAssemblyDeadlineBlock / LiveNotBeforeBlock; those fields are
 	// now populated by the contract from EPOCH_DURATION_BLOCKS.)
 	return nil
 }

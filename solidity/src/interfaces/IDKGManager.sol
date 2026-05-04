@@ -23,7 +23,7 @@ interface IDKGManager {
     event EpochCreated(bytes12 indexed epochId, address indexed organizer, uint64 startBlock, uint64 seedBlock, uint256 lotteryThreshold);
     event SeedResolved(bytes12 indexed epochId, bytes32 seed);
     event SlotClaimed(bytes12 indexed epochId, address indexed claimer, uint16 slot);
-    event RegistrationClosed(bytes12 indexed epochId);
+    event CommitteeFilled(bytes12 indexed epochId);
     event EpochEvicted(bytes12 indexed epochId);
     event ContributionSubmitted(
         bytes12 indexed epochId,
@@ -32,7 +32,7 @@ interface IDKGManager {
         bytes32 commitmentsHash,
         bytes32 encryptedSharesHash
     );
-    event EpochFinalized(
+    event EpochLive(
         bytes12 indexed epochId,
         bytes32 aggregateCommitmentsHash,
         bytes32 collectivePublicKeyHash,
@@ -75,7 +75,7 @@ interface IDKGManager {
     error NotRegistered();
     error NotSelectedParticipant();
     error AlreadyContributed();
-    error AlreadyFinalized();
+    error AlreadyLive();
     error AlreadyPartiallyDecrypted();
     error InvalidCommitteeSize();
     error InvalidContribution();

@@ -138,7 +138,7 @@ func (s *Storage) SetSelectedParticipants(id string, participants []common.Addre
 			return err
 		}
 		stored.SelectedParticipants = append([]common.Address(nil), participants...)
-		stored.Phase = types.EpochPhaseContribution
+		stored.Phase = types.EpochPhaseKeyAssembly
 		payload, err := json.Marshal(stored)
 		if err != nil {
 			return err
@@ -155,7 +155,7 @@ func (s *Storage) SetSelectedParticipants(id string, participants []common.Addre
 		return err
 	}
 	epoch.SelectedParticipants = append([]common.Address(nil), participants...)
-	epoch.Phase = types.EpochPhaseContribution
+	epoch.Phase = types.EpochPhaseKeyAssembly
 	s.epochs[id] = epoch
 	return nil
 }

@@ -15,9 +15,9 @@ type Tone = {
 }
 
 const tonesByPhase: Record<EpochPhase, Tone> = {
-  registration: { fg: 'amber.300', bg: 'warn.bg', border: 'rgba(240, 198, 116, 0.30)', dot: 'amber.300', pulse: true },
-  contribution: { fg: 'accent.bright', bg: 'accent.bg', border: 'accent.border', dot: 'accent.fg', pulse: true },
-  finalized: { fg: 'live.fg', bg: 'live.bg', border: 'rgba(134, 239, 172, 0.30)', dot: 'live.fg', pulse: false },
+  'committee-selection': { fg: 'amber.300', bg: 'warn.bg', border: 'rgba(240, 198, 116, 0.30)', dot: 'amber.300', pulse: true },
+  'key-assembly': { fg: 'accent.bright', bg: 'accent.bg', border: 'accent.border', dot: 'accent.fg', pulse: true },
+  'live': { fg: 'live.fg', bg: 'live.bg', border: 'rgba(134, 239, 172, 0.30)', dot: 'live.fg', pulse: false },
   completed: { fg: 'ink.2', bg: 'surface.raised', border: 'border', dot: 'ink.3', pulse: false },
   aborted: { fg: 'danger.fg', bg: 'danger.bg', border: 'danger.border', dot: 'danger.fg', pulse: false },
   unknown: { fg: 'ink.3', bg: 'surface.raised', border: 'border', dot: 'ink.4', pulse: false },

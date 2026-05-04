@@ -18,12 +18,12 @@ func TestEpochMonitorSyncEpoch(t *testing.T) {
 		epoch: web3.EpochView{
 			Organizer: common.HexToAddress("0x1000000000000000000000000000000000000001"),
 			Policy: web3.EpochPolicy{
-				Threshold:                 2,
-				CommitteeSize:             2,
-				MinValidContributions:     2,
-				RegistrationDeadlineBlock: 10,
-				ContributionDeadlineBlock: 20,
-				FinalizeNotBeforeBlock:    21,
+				Threshold:                       2,
+				CommitteeSize:                   2,
+				MinValidContributions:           2,
+				CommitteeSelectionDeadlineBlock: 10,
+				KeyAssemblyDeadlineBlock:        20,
+				LiveNotBeforeBlock:              21,
 			},
 			Status: 2,
 		},
@@ -44,7 +44,7 @@ func TestEpochMonitorSyncEpoch(t *testing.T) {
 	epoch, err := st.Epoch("epoch-1")
 	c.Assert(err, qt.IsNil)
 	c.Assert(epoch.Organizer, qt.Equals, contracts.epoch.Organizer)
-	c.Assert(epoch.Phase, qt.Equals, types.EpochPhaseContribution)
+	c.Assert(epoch.Phase, qt.Equals, types.EpochPhaseKeyAssembly)
 	c.Assert(epoch.SelectedParticipants, qt.DeepEquals, contracts.selected)
 }
 
@@ -55,12 +55,12 @@ func TestEpochMonitorSyncEpochUpdatesExistingSnapshot(t *testing.T) {
 		epoch: web3.EpochView{
 			Organizer: common.HexToAddress("0x1000000000000000000000000000000000000001"),
 			Policy: web3.EpochPolicy{
-				Threshold:                 2,
-				CommitteeSize:             2,
-				MinValidContributions:     2,
-				RegistrationDeadlineBlock: 10,
-				ContributionDeadlineBlock: 20,
-				FinalizeNotBeforeBlock:    21,
+				Threshold:                       2,
+				CommitteeSize:                   2,
+				MinValidContributions:           2,
+				CommitteeSelectionDeadlineBlock: 10,
+				KeyAssemblyDeadlineBlock:        20,
+				LiveNotBeforeBlock:              21,
 			},
 			Status: 1,
 		},
@@ -86,7 +86,7 @@ func TestEpochMonitorSyncEpochUpdatesExistingSnapshot(t *testing.T) {
 
 	epoch, err := st.Epoch("epoch-1")
 	c.Assert(err, qt.IsNil)
-	c.Assert(epoch.Phase, qt.Equals, types.EpochPhaseFinalized)
+	c.Assert(epoch.Phase, qt.Equals, types.EpochPhaseLive)
 	c.Assert(epoch.SelectedParticipants, qt.DeepEquals, contracts.selected)
 }
 
@@ -100,9 +100,9 @@ func TestMapEpochPhase(t *testing.T) {
 
 	// Solidity DKGTypes.EpochPhase: None=0, Readiness=1, Contribution=2, Finalized=3, Aborted=4, Completed=5
 	c.Assert(mapEpochPhase(0), qt.Equals, types.EpochPhaseUnknown)
-	c.Assert(mapEpochPhase(1), qt.Equals, types.EpochPhaseRegistration)
-	c.Assert(mapEpochPhase(2), qt.Equals, types.EpochPhaseContribution)
-	c.Assert(mapEpochPhase(3), qt.Equals, types.EpochPhaseFinalized)
+	c.Assert(mapEpochPhase(1), qt.Equals, types.EpochPhaseCommitteeSelection)
+	c.Assert(mapEpochPhase(2), qt.Equals, types.EpochPhaseKeyAssembly)
+	c.Assert(mapEpochPhase(3), qt.Equals, types.EpochPhaseLive)
 	c.Assert(mapEpochPhase(4), qt.Equals, types.EpochPhaseAborted)
 	c.Assert(mapEpochPhase(5), qt.Equals, types.EpochPhaseCompleted)
 	c.Assert(mapEpochPhase(99), qt.Equals, types.EpochPhaseUnknown)

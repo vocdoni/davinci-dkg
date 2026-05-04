@@ -114,7 +114,7 @@ func CreateFinalizedSingleParticipantRound(
 		return nil, err
 	}
 
-	// Wait until block.number >= finalizeNotBeforeBlock so the on-chain gate is open.
+	// Wait until block.number >= liveNotBeforeBlock so the on-chain gate is open.
 	if err := WaitForFinalizeGate(ctx, services, epochID); err != nil {
 		return nil, err
 	}

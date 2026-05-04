@@ -104,11 +104,11 @@ contract DKGManagerTest is Test, TestHelpers {
         manager.claimSlot(epochId);
     }
 
-    /// @dev Advance to a block at or after `finalizeNotBeforeBlock` for the epoch.
+    /// @dev Advance to a block at or after `liveNotBeforeBlock` for the epoch.
     function _advanceToFinalize(bytes12 epochId) internal {
         IDKGManager.Epoch memory r = manager.getEpoch(epochId);
-        if (block.number < uint256(r.policy.finalizeNotBeforeBlock)) {
-            vm.roll(uint256(r.policy.finalizeNotBeforeBlock));
+        if (block.number < uint256(r.policy.liveNotBeforeBlock)) {
+            vm.roll(uint256(r.policy.liveNotBeforeBlock));
         }
     }
 
@@ -178,7 +178,7 @@ contract DKGManagerTest is Test, TestHelpers {
         assertEq(epoch.organizer, address(this));
         assertEq(uint256(epoch.policy.threshold), 2);
         assertEq(uint256(epoch.policy.committeeSize), 2);
-        assertEq(uint256(epoch.status), uint256(DKGTypes.EpochPhase.Registration));
+        assertEq(uint256(epoch.status), uint256(DKGTypes.EpochPhase.CommitteeSelection));
     }
 
     function test_ClaimSlot_RejectsBeforeSeedReady() public {
@@ -203,7 +203,7 @@ contract DKGManagerTest is Test, TestHelpers {
         IDKGManager.Epoch memory epoch = manager.getEpoch(epochId);
         address[] memory selected = manager.selectedParticipants(epochId);
 
-        assertEq(uint256(epoch.status), uint256(DKGTypes.EpochPhase.Contribution));
+        assertEq(uint256(epoch.status), uint256(DKGTypes.EpochPhase.KeyAssembly));
         assertEq(selected.length, 2);
         assertEq(selected[0], address(this));
         assertEq(selected[1], address(0xBEEF));
@@ -311,8 +311,8 @@ contract DKGManagerTest is Test, TestHelpers {
         IDKGManager.Epoch memory epoch = manager.getEpoch(epochId);
 
         // The three commitment hashes are no longer stored; consumers read them from
-        // the EpochFinalized event.
-        assertEq(uint256(epoch.status), uint256(DKGTypes.EpochPhase.Finalized));
+        // the EpochLive event.
+        assertEq(uint256(epoch.status), uint256(DKGTypes.EpochPhase.Live));
     }
 
     function test_FinalizeEpoch_RejectsInsufficientContributions() public {
@@ -372,11 +372,11 @@ contract DKGManagerTest is Test, TestHelpers {
             )
         );
 
-        // Both contributions in, threshold met — but finalizeNotBeforeBlock
+        // Both contributions in, threshold met — but liveNotBeforeBlock
         // not yet reached. Must revert with InvalidPhase (the gate reuses this
         // selector to keep the contract under the EIP-170 size limit).
         IDKGManager.Epoch memory r = manager.getEpoch(epochId);
-        assertTrue(block.number < uint256(r.policy.finalizeNotBeforeBlock));
+        assertTrue(block.number < uint256(r.policy.liveNotBeforeBlock));
 
         vm.expectRevert(IDKGManager.InvalidPhase.selector);
         manager.finalizeEpoch(
@@ -393,8 +393,8 @@ contract DKGManagerTest is Test, TestHelpers {
             )
         );
 
-        // Roll exactly to finalizeNotBeforeBlock — should succeed.
-        vm.roll(uint256(r.policy.finalizeNotBeforeBlock));
+        // Roll exactly to liveNotBeforeBlock — should succeed.
+        vm.roll(uint256(r.policy.liveNotBeforeBlock));
         manager.finalizeEpoch(
             epochId,
             FINALIZED_AGGREGATE_COMMITMENTS_HASH,
@@ -409,7 +409,7 @@ contract DKGManagerTest is Test, TestHelpers {
             )
         );
         IDKGManager.Epoch memory after_ = manager.getEpoch(epochId);
-        assertEq(uint256(after_.status), uint256(DKGTypes.EpochPhase.Finalized));
+        assertEq(uint256(after_.status), uint256(DKGTypes.EpochPhase.Live));
     }
 
     /// A finalize transcript with duplicated participant indexes

@@ -20,7 +20,7 @@ const (
 		{"inputs":[],"name":"FINALIZE_VERIFIER","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},
 		{"inputs":[],"name":"PARTIAL_DECRYPT_VERIFIER","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},
 		{"inputs":[],"name":"DECRYPT_COMBINE_VERIFIER","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},
-		{"inputs":[{"internalType":"bytes12","name":"epochId","type":"bytes12"}],"name":"getEpoch","outputs":[{"name":"organizer","type":"address"},{"components":[{"name":"threshold","type":"uint16"},{"name":"committeeSize","type":"uint16"},{"name":"minValidContributions","type":"uint16"},{"name":"lotteryAlphaBps","type":"uint16"},{"name":"registrationDeadlineBlock","type":"uint64"},{"name":"contributionDeadlineBlock","type":"uint64"},{"name":"finalizeNotBeforeBlock","type":"uint64"}],"name":"policy","type":"tuple"},{"components":[{"name":"ownerOnly","type":"bool"},{"name":"maxDecryptions","type":"uint16"},{"name":"notBeforeBlock","type":"uint64"},{"name":"notBeforeTimestamp","type":"uint64"},{"name":"notAfterBlock","type":"uint64"},{"name":"notAfterTimestamp","type":"uint64"}],"name":"decryptionPolicy","type":"tuple"},{"name":"status","type":"uint8"},{"name":"nonce","type":"uint64"},{"name":"startBlock","type":"uint64"},{"name":"seedBlock","type":"uint64"},{"name":"seed","type":"bytes32"},{"name":"lotteryThreshold","type":"uint256"},{"name":"claimedCount","type":"uint16"},{"name":"contributionCount","type":"uint16"},{"name":"partialDecryptionCount","type":"uint16"},{"name":"ciphertextCount","type":"uint16"}],"stateMutability":"view","type":"function"},
+		{"inputs":[{"internalType":"bytes12","name":"epochId","type":"bytes12"}],"name":"getEpoch","outputs":[{"name":"organizer","type":"address"},{"components":[{"name":"threshold","type":"uint16"},{"name":"committeeSize","type":"uint16"},{"name":"minValidContributions","type":"uint16"},{"name":"lotteryAlphaBps","type":"uint16"},{"name":"committeeSelectionDeadlineBlock","type":"uint64"},{"name":"keyAssemblyDeadlineBlock","type":"uint64"},{"name":"liveNotBeforeBlock","type":"uint64"}],"name":"policy","type":"tuple"},{"components":[{"name":"ownerOnly","type":"bool"},{"name":"maxDecryptions","type":"uint16"},{"name":"notBeforeBlock","type":"uint64"},{"name":"notBeforeTimestamp","type":"uint64"},{"name":"notAfterBlock","type":"uint64"},{"name":"notAfterTimestamp","type":"uint64"}],"name":"decryptionPolicy","type":"tuple"},{"name":"status","type":"uint8"},{"name":"nonce","type":"uint64"},{"name":"startBlock","type":"uint64"},{"name":"seedBlock","type":"uint64"},{"name":"seed","type":"bytes32"},{"name":"lotteryThreshold","type":"uint256"},{"name":"claimedCount","type":"uint16"},{"name":"contributionCount","type":"uint16"},{"name":"partialDecryptionCount","type":"uint16"},{"name":"ciphertextCount","type":"uint16"}],"stateMutability":"view","type":"function"},
 		{"inputs":[],"name":"getContributionVerifierVKeyHash","outputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"stateMutability":"view","type":"function"},
 		{"inputs":[],"name":"getFinalizeVerifierVKeyHash","outputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"stateMutability":"view","type":"function"},
 		{"inputs":[],"name":"getPartialDecryptVerifierVKeyHash","outputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"stateMutability":"view","type":"function"},
@@ -56,13 +56,13 @@ type RegistryNode struct {
 }
 
 type EpochPolicy struct {
-	Threshold                 uint16
-	CommitteeSize             uint16
-	MinValidContributions     uint16
-	LotteryAlphaBps           uint16
-	RegistrationDeadlineBlock uint64
-	ContributionDeadlineBlock uint64
-	FinalizeNotBeforeBlock    uint64
+	Threshold                       uint16
+	CommitteeSize                   uint16
+	MinValidContributions           uint16
+	LotteryAlphaBps                 uint16
+	CommitteeSelectionDeadlineBlock uint64
+	KeyAssemblyDeadlineBlock        uint64
+	LiveNotBeforeBlock              uint64
 }
 
 type EpochView struct {

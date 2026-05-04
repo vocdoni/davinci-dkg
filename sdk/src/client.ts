@@ -495,9 +495,9 @@ export class DKGClient {
   }
 
   /**
-   * Fetch all EpochFinalized events for a specific epoch.
+   * Fetch all EpochLive events for a specific epoch.
    */
-  async getEpochFinalizedEvents(epochId: `0x${string}`): Promise<
+  async getEpochLiveEvents(epochId: `0x${string}`): Promise<
     Array<{
       aggregateCommitmentsHash: `0x${string}`;
       collectivePublicKeyHash: `0x${string}`;
@@ -512,7 +512,7 @@ export class DKGClient {
         address: this.managerAddress,
         event: {
           type: 'event',
-          name: 'EpochFinalized',
+          name: 'EpochLive',
           inputs: [
             { name: 'epochId', type: 'bytes12', indexed: true },
             { name: 'aggregateCommitmentsHash', type: 'bytes32', indexed: false },
@@ -655,9 +655,9 @@ export class DKGClient {
    *
    * IMPORTANT: do NOT encrypt and call `submitCiphertext` with the value
    * returned during the Contribution phase. The contract's `submitCiphertext`
-   * requires `EpochPhase.Finalized` and will revert otherwise. Either:
+   * requires `EpochPhase.Live` and will revert otherwise. Either:
    *   - use `flow.ts:waitForCollectivePublicKeyHash` then read this getter, or
-   *   - check `getEpoch(epochId).status === EpochPhase.Finalized` first.
+   *   - check `getEpoch(epochId).status === EpochPhase.Live` first.
    * Pre-finalize reads of this value are intended for monitoring/observation
    * (e.g. displaying the in-progress accumulator), not for producing
    * ciphertexts that will actually be sent on-chain.

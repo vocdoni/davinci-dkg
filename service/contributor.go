@@ -29,7 +29,7 @@ func (c *Contributor) PendingContribution(epochID string) (*PendingContribution,
 	if err != nil {
 		return nil, err
 	}
-	if epoch.Phase != types.EpochPhaseContribution {
+	if epoch.Phase != types.EpochPhaseKeyAssembly {
 		return nil, nil
 	}
 

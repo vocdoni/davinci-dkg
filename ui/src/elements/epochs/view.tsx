@@ -104,33 +104,33 @@ export function EpochView() {
                   value={
                     blockNumber
                       ? blocksToDuration(
-                          blocksRemaining(blockNumber, epoch.data.epoch.policy.registrationDeadlineBlock) ?? 0
+                          blocksRemaining(blockNumber, epoch.data.epoch.policy.committeeSelectionDeadlineBlock) ?? 0
                         )
                       : '—'
                   }
-                  hint={`block #${epoch.data.epoch.policy.registrationDeadlineBlock.toString()}`}
+                  hint={`block #${epoch.data.epoch.policy.committeeSelectionDeadlineBlock.toString()}`}
                 />
                 <PolicyRow
                   label='Contribution closes'
                   value={
                     blockNumber
                       ? blocksToDuration(
-                          blocksRemaining(blockNumber, epoch.data.epoch.policy.contributionDeadlineBlock) ?? 0
+                          blocksRemaining(blockNumber, epoch.data.epoch.policy.keyAssemblyDeadlineBlock) ?? 0
                         )
                       : '—'
                   }
-                  hint={`block #${epoch.data.epoch.policy.contributionDeadlineBlock.toString()}`}
+                  hint={`block #${epoch.data.epoch.policy.keyAssemblyDeadlineBlock.toString()}`}
                 />
                 <PolicyRow
                   label='Finalize unlocks'
                   value={
                     blockNumber
                       ? blocksToDuration(
-                          blocksRemaining(blockNumber, epoch.data.epoch.policy.finalizeNotBeforeBlock) ?? 0
+                          blocksRemaining(blockNumber, epoch.data.epoch.policy.liveNotBeforeBlock) ?? 0
                         )
                       : '—'
                   }
-                  hint={`block #${epoch.data.epoch.policy.finalizeNotBeforeBlock.toString()}`}
+                  hint={`block #${epoch.data.epoch.policy.liveNotBeforeBlock.toString()}`}
                 />
                 <PolicyRow
                   label='Organizer'

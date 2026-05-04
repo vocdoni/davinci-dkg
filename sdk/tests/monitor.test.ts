@@ -79,9 +79,9 @@ describe('Monitor utilities', () => {
       minValidContributions:     1,
       lotteryAlphaBps:           15000,
       seedDelay:                 1,
-      registrationDeadlineBlock: currentBlock + 30n,
-      contributionDeadlineBlock: currentBlock + 60n,
-      finalizeNotBeforeBlock:    currentBlock + 61n,
+      committeeSelectionDeadlineBlock: currentBlock + 30n,
+      keyAssemblyDeadlineBlock: currentBlock + 60n,
+      liveNotBeforeBlock:    currentBlock + 61n,
     });
     await writer.waitForTransaction(hash);
 
@@ -115,9 +115,9 @@ describe('Monitor utilities', () => {
       minValidContributions:     1,
       lotteryAlphaBps:           15000,
       seedDelay:                 1,
-      registrationDeadlineBlock: currentBlock + 30n,
-      contributionDeadlineBlock: currentBlock + 60n,
-      finalizeNotBeforeBlock:    currentBlock + 61n,
+      committeeSelectionDeadlineBlock: currentBlock + 30n,
+      keyAssemblyDeadlineBlock: currentBlock + 60n,
+      liveNotBeforeBlock:    currentBlock + 61n,
     });
     await writer.waitForTransaction(createHash);
 
@@ -126,7 +126,7 @@ describe('Monitor utilities', () => {
     const epochId = buildEpochId(prefix, nonce);
 
     // Should already be in Registration — resolves immediately
-    await waitForEpochPhase(client, epochId, EpochPhase.Registration, {
+    await waitForEpochPhase(client, epochId, EpochPhase.CommitteeSelection, {
       intervalMs: 500,
       timeoutMs: 15_000,
     });
@@ -138,13 +138,13 @@ describe('Monitor utilities', () => {
     const claimHash = await writer.claimSlot(epochId);
     await writer.waitForTransaction(claimHash);
 
-    await waitForEpochPhase(client, epochId, EpochPhase.Contribution, {
+    await waitForEpochPhase(client, epochId, EpochPhase.KeyAssembly, {
       intervalMs: 500,
       timeoutMs:  30_000,
     });
 
     const updated = await client.getEpoch(epochId);
-    expect(updated.status).toBe(EpochPhase.Contribution);
+    expect(updated.status).toBe(EpochPhase.KeyAssembly);
   });
 
   it('getEpochCreatedEvents returns historical events', async () => {

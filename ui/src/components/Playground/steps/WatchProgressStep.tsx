@@ -71,8 +71,8 @@ export function WatchProgressStep({ status, epochId, log }: Props) {
   const failure = epoch.data ? roundFailure(epoch.data.epoch, block ?? null) : null
   const canAbort =
     epoch.data &&
-    (epoch.data.epoch.status === EpochPhase.Registration ||
-      epoch.data.epoch.status === EpochPhase.Contribution)
+    (epoch.data.epoch.status === EpochPhase.CommitteeSelection ||
+      epoch.data.epoch.status === EpochPhase.KeyAssembly)
 
   // Pick the headline counter for the current phase. After finalize the
   // counters are no longer meaningful here — KeyAvailableStep takes over.
@@ -123,20 +123,20 @@ export function WatchProgressStep({ status, epochId, log }: Props) {
           )}
 
           {/* Live countdown to whichever deadline is currently relevant. */}
-          {epoch.data.epoch.status === EpochPhase.Registration && !failure && (
+          {epoch.data.epoch.status === EpochPhase.CommitteeSelection && !failure && (
             <Countdown
-              target={epoch.data.epoch.policy.registrationDeadlineBlock}
+              target={epoch.data.epoch.policy.committeeSelectionDeadlineBlock}
               label='until registration closes'
             />
           )}
-          {epoch.data.epoch.status === EpochPhase.Contribution && !failure && (
+          {epoch.data.epoch.status === EpochPhase.KeyAssembly && !failure && (
             <Stack gap={1}>
               <Countdown
-                target={epoch.data.epoch.policy.contributionDeadlineBlock}
+                target={epoch.data.epoch.policy.keyAssemblyDeadlineBlock}
                 label='until contributions close'
               />
               <Countdown
-                target={epoch.data.epoch.policy.finalizeNotBeforeBlock}
+                target={epoch.data.epoch.policy.liveNotBeforeBlock}
                 label='until finalize unlocks'
               />
             </Stack>
@@ -148,12 +148,12 @@ export function WatchProgressStep({ status, epochId, log }: Props) {
               <Alert.Indicator />
               <Alert.Content>
                 <Alert.Title>
-                  {failure.kind === 'registration'
+                  {failure.kind === 'committee-selection'
                     ? 'Registration closed without a viable committee.'
                     : 'Contribution window closed without enough contributions.'}
                 </Alert.Title>
                 <Alert.Description fontSize='xs'>
-                  {failure.kind === 'registration' ? (
+                  {failure.kind === 'committee-selection' ? (
                     <>
                       Only <b>{failure.have}</b> of the {failure.total} committee slot(s) were
                       claimed before the deadline — at least <b>{failure.need}</b> are needed for
@@ -225,7 +225,7 @@ function pickHeadlineCounter(epoch: Epoch): CounterSpec | null {
   const min = epoch.policy.minValidContributions
   const n = epoch.policy.committeeSize
   switch (epoch.status) {
-    case EpochPhase.Registration:
+    case EpochPhase.CommitteeSelection:
       return {
         label: 'Slots claimed',
         have: epoch.claimedCount,
@@ -237,7 +237,7 @@ function pickHeadlineCounter(epoch: Epoch): CounterSpec | null {
             ? 'Committee full — moving to contribution phase.'
             : `${epoch.claimedCount} of ${n} eligible nodes have joined this committee.`,
       }
-    case EpochPhase.Contribution:
+    case EpochPhase.KeyAssembly:
       return {
         label: 'Contributions accepted',
         have: epoch.contributionCount,
@@ -246,7 +246,7 @@ function pickHeadlineCounter(epoch: Epoch): CounterSpec | null {
         tone: epoch.contributionCount >= min ? 'live' : 'accent',
         caption:
           epoch.contributionCount >= min
-            ? `Threshold reached. Awaiting finalize at block ${epoch.policy.finalizeNotBeforeBlock.toString()}.`
+            ? `Threshold reached. Awaiting finalize at block ${epoch.policy.liveNotBeforeBlock.toString()}.`
             : `${epoch.contributionCount} of ${min} required contributions received.`,
       }
     default:

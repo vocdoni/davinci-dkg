@@ -83,7 +83,7 @@ console.log({
 })
 
 // Once finalized, the public key is exposed on-chain:
-if (epoch.status === EpochPhase.Finalized) {
+if (epoch.status === EpochPhase.Live) {
   const pk = await dkg.getCollectivePublicKey(epochId)
   console.log('shared key', pk.x.toString(16), pk.y.toString(16))
 }`}
@@ -96,14 +96,14 @@ if (epoch.status === EpochPhase.Finalized) {
           long-running process or a backend job.
         </Text>
         <CodeBlock language='tsx'>
-          {`import { watchNewRounds, watchEpochFinalized } from '@vocdoni/davinci-dkg-sdk'
+          {`import { watchNewRounds, watchEpochLive } from '@vocdoni/davinci-dkg-sdk'
 
 const stop = watchNewRounds(dkg, (entry) => {
   console.log('new epoch', entry.id, entry.epoch.policy.threshold,
               'of', entry.epoch.policy.committeeSize)
 })
 
-watchEpochFinalized(dkg, '0x82...0001', (event) => {
+watchEpochLive(dkg, '0x82...0001', (event) => {
   console.log('epoch finalized; key hash:', event.collectivePublicKeyHash)
 })
 

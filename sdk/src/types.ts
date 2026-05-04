@@ -4,11 +4,16 @@ export type { Address, Hex } from 'viem';
 
 // ── Epoch status ──────────────────────────────────────────────────────────────
 
+/**
+ * Epoch state machine. The first three states group into the "Preparation"
+ * phase (committee assembly + key generation); `Live` is the "Service" phase
+ * in which apps register their derived keys and ciphertexts get decrypted.
+ */
 export const EpochPhase = {
   None: 0,
-  Registration: 1,
-  Contribution: 2,
-  Finalized: 3,
+  CommitteeSelection: 1,
+  KeyAssembly: 2,
+  Live: 3,
   Aborted: 4,
   Completed: 5,
 } as const;
@@ -18,9 +23,9 @@ export type EpochPhaseValue = (typeof EpochPhase)[keyof typeof EpochPhase];
 export function roundStatusLabel(status: number): string {
   switch (status) {
     case EpochPhase.None: return 'None';
-    case EpochPhase.Registration: return 'Registration';
-    case EpochPhase.Contribution: return 'Contribution';
-    case EpochPhase.Finalized: return 'Finalized';
+    case EpochPhase.CommitteeSelection: return 'CommitteeSelection';
+    case EpochPhase.KeyAssembly: return 'KeyAssembly';
+    case EpochPhase.Live: return 'Live';
     case EpochPhase.Aborted: return 'Aborted';
     case EpochPhase.Completed: return 'Completed';
     default: return `Unknown(${status})`;
@@ -60,9 +65,9 @@ export interface EpochPolicy {
    * Callers constructing a fresh policy for `createEpoch` may leave them
    * at 0 — they are not transmitted by the writer.
    */
-  registrationDeadlineBlock: bigint;
-  contributionDeadlineBlock: bigint;
-  finalizeNotBeforeBlock: bigint;
+  committeeSelectionDeadlineBlock: bigint;
+  keyAssemblyDeadlineBlock: bigint;
+  liveNotBeforeBlock: bigint;
 }
 
 /**

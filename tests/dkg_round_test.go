@@ -42,12 +42,12 @@ func TestDKGRoundHappyPath(t *testing.T) {
 	c.Assert(err, qt.IsNil)
 
 	policy := types.EpochPolicy{
-		Threshold:                 1,
-		CommitteeSize:             1,
-		MinValidContributions:     1,
-		RegistrationDeadlineBlock: head + 25,
-		ContributionDeadlineBlock: head + 50,
-		FinalizeNotBeforeBlock:    head + 51,
+		Threshold:                       1,
+		CommitteeSize:                   1,
+		MinValidContributions:           1,
+		CommitteeSelectionDeadlineBlock: head + 25,
+		KeyAssemblyDeadlineBlock:        head + 50,
+		LiveNotBeforeBlock:              head + 51,
 	}
 	coefficients := []*big.Int{big.NewInt(7)}
 

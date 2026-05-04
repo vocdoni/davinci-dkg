@@ -14,8 +14,8 @@ import {PhaseLib} from "./libraries/PhaseLib.sol";
 import {
     MAX_N,
     DEFAULT_EPOCH_DURATION_BLOCKS,
-    REGISTRATION_BPS,
-    CONTRIBUTION_BPS,
+    COMMITTEE_SELECTION_BPS,
+    KEY_ASSEMBLY_BPS,
     FINALIZE_GAP_BPS,
     SEED_DELAY_BLOCKS
 } from "./libraries/Sizes.sol";
@@ -109,9 +109,9 @@ contract DKGManager is IDKGManager {
     uint256 public immutable EPOCH_DURATION_BLOCKS;
     /// @dev Phase deadline offsets, derived from EPOCH_DURATION_BLOCKS at
     ///      construction so we don't pay the BPS division on every createEpoch.
-    uint64 internal immutable REG_DEADLINE_OFFSET;
-    uint64 internal immutable CONTRIB_DEADLINE_OFFSET;
-    uint64 internal immutable FINALIZE_NOT_BEFORE_OFFSET;
+    uint64 internal immutable COMMITTEE_SELECTION_DEADLINE_OFFSET;
+    uint64 internal immutable KEY_ASSEMBLY_DEADLINE_OFFSET;
+    uint64 internal immutable LIVE_NOT_BEFORE_OFFSET;
     uint64 public epochNonce;
     /// @notice Block at which the most recent epoch was created. Anchor for
     ///         `nextEpochStartBlock()`.
@@ -164,7 +164,7 @@ contract DKGManager is IDKGManager {
     /// @dev Stores _hash2(scX, scY) for each share commitment, packing
     /// the original (x,y) pair into a single 32-byte slot. Saves one cold SSTORE per
     /// committee member at finalize time. The pre-image (x,y) is exposed in the
-    /// EpochFinalized event for off-chain consumers.
+    /// EpochLive event for off-chain consumers.
     mapping(bytes12 epochId => mapping(uint16 participantIndex => bytes32 shareCommitmentHash)) internal epochShareCommitmentHashes;
 
     /// @dev Stores keccak256 over the canonical (recipientIndexes ‖ recipientPubKeys)
@@ -221,16 +221,16 @@ contract DKGManager is IDKGManager {
         // Sanity: each phase needs at least 1 block, and the seed-revelation
         // block (startBlock + SEED_DELAY_BLOCKS) must land strictly inside the
         // registration window so claimers have at least one block to call.
-        uint64 reg     = uint64(dur * REGISTRATION_BPS / 10000);
-        uint64 contrib = uint64(dur * CONTRIBUTION_BPS / 10000);
+        uint64 reg     = uint64(dur * COMMITTEE_SELECTION_BPS / 10000);
+        uint64 contrib = uint64(dur * KEY_ASSEMBLY_BPS / 10000);
         uint64 finGap  = uint64(dur * FINALIZE_GAP_BPS  / 10000);
         if (reg <= SEED_DELAY_BLOCKS || contrib == 0 || finGap == 0 || dur > type(uint64).max) {
             revert InvalidPolicy();
         }
         EPOCH_DURATION_BLOCKS      = dur;
-        REG_DEADLINE_OFFSET        = reg;
-        CONTRIB_DEADLINE_OFFSET    = reg + contrib;
-        FINALIZE_NOT_BEFORE_OFFSET = reg + contrib + finGap;
+        COMMITTEE_SELECTION_DEADLINE_OFFSET        = reg;
+        KEY_ASSEMBLY_DEADLINE_OFFSET    = reg + contrib;
+        LIVE_NOT_BEFORE_OFFSET = reg + contrib + finGap;
 
         _deployer = msg.sender;
     }
@@ -374,12 +374,12 @@ contract DKGManager is IDKGManager {
                 committeeSize: committeeSize,
                 minValidContributions: minValidContributions,
                 lotteryAlphaBps: lotteryAlphaBps,
-                registrationDeadlineBlock: startBlock + REG_DEADLINE_OFFSET,
-                contributionDeadlineBlock: startBlock + CONTRIB_DEADLINE_OFFSET,
-                finalizeNotBeforeBlock:    startBlock + FINALIZE_NOT_BEFORE_OFFSET
+                committeeSelectionDeadlineBlock: startBlock + COMMITTEE_SELECTION_DEADLINE_OFFSET,
+                keyAssemblyDeadlineBlock: startBlock + KEY_ASSEMBLY_DEADLINE_OFFSET,
+                liveNotBeforeBlock:    startBlock + LIVE_NOT_BEFORE_OFFSET
             }),
             decryptionPolicy: decryptionPolicy,
-            status: DKGTypes.EpochPhase.Registration,
+            status: DKGTypes.EpochPhase.CommitteeSelection,
             nonce: epochNonce,
             startBlock: startBlock,
             seedBlock: seedBlock,
@@ -398,7 +398,7 @@ contract DKGManager is IDKGManager {
 
     /// @notice Eligible registered nodes call this to claim a slot in the epoch's
     /// committee. The first `committeeSize` callers that pass the lottery and arrive
-    /// before `registrationDeadlineBlock` form the committee.
+    /// before `committeeSelectionDeadlineBlock` form the committee.
     /// @notice Claim a committee slot in the trustless lottery.
     /// @dev    Admissible iff `keccak256(seed ‖ msg.sender) < lotteryThreshold`.
     ///         The first call after `block.number ≥ seedBlock` lazily resolves
@@ -411,7 +411,7 @@ contract DKGManager is IDKGManager {
     function claimSlot(bytes12 epochId) external {
         Epoch storage epoch = epochs[epochId];
         if (epoch.organizer == address(0)) revert InvalidEpoch();
-        if (!PhaseLib.inRegistration(epoch.status, epoch.policy.registrationDeadlineBlock)) revert InvalidPhase();
+        if (!PhaseLib.inCommitteeSelection(epoch.status, epoch.policy.committeeSelectionDeadlineBlock)) revert InvalidPhase();
         if (epoch.claimedCount >= epoch.policy.committeeSize) revert SlotsFull();
         if (selectedOperators[epochId][msg.sender]) revert AlreadyClaimed();
 
@@ -450,8 +450,8 @@ contract DKGManager is IDKGManager {
         // entire (recipientIndexes ‖ recipientPubKeys) calldata block in one keccak.
         if (slot + 1 == epoch.policy.committeeSize) {
             _snapshotCommittee(epochId, epoch.policy.committeeSize);
-            epoch.status = DKGTypes.EpochPhase.Contribution;
-            emit RegistrationClosed(epochId);
+            epoch.status = DKGTypes.EpochPhase.KeyAssembly;
+            emit CommitteeFilled(epochId);
         }
     }
 
@@ -557,7 +557,7 @@ contract DKGManager is IDKGManager {
     ) external {
         Epoch storage epoch = epochs[epochId];
         if (epoch.organizer == address(0)) revert InvalidEpoch();
-        if (!PhaseLib.inContribution(epoch.status, epoch.policy.contributionDeadlineBlock)) revert InvalidPhase();
+        if (!PhaseLib.inKeyAssembly(epoch.status, epoch.policy.keyAssemblyDeadlineBlock)) revert InvalidPhase();
         if (!selectedOperators[epochId][msg.sender]) revert NotSelectedParticipant();
         if (contributorIndex == 0 || contributorIndex > epoch.policy.committeeSize) revert InvalidContribution();
         if (epochParticipants[epochId][contributorIndex - 1] != msg.sender) revert InvalidProofInput();
@@ -639,7 +639,7 @@ contract DKGManager is IDKGManager {
     /// @dev    Callable by anyone once `contributionCount ≥
     ///         policy.minValidContributions`. Stores share commitments as
     ///         `keccak256(x, y)` per participant to keep storage to a single
-    ///         slot per entry; the pre-image is emitted in `EpochFinalized`.
+    ///         slot per entry; the pre-image is emitted in `EpochLive`.
     function finalizeEpoch(
         bytes12 epochId,
         bytes32 aggregateCommitmentsHash,
@@ -651,11 +651,11 @@ contract DKGManager is IDKGManager {
     ) external {
         Epoch storage epoch = epochs[epochId];
         if (epoch.organizer == address(0)) revert InvalidEpoch();
-        if (epoch.status == DKGTypes.EpochPhase.Finalized) revert AlreadyFinalized();
-        if (epoch.status != DKGTypes.EpochPhase.Contribution) revert InvalidPhase();
-        // finalizeNotBeforeBlock gate — semantically a "phase not yet open"
+        if (epoch.status == DKGTypes.EpochPhase.Live) revert AlreadyLive();
+        if (epoch.status != DKGTypes.EpochPhase.KeyAssembly) revert InvalidPhase();
+        // liveNotBeforeBlock gate — semantically a "phase not yet open"
         // condition, so we reuse InvalidPhase to keep the contract small.
-        if (block.number < uint256(epoch.policy.finalizeNotBeforeBlock)) revert InvalidPhase();
+        if (block.number < uint256(epoch.policy.liveNotBeforeBlock)) revert InvalidPhase();
         if (epoch.contributionCount < epoch.policy.minValidContributions) revert InsufficientContributions();
         if (
             aggregateCommitmentsHash == bytes32(0) || collectivePublicKeyHash == bytes32(0)
@@ -711,9 +711,9 @@ contract DKGManager is IDKGManager {
             cpkRef.y = agg0Y;
         }
 
-        epoch.status = DKGTypes.EpochPhase.Finalized;
+        epoch.status = DKGTypes.EpochPhase.Live;
         // The three commitment hashes are not persisted to storage; they are emitted
-        // in EpochFinalized below and reconstructed off-chain from the event log.
+        // in EpochLive below and reconstructed off-chain from the event log.
 
         // Persist share commitments directly from calldata, in the same loop as the
         // already-validated participantIndexes pass.
@@ -732,7 +732,7 @@ contract DKGManager is IDKGManager {
             epochShareCommitmentHashes[epochId][uint16(pIdx)] = _hash2(scX, scY);
         }
 
-        emit EpochFinalized(epochId, aggregateCommitmentsHash, collectivePublicKeyHash, shareCommitmentHash);
+        emit EpochLive(epochId, aggregateCommitmentsHash, collectivePublicKeyHash, shareCommitmentHash);
     }
 
     /// @dev Verifies the combineDecryption transcript directly from calldata.
@@ -876,7 +876,7 @@ contract DKGManager is IDKGManager {
     ) external {
         Epoch storage epoch = epochs[epochId];
         if (epoch.organizer == address(0)) revert InvalidEpoch();
-        if (epoch.status != DKGTypes.EpochPhase.Finalized) revert InvalidPhase();
+        if (epoch.status != DKGTypes.EpochPhase.Live) revert InvalidPhase();
         if (!selectedOperators[epochId][msg.sender]) revert NotSelectedParticipant();
         if (
             participantIndex == 0 || participantIndex > epoch.policy.committeeSize || ciphertextIndex == 0
@@ -954,7 +954,7 @@ contract DKGManager is IDKGManager {
     ) external {
         Epoch storage epoch = epochs[epochId];
         if (epoch.organizer == address(0)) revert InvalidEpoch();
-        if (epoch.status != DKGTypes.EpochPhase.Finalized) revert InvalidPhase();
+        if (epoch.status != DKGTypes.EpochPhase.Live) revert InvalidPhase();
         if (ciphertextIndex == 0 || ciphertextIndex > MAX_CIPHERTEXT_INDEX) revert InvalidCiphertext();
 
         // Well-formedness: coords must be canonical (< Q), on-curve, non-identity,
@@ -1045,7 +1045,7 @@ contract DKGManager is IDKGManager {
     ) external {
         Epoch storage epoch = epochs[epochId];
         if (epoch.organizer == address(0)) revert InvalidEpoch();
-        if (epoch.status != DKGTypes.EpochPhase.Finalized) revert InvalidPhase();
+        if (epoch.status != DKGTypes.EpochPhase.Live) revert InvalidPhase();
         if (ciphertextIndex == 0 || ciphertextIndex > MAX_CIPHERTEXT_INDEX || combineHash == bytes32(0)) revert InvalidCombinedDecryption();
         bytes32 storedCtHash = _ciphertexts[epochId][aid][ciphertextIndex];
         if (storedCtHash == bytes32(0)) revert CiphertextNotSubmitted();
@@ -1142,7 +1142,7 @@ contract DKGManager is IDKGManager {
         if (epoch.organizer == address(0)) revert InvalidEpoch();
         if (msg.sender != epoch.organizer) revert Unauthorized();
         if (
-            epoch.status == DKGTypes.EpochPhase.Finalized
+            epoch.status == DKGTypes.EpochPhase.Live
                 || epoch.status == DKGTypes.EpochPhase.Completed
                 || epoch.status == DKGTypes.EpochPhase.Aborted
         ) {
@@ -1196,7 +1196,7 @@ contract DKGManager is IDKGManager {
 
     /// @notice Returns the keccak256(abi.encode(x, y)) commitment hash for a
     /// participant's share commitment. The pre-image (x,y) is exposed off-chain via
-    /// the EpochFinalized event log.
+    /// the EpochLive event log.
     function getShareCommitmentHash(bytes12 epochId, uint16 participantIndex)
         external
         view

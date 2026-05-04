@@ -70,7 +70,7 @@ contract DKGAppManager is IDKGAppManager {
     ) external {
         IDKGManager.Epoch memory epoch = IDKGManager(MANAGER).getEpoch(epochId);
         if (epoch.organizer == address(0)) revert InvalidEpoch();
-        if (epoch.status != DKGTypes.EpochPhase.Finalized) revert InvalidPhase();
+        if (epoch.status != DKGTypes.EpochPhase.Live) revert InvalidPhase();
         if (aid == bytes32(0)) revert InvalidApplication();
         DKGTypes.Application storage existing = applications[epochId][aid];
         if (existing.exists) revert ApplicationAlreadyExists();
@@ -125,7 +125,7 @@ contract DKGAppManager is IDKGAppManager {
     ) external {
         IDKGManager.Epoch memory epoch = IDKGManager(MANAGER).getEpoch(epochId);
         if (epoch.organizer == address(0)) revert InvalidEpoch();
-        if (epoch.status != DKGTypes.EpochPhase.Finalized) revert InvalidPhase();
+        if (epoch.status != DKGTypes.EpochPhase.Live) revert InvalidPhase();
         if (aid == bytes32(0)) revert InvalidApplication();
         DKGTypes.Application storage existing = applications[epochId][aid];
         if (existing.exists) revert ApplicationAlreadyExists();
@@ -176,7 +176,7 @@ contract DKGAppManager is IDKGAppManager {
     ) external {
         IDKGManager.Epoch memory epoch = IDKGManager(MANAGER).getEpoch(epochId);
         if (epoch.organizer == address(0)) revert InvalidEpoch();
-        if (epoch.status != DKGTypes.EpochPhase.Finalized) revert InvalidPhase();
+        if (epoch.status != DKGTypes.EpochPhase.Live) revert InvalidPhase();
         if (ciphertextIndex == 0 || ciphertextIndex > MAX_CIPHERTEXT_INDEX) revert InvalidCiphertext();
         DKGTypes.Application storage app = applications[epochId][aid];
         if (!app.exists) revert InvalidApplication();

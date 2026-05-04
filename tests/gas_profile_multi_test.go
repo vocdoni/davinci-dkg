@@ -128,13 +128,13 @@ func benchmarkGasForN(t *testing.T, n, threshold int) gasProfileResult {
 	head, err := services.Contracts.Client().BlockNumber(ctx)
 	c.Assert(err, qt.IsNil)
 	policy := types.EpochPolicy{
-		Threshold:                 uint16(threshold),
-		CommitteeSize:             uint16(n),
-		MinValidContributions:     uint16(threshold),
-		LotteryAlphaBps:           helpers.DefaultLotteryAlphaBps,
-		RegistrationDeadlineBlock: head + 50,
-		ContributionDeadlineBlock: head + 200,
-		FinalizeNotBeforeBlock:    head + 201,
+		Threshold:                       uint16(threshold),
+		CommitteeSize:                   uint16(n),
+		MinValidContributions:           uint16(threshold),
+		LotteryAlphaBps:                 helpers.DefaultLotteryAlphaBps,
+		CommitteeSelectionDeadlineBlock: head + 50,
+		KeyAssemblyDeadlineBlock:        head + 200,
+		LiveNotBeforeBlock:              head + 201,
 	}
 	epochID, createGas := createRoundMeasured(t, ctx, policy)
 

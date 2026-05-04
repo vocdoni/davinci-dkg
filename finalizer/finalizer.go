@@ -39,7 +39,7 @@ type Result struct {
 // per-participant share commitments on success.
 //
 // The caller is responsible for ensuring block.number >=
-// policy.FinalizeNotBeforeBlock before calling — the contract gate would
+// policy.LiveNotBeforeBlock before calling — the contract gate would
 // otherwise revert with FinalizeTooEarly.
 func BuildAndSubmit(
 	ctx context.Context,

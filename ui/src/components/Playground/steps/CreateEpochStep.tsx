@@ -52,9 +52,9 @@ export function CreateEpochStep({ status, epochId, setRoundId, log }: Props) {
         committeeSize: Number(form.committeeSize),
         minValidContributions: Number(form.minValidContributions),
         lotteryAlphaBps: Number(form.lotteryAlphaBps),
-        registrationDeadlineBlock: 0n,
-        contributionDeadlineBlock: 0n,
-        finalizeNotBeforeBlock: 0n,
+        committeeSelectionDeadlineBlock: 0n,
+        keyAssemblyDeadlineBlock: 0n,
+        liveNotBeforeBlock: 0n,
       }
       const dp: DecryptionPolicy = {
         ownerOnly: dpForm.ownerOnly,

@@ -127,8 +127,8 @@ contract DKGManagerAppTest is Test, TestHelpers {
             )
         );
         IDKGManager.Epoch memory r = manager.getEpoch(epochId);
-        if (block.number < uint256(r.policy.finalizeNotBeforeBlock)) {
-            vm.roll(uint256(r.policy.finalizeNotBeforeBlock));
+        if (block.number < uint256(r.policy.liveNotBeforeBlock)) {
+            vm.roll(uint256(r.policy.liveNotBeforeBlock));
         }
         manager.finalizeEpoch(
             epochId,

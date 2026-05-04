@@ -25,7 +25,7 @@ func MineBlocks(ctx context.Context, services *TestServices, count uint64) error
 }
 
 // WaitForFinalizeGate mines blocks (on Anvil) until block.number >=
-// the epoch's finalizeNotBeforeBlock, opening the on-chain finalize gate.
+// the epoch's liveNotBeforeBlock, opening the on-chain finalize gate.
 // Used by integration tests/helpers that drive finalize directly.
 func WaitForFinalizeGate(ctx context.Context, services *TestServices, epochID [12]byte) error {
 	epoch, err := services.Contracts.GetEpoch(ctx, epochID)
@@ -36,8 +36,8 @@ func WaitForFinalizeGate(ctx context.Context, services *TestServices, epochID [1
 	if err != nil {
 		return fmt.Errorf("read head: %w", err)
 	}
-	if head >= epoch.Policy.FinalizeNotBeforeBlock {
+	if head >= epoch.Policy.LiveNotBeforeBlock {
 		return nil
 	}
-	return MineBlocks(ctx, services, epoch.Policy.FinalizeNotBeforeBlock-head)
+	return MineBlocks(ctx, services, epoch.Policy.LiveNotBeforeBlock-head)
 }

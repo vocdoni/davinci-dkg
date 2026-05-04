@@ -7,11 +7,15 @@ library DKGTypes {
         uint256 y;
     }
 
+    /// @notice Epoch state machine. The first three values group into the
+    ///         "Preparation" phase (committee assembly + key generation); `Live`
+    ///         is the "Service" phase in which apps register their derived keys
+    ///         and ciphertexts get decrypted under the collective key.
     enum EpochPhase {
         None,
-        Registration,    // accepting claimSlot calls (replaces Readiness)
-        Contribution,
-        Finalized,
+        CommitteeSelection,  // accepting claimSlot calls; lottery picks the committee
+        KeyAssembly,         // committee submits Feldman VSS contributions
+        Live,                // collective key PK_ep is live; apps + decryption are open
         Aborted,
         Completed
     }
@@ -25,10 +29,10 @@ library DKGTypes {
         uint16 threshold;
         uint16 committeeSize;
         uint16 minValidContributions;
-        uint16 lotteryAlphaBps;            // candidate-pool size = α × committeeSize, α expressed in basis points (10000 = 1.0)
-        uint64 registrationDeadlineBlock;  // last block in which claimSlot is accepted
-        uint64 contributionDeadlineBlock;  // last block in which submitContribution is accepted
-        uint64 finalizeNotBeforeBlock;     // earliest block at which finalizeEpoch can succeed; must be > contributionDeadlineBlock
+        uint16 lotteryAlphaBps;                  // candidate-pool size = α × committeeSize, α expressed in basis points (10000 = 1.0)
+        uint64 committeeSelectionDeadlineBlock;  // last block in which claimSlot is accepted
+        uint64 keyAssemblyDeadlineBlock;         // last block in which submitContribution is accepted
+        uint64 liveNotBeforeBlock;               // earliest block at which finalizeEpoch can flip the epoch to Live
     }
 
     /// @notice Gates `submitCiphertext` for a epoch. All checks AND together; an
