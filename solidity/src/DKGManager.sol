@@ -14,9 +14,9 @@ import {PhaseLib} from "./libraries/PhaseLib.sol";
 import {
     MAX_N,
     DEFAULT_EPOCH_DURATION_BLOCKS,
-    COMMITTEE_SELECTION_BPS,
-    KEY_ASSEMBLY_BPS,
-    FINALIZE_GAP_BPS,
+    DEFAULT_COMMITTEE_SELECTION_BLOCKS,
+    DEFAULT_KEY_ASSEMBLY_BLOCKS,
+    DEFAULT_FINALIZE_GAP_BLOCKS,
     SEED_DELAY_BLOCKS
 } from "./libraries/Sizes.sol";
 
@@ -201,7 +201,10 @@ contract DKGManager is IDKGManager {
         address _partialDecryptVerifier,
         address _finalizeVerifier,
         address _decryptCombineVerifier,
-        uint256 _epochDurationBlocks
+        uint256 _epochDurationBlocks,
+        uint256 _committeeSelectionBlocks,
+        uint256 _keyAssemblyBlocks,
+        uint256 _finalizeGapBlocks
     ) {
         if (uint32(block.chainid) != _chainId) revert InvalidChainId();
         if (_registry == address(0)) revert InvalidAddress();
@@ -217,20 +220,34 @@ contract DKGManager is IDKGManager {
         FINALIZE_VERIFIER = _finalizeVerifier;
         DECRYPT_COMBINE_VERIFIER = _decryptCombineVerifier;
 
-        uint256 dur = _epochDurationBlocks == 0 ? DEFAULT_EPOCH_DURATION_BLOCKS : _epochDurationBlocks;
-        // Sanity: each phase needs at least 1 block, and the seed-revelation
-        // block (startBlock + SEED_DELAY_BLOCKS) must land strictly inside the
-        // registration window so claimers have at least one block to call.
-        uint64 reg     = uint64(dur * COMMITTEE_SELECTION_BPS / 10000);
-        uint64 contrib = uint64(dur * KEY_ASSEMBLY_BPS / 10000);
-        uint64 finGap  = uint64(dur * FINALIZE_GAP_BPS  / 10000);
-        if (reg <= SEED_DELAY_BLOCKS || contrib == 0 || finGap == 0 || dur > type(uint64).max) {
+        uint256 dur     = _epochDurationBlocks      == 0 ? DEFAULT_EPOCH_DURATION_BLOCKS      : _epochDurationBlocks;
+        uint256 csl     = _committeeSelectionBlocks == 0 ? DEFAULT_COMMITTEE_SELECTION_BLOCKS : _committeeSelectionBlocks;
+        uint256 keyAsm  = _keyAssemblyBlocks        == 0 ? DEFAULT_KEY_ASSEMBLY_BLOCKS        : _keyAssemblyBlocks;
+        uint256 finGap  = _finalizeGapBlocks        == 0 ? DEFAULT_FINALIZE_GAP_BLOCKS        : _finalizeGapBlocks;
+
+        // Sanity:
+        //   - the seed-revelation block (startBlock + SEED_DELAY_BLOCKS) must
+        //     land strictly inside CommitteeSelection so claimers get at
+        //     least one block after the seed resolves;
+        //   - every phase must fit inside EPOCH_DURATION with the Service
+        //     window left non-empty;
+        //   - all four constants must fit in uint64 since the per-epoch
+        //     deadline blocks are stored as uint64.
+        uint256 prep = csl + keyAsm + finGap;
+        if (
+            csl <= SEED_DELAY_BLOCKS
+                || keyAsm == 0
+                || finGap == 0
+                || prep >= dur
+                || dur > type(uint64).max
+        ) {
             revert InvalidPolicy();
         }
-        EPOCH_DURATION_BLOCKS      = dur;
-        COMMITTEE_SELECTION_DEADLINE_OFFSET        = reg;
-        KEY_ASSEMBLY_DEADLINE_OFFSET    = reg + contrib;
-        LIVE_NOT_BEFORE_OFFSET = reg + contrib + finGap;
+
+        EPOCH_DURATION_BLOCKS               = dur;
+        COMMITTEE_SELECTION_DEADLINE_OFFSET = uint64(csl);
+        KEY_ASSEMBLY_DEADLINE_OFFSET        = uint64(csl + keyAsm);
+        LIVE_NOT_BEFORE_OFFSET              = uint64(prep);
 
         _deployer = msg.sender;
     }

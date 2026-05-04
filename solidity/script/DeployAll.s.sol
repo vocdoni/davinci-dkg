@@ -17,12 +17,15 @@ contract DeployAllScript is Script {
     /// which is usually fine — override with the env var when it matters.
     uint256 internal constant DEFAULT_INACTIVITY_WINDOW = 50_400;
 
-    /// Default epoch duration if `EPOCH_DURATION_BLOCKS` is not set in the
-    /// environment: 100 blocks ≈ 20 minutes at 12-second block time. Pass 0
-    /// to fall back to the contract's compiled-in default (also 100). For
-    /// faster chains (e.g. Polygon zkEVM at ~2s) bump this to ≈600 to
-    /// preserve the 20-minute target.
-    uint256 internal constant DEFAULT_EPOCH_DURATION_BLOCKS = 100;
+    /// Default phase budgets when the matching env vars are not set. Pass 0
+    /// for any of them to fall back to the contract's compiled-in defaults
+    /// (`Sizes.sol`). All values are in BLOCKS — scale per chain block time.
+    /// At ~12s blocks: 100 / 25 / 25 / 5 ≈ 20 min epoch with 5/5/1 min
+    /// preparation budget and ~9 min Service window.
+    uint256 internal constant DEFAULT_EPOCH_DURATION_BLOCKS      = 100;
+    uint256 internal constant DEFAULT_COMMITTEE_SELECTION_BLOCKS = 25;
+    uint256 internal constant DEFAULT_KEY_ASSEMBLY_BLOCKS        = 25;
+    uint256 internal constant DEFAULT_FINALIZE_GAP_BLOCKS        = 5;
 
     function run() public {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
@@ -31,6 +34,12 @@ contract DeployAllScript is Script {
             uint64(vm.envOr("INACTIVITY_WINDOW", DEFAULT_INACTIVITY_WINDOW));
         uint256 epochDurationBlocks =
             vm.envOr("EPOCH_DURATION_BLOCKS", DEFAULT_EPOCH_DURATION_BLOCKS);
+        uint256 committeeSelectionBlocks =
+            vm.envOr("COMMITTEE_SELECTION_BLOCKS", DEFAULT_COMMITTEE_SELECTION_BLOCKS);
+        uint256 keyAssemblyBlocks =
+            vm.envOr("KEY_ASSEMBLY_BLOCKS", DEFAULT_KEY_ASSEMBLY_BLOCKS);
+        uint256 finalizeGapBlocks =
+            vm.envOr("FINALIZE_GAP_BLOCKS", DEFAULT_FINALIZE_GAP_BLOCKS);
 
         vm.startBroadcast(deployerPrivateKey);
 
@@ -57,10 +66,16 @@ contract DeployAllScript is Script {
             address(partialDecryptVerifier),
             address(finalizeVerifier),
             address(decryptCombineVerifier),
-            epochDurationBlocks
+            epochDurationBlocks,
+            committeeSelectionBlocks,
+            keyAssemblyBlocks,
+            finalizeGapBlocks
         );
         console.log("DKGManager deployed at:", address(manager));
         console.log("DKGManager epochDurationBlocks:", manager.EPOCH_DURATION_BLOCKS());
+        console.log("DKGManager committeeSelectionBlocks:", committeeSelectionBlocks);
+        console.log("DKGManager keyAssemblyBlocks:       ", keyAssemblyBlocks);
+        console.log("DKGManager finalizeGapBlocks:       ", finalizeGapBlocks);
 
         // Wire the one-shot link from registry → manager so the latter can
         // call registry.markActive(...) from submitContribution.

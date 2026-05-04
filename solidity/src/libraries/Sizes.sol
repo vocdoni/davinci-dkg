@@ -8,41 +8,42 @@ uint256 constant MAX_N = 32;
 
 // ─── Epoch scheduling ────────────────────────────────────────────────────────
 //
-// Epoch length is expressed in BLOCKS (chain-agnostic). The wall-clock
-// duration depends on the deployment chain's block time and is estimated
-// off-chain by the SDK / UI from sampled block timestamps.
+// Every duration is expressed in BLOCKS (chain-agnostic). The wall-clock time
+// depends on the deployment chain's block time and is estimated off-chain by
+// the SDK / UI from sampled block timestamps.
 //
-// `EPOCH_DURATION_BLOCKS` is set per-deploy as an immutable in the
-// `DKGManager` constructor; the default below is what `script/DeployAll.s.sol`
-// uses when no override is provided. At 12-second block time (Sepolia /
-// mainnet) the default is 20 minutes per epoch.
+// All four block constants below are set per-deploy as `DKGManager`
+// constructor immutables; the defaults match the values in
+// `script/DeployAll.s.sol` when no env override is provided. They use ~12 s
+// blocks (Sepolia / mainnet) — for chains with different block times scale
+// the *_BLOCKS constants accordingly so wall-time matches.
 //
-// The phase fractions below (BPS = basis points, 10000 = 100%) carve up
-// every epoch's lifetime as:
+// Lifecycle (Preparation = first three; Service = the rest):
 //
-//   ─── Preparation (25 %) ─────────────────────────  ─── Service (75 %) ──
-//   [0,  CSL)         CommitteeSelection: claimSlot         (5 %)
-//   [CSL, CSL+KA)     KeyAssembly: submitContribution      (15 %)
-//   [CSL+KA, +GAP)    finalize gap: finalizeEpoch can run   (5 %)
-//   [+GAP, END)       Live: PK_ep is usable; apps register, decryptions land (75 %)
+//   [0,  CSL)               CommitteeSelection : claimSlot accepted
+//   [CSL, CSL+KA)           KeyAssembly        : submitContribution accepted
+//   [CSL+KA, +GAP)          finalize gap       : finalizeEpoch may run
+//   [CSL+KA+GAP, END)       Live               : PK_ep usable; apps register,
+//                                                 ciphertexts decrypt
 //
-// At the default 100 blocks: 5 / 15 / 5 / 75 — ~5 minutes of MPC and
-// ~15 minutes of decryption availability at 12 s blocks. After END blocks,
-// anyone may call `createEpoch` again to mint the next epoch (permissionless).
+// CommitteeSelection and KeyAssembly are absolute, NOT proportional. The
+// lottery is one keccak per claimer and the contribution proof is one tx
+// per committee member, so they need a fixed budget — not a fraction of the
+// epoch. Long epochs (multi-day) keep the same short Preparation; the extra
+// time falls into Service.
 //
-// The epoch stays `Live` forever once finalized, continuing to accept
-// ciphertexts / partials, until `abortEpoch` or until it gets evicted
-// from the recent-epochs ring buffer.
+// After END blocks anyone may call `createEpoch` again to mint the next
+// epoch (permissionless). The previous epoch stays `Live` for the duration
+// of its Service window, so its key remains usable while the next epoch
+// bootstraps.
 
-uint256 constant DEFAULT_EPOCH_DURATION_BLOCKS = 100;
-uint256 constant COMMITTEE_SELECTION_BPS       = 500;   // 5 %  (Preparation: lottery)
-uint256 constant KEY_ASSEMBLY_BPS              = 1500;  // 15 % (Preparation: VSS contributions)
-uint256 constant FINALIZE_GAP_BPS              = 500;   // 5 %  (Preparation: gap before finalizeEpoch)
-// Preparation subtotal = COMMITTEE_SELECTION + KEY_ASSEMBLY + FINALIZE_GAP = 2500 (25 %).
-// Service window (PK_ep is Live)               = remaining 7500 (75 %).
+uint256 constant DEFAULT_EPOCH_DURATION_BLOCKS       = 100;  // ~20 min @ 12 s
+uint256 constant DEFAULT_COMMITTEE_SELECTION_BLOCKS  = 25;   // ~5 min  @ 12 s
+uint256 constant DEFAULT_KEY_ASSEMBLY_BLOCKS         = 25;   // ~5 min  @ 12 s
+uint256 constant DEFAULT_FINALIZE_GAP_BLOCKS         = 5;    // ~1 min  @ 12 s
 
 uint256 constant SEED_DELAY_BLOCKS = 1;
 // `blockhash(startBlock + SEED_DELAY_BLOCKS)` is the lottery seed. The
-// constant must be strictly less than the CommitteeSelection window in
-// blocks at the deployed `EPOCH_DURATION_BLOCKS`; the constructor enforces
-// this.
+// constant must be strictly less than `COMMITTEE_SELECTION_BLOCKS` so
+// claimers get at least one block to call after the seed resolves; the
+// constructor enforces this.

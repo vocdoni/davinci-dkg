@@ -64,7 +64,10 @@ contract DKGManagerTest is Test, TestHelpers {
             address(partialVerifier),
             address(finalizeVerifier),
             address(decryptCombineVerifier),
-            0  // epochDurationBlocks=0 → contract picks DEFAULT_EPOCH_DURATION_BLOCKS (100)
+            0,  // epochDurationBlocks → DEFAULT (100)
+            0,  // committeeSelectionBlocks → DEFAULT (25)
+            0,  // keyAssemblyBlocks → DEFAULT (25)
+            0   // finalizeGapBlocks → DEFAULT (5)
         );
         // Wire the liveness callback so submitContribution can refresh
         // the contributor's lastActiveBlock on the registry.
@@ -765,7 +768,7 @@ contract DKGManagerTest is Test, TestHelpers {
             address(partialVerifier),
             address(finalizeVerifier),
             address(decryptCombineVerifier),
-            0
+            0, 0, 0, 0
         );
     }
 
@@ -778,7 +781,7 @@ contract DKGManagerTest is Test, TestHelpers {
             address(partialVerifier),
             address(finalizeVerifier),
             address(decryptCombineVerifier),
-            0
+            0, 0, 0, 0
         );
     }
 

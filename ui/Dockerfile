@@ -41,7 +41,7 @@ COPY ui/ ./
 # `docker build` produces a usable Sepolia bundle. Override on the build
 # command line (or via DO BUILD_TIME envs) to target any deployment.
 ARG RPC_URL=https://eth-sepolia.public.blastapi.io
-ARG MANAGER_ADDRESS=0x15A12949a8c5aC7ca9E4e89dD1C66eC8B4b4363c
+ARG MANAGER_ADDRESS=0xfb2CfAE24506D2978Cf4d0f8898F0E33aA744969
 ARG CHAIN_ID=11155111
 ARG CHAIN_NAME=sepolia
 ARG REGISTRY_ADDRESS=

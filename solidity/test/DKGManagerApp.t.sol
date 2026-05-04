@@ -81,7 +81,7 @@ contract DKGManagerAppTest is Test, TestHelpers {
             partialDecryptVerifier,
             address(new MockFinalizeVerifier()),
             address(new MockDecryptCombineVerifier()),
-            0
+            0, 0, 0, 0
         );
         registry.setManager(address(manager));
         appManager = new DKGAppManager(address(manager), partialDecryptVerifier);

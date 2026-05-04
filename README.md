@@ -53,32 +53,33 @@ keccak256 for on-chain Fiat–Shamir challenges. ElGamal for share and ciphertex
 
 An **epoch** is one DKG run. It produces a single collective public key `PK_ep` shared by `n`
 committee members; any `t` of them can decrypt. Epochs are scheduled at a fixed cadence — every
-`EPOCH_DURATION_BLOCKS` blocks (set per-deploy as a `DKGManager` immutable; default `100`).
+`EPOCH_DURATION_BLOCKS` blocks (set per-deploy as a `DKGManager` immutable).
 
 Each epoch splits into two top-level phases:
 
 ```
-       startBlock                                                         endBlock
-       │                                                                  │
-       │ ────── Preparation (25 %) ──────────────► ◄── Service (75 %) ── │
-       │                                                                  │
-       │ CommitteeSelection │ KeyAssembly  │ gap │      Live              │
-       │      (5 %)         │   (15 %)     │(5 %)│     (75 %)             │
-       ▼                                                                  ▼
-       ├────────────────────┼──────────────┼─────┼────────────────────────┤
-       │  claimSlot         │ submitContrib│ ... │ registerApplication /  │
-       │  (lottery)         │ (Groth16)    │     │ submitCiphertext /     │
-       │                    │              │     │ partialDecrypt /       │
-       │                    │              │     │ combineDecryption      │
-       └────────────────────┴──────────────┴─────┴────────────────────────┘
-                                            ▲
-                                  finalizeEpoch (Groth16)
-                                  flips state from KeyAssembly → Live
+   startBlock                                                                 endBlock
+   │                                                                          │
+   │ ─── Preparation (small, fixed) ────► ◄────── Service (the rest) ────────│
+   │                                                                          │
+   │ CommitteeSelection │ KeyAssembly │ gap │            Live                 │
+   │     ~5 min         │   ~5 min    │~1min│   (whatever is left)            │
+   ▼                                                                          ▼
+   ├────────────────────┼─────────────┼─────┼─────────────────────────────────┤
+   │  claimSlot         │submitContrib│ ... │ registerApplication[CoDec] /    │
+   │  (lottery)         │  (Groth16)  │     │ submitCiphertext /              │
+   │                    │             │     │ submitPartialDecryption /       │
+   │                    │             │     │ combineDecryption               │
+   └────────────────────┴─────────────┴─────┴─────────────────────────────────┘
+                                       ▲
+                             finalizeEpoch (Groth16)
+                             flips state from KeyAssembly → Live
 
-         < EPOCH_DURATION_BLOCKS  ─────────────────────────────────────►
+       ◄──────────────── EPOCH_DURATION_BLOCKS ─────────────────────────►
 ```
 
-- **Preparation** — committee is assembled and the collective key `PK_ep` is generated.
+- **Preparation** — committee is assembled and the collective key `PK_ep` is generated. Three
+  contiguous block windows:
   - `CommitteeSelection`: lottery via `claimSlot` picks `n` operators.
   - `KeyAssembly`: each committee member submits a Feldman VSS contribution with a Groth16 proof.
   - Finalize gap: short window before `finalizeEpoch` may run.
@@ -87,9 +88,15 @@ Each epoch splits into two top-level phases:
   - Anyone can `submitCiphertext`; the committee posts partials and any caller `combineDecryption`s
     to land the recovered plaintext on chain.
 
-Phase boundaries are derived on-chain from the immutable plus per-phase BPS constants
-(`solidity/src/libraries/Sizes.sol`). The epoch stays `Live` for the entire decryption window —
-its key remains usable while the next epoch is bootstrapping.
+Each Preparation window is an **absolute** block count, not a fraction of the epoch — the lottery
+is one keccak per claimer and the contribution proof is one tx per committee member, so a fixed
+budget is the right shape. The four block constants are deploy-time immutables (defaults in
+`solidity/src/libraries/Sizes.sol`, overridable via `EPOCH_DURATION_BLOCKS`,
+`COMMITTEE_SELECTION_BLOCKS`, `KEY_ASSEMBLY_BLOCKS`, `FINALIZE_GAP_BLOCKS` env vars at deploy
+time). Long epochs (multi-day) keep the same short Preparation; the extra time falls into Service.
+
+The epoch stays `Live` for the entire Service window — its key remains usable while the next epoch
+bootstraps.
 
 `createEpoch` is **permissionless** but cadence-gated: it reverts unless
 `block.number >= nextEpochStartBlock()`. In production, every node races to fire it once the
@@ -170,12 +177,15 @@ they are the integration contract.
 
 A few load-bearing knobs:
 
-| Constant                     | Where                              | Default | Notes                                              |
-|------------------------------|------------------------------------|---------|----------------------------------------------------|
-| `EPOCH_DURATION_BLOCKS`      | `DKGManager` constructor (immutable)| `100`   | Cadence + per-phase split derive from this         |
-| `MAX_N`                      | `solidity/src/libraries/Sizes.sol` | `32`    | Compile-time committee cap; mirrors `circuits/common.MaxN` |
-| `INACTIVITY_WINDOW`          | `DKGRegistry` constructor          | `50_400` blocks (~7 d at 12 s) | Heartbeat window before `reap` is permitted |
-| `SEED_DELAY_BLOCKS`          | `Sizes.sol`                        | `1`     | Lottery seed = `blockhash(startBlock + this)`      |
+| Constant                       | Where                                | Default                        | Notes                                                                |
+|--------------------------------|--------------------------------------|--------------------------------|----------------------------------------------------------------------|
+| `EPOCH_DURATION_BLOCKS`        | `DKGManager` constructor (immutable) | `100` (~20 min @ 12 s)         | Cadence anchor: next epoch can start `EPOCH_DURATION_BLOCKS` after the previous one |
+| `COMMITTEE_SELECTION_BLOCKS`   | `DKGManager` constructor (immutable) | `25` (~5 min @ 12 s)           | Absolute lottery window length                                       |
+| `KEY_ASSEMBLY_BLOCKS`          | `DKGManager` constructor (immutable) | `25` (~5 min @ 12 s)           | Absolute window for committee `submitContribution` calls             |
+| `FINALIZE_GAP_BLOCKS`          | `DKGManager` constructor (immutable) | `5`  (~1 min @ 12 s)           | Cooldown before `finalizeEpoch` may run                              |
+| `MAX_N`                        | `solidity/src/libraries/Sizes.sol`   | `32`                           | Compile-time committee cap; mirrors `circuits/common.MaxN`           |
+| `INACTIVITY_WINDOW`            | `DKGRegistry` constructor            | `50_400` blocks (~7 d @ 12 s)  | Heartbeat window before `reap` is permitted                          |
+| `SEED_DELAY_BLOCKS`            | `Sizes.sol`                          | `1`                            | Lottery seed = `blockhash(startBlock + this)`                        |
 
 ---
 
@@ -259,7 +269,7 @@ ciphertext before the combine can land.
 
 | Network | DKGManager                                 | Notes |
 |---------|--------------------------------------------|-------|
-| Sepolia | `0x15A12949a8c5aC7ca9E4e89dD1C66eC8B4b4363c` | Built into the node + SDK; just pass `--network sepolia` |
+| Sepolia | `0xfb2CfAE24506D2978Cf4d0f8898F0E33aA744969` | Built into the node + SDK; just pass `--network sepolia` |
 
 `DKGRegistry` and `DKGAppManager` are auto-resolved from `DKGManager` on-chain — only the manager
 address needs to be configured.
