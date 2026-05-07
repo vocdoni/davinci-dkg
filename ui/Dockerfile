@@ -14,7 +14,11 @@
 # ---------------------------------------------------------------------------
 FROM node:20-bookworm-slim AS sdk-builder
 WORKDIR /sdk
-RUN corepack enable
+# Pin pnpm at the corepack layer so any subdir without its own
+# packageManager field still gets a Node-20-compatible release. Without
+# `prepare --activate`, Corepack downloads the latest pnpm on first use,
+# which is currently pnpm 11 (uses `node:sqlite`, requires Node 22.13).
+RUN corepack enable && corepack prepare pnpm@10.0.0 --activate
 COPY sdk/package.json sdk/pnpm-lock.yaml* ./
 RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile || pnpm install
@@ -26,7 +30,7 @@ RUN pnpm run build
 # ---------------------------------------------------------------------------
 FROM node:20-bookworm-slim AS ui-builder
 WORKDIR /root
-RUN corepack enable
+RUN corepack enable && corepack prepare pnpm@10.0.0 --activate
 # Mirror the repo layout so the link:../sdk dependency resolves.
 COPY --from=sdk-builder /sdk ./sdk
 COPY scripts/ ./scripts/
