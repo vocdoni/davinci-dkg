@@ -5,7 +5,7 @@ go 1.25.5
 require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.78.2
 	github.com/cockroachdb/pebble v1.1.5
-	github.com/ethereum/go-ethereum v1.17.1
+	github.com/ethereum/go-ethereum v1.17.2
 	github.com/frankban/quicktest v1.14.6
 	github.com/rs/zerolog v1.35.0
 	github.com/spf13/pflag v1.0.10
