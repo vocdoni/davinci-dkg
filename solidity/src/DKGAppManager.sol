@@ -69,7 +69,7 @@ contract DKGAppManager is IDKGAppManager {
         IDKGManager.Epoch memory epoch = IDKGManager(MANAGER).getEpoch(epochId);
         if (epoch.organizer == address(0)) revert InvalidEpoch();
         if (epoch.status != DKGTypes.EpochPhase.Live) revert InvalidPhase();
-        if (aid == bytes32(0)) revert InvalidApplication();
+        _requireValidAid(aid);
         DKGTypes.Application storage existing = applications[epochId][aid];
         if (existing.exists) revert ApplicationAlreadyExists();
 
@@ -124,7 +124,7 @@ contract DKGAppManager is IDKGAppManager {
         IDKGManager.Epoch memory epoch = IDKGManager(MANAGER).getEpoch(epochId);
         if (epoch.organizer == address(0)) revert InvalidEpoch();
         if (epoch.status != DKGTypes.EpochPhase.Live) revert InvalidPhase();
-        if (aid == bytes32(0)) revert InvalidApplication();
+        _requireValidAid(aid);
         DKGTypes.Application storage existing = applications[epochId][aid];
         if (existing.exists) revert ApplicationAlreadyExists();
 
@@ -275,6 +275,13 @@ contract DKGAppManager is IDKGAppManager {
     }
 
     // ─── Internals ────────────────────────────────────────────────────────────
+
+    /// @dev `aid` is bound into the partial-decrypt and combine proofs as a
+    ///      BN254 scalar-field public input, so an id at or above the field
+    ///      modulus can never be proven against: reject it up front.
+    function _requireValidAid(bytes32 aid) internal pure {
+        if (aid == bytes32(0) || uint256(aid) >= BabyJubJub.Q) revert InvalidApplication();
+    }
 
     /// @dev Fiat-Shamir transcript for the organizer Schnorr proof:
     ///        challenge = keccak256(domain || eid || aid || PK_org || A) mod L

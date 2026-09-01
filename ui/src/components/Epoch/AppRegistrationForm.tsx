@@ -54,6 +54,9 @@ function defaultAid(): Hex {
   // Random aid so users can re-submit without colliding while testing.
   const rand = new Uint8Array(32)
   globalThis.crypto.getRandomValues(rand)
+  // aid is a BN254 scalar-field public input of every decryption proof, so
+  // it must stay below the field modulus (~2^253.6): clear the top 3 bits.
+  rand[0] &= 0x1f
   return ('0x' + Array.from(rand).map((b) => b.toString(16).padStart(2, '0')).join('')) as Hex
 }
 

@@ -178,6 +178,24 @@ contract DKGManagerAppTest is Test, TestHelpers {
         appManager.registerApplication(epochId, bytes32(0), _emptyAppPolicy());
     }
 
+    /// @dev `aid` is bound into every partial-decrypt and combine proof as
+    ///      a BN254 scalar-field public input, so ids at or above the field
+    ///      modulus could never be decrypted. Reject them at registration.
+    function test_RegisterApplication_RejectsAidOutsideScalarField() public {
+        bytes12 epochId = _finalizedEpoch();
+        bytes32 aid = bytes32(uint256(21888242871839275222246405745257275088548364400416034343698204186575808495617));
+        vm.expectRevert(IDKGAppManager.InvalidApplication.selector);
+        appManager.registerApplication(epochId, aid, _emptyAppPolicy());
+        vm.expectRevert(IDKGAppManager.InvalidApplication.selector);
+        appManager.registerApplicationCoDec(epochId, aid, _emptyAppPolicy(), 1, 1, 1, 1, 1);
+        // One below the modulus is the largest valid id.
+        appManager.registerApplication(
+            epochId,
+            bytes32(uint256(21888242871839275222246405745257275088548364400416034343698204186575808495616)),
+            _emptyAppPolicy()
+        );
+    }
+
     function test_RegisterApplication_RejectsDuplicate() public {
         bytes12 epochId = _finalizedEpoch();
         bytes32 aid = bytes32(uint256(42));
