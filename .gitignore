@@ -63,3 +63,6 @@ logs/
 /paper_epochs_v1.tex
 /references_epoch.bib
 /vocdoni-app/
+
+# ---- Operator secrets dropped in the working tree ------------------------
+/sepolia_privkey.txt

@@ -90,3 +90,6 @@ update_sol_pk_hash "${VERIFIERS_DIR}/PartialDecryptVerifier.sol" "$(jq -r '.part
 update_sol_pk_hash "${VERIFIERS_DIR}/DecryptCombineVerifier.sol" "$(jq -r '.decryptcombine.proving_key_hash' "${JSON}")"
 
 echo "Updated Solidity verifier wrapper contracts in ${VERIFIERS_DIR}/"
+
+# keep the pinned-hash file gofmt-clean (CI runs gofumpt -l)
+command -v gofmt >/dev/null && gofmt -w "$2"
