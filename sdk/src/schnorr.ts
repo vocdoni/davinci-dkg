@@ -5,10 +5,10 @@
 // equality is the load-bearing property; tests live at sdk/tests/schnorr.test.ts
 // and consume vectors emitted by `cmd/operator-schnorr-vectors`.
 //
-// Verifiers only — proof generation lives in the Go node, since the only
-// JS/TS callers are organizers (who use a wallet to sign) and the SDK never
-// holds a long-lived Schnorr secret. `proveOrganizer` is provided as a
-// convenience for tests; production organizers should use the Go path.
+// Provers and verifiers for both roles. `proveOperator` / `proveOrganizer`
+// need the corresponding secret scalar; DLEQ (`dleqChallenge`, `verifyDleq`)
+// is verify-only here because organizer shares are produced by the Go
+// tooling together with their Groth16 wrapper.
 
 import {
   Base8,

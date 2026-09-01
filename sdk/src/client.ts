@@ -828,8 +828,7 @@ export class DKGClient {
   /**
    * Fetch the most recent `limit` epochs in descending nonce order.
    *
-   * Epochs with status 0 (None) are omitted — they indicate an evicted slot
-   * in the ring buffer.
+   * Epochs with status 0 (None) are omitted (an id that was never created).
    *
    * @param limit  Maximum number of epochs to return (default: 20)
    */

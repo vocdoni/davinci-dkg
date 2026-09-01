@@ -59,7 +59,7 @@ interface FixtureDecryptResult {
 async function runGoFixture(args: string[]): Promise<{ status: number | null; stdout: string; stderr: string } | null> {
   const repoRoot    = path.resolve(__dirname, '..', '..');
   const fixtureMain = path.join(repoRoot, 'cmd', 'sdk-test-fixture');
-  return new Promise((resolve, reject) => {
+  return new Promise<{ status: number | null; stdout: string; stderr: string } | null>((resolve, reject) => {
     const child = spawn('go', ['run', fixtureMain, ...args], { cwd: repoRoot });
     let stdout = '';
     let stderr = '';
