@@ -31,8 +31,8 @@ which the production deployment includes.
 | Contribution    |     352,338 |   1,430,852 |   3,978,119 |
 | Finalize        |     143,288 |   1,021,651 |   3,377,949 |
 | PartialDecrypt  |      20,717 |      20,717 |      20,717 |
-| DecryptCombine  |      47,491 |      88,170 |     128,844 |
-| **Total**       | **563,834** | **2,561,390** | **7,505,629** |
+| DecryptCombine  |     104,328 |     238,207 |     409,969 |
+| **Total**       | **620,671** | **2,711,427** | **7,786,754** |
 
 The dominant cost in Contribution and Finalize is `CommitmentPolynomialValue`,
 which evaluates `Σ_k commitments[k] · x^k` for each recipient (or participant)
@@ -48,7 +48,9 @@ fails the proof rather than silently truncating.
 The empirical scaling roughly tracks O(N²) for Contribution and Finalize
 (constraint count grows ~4× from N=16→32 and ~2.8× from N=32→48), is flat
 in N for PartialDecrypt (per-share, not per-committee), and roughly linear
-in N for DecryptCombine (qualifying-set Lagrange).
+in N for DecryptCombine (qualifying-set Lagrange plus the `MaxN × t` short
+scalar multiplications of the Vandermonde check that pins the Lagrange
+vector; that check is ~60% of the combine circuit).
 
 ---
 
@@ -66,7 +68,7 @@ proofs in the production node). Each cell is `time` from
 | Contribution    |     285 ms |   1.010 s  |   2.027 s  |
 | Finalize        |     181 ms |     598 ms |   1.935 s  |
 | PartialDecrypt  |      53 ms |      50 ms |      52 ms |
-| DecryptCombine  |      76 ms |     101 ms |     128 ms |
+| DecryptCombine  |      70 ms |     135 ms |     226 ms |
 
 Contribution and Finalize are the only N-scaling circuits at the proving
 level, mirroring the constraint scaling above. PartialDecrypt is per-share
