@@ -92,10 +92,13 @@ Anything that touches encodings, hashes or constants has to be changed in all of
 
 ### Go packages
 
-- `cmd/davinci-dkg-node/node.go` is the node. It is one large file that polls `DKGManager`, and per epoch
-  does claimSlot → submitContribution (Groth16) → auto-finalize (via `finalizer/`) → partial decrypt →
-  combine. Every flag has a `DAVINCI_DKG_*` env equivalent (`config.go`). `--network sepolia` resolves the
-  manager from `config/networks.go`; registry + app manager are read from the manager on-chain.
+- `node/` is the daemon (`cmd/davinci-dkg-node` is a thin main). `node.go` polls the two newest epochs
+  and does claimSlot → submitContribution (Groth16) → auto-finalize (via `finalizer/`); `decrypt.go`
+  scans `CiphertextSubmitted` events for every aid, submits partials and combines (mode 0 tag or mode 1
+  organizer share resolved through `DKGAppManager`). All secret scalars come from `scalars.go`
+  (`crypto/rand`, never deterministic). Every flag has a `DAVINCI_DKG_*` env equivalent (`config.go`).
+  `--network sepolia` resolves the manager from `config/networks.go`; registry, verifiers and app
+  manager are read from the manager on-chain.
 - `circuits/{contribution,finalize,partialdecrypt,decryptcombine}` — gnark circuits (BN254 / BabyJubJub /
   Poseidon). Each has `circuit.go`, `witness.go` (Go-side witness construction), `assignment.go`,
   `artifacts.go`. `circuits/common` has the shared point/hash/Lagrange gadgets.
@@ -104,8 +107,8 @@ Anything that touches encodings, hashes or constants has to be changed in all of
   No business logic. `web3/txmanager` is a single-key nonce-aware EIP-1559 sender with fee bumping.
 - `finalizer/` — reconstructs accepted contributions from calldata, proves finalize, submits.
 - `prover/` — Groth16 backend wrapper; `GPU_PROVER=true` switches to the icicle backend.
-- `service/`, `storage/`, `db/` — a worker/persistence layer that is **not** wired into the node binary
-  (nothing outside those packages imports them). Don't assume node behaviour lives there.
+- `service/`, `storage/`, `db/`, `cmd/dkgcli` — unused (nothing imports them; dkgcli is a stub).
+  Candidates for deletion; don't assume node behaviour lives there.
 - `types/` — neutral structs shared by web3/finalizer/node to avoid import cycles.
 
 ### Contracts (`solidity/src`)
@@ -123,7 +126,9 @@ integration contract for the SDK/UI. Verifier wrappers in `src/verifiers` are ge
   (minutes, cached under `~/.davinci/artifacts`). The node overrides the cache dir with
   `DAVINCI_DKG_ARTIFACTS_DIR`; the `circuits` package itself (and therefore tests) reads `DAVINCI_ARTIFACTS_DIR`.
 - `tests/` = chain-backed Go integration (Anvil in Docker). `tests/helpers/round_flow.go` drives full
-  epochs; `tests/helpers/proofs.go` builds the proofs.
+  epochs; `tests/helpers/proofs.go` builds the proofs. The harness registers only 6 operators and uses
+  α=6.5535 so every actor passes the (real) lottery; `tests/node_service_test.go` runs three real
+  `node.Node` instances end to end. Application ids in tests must be < the BN254 scalar field.
 - `sdk/tests/*-e2e.test.ts` start their own Anvil stack and use `cmd/sdk-test-fixture` to produce
   proofs.
 - `solidity/test/TestHelpers.t.sol` + `TestInputs.t.sol` hold canned proofs/inputs for Foundry.
