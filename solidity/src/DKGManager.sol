@@ -25,19 +25,17 @@ import {
 /// @dev    Lifecycle: Registration (trustless lottery) → Contribution →
 ///         Finalized → Completed (or Aborted). Every state-mutating entry
 ///         point that makes a cryptographic claim is gated by a Groth16
-///         verifier — no dispute phase, no complaint flow. Historic epoch
-///         storage is bounded by a ring buffer of EPOCH_HISTORY_SIZE (64)
-///         entries; evicted epochs remain reconstructible from event logs.
+///         verifier — no dispute phase, no complaint flow. Epoch storage is
+///         never evicted: an application may outlive many epochs and
+///         `createEpoch` must stay O(1) gas regardless of history.
 ///         The share-commitment list is stored as `keccak256(x, y)` per
 ///         participant (1 SSTORE instead of 2) and the transcripts used by
 ///         finalize/combine are read straight out of calldata via assembly
 ///         to avoid per-element bounds checks.
 contract DKGManager is IDKGManager {
-    /// @dev Sibling app manager has not been wired yet — applications cannot
-    ///      yet be registered, organizer shares cannot be submitted, and any
-    ///      cross-contract path (submitCiphertext with aid != 0,
-    ///      combineDecryption with aid != 0) reverts. The legacy aid == 0 path
-    ///      remains available before wiring.
+    /// @dev Sibling app manager has not been wired yet — any cross-contract
+    ///      path (submitCiphertext / combineDecryption with aid != 0)
+    ///      reverts. The legacy aid == 0 path remains available before wiring.
     error AppManagerNotSet();
     error AppManagerAlreadySet();
 
@@ -84,12 +82,6 @@ contract DKGManager is IDKGManager {
     // combine-time per-section byte offsets:
     uint256 internal constant COMBINE_PARTIALS_BYTES_OFFSET = (4 + MAX_N) * 32;                 // partialDecryptions start, in bytes
 
-    /// @dev Number of recent epoch IDs retained on-chain. After this many `createEpoch`
-    /// calls, the oldest live epoch's storage is evicted (its data is wiped) and only
-    /// the event log retains it. Tunable; 64 is large enough to cover several days of
-    /// epochs at typical cadences.
-    uint256 internal constant EPOCH_HISTORY_SIZE = 64;
-
     /// @dev Upper bound on ciphertext indices accepted by `submitPartialDecryption`
     /// and `combineDecryption`. Prevents unbounded storage spam by a committee member
     /// who submits decryptions for arbitrarily large ciphertext indices.
@@ -129,13 +121,6 @@ contract DKGManager is IDKGManager {
     ///      call `setAppManager`. Immutable after construction.
     address private immutable _deployer;
 
-    /// @dev Fixed-size ring buffer of recent epoch IDs. New epochs push here at
-    /// createEpoch; once the buffer is full, the displaced entry tells us which epoch
-    /// to evict. `recentEpochsCount` counts total pushes; current write index is
-    /// `recentEpochsCount % EPOCH_HISTORY_SIZE`.
-    bytes12[EPOCH_HISTORY_SIZE] internal recentEpochs;
-    uint64 internal recentEpochsCount;
-
     mapping(bytes12 epochId => Epoch epoch) internal epochs;
     mapping(bytes12 epochId => mapping(address operator => bool selected)) internal selectedOperators;
     mapping(bytes12 epochId => address[] participants) internal epochParticipants;
@@ -173,10 +158,8 @@ contract DKGManager is IDKGManager {
     /// section in one keccak instead of 32 storage reads + 32 external registry calls.
     mapping(bytes12 epochId => bytes32 prefixHash) internal epochContribPrefixHash;
 
-    /// @dev Accumulates the collective public key on-chain as contributions are submitted.
-    ///      Each accepted contribution adds its commitment[0] point (a_{i,0}·G) to the
-    ///      running sum. The identity element (0,1) is the initial value. Once the epoch
-    ///      is finalized the value equals sum_i(a_{i,0}·G) = the collective public key.
+    /// @dev Collective public key PK_ep = Σᵢ aᵢ,₀·G, written exactly once by
+    ///      `finalizeEpoch` from the proof-verified aggregate commitment [0].
     mapping(bytes12 epochId => DKGTypes.Point) internal _collectiveKey;
 
     /// @dev _hash4(c1x, c1y, c2x, c2y) for each ciphertext submitted to a
@@ -352,35 +335,23 @@ contract DKGManager is IDKGManager {
         // threshold = floor(2^256 × expectedPass / registered)
         //           = floor(2^256 × numerator / 10000)         when registered > expectedPass
         // We cap the threshold at type(uint256).max - 1 so the comparison is strict.
+        // numerator = α·n in basis points; the admissible fraction of the
+        // hash space is numerator / (10000 · registered).
         uint256 numerator = uint256(lotteryAlphaBps) * uint256(committeeSize);
-        // expected = registered × numerator / 10000; if expected ≥ registered,
-        // every node passes (threshold = max). Otherwise compute proportional.
+        uint256 denominator = 10000 * registered;
         uint256 lotteryThreshold;
-        if (numerator >= 10000) {
-            // α × committeeSize ≥ registered: everyone passes
+        if (numerator >= denominator) {
+            // α·n ≥ registered: everyone passes.
             lotteryThreshold = type(uint256).max;
         } else {
-            // threshold = (2^256 × numerator) / (10000 × registered) ; use mulDiv-style
-            // safe expansion. Since numerator/10000 ≤ committeeSize, and we're scaling
-            // to 2^256, a simple shift suffices: shift by 256 then divide.
-            // Equivalent: (uint256.max / registered) × (numerator / 10000), avoiding overflow.
-            uint256 fraction = (type(uint256).max / 10000) * numerator; // ≤ uint256.max
-            lotteryThreshold = fraction / registered;
+            // threshold = 2^256 · numerator / denominator, computed as
+            // (max / denominator) · numerator which cannot overflow because
+            // numerator < denominator.
+            lotteryThreshold = (type(uint256).max / denominator) * numerator;
         }
 
         epochNonce++;
         bytes12 epochId = DKGIdLib.computeEpochId(EPOCH_PREFIX, epochNonce);
-
-        // Evict the oldest live epoch if the history buffer is full.
-        uint256 writeSlot = uint256(recentEpochsCount) % EPOCH_HISTORY_SIZE;
-        if (recentEpochsCount >= EPOCH_HISTORY_SIZE) {
-            bytes12 evictedKey = recentEpochs[writeSlot];
-            if (evictedKey != bytes12(0)) {
-                _evictRound(evictedKey);
-            }
-        }
-        recentEpochs[writeSlot] = epochId;
-        unchecked { recentEpochsCount += 1; }
 
         uint64 startBlock = uint64(block.number);
         uint64 seedBlock  = startBlock + uint64(SEED_DELAY_BLOCKS);
@@ -494,67 +465,6 @@ contract DKGManager is IDKGManager {
             canonicalKeys[i * 2 + 1] = 1; // identity-pad unused slots
         }
         epochContribPrefixHash[epochId] = keccak256(abi.encodePacked(canonicalIdxs, canonicalKeys));
-    }
-
-    /// @dev Wipes all storage tied to an old epoch when it falls out of the recent
-    /// epochs ring buffer. Refunds gas via SSTORE-zero on the storage slots being
-    /// cleared. Off-chain consumers must rely on the historical event log.
-    ///
-    /// Cleans up all four previously-leaking mappings in addition to the core
-    /// epoch data: contributions, partial decryptions (per-ciphertext counts
-    /// and per-participant records), and combined decryptions.
-    function _evictRound(bytes12 oldRoundId) internal {
-        Epoch storage r = epochs[oldRoundId];
-        if (r.organizer == address(0)) return;
-        address[] storage parts = epochParticipants[oldRoundId];
-        uint256 n = parts.length;
-        // Build the cleanup aid set: bytes32(0) (legacy per-epoch path) plus
-        // every registered application aid (sourced from the sibling app
-        // manager). When the app manager is not yet wired we only clean up
-        // the legacy path.
-        bytes32[] memory regAids;
-        if (_appManagerSet) {
-            regAids = IDKGAppManager(appManager).getRegisteredAids(oldRoundId);
-        }
-        uint256 aidCount = regAids.length + 1;
-        for (uint256 i = 0; i < n; i++) {
-            address participant = parts[i];
-            delete selectedOperators[oldRoundId][participant];
-            delete epochShareCommitmentHashes[oldRoundId][uint16(i + 1)];
-            delete epochContributions[oldRoundId][participant];
-        }
-        // Clear per-ciphertext partial-decryption hashes and bitmaps + combined
-        // decryption records, counts, and ciphertext hashes.
-        for (uint256 a = 0; a < aidCount; a++) {
-            bytes32 aid = a == 0 ? bytes32(0) : regAids[a - 1];
-            for (uint16 ci = 1; ci <= MAX_CIPHERTEXT_INDEX; ci++) {
-                if (epochPartialBitmap[oldRoundId][aid][ci] != 0) {
-                    uint256 bm = epochPartialBitmap[oldRoundId][aid][ci];
-                    for (uint16 pIdx = 1; pIdx <= MAX_N; pIdx++) {
-                        if ((bm >> pIdx) & 1 == 1) {
-                            delete epochPartialDeltaHash[oldRoundId][aid][ci][pIdx];
-                        }
-                    }
-                    delete epochPartialBitmap[oldRoundId][aid][ci];
-                }
-                if (epochPartialDecryptionCounts[oldRoundId][aid][ci] > 0) {
-                    delete epochPartialDecryptionCounts[oldRoundId][aid][ci];
-                }
-                if (epochCombinedDecryptions[oldRoundId][aid][ci].completed) {
-                    delete epochCombinedDecryptions[oldRoundId][aid][ci];
-                }
-                if (_ciphertexts[oldRoundId][aid][ci] != bytes32(0)) {
-                    delete _ciphertexts[oldRoundId][aid][ci];
-                }
-            }
-            // applications[oldRoundId][aid] now lives on DKGAppManager.
-            // Its lazy-cleanup is acceptable per the audit notes.
-        }
-        delete epochParticipants[oldRoundId];
-        delete epochContribPrefixHash[oldRoundId];
-        delete _collectiveKey[oldRoundId];
-        delete epochs[oldRoundId];
-        emit EpochEvicted(oldRoundId);
     }
 
     /// @notice Submit a contributor's polynomial commitments, encrypted
@@ -835,8 +745,8 @@ contract DKGManager is IDKGManager {
         uint256 cSize = epoch.policy.committeeSize;
         // Reject duplicate participant indexes in the
         // active prefix. Without this an attacker could repeat one accepted
-        // contributor's row and omit another, finalising an aggregate that
-        // disagrees with the on-chain accumulated `_collectiveKey`. Bitmap
+        // contributor's row and omit another, finalising an aggregate over
+        // the wrong contributor set. Bitmap
         // fits because participantIndex ≤ MAX_N ≤ 32.
         uint256 seenIndexes;
         for (uint256 i = 0; i < ccount; i++) {
@@ -1147,17 +1057,20 @@ contract DKGManager is IDKGManager {
     }
 
 
-    /// @notice Abort a non-terminal epoch. Organizer only.
-    /// @dev    Finalized epochs may NOT be aborted: the collective public key has
-    ///         already been published and messages may already be encrypted to it.
-    ///         Aborting after finalization would permanently block decryption for
-    ///         those messages. Only Registration and Contribution phases are
-    ///         abortable.
+    /// @notice Abort a non-terminal epoch. The organizer may abort at any
+    ///         time; once `keyAssemblyDeadlineBlock` has passed without the
+    ///         epoch going Live, anyone may (the epoch is dead by then, this
+    ///         just records it).
+    /// @dev    Live epochs may NOT be aborted: the collective public key has
+    ///         already been published and messages may already be encrypted
+    ///         to it.
     /// @param  epochId The epoch identifier.
     function abortEpoch(bytes12 epochId) external {
         Epoch storage epoch = epochs[epochId];
         if (epoch.organizer == address(0)) revert InvalidEpoch();
-        if (msg.sender != epoch.organizer) revert Unauthorized();
+        if (msg.sender != epoch.organizer && block.number <= uint256(epoch.policy.keyAssemblyDeadlineBlock)) {
+            revert Unauthorized();
+        }
         if (
             epoch.status == DKGTypes.EpochPhase.Live
                 || epoch.status == DKGTypes.EpochPhase.Completed

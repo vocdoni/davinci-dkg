@@ -24,7 +24,6 @@ interface IDKGManager {
     event SeedResolved(bytes12 indexed epochId, bytes32 seed);
     event SlotClaimed(bytes12 indexed epochId, address indexed claimer, uint16 slot);
     event CommitteeFilled(bytes12 indexed epochId);
-    event EpochEvicted(bytes12 indexed epochId);
     event ContributionSubmitted(
         bytes12 indexed epochId,
         address indexed contributor,

@@ -98,6 +98,5 @@ interface IDKGAppManager {
     ) external view;
 
     /// @notice Returns the list of registered aids for an epoch (excluding bytes32(0)).
-    ///         Used by DKGManager._evictRound.
     function getRegisteredAids(bytes12 epochId) external view returns (bytes32[] memory);
 }

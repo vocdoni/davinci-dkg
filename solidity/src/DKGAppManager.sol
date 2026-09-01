@@ -14,7 +14,7 @@ import {DKGProtocol} from "./libraries/DKGProtocol.sol";
 ///         `DKGManager`; communicates with it through the narrow `IDKGManager`
 ///         view surface (`getEpoch`, `getCollectivePublicKey`, `getCiphertextHash`)
 ///         and is consulted by `DKGManager` via `IDKGAppManager` at
-///         `submitCiphertext` / `combineDecryption` / `_evictRound` time.
+///         `submitCiphertext` / `combineDecryption` time.
 ///
 ///         Was carved out of `DKGManager` to keep the latter's runtime size
 ///         under the EIP-170 24,576-byte limit. No protocol behaviour change.
@@ -37,10 +37,8 @@ contract DKGAppManager is IDKGAppManager {
     ///      mode flag distinguishes the two paths at decryption time.
     mapping(bytes12 epochId => mapping(bytes32 aid => DKGTypes.Application app)) internal applications;
 
-    /// @dev List of registered aids per epoch (excluding bytes32(0)). Used by
-    ///      DKGManager._evictRound (via `getRegisteredAids`) to enumerate the
-    ///      per-aid storage that needs zeroing out for SSTORE refunds.
-    ///      Append-only; never reordered.
+    /// @dev List of registered aids per epoch (excluding bytes32(0)), exposed
+    ///      via `getRegisteredAids` for explorers. Append-only; never reordered.
     mapping(bytes12 epochId => bytes32[] aids) internal epochAidsList;
 
     /// @dev Per-(eid, aid, ciphertextIndex) organizer share submissions for

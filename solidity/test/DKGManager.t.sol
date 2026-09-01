@@ -1030,4 +1030,80 @@ contract DKGManagerTest is Test, TestHelpers {
             )
         );
     }
+    // ── Lottery threshold must scale with the active set ──────────────────
+
+    function test_CreateEpoch_LotteryThresholdScalesWithActiveSet() public {
+        // registered = 2 (this + BEEF), committeeSize = 1, α = 1.0
+        // → α·n = 1 < registered → threshold = 2^256 · 1 / 2.
+        bytes12 epochId = manager.createEpoch(1, 1, 1, 10000, _emptyDecryptionPolicy());
+        IDKGManager.Epoch memory epoch = manager.getEpoch(epochId);
+        uint256 expected = (type(uint256).max / 20000) * 10000;
+        assertEq(epoch.lotteryThreshold, expected);
+        assertTrue(epoch.lotteryThreshold < type(uint256).max);
+    }
+
+    function test_CreateEpoch_LotteryThresholdIsMaxWhenOversubscribed() public {
+        // α·n = 1.5 · 2 = 3 ≥ registered = 2 → everyone passes.
+        bytes12 epochId = manager.createEpoch(2, 2, 2, 15000, _emptyDecryptionPolicy());
+        assertEq(manager.getEpoch(epochId).lotteryThreshold, type(uint256).max);
+    }
+
+    /// @dev The contract must enforce keccak(seed ‖ op) < threshold exactly as
+    ///      documented. Across several seeds at least one registered operator
+    ///      must be turned away when only half the hash space is admissible.
+    function test_ClaimSlot_EnforcesLotteryRule() public {
+        address[2] memory ops = [address(this), address(0xBEEF)];
+        uint256 rejected;
+        for (uint256 round = 0; round < 6; round++) {
+            uint64 next = manager.nextEpochStartBlock();
+            if (block.number < uint256(next)) vm.roll(uint256(next));
+            bytes12 epochId = manager.createEpoch(1, 1, 1, 10000, _emptyDecryptionPolicy());
+            IDKGManager.Epoch memory epoch = manager.getEpoch(epochId);
+            // Roll relative to the contract-reported seed block: via-IR folds
+            // `block.number` to a constant inside this loop.
+            vm.roll(uint256(epoch.seedBlock) + 1);
+            bytes32 seed = blockhash(uint256(epoch.seedBlock));
+            bool filled;
+            for (uint256 i = 0; i < ops.length; i++) {
+                bool eligible = uint256(keccak256(abi.encodePacked(seed, ops[i]))) < epoch.lotteryThreshold;
+                if (filled) {
+                    vm.expectRevert(IDKGManager.InvalidPhase.selector);
+                } else if (!eligible) {
+                    vm.expectRevert(IDKGManager.NotEligible.selector);
+                    rejected++;
+                }
+                vm.prank(ops[i]);
+                manager.claimSlot(epochId);
+                if (eligible && !filled) filled = true;
+            }
+        }
+        assertTrue(rejected > 0);
+    }
+
+    // ── Old epochs are never evicted ───────────────────────────────────────
+
+    function test_CreateEpoch_DoesNotEvictOldEpochs() public {
+        bytes12 first = manager.createEpoch(2, 2, 2, 10000, _emptyDecryptionPolicy());
+        for (uint256 i = 0; i < 70; i++) {
+            vm.roll(uint256(manager.nextEpochStartBlock()));
+            manager.createEpoch(2, 2, 2, 10000, _emptyDecryptionPolicy());
+        }
+        assertEq(manager.getEpoch(first).organizer, address(this));
+    }
+
+    // ── abortEpoch is permissionless once the key-assembly deadline passed ──
+
+    function test_AbortEpoch_AnyoneAfterKeyAssemblyDeadline() public {
+        bytes12 epochId = manager.createEpoch(2, 2, 2, 10000, _emptyDecryptionPolicy());
+        IDKGManager.Epoch memory epoch = manager.getEpoch(epochId);
+
+        vm.prank(address(0xCAFE));
+        vm.expectRevert(IDKGManager.Unauthorized.selector);
+        manager.abortEpoch(epochId);
+
+        vm.roll(uint256(epoch.policy.keyAssemblyDeadlineBlock) + 1);
+        vm.prank(address(0xCAFE));
+        manager.abortEpoch(epochId);
+        assertEq(uint256(manager.getEpoch(epochId).status), uint256(DKGTypes.EpochPhase.Aborted));
+    }
 }

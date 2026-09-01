@@ -503,11 +503,6 @@ export const dkgManagerAbi = [
   },
   {
     type: 'event',
-    name: 'EpochEvicted',
-    inputs: [{ name: 'epochId', type: 'bytes12', indexed: true }],
-  },
-  {
-    type: 'event',
     name: 'EpochAborted',
     inputs: [{ name: 'epochId', type: 'bytes12', indexed: true }],
   },
