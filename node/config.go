@@ -29,6 +29,11 @@ type Config struct {
 	AutoCreateEpochs bool          `mapstructure:"auto-create-epochs"`
 	AutoCreateJitter time.Duration `mapstructure:"auto-create-jitter"`
 
+	// DecryptLookbackBlocks is how far behind the chain head a freshly
+	// started node scans for CiphertextSubmitted events it may still have
+	// to serve. Ciphertexts older than this are ignored on restart.
+	DecryptLookbackBlocks uint64 `mapstructure:"decrypt-lookback-blocks"`
+
 	// EpochPolicy is the per-epoch policy this node proposes when it wins
 	// the auto-create race. All fields are optional: missing fields fall
 	// back to safe defaults (committee of 4, threshold 3, α=1.5, no
@@ -74,6 +79,8 @@ func defaultConfig() *Config {
 		PollInterval:     5 * time.Second,
 		AutoCreateEpochs: true,
 		AutoCreateJitter: 12 * time.Second,
+		// ~7 days at 12 s blocks; matches the registry's default INACTIVITY_WINDOW.
+		DecryptLookbackBlocks: 50_400,
 		EpochPolicy: EpochPolicyConfig{
 			Threshold:             3,
 			CommitteeSize:         4,
@@ -104,6 +111,7 @@ func loadConfigFromArgs(args []string) (*Config, error) {
 	fs.Duration("poll-interval", cfg.PollInterval, "chain polling interval")
 	fs.Bool("auto-create-epochs", cfg.AutoCreateEpochs, "race other nodes to fire createEpoch once nextEpochStartBlock() is reached (default true; disable to participate only)")
 	fs.Duration("auto-create-jitter", cfg.AutoCreateJitter, "max random delay before firing the auto-create transaction (spreads contention)")
+	fs.Uint64("decrypt-lookback-blocks", cfg.DecryptLookbackBlocks, "on startup, scan this many blocks behind head for ciphertexts still awaiting decryption")
 	fs.Uint16("epoch-policy.threshold", cfg.EpochPolicy.Threshold, "Shamir threshold t when this node proposes an epoch")
 	fs.Uint16("epoch-policy.committee-size", cfg.EpochPolicy.CommitteeSize, "committee size n when this node proposes an epoch")
 	fs.Uint16("epoch-policy.min-valid-contributions", cfg.EpochPolicy.MinValidContributions, "minValidContributions when this node proposes an epoch")

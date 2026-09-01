@@ -39,8 +39,13 @@ func deterministicNodeKeyMaterial(privateKey string) (*big.Int, *big.Int, *big.I
 	return encoded.X, encoded.Y, secret, nil
 }
 
+// BootstrappedNodeKeys is how many Anvil accounts the harness registers as
+// operators. Kept ≤ floor(DefaultLotteryAlphaBps / 10000) so that a
+// committee of any size passes the lottery deterministically.
+const BootstrappedNodeKeys = 6
+
 func bootstrapLocalNodeKeys(ctx context.Context, services *TestServices) error {
-	for _, privateKey := range DefaultAnvilPrivateKeys {
+	for _, privateKey := range DefaultAnvilPrivateKeys[:BootstrappedNodeKeys] {
 		actor, err := services.ActorFromPrivateKey(privateKey)
 		if err != nil {
 			return fmt.Errorf("actor from private key: %w", err)

@@ -75,9 +75,13 @@ func BuildAndSubmit(
 		if err != nil || !rec.Accepted {
 			continue
 		}
-		pts, err := commitmentPointsFromCalldata(ctx, c, m, epochID, addr, startBlock, t)
+		data, err := ContributionCalldata(ctx, c, m, epochID, addr, startBlock)
 		if err != nil {
-			return nil, fmt.Errorf("commitment points for %s: %w", addr, err)
+			return nil, fmt.Errorf("contribution calldata for %s: %w", addr, err)
+		}
+		pts, err := parseCommitmentPoints(data, t)
+		if err != nil {
+			return nil, fmt.Errorf("parse commitment points for %s: %w", addr, err)
 		}
 		acceptedIdxs = append(acceptedIdxs, uint16(i+1))
 		allPoints = append(allPoints, pts)
@@ -133,6 +137,7 @@ func BuildAndSubmit(
 	if err != nil {
 		return nil, err
 	}
+	txm.RecordPending(tx)
 	if err := txm.WaitTxByHash(tx.Hash(), 120*time.Second); err != nil {
 		return nil, err
 	}
@@ -144,25 +149,22 @@ func BuildAndSubmit(
 	return res, nil
 }
 
-// commitmentPointsFromCalldata locates the submitContribution tx from
-// `contributor` for the given epoch via the ContributionSubmitted event log
-// (indexed by epochId + contributor), then fetches that single transaction
-// and parses its t Feldman commitment points from the calldata transcript.
+// ContributionCalldata locates the submitContribution tx from `contributor`
+// for the given epoch via the ContributionSubmitted event log (indexed by
+// epochId + contributor) and returns that transaction's raw calldata. The
+// encrypted shares and commitment points only live there.
 //
-// This replaces an earlier implementation that scanned the last ~2000 blocks
-// serially via BlockByNumber — on a public RPC that produced multi-minute
-// stalls per finalize attempt and was the dominant source of finalize latency.
 // The event-log path is O(1) RPC calls regardless of how long ago the
-// contribution landed, so finalize fires within the stagger window.
-func commitmentPointsFromCalldata(
+// contribution landed; scanning blocks serially stalled for minutes on
+// public RPCs.
+func ContributionCalldata(
 	ctx context.Context,
 	c *web3.Contracts,
 	m *gtypes.DKGManager,
 	epochID [12]byte,
 	contributor common.Address,
 	startBlock uint64,
-	t uint16,
-) ([]nodetypes.CurvePoint, error) {
+) ([]byte, error) {
 	client := c.Client()
 	latest, err := client.BlockNumber(ctx)
 	if err != nil {
@@ -197,24 +199,24 @@ func commitmentPointsFromCalldata(
 	if err != nil {
 		return nil, fmt.Errorf("fetch contribution tx %s: %w", txHash.Hex(), err)
 	}
-	pts, err := parseCommitmentPoints(tx.Data(), t)
-	if err != nil {
-		return nil, fmt.Errorf("parse commitment points from tx %s: %w", txHash.Hex(), err)
-	}
-	return pts, nil
+	return tx.Data(), nil
 }
 
-// parseCommitmentPoints extracts the first t Feldman commitment points from
-// the submitContribution calldata transcript.
-func parseCommitmentPoints(data []byte, t uint16) ([]nodetypes.CurvePoint, error) {
+// ContributionTranscript slices the `transcript` argument out of raw
+// submitContribution calldata:
+//
+//	submitContribution(bytes12 epochId, uint16 contributorIndex,
+//	    bytes32 commitmentsHash, bytes32 encryptedSharesHash,
+//	    bytes transcript, bytes proof, bytes input)
+//
+// Seven parameters, so the static head is 7×32 bytes and the transcript's
+// offset word is the fifth (bytes 128..160). The returned slice is the
+// 8·MaxN-word layout documented in DKGManager.submitContribution.
+func ContributionTranscript(data []byte) ([]byte, error) {
 	if len(data) < 4 {
 		return nil, fmt.Errorf("data too short")
 	}
 	payload := data[4:]
-	// submitContribution(epochId, contributorIndex, commitmentsHash,
-	// encryptedSharesHash, transcript, proof, input) — 7 params, head is
-	// 7×32 = 224 bytes. transcript is param index 4 (zero-based), so its
-	// head offset slot is bytes 128..160.
 	if len(payload) < 224 {
 		return nil, fmt.Errorf("payload head too short")
 	}
@@ -228,8 +230,18 @@ func parseCommitmentPoints(data []byte, t uint16) ([]nodetypes.CurvePoint, error
 		return nil, fmt.Errorf("transcript out of bounds")
 	}
 	tr := payload[tStart : tStart+tLen]
-	if len(tr) < contribution.MaxCoefficients*64 {
-		return nil, fmt.Errorf("transcript too short")
+	if want := 8 * contribution.MaxRecipients * 32; len(tr) != want {
+		return nil, fmt.Errorf("transcript is %d bytes, want %d", len(tr), want)
+	}
+	return tr, nil
+}
+
+// parseCommitmentPoints extracts the first t Feldman commitment points from
+// the submitContribution calldata transcript.
+func parseCommitmentPoints(data []byte, t uint16) ([]nodetypes.CurvePoint, error) {
+	tr, err := ContributionTranscript(data)
+	if err != nil {
+		return nil, err
 	}
 	pts := make([]nodetypes.CurvePoint, t)
 	for k := uint16(0); k < t; k++ {

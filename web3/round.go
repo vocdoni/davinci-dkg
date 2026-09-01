@@ -2,6 +2,7 @@ package web3
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"math/big"
 
@@ -119,4 +120,13 @@ func (c *Contracts) SelectedParticipants(ctx context.Context, epochID [12]byte) 
 		return nil, fmt.Errorf("unexpected output type for selectedParticipants")
 	}
 	return participants, nil
+}
+
+// EpochID builds the 12-byte epoch identifier `prefix ‖ nonce` used by the
+// DKGManager (see DKGIdLib.computeEpochId).
+func EpochID(prefix uint32, nonce uint64) [12]byte {
+	var id [12]byte
+	binary.BigEndian.PutUint32(id[:4], prefix)
+	binary.BigEndian.PutUint64(id[4:], nonce)
+	return id
 }

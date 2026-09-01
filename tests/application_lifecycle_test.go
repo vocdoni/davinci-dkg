@@ -169,9 +169,12 @@ func finalizedEpochForApps(ctx context.Context, c *qt.C) *helpers.FinalizedRound
 	return res
 }
 
+// randomAid returns a fresh application id below the BN254 scalar field
+// modulus (the contract rejects larger ids since proofs cannot bind them).
 func randomAid(c *qt.C) [32]byte {
 	var aid [32]byte
 	_, err := rand.Read(aid[:])
 	c.Assert(err, qt.IsNil)
+	aid[0] &= 0x1f
 	return aid
 }

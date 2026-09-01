@@ -6,6 +6,5 @@
 // that mirror the on-chain Solidity format bit-for-bit.
 //
 // The package is intentionally thin: it performs no business logic and no
-// state caching. Higher-level orchestration lives in cmd/davinci-dkg-node
-// and cmd/dkg-runner.
+// state caching. Higher-level orchestration lives in the node package.
 package web3

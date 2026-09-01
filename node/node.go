@@ -2,9 +2,6 @@ package node
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/binary"
-	"errors"
 	"fmt"
 	"math/big"
 	mrand "math/rand"
@@ -20,8 +17,6 @@ import (
 	"github.com/vocdoni/davinci-dkg/circuits"
 	ccommon "github.com/vocdoni/davinci-dkg/circuits/common"
 	"github.com/vocdoni/davinci-dkg/circuits/contribution"
-	"github.com/vocdoni/davinci-dkg/circuits/decryptcombine"
-	"github.com/vocdoni/davinci-dkg/circuits/partialdecrypt"
 	"github.com/vocdoni/davinci-dkg/crypto/group"
 	dkghash "github.com/vocdoni/davinci-dkg/crypto/hash"
 	"github.com/vocdoni/davinci-dkg/crypto/schnorr"
@@ -37,15 +32,16 @@ import (
 // bjjKeyDomain must match tests/helpers/nodekeys.go so registry keys are consistent.
 const bjjKeyDomain = "davinci-dkg/bjj-key/v1"
 
-// Ciphertext is a decoded CiphertextSubmitted event payload.
-// C1 is the ephemeral ciphertext half (k·G); C2 is the encrypted half (m·G + k·PubKey).
-// Both are needed: C1 for the per-node partial decryption proof and C2 for the
-// combine step that recovers m·G before the final BSGS DLOG (see dlog.go).
-type Ciphertext struct {
-	CiphertextIndex uint16
-	C1X, C1Y        *big.Int
-	C2X, C2Y        *big.Int
-}
+// EpochPhase values as stored on-chain (DKGTypes.EpochPhase).
+const (
+	epochCommitteeSelection uint8 = 1
+	epochKeyAssembly        uint8 = 2
+	epochLive               uint8 = 3
+	epochAborted            uint8 = 4
+	epochCompleted          uint8 = 5
+)
+
+type epochView = web3.EpochView
 
 // savedContrib caches data from the node's own submitted contribution
 // so it can compute the own-polynomial component of d_i offline.
@@ -61,20 +57,26 @@ type Node struct {
 	privKey   string
 	bjjSecret *big.Int
 
-	contracts *web3.Contracts
-	manager   *gtypes.DKGManager
-	registry  *gtypes.DKGRegistry
-	txm       *txmanager.Manager
+	contracts  *web3.Contracts
+	manager    *gtypes.DKGManager
+	appManager *gtypes.DKGAppManager
+	registry   *gtypes.DKGRegistry
+	txm        *txmanager.Manager
 
-	// per-epoch local state
+	// per-epoch local state (key generation lifecycle)
 	signaled      map[[12]byte]bool
 	contributed   map[[12]byte]bool
-	decrypted     map[[12]byte]map[uint16]bool
-	combined      map[[12]byte]bool
 	finalized     map[[12]byte]bool // tracks epochs we've already attempted to auto-finalize
-	terminal      map[[12]byte]bool // epochs where no further work is possible
+	terminal      map[[12]byte]bool // epochs whose key-generation lifecycle needs no more work
 	privateShares map[[12]byte]*big.Int
 	ownContribs   map[[12]byte]*savedContrib
+	selectedCache map[[12]byte][]common.Address
+
+	// decryption service state (see decrypt.go)
+	lookback    uint64
+	lastCtScan  uint64
+	pending     map[ctKey]*ciphertext
+	partialDone map[ctKey]bool
 
 	// auto-create-epoch state. autoCreateNextStart is the
 	// nextEpochStartBlock() value the most recent attempt was scheduled
@@ -106,6 +108,13 @@ func New(cfg *Config) (*Node, error) {
 	if err != nil {
 		return nil, fmt.Errorf("registry binding: %w", err)
 	}
+	if c.Addresses.AppManager == (common.Address{}) {
+		return nil, fmt.Errorf("DKGAppManager is not wired on manager %s", c.Addresses.Manager)
+	}
+	appManager, err := gtypes.NewDKGAppManager(c.Addresses.AppManager, c.PooledBackend())
+	if err != nil {
+		return nil, fmt.Errorf("app manager binding: %w", err)
+	}
 
 	bjjSecret, err := deriveBJJSecret(cfg.PrivKey)
 	if err != nil {
@@ -123,16 +132,19 @@ func New(cfg *Config) (*Node, error) {
 		bjjSecret:     bjjSecret,
 		contracts:     c,
 		manager:       manager,
+		appManager:    appManager,
 		registry:      registry,
 		txm:           txm,
 		signaled:      make(map[[12]byte]bool),
 		contributed:   make(map[[12]byte]bool),
-		decrypted:     make(map[[12]byte]map[uint16]bool),
-		combined:      make(map[[12]byte]bool),
 		finalized:     make(map[[12]byte]bool),
 		terminal:      make(map[[12]byte]bool),
 		privateShares: make(map[[12]byte]*big.Int),
 		ownContribs:   make(map[[12]byte]*savedContrib),
+		selectedCache: make(map[[12]byte][]common.Address),
+		lookback:      cfg.DecryptLookbackBlocks,
+		pending:       make(map[ctKey]*ciphertext),
+		partialDone:   make(map[ctKey]bool),
 	}, nil
 }
 
@@ -361,6 +373,7 @@ func (n *Node) EnsureRegistered(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("register/update key tx: %w", err)
 	}
+	n.txm.RecordPending(tx)
 	if err := n.txm.WaitTxByHash(tx.Hash(), 60*time.Second); err != nil {
 		return fmt.Errorf("wait register: %w", err)
 	}
@@ -452,6 +465,7 @@ func (n *Node) sendHeartbeat(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("heartbeat tx: %w", err)
 	}
+	n.txm.RecordPending(tx)
 	if err := n.txm.WaitTxByHash(tx.Hash(), 60*time.Second); err != nil {
 		return fmt.Errorf("wait heartbeat: %w", err)
 	}
@@ -469,6 +483,7 @@ func (n *Node) sendReactivate(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("reactivate tx: %w", err)
 	}
+	n.txm.RecordPending(tx)
 	if err := n.txm.WaitTxByHash(tx.Hash(), 60*time.Second); err != nil {
 		return fmt.Errorf("wait reactivate: %w", err)
 	}
@@ -478,6 +493,9 @@ func (n *Node) sendReactivate(ctx context.Context) error {
 
 // Run is the main participation loop; blocks until ctx is done.
 func (n *Node) Run(ctx context.Context, cfg *Config) {
+	// Fee-bump / resubmit stuck transactions in the background.
+	n.txm.Start(ctx)
+	defer n.txm.Stop()
 	ticker := time.NewTicker(cfg.PollInterval)
 	defer ticker.Stop()
 	// Emit balance and gas-spent info every 10 minutes regardless of poll interval.
@@ -595,12 +613,22 @@ func (n *Node) fireCreateEpoch(ctx context.Context, cfg *Config) error {
 	if err != nil {
 		return fmt.Errorf("create epoch: %w", err)
 	}
+	n.txm.RecordPending(tx)
 	if err := n.txm.WaitTxByHash(tx.Hash(), 30*time.Second); err != nil {
 		return fmt.Errorf("wait tx: %w", err)
 	}
 	return nil
 }
 
+// tick runs one poll cycle: key-generation lifecycle for the newest epochs,
+// then decryption service for every pending ciphertext.
+//
+// Only the two most recent epochs can still be in CommitteeSelection /
+// KeyAssembly (a new epoch cannot start until EPOCH_DURATION_BLOCKS after
+// the previous one, and Preparation is shorter than that), so the lifecycle
+// scan is O(1) RPC calls no matter how old the deployment is. Decryption
+// work is discovered from CiphertextSubmitted events instead of by walking
+// epochs, because applications outlive epochs by design.
 func (n *Node) tick(ctx context.Context) error {
 	callOpts := &bind.CallOpts{Context: ctx}
 	epochNonce, err := n.manager.EpochNonce(callOpts)
@@ -611,19 +639,27 @@ func (n *Node) tick(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("epoch prefix: %w", err)
 	}
-	for i := uint64(1); i <= epochNonce; i++ {
-		epochID := makeRoundID(prefix, i)
+	first := uint64(1)
+	if epochNonce > 1 {
+		first = epochNonce - 1
+	}
+	for i := first; i <= epochNonce; i++ {
+		epochID := web3.EpochID(prefix, i)
 		if n.terminal[epochID] {
-			continue // epoch is in a terminal state; no further work possible
+			continue // key generation finished (or failed); nothing left to do
 		}
-		if err := n.participate(ctx, epochID, callOpts); err != nil {
+		if err := n.participate(ctx, epochID); err != nil {
 			log.Warnw("participate failed", "epoch", roundHex(epochID), "err", err)
 		}
 	}
+	if err := n.scanCiphertexts(ctx); err != nil {
+		log.Warnw("ciphertext scan failed", "err", err)
+	}
+	n.serviceCiphertexts(ctx)
 	return nil
 }
 
-func (n *Node) participate(ctx context.Context, epochID [12]byte, callOpts *bind.CallOpts) error {
+func (n *Node) participate(ctx context.Context, epochID [12]byte) error {
 	epoch, err := n.contracts.GetEpoch(ctx, epochID)
 	if err != nil {
 		return fmt.Errorf("get epoch: %w", err)
@@ -632,10 +668,10 @@ func (n *Node) participate(ctx context.Context, epochID [12]byte, callOpts *bind
 	case 0: // None — epoch slot exists on-chain but is uninitialised (should not happen)
 		return nil
 
-	case 1: // Registration — try to claim a slot in the lottery
+	case epochCommitteeSelection: // try to claim a slot in the lottery
 		return n.doClaimSlot(ctx, epochID, epoch)
 
-	case 2: // Contribution — selected participants submit ZK shares,
+	case epochKeyAssembly: // selected participants submit ZK shares,
 		//                  then race on a deterministic stagger to call finalizeEpoch.
 		selected, err := n.contracts.SelectedParticipants(ctx, epochID)
 		if err != nil {
@@ -657,42 +693,17 @@ func (n *Node) participate(ctx context.Context, epochID [12]byte, callOpts *bind
 		}
 		return nil
 
-	case 3: // Finalized — partial decryptions, then combine
-		selected, err := n.contracts.SelectedParticipants(ctx, epochID)
-		if err != nil {
-			return fmt.Errorf("selected participants: %w", err)
-		}
-		idx := myIndex(selected, n.address)
-		if idx == 0 {
-			// Not a selected participant; try to combine if threshold partials exist.
-			if err := n.doCombineDecryption(ctx, epochID, epoch, selected, callOpts); err != nil {
-				return err
-			}
-		} else {
-			if err := n.doDecryption(ctx, epochID, idx, epoch, selected, callOpts); err != nil {
-				return err
-			}
-			if err := n.doCombineDecryption(ctx, epochID, epoch, selected, callOpts); err != nil {
-				return err
-			}
-		}
-		// Once combined, this epoch requires no further work — mark terminal so
-		// future ticks skip the GetEpoch RPC call entirely.
-		if n.combined[epochID] {
-			n.terminal[epochID] = true
-			log.Infow("epoch fully processed, marked terminal",
-				"epoch", roundHex(epochID))
-		}
+	case epochLive: // key is live; ciphertexts are served by the decryption scanner
+		n.terminal[epochID] = true
 		return nil
 
-	case 4: // Aborted — organizer cancelled the epoch
+	case epochAborted:
 		log.Warnw("epoch aborted — no further participation possible",
 			"epoch", roundHex(epochID))
 		n.terminal[epochID] = true
 		return nil
 
-	case 5: // Completed — secret reconstructed (disclosureAllowed path)
-		log.Infow("epoch completed (secret disclosed)", "epoch", roundHex(epochID))
+	case epochCompleted:
 		n.terminal[epochID] = true
 		return nil
 
@@ -782,6 +793,7 @@ func (n *Node) doClaimSlot(ctx context.Context, epochID [12]byte, epoch web3.Epo
 		}
 		return fmt.Errorf("claim slot: %w", err)
 	}
+	n.txm.RecordPending(tx)
 	if err := n.txm.WaitTxByHash(tx.Hash(), 60*time.Second); err != nil {
 		// On-chain revert — committee race or not eligible. Accept and stop retrying.
 		if isPermanentRevert(err) {
@@ -858,18 +870,11 @@ func (n *Node) doContribution(
 	committeeSize := epoch.Policy.CommitteeSize
 
 	roundHash := roundScalar(epochID)
-	coeffs := make([]*big.Int, threshold)
-	for i := range coeffs {
-		// Use 128-bit random coefficients to avoid overflowing the BabyJubJub
-		// subgroup order during circuit polynomial evaluation (circuit evaluates mod BN254).
-		c, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
-		if err != nil {
-			return err
-		}
-		if c.Sign() == 0 {
-			c.SetInt64(1)
-		}
-		coeffs[i] = c
+	// f_i(x) = Σ a_k x^k with uniform coefficients in the BabyJubJub scalar
+	// field; a_0 is this node's additive share of sk_ep.
+	coeffs, err := randomScalars(int(threshold))
+	if err != nil {
+		return err
 	}
 
 	recipientIdxs := make([]uint16, committeeSize)
@@ -883,10 +888,12 @@ func (n *Node) doContribution(
 		recipientKeys[i] = nodetypes.NodeKey{Operator: selected[i], PubX: nd.PubX, PubY: nd.PubY}
 	}
 
-	// Deterministic nonces
-	nonces := make([]*big.Int, committeeSize)
-	for i := range nonces {
-		nonces[i] = big.NewInt(int64(1000 + recipientIdxs[i]))
+	// One fresh hashed-ElGamal nonce per recipient. The nonce is the only
+	// thing hiding the share (mask = H(r·pub_j)); a predictable r would let
+	// anyone unmask every share from calldata.
+	nonces, err := randomScalars(int(committeeSize))
+	if err != nil {
+		return err
 	}
 
 	log.Infow(
@@ -964,6 +971,7 @@ func (n *Node) doContribution(
 		}
 		return fmt.Errorf("submit contribution: %w", err)
 	}
+	n.txm.RecordPending(tx)
 	if err := n.txm.WaitTxByHash(tx.Hash(), 120*time.Second); err != nil {
 		if strings.Contains(decodeContractError(err), "AlreadyContributed") {
 			log.Infow("contribution already on-chain (benign race) — skipping",
@@ -1087,168 +1095,6 @@ func (n *Node) tryAutoFinalize(
 	return nil
 }
 
-// ---- Partial decryption ----
-
-func (n *Node) doDecryption(
-	ctx context.Context,
-	epochID [12]byte,
-	idx uint16,
-	epoch web3.EpochView,
-	selected []common.Address,
-	callOpts *bind.CallOpts,
-) error {
-	const ctIdx = uint16(1)
-	if n.decrypted[epochID] == nil {
-		n.decrypted[epochID] = make(map[uint16]bool)
-	}
-	if n.decrypted[epochID][ctIdx] {
-		return nil
-	}
-	rec, err := n.manager.GetPartialDecryption(callOpts, epochID, [32]byte{}, idx, ctIdx)
-	if err == nil && rec.Accepted {
-		n.decrypted[epochID][ctIdx] = true
-		return nil
-	}
-
-	// NOTE: every selected committee member submits a partial decryption,
-	// even after `partialDecryptionCount >= threshold`. A planned reward
-	// mechanism will pay all participating nodes, so a "skip when enough"
-	// optimization here would silently exclude operators from future
-	// payouts. The contract accepts overshoot accepted partials cheaply
-	// (storage write + event), and the prover cost stays with the node
-	// that earned the reward. Keep all-in until the reward design lands
-	// and we know whether to revisit.
-
-	ct, err := n.fetchCiphertext(ctx, epochID, ctIdx, epoch.SeedBlock)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			log.Debugw("decryption: waiting for on-chain ciphertext",
-				"epoch", roundHex(epochID), "ctIdx", ctIdx)
-			return nil // ciphertext not submitted yet — wait
-		}
-		return fmt.Errorf("fetch ciphertext: %w", err)
-	}
-
-	// Defensive validation of (c1, c2) before computing δ_i = sk_i · c1.
-	//
-	// THREAT MODEL — why this off-chain check is load-bearing.
-	// `submitCiphertext` on the manager contract enforces only the cheap
-	// checks (canonical, on-curve, non-identity) and deliberately skips the
-	// ~2 M-gas prime-order subgroup test. A submitter with `submit` permission
-	// (or a future contract upgrade that loosened the on-chain checks) could
-	// therefore park a ciphertext whose c1 lies in the 8-element cofactor
-	// subgroup. If we naively computed δ_i = sk_i · c1 and posted it on-chain,
-	// the map sk_i ↦ δ_i would factor through `sk_i mod h` (h | 8) and leak
-	// log₂(h) ≤ 3 bits of this node's Shamir share — a permanent on-chain
-	// side channel an adversary could chain across many crafted ciphertexts.
-	// By refusing here we guarantee no such partial ever leaves this node,
-	// so no leakage occurs even if the on-chain gate is weakened.
-	//
-	// We re-run all four checks (canonical / on-curve / non-identity /
-	// prime-subgroup) even though the first three are also enforced
-	// on-chain — they are essentially free off-chain and defend against any
-	// future divergence between the contract and the node software.
-	if err := group.ValidateCiphertext(
-		nodetypes.CurvePoint{X: ct.C1X, Y: ct.C1Y},
-		nodetypes.CurvePoint{X: ct.C2X, Y: ct.C2Y},
-	); err != nil {
-		log.Warnw("decryption: rejecting toxic ciphertext — refusing partial decryption",
-			"epoch", roundHex(epochID), "ctIdx", ctIdx, "err", err)
-		// Treat as already-decrypted so we don't keep retrying every poll.
-		// The slot is permanently dead; combine cannot complete without a
-		// quorum of partials, so the on-chain state stays in
-		// AwaitingPartials forever — that is the intended outcome for an
-		// invalid ciphertext (no plaintext leaks, no node burns proving CPU
-		// in a loop). Operators can grep `rejecting toxic ciphertext` to
-		// audit the rejection reason.
-		if n.decrypted[epochID] == nil {
-			n.decrypted[epochID] = make(map[uint16]bool)
-		}
-		n.decrypted[epochID][ctIdx] = true
-		return nil
-	}
-
-	dShare, err := n.buildPrivateShare(ctx, epochID, idx, selected, epoch, callOpts)
-	if err != nil {
-		return fmt.Errorf("build private share: %w", err)
-	}
-
-	nonce := n.decNonce(epochID, idx, ctIdx)
-	asgn := partialdecrypt.Assignment{
-		RoundHash:        roundScalar(epochID),
-		ParticipantIndex: idx,
-		Base:             nodetypes.CurvePoint{X: ct.C1X, Y: ct.C1Y},
-		Secret:           dShare,
-		Nonce:            nonce,
-	}
-	witness, pi, err := partialdecrypt.BuildWitness(asgn)
-	if err != nil {
-		return fmt.Errorf("build partial decrypt witness: %w", err)
-	}
-	runtime, err := partialdecrypt.Artifacts.LoadOrSetupForCircuit(ctx, &partialdecrypt.PartialDecryptCircuit{})
-	if err != nil {
-		return fmt.Errorf("load partial decrypt circuit: %w", err)
-	}
-	proof, err := runtime.ProveAndVerify(witness)
-	if err != nil {
-		return fmt.Errorf("prove partial decrypt: %w", err)
-	}
-	proofBytes, err := marshalSolidityProof(proof)
-	if err != nil {
-		return fmt.Errorf("marshal partial decrypt proof: %w", err)
-	}
-	inputBytes, err := encodePublicWitness(pi.PublicWitness())
-	if err != nil {
-		return fmt.Errorf("encode partial decrypt public witness: %w", err)
-	}
-	dHash := ethcrypto.Keccak256Hash(
-		common.LeftPadBytes(pi.Delta.X.Bytes(), 32),
-		common.LeftPadBytes(pi.Delta.Y.Bytes(), 32),
-	)
-
-	auth, err := n.txm.NewTransactOpts(ctx)
-	if err != nil {
-		return fmt.Errorf("tx opts for partial decryption: %w", err)
-	}
-	tx, err := n.manager.SubmitPartialDecryption(auth, epochID, [32]byte{}, idx, ctIdx,
-		ct.C1X, ct.C1Y, ct.C2X, ct.C2Y, dHash, proofBytes, inputBytes)
-	if err != nil {
-		if strings.Contains(decodeContractError(err), "AlreadyPartiallyDecrypted") {
-			log.Infow("partial decryption already on-chain (benign race) — skipping",
-				"epoch", roundHex(epochID), "ctIdx", ctIdx)
-			n.decrypted[epochID][ctIdx] = true
-			return nil
-		}
-		if isPermanentRevert(err) {
-			log.Warnw("partial decryption tx permanently rejected — will not retry",
-				"epoch", roundHex(epochID), "err", decodeContractError(err))
-			n.decrypted[epochID][ctIdx] = true
-		}
-		return fmt.Errorf("submit partial decryption: %w", err)
-	}
-	if err := n.txm.WaitTxByHash(tx.Hash(), 120*time.Second); err != nil {
-		if strings.Contains(decodeContractError(err), "AlreadyPartiallyDecrypted") {
-			log.Infow("partial decryption already on-chain (benign race) — skipping",
-				"epoch", roundHex(epochID), "ctIdx", ctIdx)
-			n.decrypted[epochID][ctIdx] = true
-			return nil
-		}
-		if isPermanentRevert(err) {
-			log.Warnw("partial decryption tx reverted on-chain — will not retry",
-				"epoch", roundHex(epochID), "err", decodeContractError(err))
-			n.decrypted[epochID][ctIdx] = true
-		}
-		return fmt.Errorf("wait partial decryption tx: %w", err)
-	}
-	n.decrypted[epochID][ctIdx] = true
-	var pdGas uint64
-	if rec, err := n.contracts.Client().TransactionReceipt(ctx, tx.Hash()); err == nil {
-		pdGas = rec.GasUsed
-	}
-	log.Infow("partial decryption submitted", "epoch", roundHex(epochID), "index", idx, "tx", tx.Hash().Hex(), "gas", pdGas)
-	return nil
-}
-
 // buildPrivateShare computes d_i = Σ_j f_j(i) by:
 //   - Own contribution (in-memory cache): evaluate own polynomial directly
 //   - Own contribution (after restart, cache lost): fall back to calldata recovery
@@ -1263,7 +1109,7 @@ func (n *Node) buildPrivateShare(
 	epochID [12]byte,
 	myIdx uint16,
 	selected []common.Address,
-	epoch web3.EpochView,
+	epoch epochView,
 	callOpts *bind.CallOpts,
 ) (*big.Int, error) {
 	if s, ok := n.privateShares[epochID]; ok {
@@ -1337,11 +1183,8 @@ func (n *Node) buildPrivateShare(
 }
 
 // recoverShareFrom fetches the submitContribution tx calldata for `contributor`
-// and decrypts the share slot destined for myIdx.
-//
-// fromBlock is the earliest block to scan. Pass the epoch's
-// committeeSelectionDeadlineBlock so the scan starts at the earliest plausible point
-// instead of walking back an arbitrary fixed number of blocks from the head.
+// (located through the ContributionSubmitted event log) and decrypts the
+// share slot destined for myIdx.
 func (n *Node) recoverShareFrom(
 	ctx context.Context,
 	epochID [12]byte,
@@ -1351,408 +1194,49 @@ func (n *Node) recoverShareFrom(
 	myIdx uint16,
 	fromBlock uint64,
 ) (*big.Int, error) {
-	client := n.contracts.Client()
-	chainID := new(big.Int).SetUint64(n.contracts.ChainID)
-
-	latest, err := client.BlockNumber(ctx)
+	data, err := finalizer.ContributionCalldata(ctx, n.contracts, n.manager, epochID, contributor, fromBlock)
 	if err != nil {
 		return nil, err
 	}
-	start := fromBlock
-
-	managerAddr := n.contracts.Addresses.Manager
-	signer := ethtypes.NewCancunSigner(chainID)
-	for blk := start; blk <= latest; blk++ {
-		block, err := client.BlockByNumber(ctx, new(big.Int).SetUint64(blk))
-		if err != nil {
+	eph, masked, recipIdxs, err := decodeContributionTranscript(data)
+	if err != nil {
+		return nil, fmt.Errorf("decode contribution transcript: %w", err)
+	}
+	for slot, ridx := range recipIdxs {
+		if ridx != myIdx || slot >= len(eph) || slot >= len(masked) {
 			continue
 		}
-		for _, tx := range block.Transactions() {
-			if tx.To() == nil || *tx.To() != managerAddr {
-				continue
-			}
-			from, err := ethtypes.Sender(signer, tx)
-			if err != nil || from != contributor {
-				continue
-			}
-			data := tx.Data()
-			if len(data) < 4 {
-				continue
-			}
-			// submitContribution selector: first 4 bytes
-			// We try to decode and ignore on error
-			eph, masked, recipIdxs, err := decodeContributionTranscript(data)
-			if err != nil {
-				continue
-			}
-			for slot, ridx := range recipIdxs {
-				if ridx != myIdx {
-					continue
-				}
-				if slot >= len(eph) || slot >= len(masked) {
-					continue
-				}
-				ct := shareenc.Ciphertext{
-					Ephemeral:   nodetypes.CurvePoint{X: eph[slot][0], Y: eph[slot][1]},
-					MaskedShare: masked[slot],
-				}
-				share, err := shareenc.DecryptShareRoundHash(roundHash, contribIdx, myIdx, ct, n.bjjSecret)
-				if err != nil {
-					continue
-				}
-				return share, nil
-			}
+		ct := shareenc.Ciphertext{
+			Ephemeral:   nodetypes.CurvePoint{X: eph[slot][0], Y: eph[slot][1]},
+			MaskedShare: masked[slot],
 		}
+		return shareenc.DecryptShareRoundHash(roundHash, contribIdx, myIdx, ct, n.bjjSecret)
 	}
-	return nil, fmt.Errorf("share not found in calldata for epoch %s contributor %s", roundHex(epochID), contributor.Hex())
+	return nil, fmt.Errorf("no share slot for index %d in contribution of %s", myIdx, contributor.Hex())
 }
 
-// decodeContributionTranscript extracts (ephemerals, maskedShares, recipientIndexes)
-// from the raw calldata of a submitContribution transaction.
+// decodeContributionTranscript extracts (ephemerals, maskedShares,
+// recipientIndexes) from raw submitContribution calldata. Transcript layout
+// (N = circuits/common.MaxN words each 32 bytes):
 //
-// submitContribution ABI:
-//
-//	(bytes12,uint16,bytes32,bytes32,uint256 commitment0X,uint256 commitment0Y,bytes transcript,bytes proof,bytes input)
-//
-// transcript layout = abi.encode(
-//
-//	uint256[2N] commitmentPoints,
-//	uint256[N]  recipientIndexes,
-//	uint256[2N] recipientPubKeys,
-//	uint256[2N] ephemerals,
-//	uint256[N]  maskedShares,
-//
-// )
-// where N = circuits/common.MaxN.
+//	[0..2N)  commitmentPoints   [2N..3N) recipientIndexes
+//	[3N..5N) recipientPubKeys   [5N..7N) ephemerals   [7N..8N) maskedShares
 func decodeContributionTranscript(data []byte) (ephemerals [][2]*big.Int, maskedShares []*big.Int, recipientIndexes []uint16, err error) {
-	if len(data) < 4 {
-		return nil, nil, nil, fmt.Errorf("calldata too short")
+	transcript, err := finalizer.ContributionTranscript(data)
+	if err != nil {
+		return nil, nil, nil, err
 	}
-	// Skip 4-byte selector
-	payload := data[4:]
-
-	// ABI-decode 9 parameters; each static head is 32 bytes.
-	// epochId (bytes12)=32, contributorIndex (uint16)=32, commitmentsHash=32, encSharesHash=32,
-	// commitment0X (uint256)=32, commitment0Y (uint256)=32,
-	// transcript=offset(32), proof=offset(32), input=offset(32)
-	// Total head = 9*32 = 288 bytes
-	if len(payload) < 288 {
-		return nil, nil, nil, fmt.Errorf("payload too short for head")
-	}
-	// transcript offset is at payload[192:224] (after 6 static params × 32 bytes each)
-	transcriptOffset := int(new(big.Int).SetBytes(padTo32(payload[192:224])).Int64())
-	if transcriptOffset+32 > len(payload) {
-		return nil, nil, nil, fmt.Errorf("transcript offset out of range")
-	}
-	transcriptLen := int(new(big.Int).SetBytes(padTo32(payload[transcriptOffset : transcriptOffset+32])).Int64())
-	transcriptStart := transcriptOffset + 32
-	if transcriptStart+transcriptLen > len(payload) {
-		return nil, nil, nil, fmt.Errorf("transcript bytes out of range")
-	}
-	transcript := payload[transcriptStart : transcriptStart+transcriptLen]
-
 	const N = ccommon.MaxN
-	// total = 8N words = 256N bytes
-	totalBytes := 8 * N * 32
-	if len(transcript) < totalBytes {
-		return nil, nil, nil, fmt.Errorf("transcript too short: %d", len(transcript))
-	}
-
-	// commitmentPoints occupy the first 2N*32 bytes (skipped here).
-	// Section offsets (in bytes):
-	//   recipientIndexes: 2N*32
-	//   recipientPubKeys: 3N*32
-	//   ephemerals:       5N*32
-	//   maskedShares:     7N*32
-	ridxOffset := 2 * N * 32
+	word := func(i int) *big.Int { return new(big.Int).SetBytes(transcript[i*32 : (i+1)*32]) }
 	ridxs := make([]uint16, N)
-	for i := range ridxs {
-		word := new(big.Int).SetBytes(transcript[ridxOffset+i*32 : ridxOffset+i*32+32])
-		ridxs[i] = uint16(word.Uint64())
-	}
-	ephOffset := 5 * N * 32
 	ephs := make([][2]*big.Int, N)
-	for i := range ephs {
-		x := new(big.Int).SetBytes(transcript[ephOffset+i*64 : ephOffset+i*64+32])
-		y := new(big.Int).SetBytes(transcript[ephOffset+i*64+32 : ephOffset+i*64+64])
-		ephs[i] = [2]*big.Int{x, y}
-	}
-	maskedOffset := 7 * N * 32
 	masked := make([]*big.Int, N)
-	for i := range masked {
-		masked[i] = new(big.Int).SetBytes(transcript[maskedOffset+i*32 : maskedOffset+i*32+32])
+	for i := range N {
+		ridxs[i] = uint16(word(2*N + i).Uint64())
+		ephs[i] = [2]*big.Int{word(5*N + 2*i), word(5*N + 2*i + 1)}
+		masked[i] = word(7*N + i)
 	}
-
 	return ephs, masked, ridxs, nil
-}
-
-func padTo32(b []byte) []byte {
-	if len(b) >= 32 {
-		return b[len(b)-32:]
-	}
-	padded := make([]byte, 32)
-	copy(padded[32-len(b):], b)
-	return padded
-}
-
-func (n *Node) decNonce(epochID [12]byte, idx, ctIdx uint16) *big.Int {
-	h, err := dkghash.HashFieldElements(
-		roundScalar(epochID),
-		new(big.Int).SetUint64(uint64(idx)),
-		new(big.Int).SetUint64(uint64(ctIdx)),
-	)
-	if err != nil {
-		h = big.NewInt(999)
-	}
-	h.Xor(h, n.bjjSecret)
-	h.Mod(h, group.ScalarField())
-	if h.Sign() == 0 {
-		h.SetInt64(1)
-	}
-	return h
-}
-
-// fetchCiphertext scans the CiphertextSubmitted event log for (epochID, ctIdx) and
-// returns the ciphertext's BabyJubJub coordinates. Returns os.ErrNotExist when
-// no matching event has been emitted yet so callers can treat it as a soft
-// "wait" condition instead of a hard error.
-//
-// Scan lower bound is the epoch's SeedBlock: no submitCiphertext call can land
-// before finalization (enforced by the contract), which itself cannot happen
-// before the seed block, so SeedBlock is always a safe and tight lower bound.
-func (n *Node) fetchCiphertext(ctx context.Context, epochID [12]byte, ctIdx uint16, fromBlock uint64) (*Ciphertext, error) {
-	it, err := n.manager.FilterCiphertextSubmitted(
-		&bind.FilterOpts{Context: ctx, Start: fromBlock},
-		[][12]byte{epochID},
-		[][32]byte{{}}, // legacy aid = bytes32(0)
-		[]uint16{ctIdx},
-	)
-	if err != nil {
-		return nil, fmt.Errorf("filter CiphertextSubmitted: %w", err)
-	}
-	defer func() { _ = it.Close() }()
-	if !it.Next() {
-		if err := it.Error(); err != nil {
-			return nil, fmt.Errorf("iterate CiphertextSubmitted: %w", err)
-		}
-		return nil, os.ErrNotExist
-	}
-	ev := it.Event
-	return &Ciphertext{
-		CiphertextIndex: ev.CiphertextIndex,
-		C1X:             new(big.Int).Set(ev.C1x),
-		C1Y:             new(big.Int).Set(ev.C1y),
-		C2X:             new(big.Int).Set(ev.C2x),
-		C2Y:             new(big.Int).Set(ev.C2y),
-	}, nil
-}
-
-// doCombineDecryption attempts to combine threshold-many partial decryptions
-// into a single on-chain combined decryption proof. It is called on every
-// Finalized-epoch poll cycle by any selected participant; the first node to
-// succeed wins the race.
-//
-// Prerequisites:
-//   - A ciphertext file (including C2X, C2Y) must be present in sharedDir.
-//   - partialDecryptionCount >= threshold accepted partial decryptions on-chain.
-func (n *Node) doCombineDecryption(
-	ctx context.Context,
-	epochID [12]byte,
-	epoch web3.EpochView,
-	selected []common.Address,
-	callOpts *bind.CallOpts,
-) error {
-	if n.combined[epochID] {
-		return nil
-	}
-	// Check whether already combined on-chain.
-	rec, err := n.contracts.GetCombinedDecryption(ctx, epochID, [32]byte{}, 1)
-	if err == nil && rec.Completed {
-		n.combined[epochID] = true
-		return nil
-	}
-
-	threshold := epoch.Policy.Threshold
-	if epoch.PartialDecryptionCount < threshold {
-		return nil // not enough partial decryptions yet
-	}
-
-	const ctIdx = uint16(1)
-	ct, err := n.fetchCiphertext(ctx, epochID, ctIdx, epoch.SeedBlock)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			log.Debugw("combine: waiting for on-chain ciphertext",
-				"epoch", roundHex(epochID), "ctIdx", ctIdx)
-			return nil
-		}
-		return fmt.Errorf("combine: fetch ciphertext: %w", err)
-	}
-
-	// Gather accepted partial decryptions from the PartialDecryptionSubmitted
-	// event log. The contract no longer stores raw δ points, only their
-	// keccak hashes; combine reads the points back from the event log.
-	startBlock := uint64(0)
-	if epoch.SeedBlock > 0 {
-		startBlock = uint64(epoch.SeedBlock) - 1
-	}
-	pdIt, err := n.manager.FilterPartialDecryptionSubmitted(
-		&bind.FilterOpts{Context: ctx, Start: startBlock},
-		[][12]byte{epochID}, [][32]byte{{}}, nil,
-	)
-	if err != nil {
-		return fmt.Errorf("filter PartialDecryptionSubmitted: %w", err)
-	}
-	defer func() { _ = pdIt.Close() }()
-	type pdEntry struct {
-		idx   uint16
-		delta nodetypes.CurvePoint
-	}
-	seen := make(map[uint16]struct{}, int(threshold))
-	entries := make([]pdEntry, 0, int(threshold))
-	for pdIt.Next() {
-		e := pdIt.Event
-		if e.CiphertextIndex != 1 {
-			continue
-		}
-		if _, dup := seen[e.ParticipantIndex]; dup {
-			continue
-		}
-		seen[e.ParticipantIndex] = struct{}{}
-		entries = append(entries, pdEntry{
-			idx:   e.ParticipantIndex,
-			delta: nodetypes.CurvePoint{X: new(big.Int).Set(e.DeltaX), Y: new(big.Int).Set(e.DeltaY)},
-		})
-		if len(entries) >= int(threshold) {
-			break
-		}
-	}
-	if err := pdIt.Error(); err != nil {
-		return fmt.Errorf("iterate PartialDecryptionSubmitted: %w", err)
-	}
-	if len(entries) < int(threshold) {
-		return nil // not enough accepted partial decryptions yet
-	}
-	partialIndexes := make([]uint16, len(entries))
-	partialDeltas := make([]nodetypes.CurvePoint, len(entries))
-	for i, e := range entries {
-		partialIndexes[i] = e.idx
-		partialDeltas[i] = e.delta
-	}
-	_ = selected // kept for the caller signature; combine reads peers from events
-
-	c1X, c1Y := ct.C1X, ct.C1Y
-	c2X, c2Y := ct.C2X, ct.C2Y
-
-	// Interpolate partial decryptions to recover k*PubKey.
-	indexes := ccommon.Uint16sToBigInts(partialIndexes)
-	combinedEncoded, err := ccommon.InterpolatePointsAtZeroNative(indexes, partialDeltas)
-	if err != nil {
-		return fmt.Errorf("combine: interpolate partial decryptions: %w", err)
-	}
-	combined, err := group.Decode(combinedEncoded)
-	if err != nil {
-		return fmt.Errorf("combine: decode combined point: %w", err)
-	}
-
-	// mG = C2 - combined.
-	c2, err := group.Decode(nodetypes.CurvePoint{X: c2X, Y: c2Y})
-	if err != nil {
-		return fmt.Errorf("combine: decode C2: %w", err)
-	}
-	negCombined := group.NewPoint()
-	negCombined.Neg(combined)
-	mG := group.NewPoint()
-	mG.Add(c2, negCombined)
-
-	// Recover the plaintext scalar via baby-step/giant-step DLOG. Costly
-	// the first time (~30-60 s for table build) and at most m giant-step
-	// iterations per call thereafter — see dlog.go.
-	plaintext, err := dlogBSGS(mG)
-	if err != nil {
-		// DLOG failed — plaintext is ≥ MaxDLogPlaintext (2^50). Retrying
-		// will always produce the same failure, so mark the epoch terminal
-		// to avoid burning CPU every tick.
-		n.combined[epochID] = true
-		n.terminal[epochID] = true
-		return fmt.Errorf("combine: dlog failed (plaintext must be < 2^50 ≈ 10^15): %w", err)
-	}
-
-	// Build the ZK witness.
-	assignment := decryptcombine.Assignment{
-		RoundHash:          roundScalar(epochID),
-		Threshold:          threshold,
-		CiphertextC1:       nodetypes.CurvePoint{X: c1X, Y: c1Y},
-		CiphertextC2:       nodetypes.CurvePoint{X: c2X, Y: c2Y},
-		ParticipantIndexes: partialIndexes,
-		PartialDecryptions: partialDeltas,
-		Plaintext:          plaintext,
-	}
-	witness, pi, err := decryptcombine.BuildWitness(assignment)
-	if err != nil {
-		return fmt.Errorf("combine: build witness: %w", err)
-	}
-	runtime, err := decryptcombine.Artifacts.LoadOrSetupForCircuit(ctx, &decryptcombine.DecryptCombineCircuit{})
-	if err != nil {
-		return fmt.Errorf("combine: load circuit: %w", err)
-	}
-	proof, err := runtime.ProveAndVerify(witness)
-	if err != nil {
-		return fmt.Errorf("combine: prove: %w", err)
-	}
-	proofBytes, err := marshalSolidityProof(proof)
-	if err != nil {
-		return fmt.Errorf("combine: marshal proof: %w", err)
-	}
-	inputBytes, err := encodePublicWitness(pi.PublicWitness())
-	if err != nil {
-		return fmt.Errorf("combine: encode input: %w", err)
-	}
-	transcriptBytes, err := encodeWords(pi.TranscriptScalars()...)
-	if err != nil {
-		return fmt.Errorf("combine: encode transcript: %w", err)
-	}
-
-	auth, err := n.txm.NewTransactOpts(ctx)
-	if err != nil {
-		return fmt.Errorf("combine: tx opts: %w", err)
-	}
-	tx, err := n.manager.CombineDecryption(
-		auth, epochID, [32]byte{}, 1,
-		common.BigToHash(pi.CombineHash),
-		pi.PlaintextHash, // raw plaintext (uint256); circuit public input already equals this value
-		transcriptBytes, proofBytes, inputBytes,
-	)
-	if err != nil {
-		if strings.Contains(decodeContractError(err), "AlreadyCombined") {
-			log.Infow("combine decryption already on-chain (benign race) — skipping",
-				"epoch", roundHex(epochID))
-			n.combined[epochID] = true
-			return nil
-		}
-		if isPermanentRevert(err) {
-			log.Warnw("combine decryption tx permanently rejected — will not retry",
-				"epoch", roundHex(epochID), "err", decodeContractError(err))
-			n.combined[epochID] = true
-		}
-		return fmt.Errorf("combine: submit tx: %w", err)
-	}
-	if err := n.txm.WaitTxByHash(tx.Hash(), 120*time.Second); err != nil {
-		if strings.Contains(decodeContractError(err), "AlreadyCombined") {
-			log.Infow("combine decryption already on-chain (benign race) — skipping",
-				"epoch", roundHex(epochID))
-			n.combined[epochID] = true
-			return nil
-		}
-		if isPermanentRevert(err) {
-			log.Warnw("combine decryption tx reverted on-chain — will not retry",
-				"epoch", roundHex(epochID), "err", decodeContractError(err))
-			n.combined[epochID] = true
-		}
-		return fmt.Errorf("combine: wait tx: %w", err)
-	}
-	n.combined[epochID] = true
-	log.Infow("decryption combined", "epoch", roundHex(epochID), "plaintext", plaintext.String())
-	return nil
 }
 
 // ---- small helpers ----
@@ -1768,13 +1252,6 @@ func myIndex(selected []common.Address, addr common.Address) uint16 {
 
 func roundScalar(id [12]byte) *big.Int {
 	return new(big.Int).SetBytes(id[:])
-}
-
-func makeRoundID(prefix uint32, nonce uint64) [12]byte {
-	var id [12]byte
-	binary.BigEndian.PutUint32(id[:4], prefix)
-	binary.BigEndian.PutUint64(id[4:], nonce)
-	return id
 }
 
 func roundHex(id [12]byte) string { return fmt.Sprintf("%x", id) }
@@ -1835,12 +1312,14 @@ func decodeContractError(err error) string {
 	}
 	var sel [4]byte
 	copy(sel[:], data[:4])
-	parsed, parseErr := gtypes.DKGManagerMetaData.GetAbi()
-	if parseErr != nil {
-		return err.Error()
-	}
-	if abiErr, lookupErr := parsed.ErrorByID(sel); lookupErr == nil {
-		return fmt.Sprintf("execution reverted: %s", abiErr.Name)
+	for _, md := range []*bind.MetaData{gtypes.DKGManagerMetaData, gtypes.DKGAppManagerMetaData, gtypes.DKGRegistryMetaData} {
+		parsed, parseErr := md.GetAbi()
+		if parseErr != nil {
+			continue
+		}
+		if abiErr, lookupErr := parsed.ErrorByID(sel); lookupErr == nil {
+			return fmt.Sprintf("execution reverted: %s", abiErr.Name)
+		}
 	}
 	return err.Error()
 }

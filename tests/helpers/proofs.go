@@ -2,6 +2,7 @@ package helpers
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
 	"math/big"
 	"reflect"
@@ -468,6 +469,53 @@ func BuildDecryptCombineOutputForApp(
 		CiphertextC1: ciphertextC1,
 		CiphertextC2: ciphertextC2,
 	}, nil
+}
+
+// BuildOrganizerShareSubmission proves Δ_org = sk_org·C1 with the organizer
+// role (participant index 0) so it can be posted via submitOrganizerShare.
+func BuildOrganizerShareSubmission(
+	ctx context.Context,
+	epochID [12]byte,
+	aid [32]byte,
+	ciphertextIndex uint16,
+	c1 types.CurvePoint,
+	skOrg *big.Int,
+) (*PartialDecryptionSubmission, error) {
+	nonce, err := rand.Int(rand.Reader, group.ScalarField())
+	if err != nil {
+		return nil, err
+	}
+	assignment := partialdecrypt.Assignment{
+		RoundHash:        RoundScalar(epochID),
+		Aid:              new(big.Int).SetBytes(aid[:]),
+		CtIdx:            new(big.Int).SetUint64(uint64(ciphertextIndex)),
+		Role:             big.NewInt(int64(protocol.RoleOrganizer)),
+		ParticipantIndex: 0,
+		Base:             c1,
+		Secret:           skOrg,
+		Nonce:            nonce,
+	}
+	witness, publicInputs, err := partialdecrypt.BuildWitness(assignment)
+	if err != nil {
+		return nil, err
+	}
+	runtime, err := loadPartialDecryptRuntime(ctx)
+	if err != nil {
+		return nil, err
+	}
+	proof, err := runtime.ProveAndVerify(witness)
+	if err != nil {
+		return nil, fmt.Errorf("prove organizer share: %w", err)
+	}
+	proofBytes, err := marshalSolidityProof(proof)
+	if err != nil {
+		return nil, err
+	}
+	inputBytes, err := encodePublicAssignment(publicInputs.PublicWitness())
+	if err != nil {
+		return nil, err
+	}
+	return &PartialDecryptionSubmission{Proof: proofBytes, Input: inputBytes, Delta: publicInputs.Delta, C1: c1}, nil
 }
 
 func RoundScalar(epochID [12]byte) *big.Int {

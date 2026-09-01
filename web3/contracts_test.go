@@ -57,6 +57,8 @@ func TestVerifierKeyHashes(t *testing.T) {
 		DecryptCombineVerifier: common.HexToAddress("0x6000000000000000000000000000000000000006"),
 	})
 	c.Assert(err, qt.IsNil)
+	// AppManager is wired post-deploy, so New derives it from the manager.
+	c.Assert(contracts.Addresses.AppManager, qt.Equals, common.HexToAddress("0x7000000000000000000000000000000000000007"))
 
 	contributionHash, err := contracts.GetContributionVerifierVKeyHash(context.Background())
 	c.Assert(err, qt.IsNil)
@@ -166,6 +168,7 @@ func testRPCServer() *httptest.Server {
 			getRoundSelector := "0x" + hex.EncodeToString(managerABI.Methods["getEpoch"].ID)
 			selectedParticipantsSelector := "0x" + hex.EncodeToString(managerABI.Methods["selectedParticipants"].ID)
 			getCombinedDecryptionSelector := "0x" + hex.EncodeToString(managerABI.Methods["getCombinedDecryption"].ID)
+			appManagerSelector := "0x" + hex.EncodeToString(managerABI.Methods["appManager"].ID)
 			switch {
 			case strings.HasPrefix(callData, contributionSelector):
 				resp.Result = "0x" + strings.Repeat("0", 60) + "1234"
@@ -237,6 +240,11 @@ func testRPCServer() *httptest.Server {
 					common.HexToAddress("0x5000000000000000000000000000000000000005"),
 					common.HexToAddress("0x6000000000000000000000000000000000000006"),
 				})
+				resp.Result = "0x" + hex.EncodeToString(output)
+			case strings.HasPrefix(callData, appManagerSelector):
+				output, _ := managerABI.Methods["appManager"].Outputs.Pack(
+					common.HexToAddress("0x7000000000000000000000000000000000000007"),
+				)
 				resp.Result = "0x" + hex.EncodeToString(output)
 			case strings.HasPrefix(callData, getCombinedDecryptionSelector):
 				output, _ := managerABI.Methods["getCombinedDecryption"].Outputs.Pack(

@@ -144,7 +144,9 @@ Submitting a plaintext above the relevant cap is unrecoverable.
 ### Per-application keys
 
 A `Live` epoch can host many independent encryption contexts — one per **application**, keyed
-by a 32-byte `aid` chosen by the integrator. `DKGAppManager` exposes two registration modes:
+by a 32-byte `aid` chosen by the integrator. `aid` is bound into every decryption proof as a
+BN254 scalar-field public input, so it must be non-zero and below the field modulus
+(clear the top three bits of a random or hashed id); the contract rejects other values. `DKGAppManager` exposes two registration modes:
 
 - **Mode 0 — public derivation** (`registerApplication`). The contract derives
   `S = keccak256(epochId ‖ PK_ep ‖ aid) mod q`. The implicit per-app key is `PK_aid = PK_ep + S·G`,
@@ -257,8 +259,10 @@ honest path:
 2. ElGamal-encrypt your plaintext scalar `m` (must fit under the BSGS cap — 2⁵⁰ on the committee,
    2³² in the SDK).
 3. `DKGManager.submitCiphertext(epochId, aid, ctIdx, c1, c2)` — emits `CiphertextSubmitted`.
-4. Nodes pick up the event, submit partials, call `combineDecryption`. The recovered plaintext is
-   readable on `getPlaintext`.
+4. Every committee node watches `CiphertextSubmitted` events (for any `aid`), submits its
+   partial, and the first node to reach `t` partials calls `combineDecryption`. The recovered
+   plaintext is readable on `getPlaintext`. A restarted node re-scans the last
+   `--decrypt-lookback-blocks` (default ~7 days) for ciphertexts still awaiting decryption.
 
 For mode-1 applications, the organizer must additionally call `submitOrganizerShare` for each
 ciphertext before the combine can land.
@@ -269,7 +273,7 @@ ciphertext before the combine can land.
 
 | Network | DKGManager                                 | Notes |
 |---------|--------------------------------------------|-------|
-| Sepolia | `0xfb2CfAE24506D2978Cf4d0f8898F0E33aA744969` | Built into the node + SDK; just pass `--network sepolia` |
+| Sepolia | `0xfb2CfAE24506D2978Cf4d0f8898F0E33aA744969` | Built into the node + SDK; just pass `--network sepolia`. **Predates the lottery / eviction fixes on `main`; redeploy before relying on it.** |
 
 `DKGRegistry` and `DKGAppManager` are auto-resolved from `DKGManager` on-chain — only the manager
 address needs to be configured.

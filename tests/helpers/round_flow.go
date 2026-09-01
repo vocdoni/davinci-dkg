@@ -28,8 +28,10 @@ type FinalizedRoundResult struct {
 }
 
 // DefaultLotteryAlphaBps is the over-subscription factor applied to integration
-// test epoch policies when the caller leaves LotteryAlphaBps at zero.
-const DefaultLotteryAlphaBps uint16 = 15000
+// test epoch policies when the caller leaves LotteryAlphaBps at zero. With
+// BootstrappedNodeKeys active operators, α·n ≥ registered for every n ≥ 1, so
+// every test actor is lottery-eligible and committees are deterministic.
+const DefaultLotteryAlphaBps uint16 = 65535
 
 // DefaultSeedDelay matches the on-chain `SEED_DELAY_BLOCKS` constant in
 // `solidity/src/libraries/Sizes.sol`. Kept as a Go-side constant for tests
