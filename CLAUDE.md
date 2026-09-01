@@ -107,8 +107,6 @@ Anything that touches encodings, hashes or constants has to be changed in all of
   No business logic. `web3/txmanager` is a single-key nonce-aware EIP-1559 sender with fee bumping.
 - `finalizer/` — reconstructs accepted contributions from calldata, proves finalize, submits.
 - `prover/` — Groth16 backend wrapper; `GPU_PROVER=true` switches to the icicle backend.
-- `service/`, `storage/`, `db/`, `cmd/dkgcli` — unused (nothing imports them; dkgcli is a stub).
-  Candidates for deletion; don't assume node behaviour lives there.
 - `types/` — neutral structs shared by web3/finalizer/node to avoid import cycles.
 
 ### Contracts (`solidity/src`)

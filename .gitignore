@@ -3,7 +3,6 @@
 /davinci-dkg-node
 /dkg-runner
 /circuit-compile
-/dkgcli
 /protocol-vectors
 *.exe
 *.test
