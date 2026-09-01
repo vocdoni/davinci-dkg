@@ -1,4 +1,4 @@
-package main
+package node
 
 import (
 	"fmt"
@@ -83,7 +83,8 @@ func defaultConfig() *Config {
 	}
 }
 
-func loadConfig() (*Config, error) {
+// LoadConfig parses flags and DAVINCI_DKG_* environment variables.
+func LoadConfig() (*Config, error) {
 	return loadConfigFromArgs(os.Args[1:])
 }
 
@@ -177,8 +178,8 @@ func (c *Config) resolvedManagerAddr() string {
 	return ""
 }
 
-// resolvedNetworkName returns the canonical network name for display/logging.
-func (c *Config) resolvedNetworkName() string {
+// ResolvedNetworkName returns the canonical network name for display/logging.
+func (c *Config) ResolvedNetworkName() string {
 	if c.Network != "" {
 		canonical, _, err := config.ResolveNetwork(c.Network)
 		if err == nil {

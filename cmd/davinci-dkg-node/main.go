@@ -9,17 +9,18 @@ import (
 
 	"github.com/vocdoni/davinci-dkg/internal/version"
 	"github.com/vocdoni/davinci-dkg/log"
+	"github.com/vocdoni/davinci-dkg/node"
 )
 
 func main() {
-	cfg, err := loadConfig()
+	cfg, err := node.LoadConfig()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error loading configuration: %v\n", err)
 		os.Exit(1)
 	}
 
 	log.Init(cfg.Log.Level, cfg.Log.Output, nil)
-	log.Infow("starting davinci-dkg-node", "version", version.Version, "network", cfg.resolvedNetworkName())
+	log.Infow("starting davinci-dkg-node", "version", version.Version, "network", cfg.ResolvedNetworkName())
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -30,13 +31,13 @@ func main() {
 		return
 	}
 
-	node, err := newNode(cfg)
+	n, err := node.New(cfg)
 	if err != nil {
 		log.Errorw(err, "failed to initialize node")
 		os.Exit(1)
 	}
 
-	if err := node.EnsureRegistered(ctx); err != nil {
+	if err := n.EnsureRegistered(ctx); err != nil {
 		log.Errorw(err, "key registration failed")
 		os.Exit(1)
 	}
@@ -44,9 +45,9 @@ func main() {
 	// Emit the full startup banner *after* EnsureRegistered so the on-chain
 	// snapshot reflects the post-registration state (status=ACTIVE, fresh
 	// lastActiveBlock).
-	node.LogStartupSnapshot(ctx, cfg)
+	n.LogStartupSnapshot(ctx, cfg)
 
-	go node.Run(ctx, cfg)
+	go n.Run(ctx, cfg)
 	waitForSignal()
 }
 

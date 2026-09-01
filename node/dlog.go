@@ -1,4 +1,4 @@
-package main
+package node
 
 // Discrete-log recovery for the final step of threshold ElGamal decryption.
 //

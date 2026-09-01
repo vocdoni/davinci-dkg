@@ -1,4 +1,4 @@
-package main
+package node
 
 import (
 	"context"
@@ -83,8 +83,8 @@ type Node struct {
 	autoCreateNextStart uint64
 }
 
-// newNode constructs a Node from the daemon config.
-func newNode(cfg *Config) (*Node, error) {
+// New constructs a Node from the daemon config.
+func New(cfg *Config) (*Node, error) {
 	addrs := nodetypes.ContractAddresses{
 		Manager: common.HexToAddress(cfg.resolvedManagerAddr()),
 	}
