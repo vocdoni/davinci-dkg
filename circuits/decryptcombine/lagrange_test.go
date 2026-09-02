@@ -13,8 +13,8 @@ import (
 
 // A prover who knows log_G(δ_k) for one accepted partial (the ciphertext's
 // encryptor colluding with that share holder) can pick any plaintext M' and
-// solve for a λ vector that still satisfies C2 = M'·G + Σ λ_k δ_k + T. The
-// circuit must therefore pin λ to the canonical Lagrange vector of the
+// solve for a λ vector that still satisfies C2 = M'·G + Σ λ_k δ_k + Δ_org.
+// The circuit must therefore pin λ to the canonical Lagrange vector of the
 // qualifying set, not merely check the decryption identity.
 func TestDecryptCombineRejectsNonCanonicalLagrangeVector(t *testing.T) {
 	c := qt.New(t)
@@ -33,11 +33,21 @@ func TestDecryptCombineRejectsNonCanonicalLagrangeVector(t *testing.T) {
 		p.ScalarBaseMult(mul(d[k], r))
 		deltas[k] = group.Encode(p)
 	}
+	deltaOrg, proof := mustOrganizerShare(group.Encode(c1))
+	deltaOrgPoint, err := group.Decode(deltaOrg)
+	c.Assert(err, qt.IsNil)
+	// C2 = m·G + f(0)·r·G + Δ_org
 	c2 := group.NewPoint()
-	c2.ScalarBaseMult(new(big.Int).Add(m, mul(big.NewInt(8), r))) // m·G + f(0)·r·G
+	c2.ScalarBaseMult(new(big.Int).Add(m, mul(big.NewInt(8), r)))
+	c2.Add(c2, deltaOrgPoint)
 
 	honest, _, err := BuildWitness(Assignment{
-		RoundHash:          big.NewInt(5555),
+		RoundHash:          new(big.Int).Set(testRoundHash),
+		Aid:                new(big.Int).Set(testAid),
+		CtIdx:              new(big.Int).Set(testCtIdx),
+		DeltaOrg:           deltaOrg,
+		OrganizerPK:        organizerPK(),
+		OrganizerProof:     proof,
 		Threshold:          2,
 		CiphertextC1:       group.Encode(c1),
 		CiphertextC2:       group.Encode(c2),

@@ -14,6 +14,13 @@ import (
 // MaxShares is an alias of the single shared constant `circuits/common.MaxN`.
 const MaxShares = ccommon.MaxN
 
+// TranscriptWords is the length of the calldata transcript the contract
+// re-hashes and BRLC-folds: 4 ciphertext words, 8 organizer words
+// (PK_org, A_1, A_2, z, e), then MaxShares participant indexes and
+// MaxShares partial-decryption (x, y) pairs. Mirrors
+// `COMBINE_TRANSCRIPT_WORDS` in solidity/src/libraries/Sizes.sol.
+const TranscriptWords = 12 + 3*MaxShares
+
 // Artifacts contains the decrypt combine circuit artifact configuration.
 var Artifacts = circuits.NewCircuitArtifacts(
 	"decryptcombine",

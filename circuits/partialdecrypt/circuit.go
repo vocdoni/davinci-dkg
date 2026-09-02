@@ -7,21 +7,22 @@ import (
 )
 
 // PartialDecryptCircuit proves a BabyJubJub Chaum-Pedersen relation for one
-// partial decryption: Y = xG, Delta = xM, A1 = wG, A2 = wM.
+// committee partial decryption: D_i = d_i·G, δ_i = d_i·C_1, A_i = w·G,
+// B_i = w·C_1.
 //
-// Per paper §4.4 lines 695–704, the Fiat-Shamir challenge
-// transcript binds (eid, aid, ctIdx, role, i, G, C_1, D_i, δ_i, A_i, B_i).
-// Role tags committee partial decryptions (1) versus organizer shares (2)
-// per paper §6.3 line 1161; binding it prevents cross-protocol replay.
+// The Fiat-Shamir challenge transcript binds
+// (eid, aid, ctIdx, i, D_i, C_1, δ_i, A_i, B_i), so a proof cannot be
+// replayed across epochs, applications, ciphertexts or participants. The
+// organizer share is a different object entirely — a keccak Chaum-Pedersen
+// proof verified inside the combine circuit, not here.
 type PartialDecryptCircuit struct {
 	RoundHash        frontend.Variable    `gnark:",public"` // semantically: eid
 	Aid              frontend.Variable    `gnark:",public"` // application identifier
 	CtIdx            frontend.Variable    `gnark:",public"` // per-application ciphertext index
-	Role             frontend.Variable    `gnark:",public"` // 1 = COMMITTEE, 2 = ORGANIZER
-	ParticipantIndex frontend.Variable    `gnark:",public"` // i (committee slot, 0 for organizer)
+	ParticipantIndex frontend.Variable    `gnark:",public"` // i (committee slot, one-based)
 	Base             twistededwards.Point `gnark:",public"` // C_1
-	PublicKey        twistededwards.Point `gnark:",public"` // D_i  (or PK_org for role=ORGANIZER)
-	Delta            twistededwards.Point `gnark:",public"` // δ_i  (or Δ_org for role=ORGANIZER)
+	PublicKey        twistededwards.Point `gnark:",public"` // D_i
+	Delta            twistededwards.Point `gnark:",public"` // δ_i
 	A1               twistededwards.Point `gnark:",public"` // A_i = w·G
 	A2               twistededwards.Point `gnark:",public"` // B_i = w·C_1
 	Response         frontend.Variable    `gnark:",public"` // z_i = w + e·d_i
@@ -56,26 +57,16 @@ func (c *PartialDecryptCircuit) Define(api frontend.API) error {
 	ccommon.AssertPointEqual(api, ccommon.FixedBaseMul(api, c.Nonce), a1)
 	ccommon.AssertPointEqual(api, curve.ScalarMul(base, c.Nonce), a2)
 
-	// Role must be 1 (COMMITTEE) or 2 (ORGANIZER).
-	// (role - 1) * (role - 2) == 0 ⟺ role ∈ {1, 2}.
-	// The Solidity entry-point gates already enforce this per call site
-	// (submitPartialDecryption requires role=1; submitOrganizerShare
-	// requires role=2), so this is defence-in-depth: the circuit
-	// statement itself is now closed under valid roles.
-	api.AssertIsEqual(api.Mul(api.Sub(c.Role, 1), api.Sub(c.Role, 2)), 0)
-
-	// Per paper §4.4 lines 695–704: bind the Fiat-Shamir
-	// challenge to the full transcript
-	//   (eid, aid, ctIdx, role, i, G, C_1, D_i, δ_i, A_i, B_i)
+	// Bind the Fiat-Shamir challenge to the full transcript
+	//   (eid, aid, ctIdx, i, D_i, C_1, δ_i, A_i, B_i)
 	// so a proof cannot be replayed across epochs, applications,
-	// ciphertexts, participants, or roles.
+	// ciphertexts or participants.
 	state, err := ccommon.HashFieldElements(
 		api,
 		ccommon.PartialDecryptDomain(),
 		c.RoundHash, // eid
 		c.Aid,
 		c.CtIdx,
-		c.Role,
 		c.ParticipantIndex, // i
 	)
 	if err != nil {
@@ -84,7 +75,7 @@ func (c *PartialDecryptCircuit) Define(api frontend.API) error {
 	challenge, err := ccommon.HashPointTuple(
 		api,
 		state,
-		c.PublicKey, // D_i (or PK_org)
+		c.PublicKey, // D_i
 		c.Base,      // C_1
 		c.Delta,     // δ_i
 		c.A1,        // A_i

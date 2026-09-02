@@ -7,28 +7,18 @@ import (
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark/test"
 	qt "github.com/frankban/quicktest"
-	"github.com/vocdoni/davinci-dkg/crypto/group"
-)
-
-// Mirror of the constants in internal/protocol/protocol.go. Kept inline
-// here so the circuit test doesn't pull in the cross-layer protocol
-// package (which carries an extra dep on ethcrypto).
-const (
-	roleCommittee = 1
-	roleOrganizer = 2
 )
 
 // TestPartialDecryptRejectsCrossEpochReplay:
 // A valid (δ_i, A_i, B_i, z_i) for one (eid, aid, ctIdx) must NOT satisfy
 // the circuit when re-bound to a different (eid', aid', ctIdx'). The
-// circuit binds RoundHash, Aid, and CtIdx into the Fiat-Shamir transcript
-// to prevent cross-round replay.
+// circuit binds RoundHash, Aid, CtIdx and ParticipantIndex into the
+// Fiat-Shamir transcript to prevent cross-round replay.
 //
 // Strategy: build a valid witness for `(eid_1, aid_1, ctIdx_1)` so
-// Response = w + c1·secret. Then mutate any one of the bound fields
-// (eid, aid, ctIdx, role, participantIndex) — Response stays fixed but
-// the circuit recomputes c2 ≠ c1, so z·G ≠ A + c2·PK and the constraint
-// solver fails.
+// Response = w + c1·secret. Then mutate any one of the bound fields —
+// Response stays fixed but the circuit recomputes c2 ≠ c1, so
+// z·G ≠ A + c2·PK and the constraint solver fails.
 func TestPartialDecryptRejectsCrossEpochReplay(t *testing.T) {
 	c := qt.New(t)
 
@@ -36,7 +26,6 @@ func TestPartialDecryptRejectsCrossEpochReplay(t *testing.T) {
 	asn.RoundHash = big.NewInt(1111)
 	asn.Aid = big.NewInt(0xAA)
 	asn.CtIdx = big.NewInt(7)
-	asn.Role = big.NewInt(roleCommittee)
 	witness, _, err := BuildWitness(asn)
 	c.Assert(err, qt.IsNil)
 
@@ -48,7 +37,6 @@ func TestPartialDecryptRejectsCrossEpochReplay(t *testing.T) {
 		{"different-aid", func(w *PartialDecryptCircuit) { w.Aid = big.NewInt(0xBB) }},
 		{"different-ctIdx", func(w *PartialDecryptCircuit) { w.CtIdx = big.NewInt(8) }},
 		{"different-participant", func(w *PartialDecryptCircuit) { w.ParticipantIndex = big.NewInt(99) }},
-		{"committee→organizer", func(w *PartialDecryptCircuit) { w.Role = big.NewInt(roleOrganizer) }},
 	}
 
 	assert := test.NewAssert(t)
@@ -66,61 +54,14 @@ func TestPartialDecryptRejectsCrossEpochReplay(t *testing.T) {
 	}
 }
 
-// TestPartialDecryptOrganizerRoleConsistency:
-// the organizer DLEQ shares a circuit with the committee DLEQ; the role
-// tag is the only thing distinguishing them in-circuit. A witness built
-// for role=ORGANIZER must verify with role=ORGANIZER (sanity check) AND
-// must be rejected if role is silently flipped to COMMITTEE post-build —
-// the contract relies on this to enforce that organizer shares can only
-// be submitted via submitOrganizerShare with role=ORGANIZER.
-func TestPartialDecryptOrganizerRoleConsistency(t *testing.T) {
+// TestPartialDecryptRejectsZeroParticipantIndex: committee slots are
+// one-based, so the witness builder must refuse index 0 rather than emit a
+// proof the contract's index checks would reject anyway.
+func TestPartialDecryptRejectsZeroParticipantIndex(t *testing.T) {
 	c := qt.New(t)
 
 	asn := testAssignment()
-	asn.Role = big.NewInt(roleOrganizer)
-	asn.ParticipantIndex = 0 // organizer requires i=0
-	witness, _, err := BuildWitness(asn)
-	c.Assert(err, qt.IsNil)
-
-	assert := test.NewAssert(t)
-
-	// Sanity: the honest organizer witness solves.
-	t.Run("organizer-role-honest", func(t *testing.T) {
-		assert.SolvingSucceeded(&PartialDecryptCircuit{}, witness, test.WithCurves(ecc.BN254))
-	})
-
-	// Replay: same proof material relabeled as committee → fails.
-	// (The circuit also enforces (role-1)*(role-2)=0 — committee is
-	// a valid role, so this assertion catches the transcript replay,
-	// not the role-value check.)
-	t.Run("organizer→committee", func(t *testing.T) {
-		tampered := *witness
-		tampered.Role = big.NewInt(roleCommittee)
-		assert.SolvingFailed(&PartialDecryptCircuit{}, &tampered, test.WithCurves(ecc.BN254))
-	})
+	asn.ParticipantIndex = 0
+	_, _, err := BuildWitness(asn)
+	c.Assert(err, qt.Not(qt.IsNil))
 }
-
-// TestPartialDecryptRejectsInvalidRoleValue verifies that the circuit
-// itself enforces role ∈ {1, 2}. The Solidity
-// entry-point checks already constrain role per call site; this is
-// defence-in-depth for any future verifier path that trusts the
-// circuit alone.
-func TestPartialDecryptRejectsInvalidRoleValue(t *testing.T) {
-	c := qt.New(t)
-
-	asn := testAssignment() // committee defaults
-	witness, _, err := BuildWitness(asn)
-	c.Assert(err, qt.IsNil)
-
-	assert := test.NewAssert(t)
-	for _, badRole := range []int64{0, 3, 7, 1 << 32} {
-		t.Run("role=invalid", func(t *testing.T) {
-			tampered := *witness
-			tampered.Role = big.NewInt(badRole)
-			assert.SolvingFailed(&PartialDecryptCircuit{}, &tampered, test.WithCurves(ecc.BN254))
-		})
-	}
-}
-
-// touch group import in case future test additions need it.
-var _ = group.Generator
