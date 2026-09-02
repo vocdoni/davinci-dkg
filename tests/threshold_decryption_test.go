@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	qt "github.com/frankban/quicktest"
+	"github.com/vocdoni/davinci-dkg/crypto/elgamal"
 	"github.com/vocdoni/davinci-dkg/tests/helpers"
 	"github.com/vocdoni/davinci-dkg/types"
 )
@@ -43,13 +44,9 @@ func TestThresholdDecryptionHappyPath(t *testing.T) {
 
 	// submitCiphertext must precede submitPartialDecryption: the
 	// partial-decrypt verifier binds pi[5..6] to the on-chain C1.
-	c.Assert(helpers.SubmitCiphertextAs(
-		ctx,
-		&helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager},
-		result.EpochID, 1,
-		combine.CiphertextC1.X, combine.CiphertextC1.Y,
-		combine.CiphertextC2.X, combine.CiphertextC2.Y,
-	), qt.IsNil)
+	assignedIdx, err := helpers.SubmitCiphertextAs(ctx, &helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager}, result.EpochID, combine.CiphertextC1.X, combine.CiphertextC1.Y, combine.CiphertextC2.X, combine.CiphertextC2.Y, elgamal.NoPoK())
+	c.Assert(err, qt.IsNil)
+	c.Assert(assignedIdx, qt.Equals, uint16(1))
 
 	auth, err := services.TxManager.NewTransactOpts(ctx)
 	c.Assert(err, qt.IsNil)
@@ -146,13 +143,9 @@ func TestThresholdDecryptionSupportsMultipleCiphertextsPerRound(t *testing.T) {
 		c.Assert(err, qt.IsNil)
 
 		// submitCiphertext must precede submitPartialDecryption.
-		c.Assert(helpers.SubmitCiphertextAs(
-			ctx,
-			&helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager},
-			result.EpochID, ciphertextIndex,
-			combine.CiphertextC1.X, combine.CiphertextC1.Y,
-			combine.CiphertextC2.X, combine.CiphertextC2.Y,
-		), qt.IsNil)
+		assignedIdx, err := helpers.SubmitCiphertextAs(ctx, &helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager}, result.EpochID, combine.CiphertextC1.X, combine.CiphertextC1.Y, combine.CiphertextC2.X, combine.CiphertextC2.Y, elgamal.NoPoK())
+		c.Assert(err, qt.IsNil)
+		c.Assert(assignedIdx, qt.Equals, uint16(ciphertextIndex))
 
 		auth, err := services.TxManager.NewTransactOpts(ctx)
 		c.Assert(err, qt.IsNil)

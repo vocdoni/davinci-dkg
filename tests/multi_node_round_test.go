@@ -7,6 +7,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	qt "github.com/frankban/quicktest"
+	"github.com/vocdoni/davinci-dkg/crypto/elgamal"
 	"github.com/vocdoni/davinci-dkg/tests/helpers"
 	"github.com/vocdoni/davinci-dkg/types"
 )
@@ -129,13 +130,9 @@ func TestCommitteeRoundHappyPath(t *testing.T) {
 
 	// submitCiphertext must precede submitPartialDecryption so the
 	// proof's pi[5..6] can be bound against the on-chain C1.
-	c.Assert(helpers.SubmitCiphertextAs(
-		ctx,
-		&helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager},
-		epochID, 1,
-		combineOutput.CiphertextC1.X, combineOutput.CiphertextC1.Y,
-		combineOutput.CiphertextC2.X, combineOutput.CiphertextC2.Y,
-	), qt.IsNil)
+	assignedIdx, err := helpers.SubmitCiphertextAs(ctx, &helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager}, epochID, combineOutput.CiphertextC1.X, combineOutput.CiphertextC1.Y, combineOutput.CiphertextC2.X, combineOutput.CiphertextC2.Y, elgamal.NoPoK())
+	c.Assert(err, qt.IsNil)
+	c.Assert(assignedIdx, qt.Equals, uint16(1))
 
 	c.Assert(helpers.SubmitPartialDecryptionAs(ctx, &helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager}, epochID, 1, 1, combineOutput.CiphertextC1, combineOutput.CiphertextC2, partial0.DeltaHash, partial0.Proof, partial0.Input), qt.IsNil)
 	c.Assert(helpers.SubmitPartialDecryptionAs(ctx, actor1, epochID, 2, 1, combineOutput.CiphertextC1, combineOutput.CiphertextC2, partial1.DeltaHash, partial1.Proof, partial1.Input), qt.IsNil)

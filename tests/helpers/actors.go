@@ -7,6 +7,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/vocdoni/davinci-dkg/crypto/elgamal"
 	"github.com/vocdoni/davinci-dkg/crypto/schnorr"
 	"github.com/vocdoni/davinci-dkg/solidity/golang-types"
 	"github.com/vocdoni/davinci-dkg/types"
@@ -179,17 +180,16 @@ func CombineDecryptionAs(
 	return actor.TxManager.WaitTxByHash(tx.Hash(), DefaultTxTimeout)
 }
 
-// SubmitCiphertextAs sends a submitCiphertext tx from the given actor against
-// the legacy per-epoch path (aid = bytes32(0)). For per-application ciphertexts
-// use SubmitCiphertextAsApp.
+// SubmitCiphertextAs submits a ciphertext on the epoch-key path (aid = 0) and
+// returns the index the contract assigned to it.
 func SubmitCiphertextAs(
 	ctx context.Context,
 	actor *TestActor,
 	epochID [12]byte,
-	ciphertextIndex uint16,
 	c1x, c1y, c2x, c2y *big.Int,
-) error {
-	return SubmitCiphertextAsApp(ctx, actor, epochID, [32]byte{}, ciphertextIndex, c1x, c1y, c2x, c2y)
+	pok elgamal.PoK,
+) (uint16, error) {
+	return SubmitCiphertextAsApp(ctx, actor, epochID, [32]byte{}, c1x, c1y, c2x, c2y, pok)
 }
 
 // SubmitCiphertextAsApp is the per-application variant of SubmitCiphertextAs.
@@ -198,18 +198,30 @@ func SubmitCiphertextAsApp(
 	actor *TestActor,
 	epochID [12]byte,
 	aid [32]byte,
-	ciphertextIndex uint16,
 	c1x, c1y, c2x, c2y *big.Int,
-) error {
+	pok elgamal.PoK,
+) (uint16, error) {
 	auth, err := actor.TxManager.NewTransactOpts(ctx)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	tx, err := actor.Manager.SubmitCiphertext(auth, epochID, aid, ciphertextIndex, c1x, c1y, c2x, c2y)
+	tx, err := actor.Manager.SubmitCiphertext(auth, epochID, aid, c1x, c1y, c2x, c2y, pok.A.X, pok.A.Y, pok.Z)
 	if err != nil {
-		return fmt.Errorf("submit ciphertext: %w", err)
+		return 0, fmt.Errorf("submit ciphertext: %w", err)
 	}
-	return actor.TxManager.WaitTxByHash(tx.Hash(), DefaultTxTimeout)
+	if err := actor.TxManager.WaitTxByHash(tx.Hash(), DefaultTxTimeout); err != nil {
+		return 0, err
+	}
+	receipt, err := actor.Contracts.Client().TransactionReceipt(ctx, tx.Hash())
+	if err != nil {
+		return 0, fmt.Errorf("ciphertext receipt: %w", err)
+	}
+	for _, lg := range receipt.Logs {
+		if ev, err := actor.Manager.ParseCiphertextSubmitted(*lg); err == nil {
+			return ev.CiphertextIndex, nil
+		}
+	}
+	return 0, fmt.Errorf("CiphertextSubmitted event not found in tx %s", tx.Hash().Hex())
 }
 
 // EnsureNodeKeyRegistered registers or updates the BJJ key for actor if it is

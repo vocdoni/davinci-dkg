@@ -6,18 +6,9 @@ import (
 	"fmt"
 	"strings"
 
-	golangtypes "github.com/vocdoni/davinci-dkg/solidity/golang-types"
 	"github.com/vocdoni/davinci-dkg/types"
 	"github.com/vocdoni/davinci-dkg/web3"
 )
-
-// ZeroDecryptionPolicy is an all-zero decryption policy: no owner restriction,
-// no time locks, no submission cap. Used by tests that don't care about
-// submission gating; callers constructing CreateEpoch calls directly should
-// pass this to keep behaviour equivalent to the pre-DecryptionPolicy era.
-func ZeroDecryptionPolicy() golangtypes.DKGTypesDecryptionPolicy {
-	return golangtypes.DKGTypesDecryptionPolicy{}
-}
 
 func RoundIDFromString(value string) [12]byte {
 	var epochID [12]byte
@@ -77,14 +68,6 @@ func CreateEpoch(ctx context.Context, services *TestServices, policy types.Epoch
 		policy.CommitteeSize,
 		policy.MinValidContributions,
 		policy.LotteryAlphaBps,
-		golangtypes.DKGTypesDecryptionPolicy{
-			OwnerOnly:          policy.DecryptionPolicy.OwnerOnly,
-			MaxDecryptions:     policy.DecryptionPolicy.MaxDecryptions,
-			NotBeforeBlock:     policy.DecryptionPolicy.NotBeforeBlock,
-			NotBeforeTimestamp: policy.DecryptionPolicy.NotBeforeTimestamp,
-			NotAfterBlock:      policy.DecryptionPolicy.NotAfterBlock,
-			NotAfterTimestamp:  policy.DecryptionPolicy.NotAfterTimestamp,
-		},
 	)
 	if err != nil {
 		return zero, fmt.Errorf("create epoch: %w", err)

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	qt "github.com/frankban/quicktest"
+	"github.com/vocdoni/davinci-dkg/crypto/elgamal"
 	"github.com/vocdoni/davinci-dkg/crypto/schnorr"
 	"github.com/vocdoni/davinci-dkg/node"
 	golangtypes "github.com/vocdoni/davinci-dkg/solidity/golang-types"
@@ -57,7 +58,7 @@ func TestNodesServiceApplicationCiphertexts(t *testing.T) {
 	}), qt.IsNil)
 	auth, err := services.TxManager.NewTransactOpts(ctx)
 	c.Assert(err, qt.IsNil)
-	tx, err := services.Manager.CreateEpoch(auth, 2, 3, 3, helpers.DefaultLotteryAlphaBps, golangtypes.DKGTypesDecryptionPolicy{})
+	tx, err := services.Manager.CreateEpoch(auth, 2, 3, 3, helpers.DefaultLotteryAlphaBps)
 	c.Assert(err, qt.IsNil)
 	c.Assert(services.TxManager.WaitTxByHash(tx.Hash(), helpers.DefaultTxTimeout), qt.IsNil)
 	nonce, err := services.Manager.EpochNonce(services.CallOpts(ctx))
@@ -118,9 +119,11 @@ func TestNodesServiceApplicationCiphertexts(t *testing.T) {
 	}
 	pkFor := map[[32]byte]types.CurvePoint{aidA: pkA, aidB: pkB, {}: pkEp}
 	for _, w := range wants {
-		c1, c2, err := helpers.EncryptScalar(pkFor[w.aid], w.m)
+		c1, c2, pok, err := elgamal.EncryptWithProof(epochID, w.aid, pkFor[w.aid], w.m)
 		c.Assert(err, qt.IsNil)
-		c.Assert(helpers.SubmitCiphertextAsApp(ctx, submitter, epochID, w.aid, w.idx, c1.X, c1.Y, c2.X, c2.Y), qt.IsNil)
+		assigned, err := helpers.SubmitCiphertextAsApp(ctx, submitter, epochID, w.aid, c1.X, c1.Y, c2.X, c2.Y, pok)
+		c.Assert(err, qt.IsNil)
+		c.Assert(assigned, qt.Equals, w.idx, qt.Commentf("indices are assigned sequentially per application"))
 		if w.aid == aidB {
 			share, err := helpers.BuildOrganizerShareSubmission(ctx, epochID, aidB, w.idx, c1, skOrg)
 			c.Assert(err, qt.IsNil)

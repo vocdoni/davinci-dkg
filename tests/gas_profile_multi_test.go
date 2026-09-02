@@ -20,6 +20,7 @@ import (
 
 	qt "github.com/frankban/quicktest"
 	"github.com/vocdoni/davinci-dkg/circuits/contribution"
+	"github.com/vocdoni/davinci-dkg/crypto/elgamal"
 	"github.com/vocdoni/davinci-dkg/tests/helpers"
 	"github.com/vocdoni/davinci-dkg/types"
 )
@@ -222,13 +223,9 @@ func benchmarkGasForN(t *testing.T, n, threshold int) gasProfileResult {
 	c.Assert(err, qt.IsNil)
 
 	// The combine tx is now bound to an on-chain ciphertext; submit it first.
-	c.Assert(helpers.SubmitCiphertextAs(
-		ctx,
-		&helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager},
-		epochID, 1,
-		combineOut.CiphertextC1.X, combineOut.CiphertextC1.Y,
-		combineOut.CiphertextC2.X, combineOut.CiphertextC2.Y,
-	), qt.IsNil)
+	assignedIdx, err := helpers.SubmitCiphertextAs(ctx, &helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager}, epochID, combineOut.CiphertextC1.X, combineOut.CiphertextC1.Y, combineOut.CiphertextC2.X, combineOut.CiphertextC2.Y, elgamal.NoPoK())
+	c.Assert(err, qt.IsNil)
+	c.Assert(assignedIdx, qt.Equals, uint16(1))
 
 	combineGas := combineMeasured(t, ctx, epochID, combineOut)
 
@@ -262,7 +259,6 @@ func createRoundMeasured(t *testing.T, ctx context.Context, policy types.EpochPo
 		auth,
 		policy.Threshold, policy.CommitteeSize, policy.MinValidContributions,
 		policy.LotteryAlphaBps,
-		helpers.ZeroDecryptionPolicy(),
 	)
 	c.Assert(err, qt.IsNil)
 	c.Assert(services.TxManager.WaitTxByHash(tx.Hash(), helpers.DefaultTxTimeout), qt.IsNil)

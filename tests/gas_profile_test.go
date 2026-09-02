@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	qt "github.com/frankban/quicktest"
+	"github.com/vocdoni/davinci-dkg/crypto/elgamal"
 	"github.com/vocdoni/davinci-dkg/crypto/group"
 	"github.com/vocdoni/davinci-dkg/tests/helpers"
 	"github.com/vocdoni/davinci-dkg/types"
@@ -86,7 +87,6 @@ func createEpochForGasProfile(t *testing.T, ctx context.Context, policy types.Ep
 		policy.CommitteeSize,
 		policy.MinValidContributions,
 		policy.LotteryAlphaBps,
-		helpers.ZeroDecryptionPolicy(),
 	)
 	c.Assert(err, qt.IsNil)
 	c.Assert(services.TxManager.WaitTxByHash(tx.Hash(), helpers.DefaultTxTimeout), qt.IsNil)
@@ -186,11 +186,9 @@ func submitPartialDecryptForGasProfile(t *testing.T, ctx context.Context, epochI
 	c2 := group.Generator()
 	c2.ScalarBaseMult(big.NewInt(11))
 	c1Enc, c2Enc := group.Encode(c1), group.Encode(c2)
-	c.Assert(helpers.SubmitCiphertextAs(
-		ctx,
-		&helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager},
-		epochID, 1, c1Enc.X, c1Enc.Y, c2Enc.X, c2Enc.Y,
-	), qt.IsNil)
+	assignedIdx, err := helpers.SubmitCiphertextAs(ctx, &helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager}, epochID, c1Enc.X, c1Enc.Y, c2Enc.X, c2Enc.Y, elgamal.NoPoK())
+	c.Assert(err, qt.IsNil)
+	c.Assert(assignedIdx, qt.Equals, uint16(1))
 
 	output, err := helpers.BuildPartialDecryptionSubmission(ctx, epochID, 1, 1, big.NewInt(9), big.NewInt(7), big.NewInt(5))
 	c.Assert(err, qt.IsNil)
@@ -228,13 +226,9 @@ func combineDecryptionForGasProfile(t *testing.T, ctx context.Context, epochID [
 	)
 	c.Assert(err, qt.IsNil)
 
-	c.Assert(helpers.SubmitCiphertextAs(
-		ctx,
-		&helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager},
-		epochID, 1,
-		output.CiphertextC1.X, output.CiphertextC1.Y,
-		output.CiphertextC2.X, output.CiphertextC2.Y,
-	), qt.IsNil)
+	assignedIdx, err := helpers.SubmitCiphertextAs(ctx, &helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager}, epochID, output.CiphertextC1.X, output.CiphertextC1.Y, output.CiphertextC2.X, output.CiphertextC2.Y, elgamal.NoPoK())
+	c.Assert(err, qt.IsNil)
+	c.Assert(assignedIdx, qt.Equals, uint16(1))
 
 	auth, err := services.TxManager.NewTransactOpts(ctx)
 	c.Assert(err, qt.IsNil)
