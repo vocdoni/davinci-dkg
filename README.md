@@ -123,8 +123,16 @@ keccak256(seed ‖ msg.sender) < (α · n · 2²⁵⁶) / R
 
 Eligible nodes race first-come-first-served until `n` slots are filled, at which point the epoch
 auto-advances to `KeyAssembly`. Anyone can recompute eligibility by replaying the keccak — no ZK
-proof, no trusted coordinator. If the committee fails to fill within `CommitteeSelection`, the
-epoch is aborted and the next scheduled one opens automatically.
+proof, no trusted coordinator. Only operators registered *before* `createEpoch` may claim (the
+registry is snapshotted with `R`, so fresh identities cannot be ground against a revealed seed).
+If the committee fails to fill within `CommitteeSelection`, the epoch is dead: anyone may record
+the abort and the next scheduled epoch opens automatically. An epoch that can still be finalized
+cannot be aborted by anybody.
+
+Whoever wins the `createEpoch` race chooses `(t, n, minValidContributions, α)`, so the deployment
+pins floors: `MIN_THRESHOLD`, `MIN_COMMITTEE_SIZE` and a ceiling `MAX_LOTTERY_ALPHA_BPS`
+(constructor immutables, `MIN_THRESHOLD`/`MIN_COMMITTEE_SIZE`/`MAX_LOTTERY_ALPHA_BPS` env vars at
+deploy time).
 
 ### Threshold decryption
 
@@ -157,8 +165,8 @@ BN254 scalar-field public input, so it must be non-zero and below the field modu
   `PK_aid = PK_ep + PK_org`. Decryption now requires both the committee and the organizer to
   cooperate; the latter contributes `Δ_org = sk_org · C₁` via `submitOrganizerShare`.
 
-The legacy "epoch-key only" path is the special case `aid = bytes32(0)`, gated by the epoch's own
-`DecryptionPolicy` rather than an `AppPolicy`.
+The legacy "epoch-key only" path is the special case `aid = bytes32(0)`: open submission,
+no `AppPolicy`.
 
 ---
 
@@ -224,6 +232,26 @@ You only pay gas on the phases you actually participate in. Per-call cost breakd
 Release binaries and source builds work the same way; see `davinci-dkg-node --help` for flags
 (every flag has a `DAVINCI_DKG_…` env-var equivalent).
 
+### Application CLI
+
+`cmd/dkgapp` is the organizer-side companion of the node: register an application (mode 0 or
+mode 1), encrypt and submit a ciphertext with its proof of knowledge, post the organizer share of a
+mode-1 application, and read the combined plaintext.
+
+```bash
+export DAVINCI_DKG_WEB3_RPC=https://ethereum-sepolia-rpc.publicnode.com
+export DAVINCI_DKG_NETWORK=sepolia DAVINCI_DKG_PRIVKEY=0x...
+go run ./cmd/dkgapp epoch                                   # newest epoch and PK_ep
+go run ./cmd/dkgapp register -aid 0x0a…                     # mode 0 (public derivation)
+go run ./cmd/dkgapp register -aid 0x0b… -codec              # mode 1; prints the organizer secret
+go run ./cmd/dkgapp encrypt  -aid 0x0a… -m 42               # submits; prints the assigned index
+go run ./cmd/dkgapp encrypt  -aid 0x0b… -m 7 -org-secret …  # also posts Δ_org with its DLEQ proof
+go run ./cmd/dkgapp plaintext -aid 0x0a… -index 1 -wait 5m
+```
+
+Application ids must be non-zero and below the BN254 scalar field (clear the top three bits of a
+random or hashed id); `-epoch` defaults to the newest epoch.
+
 ### TypeScript SDK
 
 ```bash
@@ -241,10 +269,10 @@ const pk     = await client.getCollectivePublicKey(epochId);
 const eg     = await buildElGamal();
 const ct     = eg.encrypt(42n, [pk.x, pk.y]);
 const writer = new DKGWriter({ publicClient, walletClient, managerAddress });
-const tx     = await writer.submitCiphertext(epochId, '0x00…', 0, ct);
+const { hash, ciphertextIndex } = await writer.submitCiphertext(epochId, '0x00…', ct); // index is assigned on chain
 
 // Wait for the committee to finish, then read the plaintext
-await writer.waitForCombinedDecryption(epochId, '0x00…', 0);
+await writer.waitForCombinedDecryption(epochId, '0x00…', ciphertextIndex);
 const m = await client.getPlaintext(epochId, '0x00…', 0);
 ```
 
@@ -258,7 +286,12 @@ honest path:
 1. Read `PK_ep` (or `PK_aid` for an application) from chain.
 2. ElGamal-encrypt your plaintext scalar `m` (must fit under the BSGS cap — 2⁵⁰ on the committee,
    2³² in the SDK).
-3. `DKGManager.submitCiphertext(epochId, aid, ctIdx, c1, c2)` — emits `CiphertextSubmitted`.
+3. `DKGManager.submitCiphertext(epochId, aid, c1, c2, pok)` — the contract assigns the next
+   `ctIdx` for the application and emits `CiphertextSubmitted`. `pok` is a Schnorr proof of
+   knowledge of the encryption randomness `r` (`C₁ = r·G`), bound to `(epochId, aid, C₁, C₂)`.
+   Committee nodes verify it before releasing a partial decryption, which is what stops anyone
+   from re-submitting another application's `C₁` (or `C₁ + x·G`) under their own application
+   as a decryption oracle. The SDK and `dkgapp` produce it for you.
 4. Every committee node watches `CiphertextSubmitted` events (for any `aid`), submits its
    partial, and the first node to reach `t` partials calls `combineDecryption`. The recovered
    plaintext is readable on `getPlaintext`. A restarted node re-scans the last
@@ -273,7 +306,7 @@ ciphertext before the combine can land.
 
 | Network | DKGManager                                 | Notes |
 |---------|--------------------------------------------|-------|
-| Sepolia | `0xfb2CfAE24506D2978Cf4d0f8898F0E33aA744969` | Built into the node + SDK; just pass `--network sepolia`. **Predates the lottery / eviction fixes on `main`; redeploy before relying on it.** |
+| Sepolia | `0x92d324254ef12e4392d54c771b121cc976682340` | Built into the node + SDK; just pass `--network sepolia`. Registry `0xd7c1e9d8167a72d780971360efa97828eb57d01e`, app manager `0xc3b5a70301286b47421ba15598d61cff44df96b9`, deployed at block 11,615,847. |
 
 `DKGRegistry` and `DKGAppManager` are auto-resolved from `DKGManager` on-chain — only the manager
 address needs to be configured.

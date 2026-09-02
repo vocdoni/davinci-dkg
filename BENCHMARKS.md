@@ -28,22 +28,25 @@ which the production deployment includes.
 
 | Circuit         |  MaxN = 16  |   MaxN = 32 |   MaxN = 48 |
 |-----------------|------------:|------------:|------------:|
-| Contribution    |     352,338 |   1,430,852 |   3,978,119 |
-| Finalize        |     143,288 |   1,021,651 |   3,377,949 |
-| PartialDecrypt  |      20,717 |      20,717 |      20,717 |
+| Contribution    |   251,792 |     536,262 |   859,076 |
+| Finalize        |     65,343 |     211,600 |     444,799 |
+| PartialDecrypt  |      22,061 |      22,061 |      22,061 |
 | DecryptCombine  |     104,328 |     238,207 |     409,969 |
-| **Total**       | **620,671** | **2,711,427** | **7,786,754** |
+| **Total**       | **443,524** | **1,008,130** | **1,735,905** |
 
 The dominant cost in Contribution and Finalize is `CommitmentPolynomialValue`,
 which evaluates `Σ_k commitments[k] · x^k` for each recipient (or participant)
-index `x ≤ MaxN`. The implementation specialises this to a 2-bit-windowed
-left-to-right double-and-add over `api.ToBinary(scalar, nbBits)` with a
-caller-supplied bit width, so the per-iteration scalar mul shrinks from a
-~252-bit BabyJubJub field op (`scalarMulFakeGLV`) to roughly
-`14 · (xMaxBits · k + 1)` constraints. The `k = 0` (`power = 1`) case is
-special-cased to a direct point add. Range-check on the recipient /
-participant index makes the bit-width bound sound — an oversized scalar
-fails the proof rather than silently truncating.
+index `x ≤ MaxN`. It uses Horner's rule, `acc ← x·acc + C_k` from the top
+coefficient down, so every step is one 6-bit `ScalarMulSmallScalar` plus one
+point addition (≈ 75 constraints) regardless of `k`; the previous form
+multiplied each commitment by a growing power `x^k` and cost ~4× more.
+`ScalarMulSmallScalar` range-checks `x` via `api.ToBinary`, so an oversized
+index fails the proof rather than wrapping.
+
+Since the Fiat–Shamir hardening (challenge over calldata + digests), Finalize
+also digests the contribution rows in circuit (one Poseidon per row, one over
+the row digests, ~40 k constraints) and Contribution absorbs the recipient
+keys into its share digest.
 
 The empirical scaling roughly tracks O(N²) for Contribution and Finalize
 (constraint count grows ~4× from N=16→32 and ~2.8× from N=32→48), is flat
@@ -65,10 +68,10 @@ proofs in the production node). Each cell is `time` from
 
 | Circuit         |  MaxN = 16 |  MaxN = 32 |  MaxN = 48 |
 |-----------------|-----------:|-----------:|-----------:|
-| Contribution    |     285 ms |   1.010 s  |   2.027 s  |
-| Finalize        |     181 ms |     598 ms |   1.935 s  |
-| PartialDecrypt  |      53 ms |      50 ms |      52 ms |
-| DecryptCombine  |      70 ms |     135 ms |     226 ms |
+| Contribution    |     145 ms |     441 ms |     PT48C |
+| Finalize        |     66 ms |     193 ms |     364 ms |
+| PartialDecrypt  |     26 ms |      27 ms |     PT48P |
+| DecryptCombine  |      70 ms |     133 ms |     226 ms |
 
 Contribution and Finalize are the only N-scaling circuits at the proving
 level, mirroring the constraint scaling above. PartialDecrypt is per-share
