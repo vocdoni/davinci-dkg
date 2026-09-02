@@ -14,7 +14,7 @@ export function ChainPill({ className }: { className?: string }) {
   return (
     <div className={cn('flex items-center gap-2.5 rounded-pill border border-charcoal bg-carbon px-3 py-1', className)}>
       <Tooltip content={`chain id ${config.chainId}`}>
-        <span className='flex items-center gap-1.5 text-[11px] font-medium text-silver'>
+        <span className='flex items-center gap-1.5 text-[11px] font-medium whitespace-nowrap text-silver'>
           <span
             className={cn(
               'h-1.5 w-1.5 rounded-full',

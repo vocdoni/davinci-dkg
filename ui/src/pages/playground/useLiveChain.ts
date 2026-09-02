@@ -13,7 +13,7 @@
 import { useCallback, useMemo } from 'react'
 import { useAccount, useChainId, usePublicClient, useWalletClient } from 'wagmi'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
-import { DKGWriter, type ElGamalCiphertext } from '@vocdoni/davinci-dkg-sdk'
+import { DKGWriter, type ElGamalCiphertext, fromRTEtoTE } from '@vocdoni/davinci-dkg-sdk'
 import type { Hex } from 'viem'
 import { useRuntimeConfig } from '~config/config-context'
 import { useApplication, useEpoch, useIndexer, useStore } from '~data/hooks'
@@ -143,7 +143,8 @@ export function useLiveChain(target: PlaygroundTarget): PlaygroundChain {
           tx: row.combined.tx,
           plaintext: row.combined.plaintext,
         },
-        onChain: { c1: [row.c1.x, row.c1.y], c2: [row.c2.x, row.c2.y] } as ElGamalCiphertext,
+        // The store keeps the calldata (RTE) words; the local ciphertext is TE.
+        onChain: { c1: fromRTEtoTE(row.c1.x, row.c1.y), c2: fromRTEtoTE(row.c2.x, row.c2.y) } as ElGamalCiphertext,
       }
     },
     [application, staggerBlocks]
