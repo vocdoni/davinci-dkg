@@ -58,6 +58,7 @@ export class StateReader {
   private readonly multicallAddress: Address
   /** Flips to false the first time multicall is rejected by the chain. */
   private multicallSupported = true
+  private multicallProbed = false
   /** Requests issued (multicall batches + individual calls). */
   requests = 0
 
@@ -87,6 +88,16 @@ export class StateReader {
   }
 
   private async readBatch(batch: CallSpec[]): Promise<CallResult[]> {
+    if (this.multicallSupported && !this.multicallProbed) {
+      // viem reports a missing Multicall3 as per-call failures rather than a
+      // rejection, so probe for code once (fresh Anvil chains have none).
+      this.multicallProbed = true
+      // Test doubles may not implement getCode; only a real empty answer disables multicall.
+      if (typeof this.client.getCode === 'function') {
+        const code = await this.client.getCode({ address: this.multicallAddress }).catch(() => undefined)
+        if (code === '0x' || code === undefined) this.multicallSupported = false
+      }
+    }
     if (this.multicallSupported) {
       try {
         this.requests += 1
