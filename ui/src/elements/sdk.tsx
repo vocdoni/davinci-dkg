@@ -62,7 +62,7 @@ export const dkg = new DKGClient({
         </CodeBlock>
       </Section>
 
-      <Section heading='Reading a epoch'>
+      <Section heading='Reading an epoch'>
         <Text fontSize='sm' color='ink.2'>
           Epoch identifiers are 12-byte values formed from a 4-byte chain prefix and an 8-byte
           nonce. Build one with <Code>buildEpochId</Code> or pass a known one as a hex string.

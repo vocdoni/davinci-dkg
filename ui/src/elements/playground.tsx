@@ -40,7 +40,7 @@ export function Playground() {
     setLog((prev) => [...prev, { ts: Date.now(), msg, level }])
   }, [])
 
-  // Surface a epoch-failure state up here so every downstream step can
+  // Surface an epoch-failure state up here so every downstream step can
   // freeze. Same React Query key as the WatchProgressStep, so this is a
   // free read from the cache.
   const epoch = useEpoch((epochId ?? undefined) as `0x${string}` | undefined)
@@ -77,7 +77,7 @@ export function Playground() {
     <Stack gap={{ base: 8, md: 12 }}>
       <PageHeader
         title='Playground'
-        subtitle='A guided walkthrough of the full DKG flow: create a epoch, wait for nodes to contribute, read the collective public key, encrypt a value, submit the ciphertext, and watch the committee threshold-decrypt it on-chain.'
+        subtitle='A guided walkthrough of the full DKG flow: create an epoch, wait for nodes to contribute, read the collective public key, encrypt a value, submit the ciphertext, and watch the committee threshold-decrypt it on-chain.'
       />
 
       <Grid templateColumns={{ base: '1fr', lg: '2fr 1fr' }} gap={{ base: 6, lg: 8 }} alignItems='start'>
