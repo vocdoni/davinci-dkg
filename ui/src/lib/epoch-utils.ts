@@ -99,10 +99,19 @@ export function roundPhaseColor(phase: EpochPhase): string {
 export const phaseSequence: EpochPhase[] = ['committee-selection', 'key-assembly', 'live', 'completed']
 
 /**
- * An epoch has effectively failed when its current phase deadline has passed
- * without enough nodes participating to make the next phase viable. The
- * contract doesn't auto-flip the epoch to Aborted in this case — it just
- * sits stuck — so the UI has to recognise it and surface the failure.
+ * An epoch is dead when its current phase deadline has passed without the
+ * participation the next phase needs. The contract doesn't auto-flip the
+ * epoch to Aborted in this case — it just sits stuck until someone calls
+ * `abortEpoch` — so the UI has to recognise it and surface the failure.
+ *
+ * Mirrors `DKGManager.abortEpoch`'s dead-epoch predicate exactly: anyone may
+ * abort an epoch for which this returns non-null, and abort reverts for any
+ * other epoch.
+ *   - CommitteeSelection: the selection deadline passed. (Filling the
+ *     committee moves the epoch to KeyAssembly, so still being in this phase
+ *     past the deadline means the committee never filled.)
+ *   - KeyAssembly: the assembly deadline passed with fewer than
+ *     minValidContributions accepted.
  *
  * Returns null when the epoch is healthy or already aborted/completed.
  */
@@ -114,10 +123,8 @@ export function roundFailure(
   if (epoch.status === EpochPhase.CommitteeSelection) {
     if (currentBlock > epoch.policy.committeeSelectionDeadlineBlock) {
       const have = epoch.claimedCount
-      const need = epoch.policy.minValidContributions
-      if (have < need) {
-        return { kind: 'committee-selection', have, need, total: epoch.policy.committeeSize }
-      }
+      const need = epoch.policy.committeeSize
+      return { kind: 'committee-selection', have, need, total: epoch.policy.committeeSize }
     }
   } else if (epoch.status === EpochPhase.KeyAssembly) {
     if (currentBlock > epoch.policy.keyAssemblyDeadlineBlock) {

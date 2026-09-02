@@ -10,8 +10,8 @@ function eventSummary(ev: EpochEvent): string {
   switch (ev.eventName) {
     case 'EpochCreated':
       return 'Epoch created on-chain.'
-    case 'SeedRevealed':
-      return 'Lottery seed revealed.'
+    case 'SeedResolved':
+      return 'Lottery seed resolved.'
     case 'SlotClaimed':
       return 'Committee member claimed a slot.'
     case 'ContributionSubmitted':
@@ -19,17 +19,13 @@ function eventSummary(ev: EpochEvent): string {
     case 'EpochLive':
       return 'Epoch finalized — collective public key locked in.'
     case 'CiphertextSubmitted':
-      return 'Ciphertext submitted for threshold decryption.'
+      return 'Ciphertext submitted for threshold decryption (with its proof of knowledge).'
     case 'PartialDecryptionSubmitted':
       return 'Committee member submitted a partial decryption.'
     case 'DecryptionCombined':
       return 'Plaintext recovered via Lagrange-interpolated combine.'
     case 'EpochAborted':
-      return 'Epoch aborted.'
-    case 'ShareRevealed':
-      return 'Secret share revealed.'
-    case 'KeyReconstructed':
-      return 'Secret key reconstructed.'
+      return 'Dead epoch aborted.'
     default:
       return ev.eventName
   }

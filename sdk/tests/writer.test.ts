@@ -67,17 +67,19 @@ describe('DKGWriter', () => {
     if (!enabled) return;
 
     await mineUntilEpochAllowed(writer.publicClient, writer.managerAddress);
-    const currentBlock = await writer.blockNumber();
     const nonceBefore  = await writer.epochNonce();
+
+    // Deploy-time bounds must admit the smallest possible epoch.
+    const bounds = await writer.getEpochBounds();
+    expect(bounds.minThreshold).toBeGreaterThanOrEqual(1);
+    expect(bounds.minCommitteeSize).toBeGreaterThanOrEqual(bounds.minThreshold);
+    expect(bounds.maxLotteryAlphaBps).toBeGreaterThanOrEqual(15000);
 
     const hash = await writer.createEpoch({
       threshold:                 1,
       committeeSize:             1,
       minValidContributions:     1,
       lotteryAlphaBps:           15000,
-      committeeSelectionDeadlineBlock: currentBlock + 25n,
-      keyAssemblyDeadlineBlock: currentBlock + 50n,
-      liveNotBeforeBlock:    currentBlock + 51n,
     });
     const receipt = await writer.waitForTransaction(hash);
     expect(receipt.status).toBe('success');
@@ -94,6 +96,9 @@ describe('DKGWriter', () => {
     expect(epoch.status).toBe(EpochPhase.CommitteeSelection);
     expect(epoch.policy.threshold).toBe(1);
     expect(epoch.policy.committeeSize).toBe(1);
+    // Deadlines are derived on-chain; the SDK never sends them.
+    expect(epoch.policy.committeeSelectionDeadlineBlock).toBeGreaterThan(epoch.startBlock);
+    expect('decryptionPolicy' in epoch).toBe(false);
   });
 
   it('buildEpochId and parseEpochId are inverses', () => {
@@ -123,17 +128,12 @@ describe('DKGWriter', () => {
     }
 
     await mineUntilEpochAllowed(writer.publicClient, writer.managerAddress);
-    const currentBlock = await writer.blockNumber();
-    const seedDelay    = 1;
 
     const createHash = await writer.createEpoch({
       threshold:                 1,
       committeeSize:             1,
       minValidContributions:     1,
       lotteryAlphaBps:           15000,
-      committeeSelectionDeadlineBlock: currentBlock + 30n,
-      keyAssemblyDeadlineBlock: currentBlock + 60n,
-      liveNotBeforeBlock:    currentBlock + 61n,
     });
     await writer.waitForTransaction(createHash);
 

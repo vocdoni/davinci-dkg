@@ -151,21 +151,13 @@ export function EpochView() {
                 />
               </SimpleGrid>
               <Box mt={6}>
-                <DetailDisclosure title='Show raw policy and decryption-policy fields'>
-                  <Stack gap={4}>
-                    <Box>
-                      <Text fontSize='2xs' color='ink.4' mb={2} letterSpacing='0.06em'>
-                        POLICY
-                      </Text>
-                      <RawJson value={epoch.data.epoch.policy} />
-                    </Box>
-                    <Box>
-                      <Text fontSize='2xs' color='ink.4' mb={2} letterSpacing='0.06em'>
-                        DECRYPTION POLICY
-                      </Text>
-                      <RawJson value={epoch.data.epoch.decryptionPolicy} />
-                    </Box>
-                  </Stack>
+                <DetailDisclosure title='Show raw policy fields'>
+                  <Box>
+                    <Text fontSize='2xs' color='ink.4' mb={2} letterSpacing='0.06em'>
+                      POLICY
+                    </Text>
+                    <RawJson value={epoch.data.epoch.policy} />
+                  </Box>
                 </DetailDisclosure>
               </Box>
             </RoundSection>

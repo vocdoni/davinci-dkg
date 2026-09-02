@@ -1,6 +1,6 @@
 {
   "rpcUrl": "https://w3.ch4in.net/sepolia",
-  "managerAddress": "0xfb2CfAE24506D2978Cf4d0f8898F0E33aA744969",
+  "managerAddress": "0x92d324254ef12e4392d54c771b121cc976682340",
   "chainId": 11155111,
   "chainName": "sepolia",
   "explorerUrl": "https://sepolia.etherscan.io"

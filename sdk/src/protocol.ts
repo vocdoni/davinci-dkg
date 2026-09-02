@@ -64,6 +64,13 @@ export type RoleValue = (typeof Role)[keyof typeof Role];
 export const DomainOperatorRegisterV1Str = 'davinci-dkg:operator-register:v1';
 export const DomainOrganizerRegisterV1Str = 'davinci-dkg:organizer-register:v1';
 export const DomainDLEQV1Str = 'davinci-dkg:dleq:v1';
+/**
+ * Schnorr proof of knowledge of a ciphertext's randomness r (C1 = r·G),
+ * checked off-chain by every committee node before it releases a partial
+ * decryption; stops a ciphertext's C1 from being re-submitted under another
+ * application as a decryption oracle.
+ */
+export const DomainCiphertextPoKV1Str = 'davinci-dkg:ciphertext-pok:v1';
 
 /**
  * Domain-prefix digests (keccak256 of the strings above). Bound into the
@@ -76,3 +83,4 @@ export const DomainDLEQV1Str = 'davinci-dkg:dleq:v1';
 export const DomainOperatorRegisterV1 = keccak256(toHex(DomainOperatorRegisterV1Str));
 export const DomainOrganizerRegisterV1 = keccak256(toHex(DomainOrganizerRegisterV1Str));
 export const DomainDLEQV1 = keccak256(toHex(DomainDLEQV1Str));
+export const DomainCiphertextPoKV1 = keccak256(toHex(DomainCiphertextPoKV1Str));

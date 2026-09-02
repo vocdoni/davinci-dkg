@@ -57,7 +57,7 @@ const publicClient = createPublicClient({
 
 export const dkg = new DKGClient({
   publicClient,
-  managerAddress: '0xfb2CfAE24506D2978Cf4d0f8898F0E33aA744969',
+  managerAddress: '0x92d324254ef12e4392d54c771b121cc976682340',
 })`}
         </CodeBlock>
       </Section>
@@ -96,15 +96,20 @@ if (epoch.status === EpochPhase.Live) {
           long-running process or a backend job.
         </Text>
         <CodeBlock language='tsx'>
-          {`import { watchNewRounds, watchEpochLive } from '@vocdoni/davinci-dkg-sdk'
+          {`import { watchNewEpochs, watchEpochLive, watchCiphertextSubmitted } from '@vocdoni/davinci-dkg-sdk'
 
-const stop = watchNewRounds(dkg, (entry) => {
-  console.log('new epoch', entry.id, entry.epoch.policy.threshold,
-              'of', entry.epoch.policy.committeeSize)
+const stop = watchNewEpochs(dkg, (epochId, organizer) => {
+  console.log('new epoch', epochId, 'created by', organizer)
 })
 
-watchEpochLive(dkg, '0x82...0001', (event) => {
-  console.log('epoch finalized; key hash:', event.collectivePublicKeyHash)
+watchEpochLive(dkg, '0x82...0001', (collectivePublicKeyHash) => {
+  console.log('epoch finalized; key hash:', collectivePublicKeyHash)
+})
+
+// Ciphertexts as they land. pokValid is the same check every committee
+// node runs before releasing a partial decryption.
+watchCiphertextSubmitted(dkg, '0x82...0001', ({ aid, ciphertextIndex, pokValid }) => {
+  console.log('ciphertext', ciphertextIndex, 'for app', aid, pokValid ? 'ok' : 'INVALID PROOF')
 })
 
 // Later, to clean up:
@@ -114,20 +119,25 @@ stop()`}
 
       <Section heading='Encrypting for the committee'>
         <Text fontSize='sm' color='ink.2'>
-          Once a epoch is finalized, anyone can encrypt for it. ElGamal on BabyJubJub is provided
-          by <Code>buildElGamal</Code> and operates entirely client-side.
+          Once an epoch is Live, anyone can encrypt for it. ElGamal on BabyJubJub runs entirely
+          client-side. Use <Code>encryptWithProof</Code>: besides the ciphertext it returns a
+          Schnorr proof that you know the encryption randomness, bound to the epoch and
+          application id. Every committee node verifies that proof before it releases a partial
+          decryption, so a ciphertext submitted without one is never decrypted — that is what
+          stops a copied <Code>C1</Code> from being used as a decryption oracle.
         </Text>
         <CodeBlock language='tsx'>
-          {`import { buildElGamal } from '@vocdoni/davinci-dkg-sdk'
+          {`import { encryptWithProof } from '@vocdoni/davinci-dkg-sdk'
 
-const eg = await buildElGamal()
+const ZERO_AID = '0x' + '00'.repeat(32)   // bare epoch key; or a registered app's aid
 const pk = await dkg.getCollectivePublicKey(epochId)
 
 // 'message' must be a non-negative integer strictly below 2^50 (≈ 1.13e15).
 // That's the upper bound the committee's BSGS dlog can recover; submitting
-// anything larger leaves the epoch unrecoverable.
-const ciphertext = eg.encrypt(42n, [pk.x, pk.y])
-// ciphertext = { c1: [x, y], c2: [x, y] } — both points on BabyJubJub`}
+// anything larger leaves the ciphertext unrecoverable.
+const { ciphertext, pok } = await encryptWithProof(epochId, ZERO_AID, 42n, [pk.x, pk.y])
+// ciphertext = { c1: [x, y], c2: [x, y] } — both points on BabyJubJub
+// pok        = { ax, ay, z }              — proof of knowledge of the randomness`}
         </CodeBlock>
         <Text fontSize='sm' color='ink.2'>
           The matching client-side <Code>decrypt(ct, privKey)</Code> helper (used in tests
@@ -141,7 +151,11 @@ const ciphertext = eg.encrypt(42n, [pk.x, pk.y])
         <Text fontSize='sm' color='ink.2'>
           Chain-writing operations require a viem <Code>WalletClient</Code>. Wrap it with{' '}
           <Code>DKGWriter</Code>, which extends <Code>DKGClient</Code> with{' '}
-          <Code>createEpoch</Code>, <Code>submitCiphertext</Code>, and <Code>abortEpoch</Code>.
+          <Code>createEpoch</Code> (four policy fields, bounded by the deployment's{' '}
+          <Code>getEpochBounds()</Code>), <Code>submitCiphertext</Code>, and{' '}
+          <Code>abortEpoch</Code> (permissionless, but only accepted for a dead epoch whose
+          selection or key-assembly deadline has passed). The contract assigns the ciphertext
+          index; <Code>submitCiphertext</Code> waits for the receipt and returns it.
         </Text>
         <CodeBlock language='tsx'>
           {`import { createWalletClient, http } from 'viem'
@@ -159,16 +173,15 @@ const walletClient = createWalletClient({
 const writer = new DKGWriter({
   publicClient,
   walletClient,
-  managerAddress: '0xfb2CfAE24506D2978Cf4d0f8898F0E33aA744969',
+  managerAddress: '0x92d324254ef12e4392d54c771b121cc976682340',
 })
 
-const ZERO_AID = '0x' + '00'.repeat(32)
-const txHash = await writer.submitCiphertext(
-  epochId, ZERO_AID, /* ciphertextIndex */ 1,
-  ciphertext.c1[0], ciphertext.c1[1],
-  ciphertext.c2[0], ciphertext.c2[1],
+// Verifies the proof locally, sends, waits for the receipt and reads the
+// on-chain-assigned index from the CiphertextSubmitted event.
+const { hash, ciphertextIndex } = await writer.submitCiphertext(
+  epochId, ZERO_AID, ciphertext, pok,
 )
-await writer.waitForTransaction(txHash)`}
+console.log('submitted in', hash, 'as ciphertext #', ciphertextIndex)`}
         </CodeBlock>
       </Section>
 
@@ -181,7 +194,7 @@ await writer.waitForTransaction(txHash)`}
         <CodeBlock language='tsx'>
           {`import { waitForCombinedDecryption } from '@vocdoni/davinci-dkg-sdk'
 
-const record = await waitForCombinedDecryption(dkg, epochId, 1, {
+const record = await waitForCombinedDecryption(dkg, epochId, ZERO_AID, ciphertextIndex, {
   intervalMs: 3000,
   timeoutMs: 5 * 60_000,
 })

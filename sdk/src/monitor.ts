@@ -1,8 +1,10 @@
 import { type Address } from 'viem';
+import { dkgManagerAbi } from './abi.js';
 import { type DKGClient } from './client.js';
-import { EpochPhase, type EpochPhaseValue, type PollOptions } from './types.js';
+import { EpochPhase, type CiphertextPoK, type EpochPhaseValue, type PollOptions } from './types.js';
 import { sleep } from './utils.js';
 import { fromRTEtoTE } from './crypto/babyjub-form.js';
+import { verifyCiphertextPoK } from './schnorr.js';
 
 const DEFAULT_INTERVAL_MS = 2_000;
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -145,32 +147,26 @@ export function watchEpochLive(
 }
 
 /**
- * Watch for the DecryptionCombined event for a specific ciphertext.
- * The callback receives the recovered plaintext scalar as a bigint.
- * Returns an unsubscribe function.
+ * Watch for the DecryptionCombined event for a specific ciphertext
+ * (optionally narrowed to one application via `opts.aid`; the index is
+ * per `(epochId, aid)`, so pass the aid whenever more than one application
+ * is registered on the epoch). The callback receives the recovered
+ * plaintext scalar as a bigint. Returns an unsubscribe function.
  */
 export function watchDecryptionCombined(
   client: DKGClient,
   epochId: `0x${string}`,
   ciphertextIndex: number,
   onCombined: (combineHash: `0x${string}`, plaintext: bigint) => void,
+  opts?: { aid?: `0x${string}` },
 ): () => void {
+  const args: Record<string, unknown> = { epochId, ciphertextIndex };
+  if (opts?.aid != null) args.aid = opts.aid;
   return client.publicClient.watchContractEvent({
     address: client.managerAddress,
-    abi: [
-      {
-        type: 'event',
-        name: 'DecryptionCombined',
-        inputs: [
-          { name: 'epochId', type: 'bytes12', indexed: true },
-          { name: 'ciphertextIndex', type: 'uint16', indexed: true },
-          { name: 'combineHash', type: 'bytes32', indexed: false },
-          { name: 'plaintext', type: 'uint256', indexed: false },
-        ],
-      },
-    ] as const,
+    abi: dkgManagerAbi,
     eventName: 'DecryptionCombined',
-    args: { epochId: epochId as any, ciphertextIndex } as any,
+    args: args as any,
     onLogs: (logs) => {
       for (const log of logs) {
         const { combineHash, plaintext } = log.args as any;
@@ -182,13 +178,18 @@ export function watchDecryptionCombined(
 }
 
 /**
- * Watch for CiphertextSubmitted events on a epoch. The callback receives the
- * ciphertext index, submitter, and the (C1, C2) BabyJubJub coordinates —
- * the contract stores only the keccak hash, so the event log is the only way
- * to recover the coordinates nodes need for threshold decryption.
+ * Watch for CiphertextSubmitted events on an epoch (optionally one
+ * application via `opts.aid`). The callback receives the application id,
+ * the on-chain-assigned ciphertext index, the submitter, the (C1, C2)
+ * BabyJubJub coordinates and the submitter's proof of knowledge — the
+ * contract stores only the keccak hash, so the event log is the only way to
+ * recover the coordinates nodes need for threshold decryption.
  *
- * Coordinates are converted from on-chain RTE form to TE form for
- * consistency with the rest of this SDK (see `crypto/babyjub-form.ts`).
+ * `c1`/`c2` are converted from on-chain RTE form to TE form for consistency
+ * with the rest of this SDK (see `crypto/babyjub-form.ts`); `pok` stays in
+ * RTE form as reported on-chain. `pokValid` is the SDK's verdict on the
+ * proof (`verifyCiphertextPoK`, computed over the RTE words): committee
+ * nodes run the same check and never decrypt a ciphertext that fails it.
  *
  * Returns an unsubscribe function.
  */
@@ -196,42 +197,42 @@ export function watchCiphertextSubmitted(
   client: DKGClient,
   epochId: `0x${string}`,
   onCiphertext: (payload: {
+    aid: `0x${string}`;
     ciphertextIndex: number;
     submitter: Address;
     c1: { x: bigint; y: bigint };
     c2: { x: bigint; y: bigint };
+    pok: CiphertextPoK;
+    pokValid: boolean;
   }) => void,
+  opts?: { aid?: `0x${string}` },
 ): () => void {
+  const args: Record<string, unknown> = { epochId };
+  if (opts?.aid != null) args.aid = opts.aid;
   return client.publicClient.watchContractEvent({
     address: client.managerAddress,
-    abi: [
-      {
-        type: 'event',
-        name: 'CiphertextSubmitted',
-        inputs: [
-          { name: 'epochId', type: 'bytes12', indexed: true },
-          { name: 'ciphertextIndex', type: 'uint16', indexed: true },
-          { name: 'submitter', type: 'address', indexed: true },
-          { name: 'c1x', type: 'uint256', indexed: false },
-          { name: 'c1y', type: 'uint256', indexed: false },
-          { name: 'c2x', type: 'uint256', indexed: false },
-          { name: 'c2y', type: 'uint256', indexed: false },
-        ],
-      },
-    ] as const,
+    abi: dkgManagerAbi,
     eventName: 'CiphertextSubmitted',
-    args: { epochId: epochId as any } as any,
+    args: args as any,
     onLogs: (logs) => {
       for (const log of logs) {
-        const { ciphertextIndex, submitter, c1x, c1y, c2x, c2y } = log.args as any;
-        if (typeof ciphertextIndex === 'number' && submitter) {
+        const { aid, ciphertextIndex, submitter, c1x, c1y, c2x, c2y, pokAx, pokAy, pokZ } =
+          log.args as any;
+        if (typeof ciphertextIndex === 'number' && submitter && aid) {
+          const pok: CiphertextPoK = { ax: pokAx as bigint, ay: pokAy as bigint, z: pokZ as bigint };
+          const pokValid = verifyCiphertextPoK(
+            epochId, aid as `0x${string}`, c1x as bigint, c1y as bigint, c2x as bigint, c2y as bigint, pok,
+          );
           const [c1xT, c1yT] = fromRTEtoTE(c1x as bigint, c1y as bigint);
           const [c2xT, c2yT] = fromRTEtoTE(c2x as bigint, c2y as bigint);
           onCiphertext({
+            aid: aid as `0x${string}`,
             ciphertextIndex,
             submitter: submitter as Address,
             c1: { x: c1xT, y: c1yT },
             c2: { x: c2xT, y: c2yT },
+            pok,
+            pokValid,
           });
         }
       }

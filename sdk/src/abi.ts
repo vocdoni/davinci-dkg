@@ -12,18 +12,6 @@ export const dkgManagerAbi = [
       { name: 'committeeSize', type: 'uint16' },
       { name: 'minValidContributions', type: 'uint16' },
       { name: 'lotteryAlphaBps', type: 'uint16' },
-      {
-        name: 'decryptionPolicy',
-        type: 'tuple',
-        components: [
-          { name: 'ownerOnly', type: 'bool' },
-          { name: 'maxDecryptions', type: 'uint16' },
-          { name: 'notBeforeBlock', type: 'uint64' },
-          { name: 'notBeforeTimestamp', type: 'uint64' },
-          { name: 'notAfterBlock', type: 'uint64' },
-          { name: 'notAfterTimestamp', type: 'uint64' },
-        ],
-      },
     ],
     outputs: [{ name: '', type: 'bytes12' }],
   },
@@ -55,6 +43,28 @@ export const dkgManagerAbi = [
     inputs: [],
     outputs: [{ name: '', type: 'uint256' }],
   },
+  // Deploy-time bounds enforced by createEpoch (see DKGManager constructor).
+  {
+    type: 'function',
+    name: 'MIN_THRESHOLD',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'uint16' }],
+  },
+  {
+    type: 'function',
+    name: 'MIN_COMMITTEE_SIZE',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'uint16' }],
+  },
+  {
+    type: 'function',
+    name: 'MAX_LOTTERY_ALPHA_BPS',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'uint16' }],
+  },
   {
     type: 'function',
     name: 'submitCiphertext',
@@ -62,13 +72,15 @@ export const dkgManagerAbi = [
     inputs: [
       { name: 'epochId', type: 'bytes12' },
       { name: 'aid', type: 'bytes32' },
-      { name: 'ciphertextIndex', type: 'uint16' },
       { name: 'c1x', type: 'uint256' },
       { name: 'c1y', type: 'uint256' },
       { name: 'c2x', type: 'uint256' },
       { name: 'c2y', type: 'uint256' },
+      { name: 'pokAx', type: 'uint256' },
+      { name: 'pokAy', type: 'uint256' },
+      { name: 'pokZ', type: 'uint256' },
     ],
-    outputs: [],
+    outputs: [{ name: 'ciphertextIndex', type: 'uint16' }],
   },
   {
     type: 'function',
@@ -227,18 +239,6 @@ export const dkgManagerAbi = [
               { name: 'liveNotBeforeBlock', type: 'uint64' },
             ],
           },
-          {
-            name: 'decryptionPolicy',
-            type: 'tuple',
-            components: [
-              { name: 'ownerOnly', type: 'bool' },
-              { name: 'maxDecryptions', type: 'uint16' },
-              { name: 'notBeforeBlock', type: 'uint64' },
-              { name: 'notBeforeTimestamp', type: 'uint64' },
-              { name: 'notAfterBlock', type: 'uint64' },
-              { name: 'notAfterTimestamp', type: 'uint64' },
-            ],
-          },
           { name: 'status', type: 'uint8' },
           { name: 'nonce', type: 'uint64' },
           { name: 'startBlock', type: 'uint64' },
@@ -351,23 +351,13 @@ export const dkgManagerAbi = [
   },
   {
     type: 'function',
-    name: 'getDecryptionPolicy',
+    name: 'ciphertextCount',
     stateMutability: 'view',
-    inputs: [{ name: 'epochId', type: 'bytes12' }],
-    outputs: [
-      {
-        name: '',
-        type: 'tuple',
-        components: [
-          { name: 'ownerOnly', type: 'bool' },
-          { name: 'maxDecryptions', type: 'uint16' },
-          { name: 'notBeforeBlock', type: 'uint64' },
-          { name: 'notBeforeTimestamp', type: 'uint64' },
-          { name: 'notAfterBlock', type: 'uint64' },
-          { name: 'notAfterTimestamp', type: 'uint64' },
-        ],
-      },
+    inputs: [
+      { name: 'epochId', type: 'bytes12' },
+      { name: 'aid', type: 'bytes32' },
     ],
+    outputs: [{ name: '', type: 'uint16' }],
   },
   {
     type: 'function',
@@ -488,6 +478,9 @@ export const dkgManagerAbi = [
       { name: 'c1y', type: 'uint256', indexed: false },
       { name: 'c2x', type: 'uint256', indexed: false },
       { name: 'c2y', type: 'uint256', indexed: false },
+      { name: 'pokAx', type: 'uint256', indexed: false },
+      { name: 'pokAy', type: 'uint256', indexed: false },
+      { name: 'pokZ', type: 'uint256', indexed: false },
     ],
   },
   {
@@ -509,6 +502,8 @@ export const dkgManagerAbi = [
 
   // ── errors ────────────────────────────────────────────────────────────────
   { type: 'error', name: 'InvalidPolicy', inputs: [] },
+  { type: 'error', name: 'InvalidChainId', inputs: [] },
+  { type: 'error', name: 'InvalidAddress', inputs: [] },
   { type: 'error', name: 'InvalidEpoch', inputs: [] },
   { type: 'error', name: 'InvalidPhase', inputs: [] },
   { type: 'error', name: 'NotEligible', inputs: [] },
@@ -517,9 +512,12 @@ export const dkgManagerAbi = [
   { type: 'error', name: 'SeedNotReady', inputs: [] },
   { type: 'error', name: 'SeedExpired', inputs: [] },
   { type: 'error', name: 'NotRegistered', inputs: [] },
+  // The operator registered after the epoch was created; only the registry
+  // snapshot taken at createEpoch enters the lottery.
+  { type: 'error', name: 'NotInSnapshot', inputs: [] },
   { type: 'error', name: 'NotSelectedParticipant', inputs: [] },
   { type: 'error', name: 'AlreadyContributed', inputs: [] },
-  { type: 'error', name: 'AlreadyFinalized', inputs: [] },
+  { type: 'error', name: 'AlreadyLive', inputs: [] },
   { type: 'error', name: 'AlreadyPartiallyDecrypted', inputs: [] },
   { type: 'error', name: 'InvalidCommitteeSize', inputs: [] },
   { type: 'error', name: 'InvalidContribution', inputs: [] },
@@ -540,6 +538,8 @@ export const dkgManagerAbi = [
   { type: 'error', name: 'CiphertextAlreadySubmitted', inputs: [] },
   { type: 'error', name: 'CiphertextNotSubmitted', inputs: [] },
   { type: 'error', name: 'InvalidCiphertext', inputs: [] },
+  { type: 'error', name: 'AppManagerAlreadySet', inputs: [] },
+  { type: 'error', name: 'AppManagerNotSet', inputs: [] },
 ] as const;
 
 export const dkgRegistryAbi = [
@@ -650,6 +650,9 @@ export const dkgRegistryAbi = [
           { name: 'pubY', type: 'uint256' },
           { name: 'status', type: 'uint8' },
           { name: 'lastActiveBlock', type: 'uint64' },
+          // Block of the first registerKey; the node only enters lotteries of
+          // epochs created after it.
+          { name: 'registeredAtBlock', type: 'uint64' },
         ],
       },
     ],
@@ -711,6 +714,12 @@ export const dkgRegistryAbi = [
   { type: 'error', name: 'NotActive', inputs: [] },
   { type: 'error', name: 'StillActive', inputs: [] },
   { type: 'error', name: 'NotInactive', inputs: [] },
+  { type: 'error', name: 'InvalidAddress', inputs: [] },
+  { type: 'error', name: 'Unauthorized', inputs: [] },
+  { type: 'error', name: 'InvalidSchnorrProof', inputs: [] },
+  { type: 'error', name: 'PointNotCanonical', inputs: [] },
+  { type: 'error', name: 'PointNotOnCurve', inputs: [] },
+  { type: 'error', name: 'PointIsIdentity', inputs: [] },
 ] as const;
 
 export const dkgAppManagerAbi = [
@@ -886,4 +895,7 @@ export const dkgAppManagerAbi = [
   { type: 'error', name: 'DecryptionExpired', inputs: [] },
   { type: 'error', name: 'DecryptionLimitReached', inputs: [] },
   { type: 'error', name: 'InsufficientPartialDecryptions', inputs: [] },
+  { type: 'error', name: 'IsIdentity', inputs: [] },
+  { type: 'error', name: 'NotCanonical', inputs: [] },
+  { type: 'error', name: 'NotOnCurve', inputs: [] },
 ] as const;

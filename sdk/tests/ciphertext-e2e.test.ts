@@ -7,9 +7,11 @@
 //   1. Go fixture (`sdk-test-fixture --action=create`) creates a finalized
 //      single-participant epoch (committee=1, threshold=1, share=11).
 //   2. SDK reads `getCollectivePublicKey(epochId)` → returned in TE form.
-//   3. SDK encrypts a small plaintext with `buildElGamal().encrypt()`.
+//   3. SDK encrypts a small plaintext with `encryptWithProof()`, which also
+//      produces the Schnorr proof of knowledge of the ElGamal randomness.
 //   4. SDK calls `writer.submitCiphertext(...)` — internally converts c1/c2
-//      from TE → RTE so the contract's `_isOnBabyJubJub` check accepts them.
+//      from TE → RTE so the contract's `_isOnBabyJubJub` check accepts them,
+//      and returns the on-chain-assigned ciphertext index.
 //   5. Go fixture (`sdk-test-fixture --action=decrypt --share=11 ...`) drives
 //      partial decryption + combine on-chain.
 //   6. SDK reads `getPlaintext(epochId, idx)` and asserts the recovered
@@ -30,7 +32,8 @@ import { fileURLToPath } from 'node:url';
 import {
   DKGClient,
   DKGWriter,
-  buildElGamal,
+  encryptWithProof,
+  verifyCiphertextPoK,
 } from '../src/index.js';
 import { makePublicClient, makeWalletClient } from './helpers/accounts.js';
 
@@ -127,28 +130,33 @@ describe('SDK ciphertext end-to-end (encrypt → submit → combine → getPlain
     // y == 1 with x == 0 would be the identity, i.e. no contributions accepted yet.
     expect(!(pk.x === 0n && pk.y === 1n)).toBe(true);
 
-    // 2. Encrypt a small plaintext using SDK ElGamal (operates in TE form).
+    // 2. Encrypt a small plaintext using SDK ElGamal (operates in TE form) and
+    //    prove knowledge of the randomness for (epochId, aid).
     const plaintext = 42n;
-    const eg = await buildElGamal();
-    const ciphertext = eg.encrypt(plaintext, [pk.x, pk.y]);
+    const zeroAid = ('0x' + '0'.repeat(64)) as `0x${string}`;
+    const { ciphertext, pok } = await encryptWithProof(fixture.epochId, zeroAid, plaintext, [pk.x, pk.y]);
 
     // 3. Submit to chain. The writer converts TE→RTE internally before sending,
-    //    so the contract's `_isOnBabyJubJub` (RTE) check passes.
-    const ciphertextIndex = 1;
-    const zeroAid = ('0x' + '0'.repeat(64)) as `0x${string}`;
-    const submitTx = await writer.submitCiphertext(
-      fixture.epochId,
-      zeroAid,
-      ciphertextIndex,
-      ciphertext.c1[0], ciphertext.c1[1],
-      ciphertext.c2[0], ciphertext.c2[1],
+    //    so the contract's `_isOnBabyJubJub` (RTE) check passes, and hands back
+    //    the index the contract assigned.
+    const countBefore = await client.ciphertextCount(fixture.epochId, zeroAid);
+    const { hash: submitTx, ciphertextIndex } = await writer.submitCiphertext(
+      fixture.epochId, zeroAid, ciphertext, pok,
     );
     expect(submitTx).toMatch(/^0x[0-9a-f]{64}$/i);
-    await writer.publicClient.waitForTransactionReceipt({ hash: submitTx });
+    expect(ciphertextIndex).toBe(countBefore + 1);
+    expect(await client.ciphertextCount(fixture.epochId, zeroAid)).toBe(ciphertextIndex);
 
-    // Sanity: the contract now stores a non-zero ciphertext hash for this index.
+    // Sanity: the contract now stores a non-zero ciphertext hash for this index,
+    // and the event carries a proof the committee will accept.
     const ctHash = await client.getCiphertextHash(fixture.epochId, zeroAid, ciphertextIndex);
     expect(ctHash).not.toBe('0x' + '0'.repeat(64));
+    const events = await client.getCiphertextSubmittedEvents(fixture.epochId, { aid: zeroAid, ciphertextIndex });
+    expect(events).toHaveLength(1);
+    expect(events[0].pokValid).toBe(true);
+    expect(verifyCiphertextPoK(
+      fixture.epochId, zeroAid, events[0].c1.x, events[0].c1.y, events[0].c2.x, events[0].c2.y, events[0].pok,
+    )).toBe(true);
 
     // 4. Drive the on-chain decryption flow via the Go fixture (it builds the
     //    Groth16 proofs we can't generate in TS).

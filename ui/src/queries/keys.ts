@@ -8,6 +8,7 @@ export const QueryKeys = {
   chain: ['chain'] as const,
   blockNumber: ['chain', 'blockNumber'] as const,
 
+  epochBounds: ['chain', 'epochBounds'] as const,
   epochsRecent: (limit: number) => ['epochs', 'recent', limit] as const,
   epoch: (id: `0x${string}`) => ['epochs', id] as const,
   epochEvents: (id: `0x${string}`, fromBlock?: bigint) =>

@@ -78,6 +78,7 @@ export function NodeTable({ nodes, currentBlock }: Props) {
             <Th>Operator</Th>
             <Th>Status</Th>
             <Th>Last seen</Th>
+            <Th>Registered</Th>
             <Th>Public key</Th>
           </Table.Row>
         </Table.Header>
@@ -108,6 +109,13 @@ export function NodeTable({ nodes, currentBlock }: Props) {
                       block #{node.lastActiveBlock.toString()}
                     </Text>
                   </Stack>
+                </Table.Cell>
+                <Table.Cell py={3.5}>
+                  {/* A node only enters the lottery of epochs created after this
+                      block, so a fresh identity can't be ground against a seed. */}
+                  <Text className='dkg-tabular' fontFamily='mono' fontSize='2xs' color='ink.4'>
+                    block #{node.registeredAtBlock.toString()}
+                  </Text>
                 </Table.Cell>
                 <Table.Cell py={3.5}>
                   <DetailDisclosure title='Show key coordinates'>

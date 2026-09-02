@@ -72,15 +72,11 @@ describe('Monitor utilities', () => {
     }
 
     await mineUntilEpochAllowed(writer.publicClient, writer.managerAddress);
-    const currentBlock = await client.blockNumber();
     const hash = await writer.createEpoch({
       threshold:                 1,
       committeeSize:             1,
       minValidContributions:     1,
       lotteryAlphaBps:           15000,
-      committeeSelectionDeadlineBlock: currentBlock + 30n,
-      keyAssemblyDeadlineBlock: currentBlock + 60n,
-      liveNotBeforeBlock:    currentBlock + 61n,
     });
     await writer.waitForTransaction(hash);
 
@@ -107,15 +103,11 @@ describe('Monitor utilities', () => {
     }
 
     await mineUntilEpochAllowed(writer.publicClient, writer.managerAddress);
-    const currentBlock = await client.blockNumber();
     const createHash   = await writer.createEpoch({
       threshold:                 1,
       committeeSize:             1,
       minValidContributions:     1,
       lotteryAlphaBps:           15000,
-      committeeSelectionDeadlineBlock: currentBlock + 30n,
-      keyAssemblyDeadlineBlock: currentBlock + 60n,
-      liveNotBeforeBlock:    currentBlock + 61n,
     });
     await writer.waitForTransaction(createHash);
 

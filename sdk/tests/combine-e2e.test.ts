@@ -10,7 +10,8 @@
 //
 // Flow:
 //   1. Go fixture (`--action=create`) → finalized single-participant epoch.
-//   2. SDK encrypts a plaintext, calls writer.submitCiphertext.
+//   2. SDK encrypts a plaintext (with its proof of knowledge), calls
+//      writer.submitCiphertext and takes the on-chain-assigned index.
 //   3. Go fixture (`--action=prepare-combine`) → submits the partial
 //      decryption on-chain and emits the combine payload bytes.
 //   4. SDK calls writer.combineDecryption(epochId, 0x00…00, idx, …) with
@@ -23,7 +24,7 @@ import { inject } from 'vitest';
 import { spawn } from 'node:child_process';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DKGClient, DKGWriter, buildElGamal } from '../src/index.js';
+import { DKGClient, DKGWriter, encryptWithProof } from '../src/index.js';
 import { makePublicClient, makeWalletClient } from './helpers/accounts.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -103,16 +104,12 @@ describe('SDK combineDecryption end-to-end (writer drives the on-chain combine)'
     const { enabled, rpcUrl, addressesFile } = useHarness();
     if (!enabled || !fixture) return;
 
-    // 1. SDK encrypts + submits the ciphertext.
+    // 1. SDK encrypts + submits the ciphertext; the contract assigns the index.
     const pk = await client.getCollectivePublicKey(fixture.epochId);
     const plaintext = 137n;
-    const eg = await buildElGamal();
-    const ct = eg.encrypt(plaintext, [pk.x, pk.y]);
-    const ciphertextIndex = 1;
-    const submitTx = await writer.submitCiphertext(
-      fixture.epochId, ZERO_AID, ciphertextIndex, ct.c1[0], ct.c1[1], ct.c2[0], ct.c2[1],
-    );
-    await writer.publicClient.waitForTransactionReceipt({ hash: submitTx });
+    const { ciphertext, pok } = await encryptWithProof(fixture.epochId, ZERO_AID, plaintext, [pk.x, pk.y]);
+    const { ciphertextIndex } = await writer.submitCiphertext(fixture.epochId, ZERO_AID, ciphertext, pok);
+    expect(ciphertextIndex).toBeGreaterThanOrEqual(1);
 
     // 2. Go fixture builds the proof + submits the partial decryption,
     //    then hands back the combine bytes for the SDK to send.

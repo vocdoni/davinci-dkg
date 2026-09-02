@@ -12,6 +12,7 @@ import {
   DomainOperatorRegisterV1,
   DomainOrganizerRegisterV1,
   DomainDLEQV1,
+  DomainCiphertextPoKV1,
 } from '../src/protocol';
 import { computeS, SUBGROUP_ORDER } from '../src/derive';
 import {
@@ -59,6 +60,7 @@ describe('vectors / protocol.json', () => {
     expect(DomainOperatorRegisterV1).toBe(f.domains.OperatorRegisterV1.keccak256);
     expect(DomainOrganizerRegisterV1).toBe(f.domains.OrganizerRegisterV1.keccak256);
     expect(DomainDLEQV1).toBe(f.domains.DLEQV1.keccak256);
+    expect(DomainCiphertextPoKV1).toBe(f.domains.CiphertextPoKV1.keccak256);
   });
 
   it('PartialDecrypt domain reduction matches', () => {

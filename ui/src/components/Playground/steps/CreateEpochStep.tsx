@@ -1,17 +1,20 @@
 import { useState } from 'react'
-import { Alert, Box, Button, Heading, Stack, Text } from '@chakra-ui/react'
+import { Alert, Box, Button, Heading, SimpleGrid, Stack, Text } from '@chakra-ui/react'
 import { LuPenLine, LuUsers, LuShuffle } from 'react-icons/lu'
-import { buildEpochId, type DecryptionPolicy, type EpochPolicy } from '@vocdoni/davinci-dkg-sdk'
+import { buildEpochId, type CreateEpochParams, type EpochBounds } from '@vocdoni/davinci-dkg-sdk'
 import { StepCard, type StepStatus } from '../StepCard'
-import { PolicyForm, defaultPolicyForm, validatePolicyForm, type PolicyFormState } from '~components/Epoch/PolicyForm'
 import {
-  DecryptionPolicyForm,
-  defaultDecryptionPolicyForm,
-  type DecryptionPolicyFormState,
-} from '~components/Epoch/DecryptionPolicyForm'
+  MAX_COMMITTEE_SIZE,
+  MIN_LOTTERY_ALPHA_BPS,
+  PolicyForm,
+  defaultPolicyForm,
+  validatePolicyForm,
+  type PolicyFormState,
+} from '~components/Epoch/PolicyForm'
 import { DetailDisclosure } from '~components/Debug/DetailDisclosure'
 import { HowItWorks } from '../HowItWorks'
 import { useDkgWriter } from '~hooks/use-dkg-writer'
+import { useEpochBounds } from '~queries/epochs'
 import { HashCell } from '~components/ui/HashCell'
 import type { Hex } from 'viem'
 
@@ -24,15 +27,17 @@ interface Props {
 
 export function CreateEpochStep({ status, epochId, setRoundId, log }: Props) {
   const writer = useDkgWriter()
+  const bounds = useEpochBounds()
   const [form, setForm] = useState<PolicyFormState>(defaultPolicyForm)
-  const [dpForm, setDpForm] = useState<DecryptionPolicyFormState>(defaultDecryptionPolicyForm)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [txHash, setTxHash] = useState<Hex | null>(null)
 
   // Validate the form on every render so the submit button reflects the
   // current state without an extra useEffect roundtrip. Cheap pure call.
-  const validationError = validatePolicyForm(form)
+  // The deployment bounds arrive asynchronously; until then only the
+  // contract-wide invariants are checked.
+  const validationError = validatePolicyForm(form, bounds.data ?? null)
 
   const onCreate = async () => {
     if (!writer) return
@@ -43,31 +48,21 @@ export function CreateEpochStep({ status, epochId, setRoundId, log }: Props) {
     setBusy(true)
     setError(null)
     try {
-      // Phase deadline blocks are derived ON-CHAIN from the contract's
-      // immutable EPOCH_DURATION_BLOCKS plus per-phase BPS constants. The
-      // form fields below are unused by the writer but stay on PolicyFormState
-      // for backward UI-test compatibility — leave them at 0n.
-      const policy: EpochPolicy = {
+      // Only these four fields exist on createEpoch. Phase deadline blocks
+      // are derived ON-CHAIN from the contract's immutable
+      // EPOCH_DURATION_BLOCKS plus per-phase BPS constants, and there is no
+      // per-epoch decryption policy any more — ciphertext submission is
+      // gated per application instead.
+      const policy: CreateEpochParams = {
         threshold: Number(form.threshold),
         committeeSize: Number(form.committeeSize),
         minValidContributions: Number(form.minValidContributions),
         lotteryAlphaBps: Number(form.lotteryAlphaBps),
-        committeeSelectionDeadlineBlock: 0n,
-        keyAssemblyDeadlineBlock: 0n,
-        liveNotBeforeBlock: 0n,
-      }
-      const dp: DecryptionPolicy = {
-        ownerOnly: dpForm.ownerOnly,
-        maxDecryptions: Number(dpForm.maxDecryptions || '0'),
-        notBeforeBlock: BigInt(dpForm.notBeforeBlock || '0'),
-        notBeforeTimestamp: BigInt(dpForm.notBeforeTimestamp || '0'),
-        notAfterBlock: BigInt(dpForm.notAfterBlock || '0'),
-        notAfterTimestamp: BigInt(dpForm.notAfterTimestamp || '0'),
       }
 
       const currentBlock = await writer.blockNumber()
       log(`Creating epoch at block #${currentBlock} (t=${policy.threshold} of n=${policy.committeeSize})`, 'info')
-      const hash = await writer.createEpoch(policy, dp)
+      const hash = await writer.createEpoch(policy)
       setTxHash(hash)
       log(`createEpoch tx submitted: ${hash}`, 'tx')
 
@@ -101,18 +96,9 @@ export function CreateEpochStep({ status, epochId, setRoundId, log }: Props) {
               <Heading size='xs' mb={3} color='ink.2'>
                 Epoch configuration
               </Heading>
-              <PolicyForm value={form} onChange={setForm} disabled={busy || !writer} />
+              <PolicyForm value={form} onChange={setForm} disabled={busy || !writer} bounds={bounds.data ?? null} />
             </Box>
-            <DetailDisclosure title='Restrict who can publish ciphertexts (optional)'>
-              <Stack gap={3} p={1}>
-                <Text fontSize='xs' color='ink.3'>
-                  By default, anyone can publish a ciphertext for this epoch to be decrypted. Set
-                  these limits if you only want yourself (or a specific time window, or a maximum
-                  count) to be allowed. Leave everything blank for an open epoch.
-                </Text>
-                <DecryptionPolicyForm value={dpForm} onChange={setDpForm} disabled={busy || !writer} />
-              </Stack>
-            </DetailDisclosure>
+            <DeploymentBounds bounds={bounds.data ?? null} loading={bounds.isLoading} />
             <HowItWorks
               body={
                 <>
@@ -120,7 +106,8 @@ export function CreateEpochStep({ status, epochId, setRoundId, log }: Props) {
                   exists, the registry runs a small lottery and picks {form.committeeSize}{' '}
                   committee members from the active nodes. Those nodes will spend the next minutes
                   collaboratively building one shared encryption key — without any single one of
-                  them ever knowing the matching private key.
+                  them ever knowing the matching private key. Anyone may create an epoch once the
+                  cadence window allows it.
                 </>
               }
               flow={[
@@ -175,5 +162,66 @@ export function CreateEpochStep({ status, epochId, setRoundId, log }: Props) {
         )}
       </Stack>
     </StepCard>
+  )
+}
+
+// The limits `createEpoch` enforces on this deployment. Three of them are
+// constructor immutables of DKGManager (read on-chain); the α floor and the
+// committee cap are protocol-wide. Shown in place of the old per-epoch
+// decryption-policy form, which no longer exists — ciphertext submission
+// is gated per application via AppPolicy.
+function DeploymentBounds({ bounds, loading }: { bounds: EpochBounds | null; loading: boolean }) {
+  const rows: { label: string; value: string; hint: string }[] = [
+    {
+      label: 'Min threshold',
+      value: bounds ? String(bounds.minThreshold) : loading ? '…' : '—',
+      hint: 'MIN_THRESHOLD',
+    },
+    {
+      label: 'Min committee',
+      value: bounds ? String(bounds.minCommitteeSize) : loading ? '…' : '—',
+      hint: 'MIN_COMMITTEE_SIZE',
+    },
+    {
+      label: 'Max committee',
+      value: String(MAX_COMMITTEE_SIZE),
+      hint: 'circuit MaxN',
+    },
+    {
+      label: 'Lottery α range',
+      value: bounds
+        ? `${MIN_LOTTERY_ALPHA_BPS}–${bounds.maxLotteryAlphaBps} bps`
+        : loading
+          ? '…'
+          : `≥ ${MIN_LOTTERY_ALPHA_BPS} bps`,
+      hint: 'MAX_LOTTERY_ALPHA_BPS',
+    },
+  ]
+  return (
+    <Box borderWidth='1px' borderColor='border.subtle' borderRadius='lg' bg='surface.sunken' p={4}>
+      <Text fontFamily='mono' fontSize='2xs' color='ink.3' letterSpacing='0.08em' textTransform='uppercase' mb={3}>
+        Deployment bounds
+      </Text>
+      <SimpleGrid columns={{ base: 2, md: 4 }} gap={3}>
+        {rows.map((r) => (
+          <Box key={r.label}>
+            <Text fontSize='2xs' color='ink.4'>
+              {r.label}
+            </Text>
+            <Text className='dkg-tabular' fontFamily='mono' fontSize='sm' color='ink.0' fontWeight={500}>
+              {r.value}
+            </Text>
+            <Text fontFamily='mono' fontSize='2xs' color='ink.4'>
+              {r.hint}
+            </Text>
+          </Box>
+        ))}
+      </SimpleGrid>
+      <Text fontSize='2xs' color='ink.4' mt={3} lineHeight='1.55' maxW='62ch'>
+        Fixed when the <code>DKGManager</code> was deployed; <code>createEpoch</code> reverts with{' '}
+        <code>InvalidPolicy()</code> outside them. The contract also requires threshold ≤ min valid
+        contributions ≤ committee size.
+      </Text>
+    </Box>
   )
 }

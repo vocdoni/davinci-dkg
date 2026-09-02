@@ -1,4 +1,5 @@
 import {
+  getAbiItem,
   getContract,
   type PublicClient,
   type Address,
@@ -7,9 +8,11 @@ import {
 import { dkgManagerAbi, dkgRegistryAbi, dkgAppManagerAbi } from './abi.js';
 import {
   type Epoch,
+  type EpochBounds,
   type ContributionRecord,
   type PartialDecryptionRecord,
   type CombinedDecryptionRecord,
+  type CiphertextPoK,
   type NodeKey,
   type DKGConfig,
   type EpochPhaseValue,
@@ -18,6 +21,7 @@ import {
 } from './types.js';
 import { buildEpochId } from './utils.js';
 import { fromRTEtoTE } from './crypto/babyjub-form.js';
+import { verifyCiphertextPoK } from './schnorr.js';
 
 type ManagerContract = GetContractReturnType<typeof dkgManagerAbi, PublicClient>;
 type RegistryContract = GetContractReturnType<typeof dkgRegistryAbi, PublicClient>;
@@ -261,6 +265,27 @@ export class DKGClient {
     return BigInt(await this._manager.read.lastEpochStartBlock() as bigint);
   }
 
+  /**
+   * Deploy-time bounds `createEpoch` enforces (the manager's immutables
+   * `MIN_THRESHOLD`, `MIN_COMMITTEE_SIZE`, `MAX_LOTTERY_ALPHA_BPS`). The
+   * contract additionally always requires
+   * `1 ≤ threshold ≤ minValidContributions ≤ committeeSize ≤ MaxN` and
+   * `lotteryAlphaBps ≥ 10000`; anything outside reverts `InvalidPolicy()`.
+   * Immutable per deployment, so cache freely.
+   */
+  async getEpochBounds(): Promise<EpochBounds> {
+    const [minThreshold, minCommitteeSize, maxLotteryAlphaBps] = await Promise.all([
+      this._manager.read.MIN_THRESHOLD(),
+      this._manager.read.MIN_COMMITTEE_SIZE(),
+      this._manager.read.MAX_LOTTERY_ALPHA_BPS(),
+    ]);
+    return {
+      minThreshold: Number(minThreshold),
+      minCommitteeSize: Number(minCommitteeSize),
+      maxLotteryAlphaBps: Number(maxLotteryAlphaBps),
+    };
+  }
+
   // ── Epoch queries ──────────────────────────────────────────────────────────
 
   /** Fetch full epoch state. */
@@ -359,8 +384,8 @@ export class DKGClient {
 
   /**
    * keccak256(abi.encode(c1x, c1y, c2x, c2y)) for the ciphertext stored at
-   * (epochId, ciphertextIndex). Returns 0x00..00 when no ciphertext has been
-   * submitted at this slot. The raw coordinates are only in the
+   * (epochId, aid, ciphertextIndex). Returns 0x00..00 when no ciphertext has
+   * been submitted at this slot. The raw coordinates are only in the
    * `CiphertextSubmitted` event log.
    */
   async getCiphertextHash(
@@ -371,12 +396,13 @@ export class DKGClient {
     return this._manager.read.getCiphertextHash([epochId as any, aid as any, ciphertextIndex]);
   }
 
-  /** Fetch the decryption policy set at epoch creation. */
-  async getDecryptionPolicy(
-    epochId: `0x${string}`,
-  ): Promise<import('./types.js').DecryptionPolicy> {
-    const r = await this._manager.read.getDecryptionPolicy([epochId as any]);
-    return r as unknown as import('./types.js').DecryptionPolicy;
+  /**
+   * Number of ciphertexts accepted so far under `(epochId, aid)`. Indices are
+   * assigned on-chain as 1, 2, … in submission order, so the last accepted
+   * ciphertext has index `ciphertextCount`.
+   */
+  async ciphertextCount(epochId: `0x${string}`, aid: `0x${string}`): Promise<number> {
+    return Number(await this._manager.read.ciphertextCount([epochId as any, aid as any]));
   }
 
   /** Fetch the share-commitment hash for a given participant index. */
@@ -536,42 +562,41 @@ export class DKGClient {
   }
 
   /**
-   * Fetch all CiphertextSubmitted events for a specific epoch. Each entry
-   * carries the raw (C1, C2) coordinates; nodes and consumers need these to
-   * perform threshold decryption since the contract only stores a keccak hash.
+   * Fetch all CiphertextSubmitted events for a specific epoch, optionally
+   * narrowed to one application (`aid`) and/or one `ciphertextIndex`. Each
+   * entry carries the raw (C1, C2) coordinates in on-chain (RTE) form plus
+   * the submitter's proof of knowledge; the contract only stores a keccak
+   * hash, so this log is the only source of the coordinates nodes need for
+   * threshold decryption.
+   *
+   * `pokValid` is the SDK's own verdict on the proof (`verifyCiphertextPoK`).
+   * Committee nodes run the same check and never decrypt a ciphertext whose
+   * proof fails, so a `false` here means the plaintext will never appear.
    */
   async getCiphertextSubmittedEvents(
     epochId: `0x${string}`,
-    opts?: { ciphertextIndex?: number },
+    opts?: { aid?: `0x${string}`; ciphertextIndex?: number },
   ): Promise<
     Array<{
+      aid: `0x${string}`;
       ciphertextIndex: number;
       submitter: Address;
       c1: { x: bigint; y: bigint };
       c2: { x: bigint; y: bigint };
+      pok: CiphertextPoK;
+      pokValid: boolean;
       blockNumber: bigint;
       transactionHash: `0x${string}` | null;
     }>
   > {
     const args: Record<string, unknown> = { epochId: epochId as any };
+    if (opts?.aid != null) args.aid = opts.aid;
     if (opts?.ciphertextIndex != null) args.ciphertextIndex = opts.ciphertextIndex;
     const logs = await getLogsChunked(
       this.publicClient,
       {
         address: this.managerAddress,
-        event: {
-          type: 'event',
-          name: 'CiphertextSubmitted',
-          inputs: [
-            { name: 'epochId', type: 'bytes12', indexed: true },
-            { name: 'ciphertextIndex', type: 'uint16', indexed: true },
-            { name: 'submitter', type: 'address', indexed: true },
-            { name: 'c1x', type: 'uint256', indexed: false },
-            { name: 'c1y', type: 'uint256', indexed: false },
-            { name: 'c2x', type: 'uint256', indexed: false },
-            { name: 'c2y', type: 'uint256', indexed: false },
-          ],
-        } as const,
+        event: getAbiItem({ abi: dkgManagerAbi, name: 'CiphertextSubmitted' }),
         args,
         fromBlock: 0n,
         toBlock: 'latest',
@@ -580,11 +605,16 @@ export class DKGClient {
     );
     return logs.map((l) => {
       const a = l.args as any;
+      const aid = a.aid as `0x${string}`;
+      const pok: CiphertextPoK = { ax: a.pokAx as bigint, ay: a.pokAy as bigint, z: a.pokZ as bigint };
       return {
+        aid,
         ciphertextIndex: Number(a.ciphertextIndex),
         submitter: a.submitter as Address,
         c1: { x: a.c1x as bigint, y: a.c1y as bigint },
         c2: { x: a.c2x as bigint, y: a.c2y as bigint },
+        pok,
+        pokValid: verifyCiphertextPoK(epochId, aid, a.c1x, a.c1y, a.c2x, a.c2y, pok),
         blockNumber: l.blockNumber ?? 0n,
         transactionHash: (l.transactionHash ?? null) as `0x${string}` | null,
       };
@@ -593,13 +623,15 @@ export class DKGClient {
 
   /**
    * Fetch all DecryptionCombined events for a specific epoch (optionally
-   * filtered by `ciphertextIndex`). Each entry contains the plaintext scalar.
+   * filtered by `aid` and/or `ciphertextIndex`). Each entry contains the
+   * plaintext scalar.
    */
   async getDecryptionCombinedEvents(
     epochId: `0x${string}`,
-    opts?: { ciphertextIndex?: number },
+    opts?: { aid?: `0x${string}`; ciphertextIndex?: number },
   ): Promise<
     Array<{
+      aid: `0x${string}`;
       ciphertextIndex: number;
       combineHash: `0x${string}`;
       plaintext: bigint;
@@ -608,21 +640,13 @@ export class DKGClient {
     }>
   > {
     const args: Record<string, unknown> = { epochId: epochId as any };
+    if (opts?.aid != null) args.aid = opts.aid;
     if (opts?.ciphertextIndex != null) args.ciphertextIndex = opts.ciphertextIndex;
     const logs = await getLogsChunked(
       this.publicClient,
       {
         address: this.managerAddress,
-        event: {
-          type: 'event',
-          name: 'DecryptionCombined',
-          inputs: [
-            { name: 'epochId', type: 'bytes12', indexed: true },
-            { name: 'ciphertextIndex', type: 'uint16', indexed: true },
-            { name: 'combineHash', type: 'bytes32', indexed: false },
-            { name: 'plaintext', type: 'uint256', indexed: false },
-          ],
-        } as const,
+        event: getAbiItem({ abi: dkgManagerAbi, name: 'DecryptionCombined' }),
         args,
         fromBlock: 0n,
         toBlock: 'latest',
@@ -632,6 +656,7 @@ export class DKGClient {
     return logs.map((l) => {
       const a = l.args as any;
       return {
+        aid: a.aid as `0x${string}`,
         ciphertextIndex: Number(a.ciphertextIndex),
         combineHash: a.combineHash as `0x${string}`,
         plaintext: a.plaintext as bigint,

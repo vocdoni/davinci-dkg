@@ -69,10 +69,10 @@ export function WatchProgressStep({ status, epochId, log }: Props) {
   }
 
   const failure = epoch.data ? roundFailure(epoch.data.epoch, block ?? null) : null
-  const canAbort =
-    epoch.data &&
-    (epoch.data.epoch.status === EpochPhase.CommitteeSelection ||
-      epoch.data.epoch.status === EpochPhase.KeyAssembly)
+  // abortEpoch is permissionless but the contract only accepts it for a dead
+  // epoch — exactly the condition roundFailure detects — so the button is
+  // offered only then; any earlier it would just revert InvalidPhase().
+  const canAbort = failure !== null
 
   // Pick the headline counter for the current phase. After finalize the
   // counters are no longer meaningful here — KeyAvailableStep takes over.
@@ -156,10 +156,10 @@ export function WatchProgressStep({ status, epochId, log }: Props) {
                   {failure.kind === 'committee-selection' ? (
                     <>
                       Only <b>{failure.have}</b> of the {failure.total} committee slot(s) were
-                      claimed before the deadline — at least <b>{failure.need}</b> are needed for
-                      the epoch to be decryptable. The playground cannot continue with this epoch.
-                      Abort it and try again with a longer window, or wait for more nodes to come
-                      online.
+                      claimed before the deadline — all <b>{failure.need}</b> must be filled for
+                      the epoch to move on. The playground cannot continue with this epoch. Abort
+                      it and try again once the next cadence window opens, or wait for more nodes
+                      to come online.
                     </>
                   ) : (
                     <>
@@ -179,7 +179,9 @@ export function WatchProgressStep({ status, epochId, log }: Props) {
                 Abort epoch
               </Button>
               <Text fontSize='2xs' color='ink.4' mt={1}>
-                Organizer-only. Useful if you started a epoch you don't intend to complete.
+                Anyone can abort a dead epoch — the contract only accepts it once the selection
+                deadline passed without a full committee, or key assembly closed with too few
+                contributions. It marks the epoch Aborted so explorers stop waiting on it.
               </Text>
             </Box>
           )}

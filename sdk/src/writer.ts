@@ -1,19 +1,32 @@
 import {
-  getContract,
+  parseEventLogs,
   type WalletClient,
-  type PublicClient,
   type Address,
   type Hash,
+  type TransactionReceipt,
 } from 'viem';
 import { dkgManagerAbi, dkgRegistryAbi, dkgAppManagerAbi } from './abi.js';
 import {
-  type EpochPolicy,
-  type DecryptionPolicy,
+  type CreateEpochParams,
+  type CiphertextPoK,
+  type ElGamalCiphertext,
   type DKGWriterConfig,
-  OpenDecryptionPolicy,
 } from './types.js';
 import { DKGClient } from './client.js';
 import { fromTEtoRTE } from './crypto/babyjub-form.js';
+import { proveOperator, verifyCiphertextPoK } from './schnorr.js';
+
+/** Outcome of `DKGWriter.submitCiphertext` (the call waits for the receipt). */
+export interface SubmitCiphertextResult {
+  hash: Hash;
+  receipt: TransactionReceipt;
+  /**
+   * Index the contract assigned to this ciphertext (1, 2, … per
+   * `(epochId, aid)`), read back from the `CiphertextSubmitted` event. Use
+   * it for `getPlaintext`, `waitForDecryption`, `getCombinedDecryption`.
+   */
+  ciphertextIndex: number;
+}
 
 /**
  * Write client for the DKG Manager and Registry contracts.
@@ -36,20 +49,21 @@ export class DKGWriter extends DKGClient {
   // ── DKGManager write functions ─────────────────────────────────────────────
 
   /**
-   * Create a new DKG epoch.
+   * Create a new DKG epoch. Permissionless, but only succeeds once
+   * `block.number >= nextEpochStartBlock()` (the cadence guard).
    *
-   * @param policy            committee / phase policy for the epoch.
-   * @param decryptionPolicy  gate on `submitCiphertext` (owner-only, time
-   *                          windows, submission cap). Defaults to fully open —
-   *                          anyone can submit, no caps, no windows. Pair with
-   *                          `OpenDecryptionPolicy` for the permissive default.
-   * @returns The transaction hash. Use `waitForRoundId` to obtain the epoch ID
-   *          once the tx is mined.
+   * @param policy  the four `createEpoch` arguments (threshold, committeeSize,
+   *                minValidContributions, lotteryAlphaBps). Phase deadlines are
+   *                derived on-chain from `EPOCH_DURATION_BLOCKS`, and the
+   *                values must satisfy `getEpochBounds()` plus
+   *                `1 ≤ threshold ≤ minValidContributions ≤ committeeSize ≤ MaxN`
+   *                and `lotteryAlphaBps ≥ 10000`, else `InvalidPolicy()`.
+   *                A full `EpochPolicy` is accepted too; its deadline fields
+   *                are ignored.
+   * @returns The transaction hash. Once mined, derive the id with
+   *          `buildEpochId(prefix, epochNonce())`.
    */
-  async createEpoch(
-    policy: EpochPolicy,
-    decryptionPolicy: DecryptionPolicy = OpenDecryptionPolicy,
-  ): Promise<Hash> {
+  async createEpoch(policy: CreateEpochParams): Promise<Hash> {
     const { request } = await this.publicClient.simulateContract({
       address: this.managerAddress,
       abi: dkgManagerAbi,
@@ -59,7 +73,6 @@ export class DKGWriter extends DKGClient {
         policy.committeeSize,
         policy.minValidContributions,
         policy.lotteryAlphaBps,
-        decryptionPolicy,
       ],
       account: this._writerAccount,
     });
@@ -186,36 +199,67 @@ export class DKGWriter extends DKGClient {
   }
 
   /**
-   * Submit a ciphertext to be threshold-decrypted by the committee.
-   * The epoch must be Finalized and the submission must pass the epoch's
-   * DecryptionPolicy (owner-only, time windows, max count).
+   * Submit a ciphertext to be threshold-decrypted by the committee. The
+   * epoch must be Live and, for a registered application, the submission
+   * must pass its `AppPolicy` (authorized submitter, block window, cap).
    *
-   * `ciphertextIndex` is caller-chosen and write-once per epoch.
+   * The ciphertext index is assigned on-chain (1, 2, … per `(epochId, aid)`)
+   * and returned in the result, read back from the `CiphertextSubmitted`
+   * event; this method therefore waits for the receipt.
    *
-   * Inputs are expected in circomlib TE form (the form that this SDK's
-   * `encrypt` returns and that davinci-sdk also uses). They are converted
-   * to gnark RTE form just before sending so the contract's on-curve check
-   * (`_isOnBabyJubJub`, in RTE) accepts them. See `crypto/babyjub-form.ts`.
+   * `pok` is the Schnorr proof of knowledge of the ElGamal randomness bound
+   * to exactly this `(epochId, aid)` — obtain it from `encryptWithProof` or
+   * `proveCiphertext`. The contract only records it, but every committee
+   * node verifies it before releasing a partial decryption, so a ciphertext
+   * with a bad proof is silently never decrypted. The writer verifies the
+   * proof locally and throws rather than sending such a ciphertext.
+   *
+   * `ciphertext` is expected in circomlib TE form (what this SDK's
+   * `encrypt` returns). It is converted to gnark RTE form just before
+   * sending so the contract's on-curve check accepts it; the proof is
+   * already in RTE form. See `crypto/babyjub-form.ts`.
    */
   async submitCiphertext(
     epochId: `0x${string}`,
     aid: `0x${string}`,
-    ciphertextIndex: number,
-    c1x: bigint,
-    c1y: bigint,
-    c2x: bigint,
-    c2y: bigint,
-  ): Promise<Hash> {
-    const [c1xR, c1yR] = fromTEtoRTE(c1x, c1y);
-    const [c2xR, c2yR] = fromTEtoRTE(c2x, c2y);
+    ciphertext: ElGamalCiphertext,
+    pok: CiphertextPoK,
+  ): Promise<SubmitCiphertextResult> {
+    const [c1xR, c1yR] = fromTEtoRTE(ciphertext.c1[0], ciphertext.c1[1]);
+    const [c2xR, c2yR] = fromTEtoRTE(ciphertext.c2[0], ciphertext.c2[1]);
+    if (!verifyCiphertextPoK(epochId, aid, c1xR, c1yR, c2xR, c2yR, pok)) {
+      throw new Error(
+        'submitCiphertext: ciphertext proof of knowledge does not verify for this (epochId, aid); ' +
+          'build it with encryptWithProof() / proveCiphertext() for exactly this epoch and application',
+      );
+    }
     const { request } = await this.publicClient.simulateContract({
       address: this.managerAddress,
       abi: dkgManagerAbi,
       functionName: 'submitCiphertext',
-      args: [epochId as any, aid as any, ciphertextIndex, c1xR, c1yR, c2xR, c2yR],
+      args: [epochId as any, aid as any, c1xR, c1yR, c2xR, c2yR, pok.ax, pok.ay, pok.z],
       account: this._writerAccount,
     });
-    return this.walletClient.writeContract(request);
+    const hash = await this.walletClient.writeContract(request);
+    const receipt = await this.publicClient.waitForTransactionReceipt({ hash });
+    if (receipt.status !== 'success') {
+      throw new Error(`submitCiphertext: transaction ${hash} reverted`);
+    }
+    const manager = this.managerAddress.toLowerCase();
+    const submitted = parseEventLogs({
+      abi: dkgManagerAbi,
+      eventName: 'CiphertextSubmitted',
+      logs: receipt.logs,
+    }).find(
+      (l) =>
+        l.address.toLowerCase() === manager &&
+        String(l.args.epochId).toLowerCase() === epochId.toLowerCase() &&
+        String(l.args.aid).toLowerCase() === aid.toLowerCase(),
+    );
+    if (!submitted) {
+      throw new Error(`submitCiphertext: no CiphertextSubmitted event in receipt of ${hash}`);
+    }
+    return { hash, receipt, ciphertextIndex: Number(submitted.args.ciphertextIndex) };
   }
 
   /**
@@ -361,8 +405,11 @@ export class DKGWriter extends DKGClient {
   }
 
   /**
-   * Abort a epoch. Only callable by the organizer when the epoch
-   * has not reached the minimum contribution threshold.
+   * Abort a dead epoch. Permissionless — anyone may call it — but the
+   * contract only accepts it once the epoch can no longer progress: the
+   * committee-selection deadline passed without a full committee, or the
+   * key-assembly deadline passed with fewer than `minValidContributions`
+   * accepted. Any other state reverts `InvalidPhase()`.
    */
   async abortEpoch(epochId: `0x${string}`): Promise<Hash> {
     const { request } = await this.publicClient.simulateContract({
@@ -389,7 +436,6 @@ export class DKGWriter extends DKGClient {
    */
   async registerKey(privateKey: bigint, nonce?: bigint): Promise<Hash> {
     const operator = this._writerAccount;
-    const { proveOperator } = await import('./schnorr.js');
     const { pubX, pubY, proof } = proveOperator(privateKey, operator, nonce);
     const registryAddress = await this._registryAddressResolved();
     const { request } = await this.publicClient.simulateContract({
@@ -409,7 +455,6 @@ export class DKGWriter extends DKGClient {
    */
   async updateKey(privateKey: bigint, nonce?: bigint): Promise<Hash> {
     const operator = this._writerAccount;
-    const { proveOperator } = await import('./schnorr.js');
     const { pubX, pubY, proof } = proveOperator(privateKey, operator, nonce);
     const registryAddress = await this._registryAddressResolved();
     const { request } = await this.publicClient.simulateContract({
@@ -475,10 +520,10 @@ export class DKGWriter extends DKGClient {
   }
 
   /**
-   * Create a epoch and wait for the receipt.
+   * Create an epoch and wait for the receipt.
    * Returns the transaction receipt (check `status === 'success'`).
    */
-  async createRoundAndWait(policy: EpochPolicy) {
+  async createRoundAndWait(policy: CreateEpochParams) {
     const hash = await this.createEpoch(policy);
     return this.waitForTransaction(hash);
   }

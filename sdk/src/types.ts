@@ -71,40 +71,32 @@ export interface EpochPolicy {
 }
 
 /**
- * Gates `submitCiphertext` for a epoch. All checks AND together; a zero-valued
- * field is a no-op for that check. Policy gates SUBMISSION only — once a
- * ciphertext is on-chain, committee decryption proceeds regardless of these
- * fields.
+ * The caller-supplied part of an epoch policy — exactly the four arguments
+ * of `DKGManager.createEpoch`. Phase deadlines are derived on-chain, and the
+ * former per-epoch `DecryptionPolicy` no longer exists: ciphertext submission
+ * is gated per application (`AppPolicy`) instead.
  */
-export interface DecryptionPolicy {
-  /** If true, only the epoch organizer may call `submitCiphertext`. */
-  ownerOnly: boolean;
-  /** Maximum accepted ciphertexts per epoch; 0 = unlimited (bounded by MAX_CIPHERTEXT_INDEX). */
-  maxDecryptions: number;
-  /** submitCiphertext reverts if `block.number < notBeforeBlock`; 0 = no lock. */
-  notBeforeBlock: bigint;
-  /** submitCiphertext reverts if `block.timestamp < notBeforeTimestamp`; 0 = no lock. */
-  notBeforeTimestamp: bigint;
-  /** submitCiphertext reverts if `block.number > notAfterBlock`; 0 = no deadline. */
-  notAfterBlock: bigint;
-  /** submitCiphertext reverts if `block.timestamp > notAfterTimestamp`; 0 = no deadline. */
-  notAfterTimestamp: bigint;
-}
+export type CreateEpochParams = Pick<
+  EpochPolicy,
+  'threshold' | 'committeeSize' | 'minValidContributions' | 'lotteryAlphaBps'
+>;
 
-/** Convenience: an all-zero DecryptionPolicy = no submission gating. */
-export const OpenDecryptionPolicy: DecryptionPolicy = {
-  ownerOnly: false,
-  maxDecryptions: 0,
-  notBeforeBlock: 0n,
-  notBeforeTimestamp: 0n,
-  notAfterBlock: 0n,
-  notAfterTimestamp: 0n,
-};
+/**
+ * Deploy-time bounds `createEpoch` enforces on `CreateEpochParams`
+ * (`DKGManager` immutables `MIN_THRESHOLD`, `MIN_COMMITTEE_SIZE`,
+ * `MAX_LOTTERY_ALPHA_BPS`). On top of these the contract always requires
+ * `1 ≤ threshold ≤ minValidContributions ≤ committeeSize ≤ MaxN` and
+ * `lotteryAlphaBps ≥ 10000`. Read them with `client.getEpochBounds()`.
+ */
+export interface EpochBounds {
+  minThreshold: number;
+  minCommitteeSize: number;
+  maxLotteryAlphaBps: number;
+}
 
 export interface Epoch {
   organizer: Address;
   policy: EpochPolicy;
-  decryptionPolicy: DecryptionPolicy;
   status: EpochPhaseValue;
   nonce: bigint;
   /** Block in which this epoch was created (anchor for nextEpochStartBlock). */
@@ -147,6 +139,12 @@ export interface NodeKey {
   pubY: bigint;
   status: NodeStatusValue;
   lastActiveBlock: bigint;
+  /**
+   * Block of the first `registerKey`. A node only enters the lottery of
+   * epochs created after this block (`NotInSnapshot` otherwise), so a fresh
+   * identity cannot be ground against an already-revealed seed.
+   */
+  registeredAtBlock: bigint;
 }
 
 // ── Application (P8/P9) ──────────────────────────────────────────────────────
@@ -214,6 +212,23 @@ export interface ElGamalCiphertext {
   c1: BabyJubPoint;
   /** Encrypted message: c2 = m*G + k*PubKey */
   c2: BabyJubPoint;
+}
+
+/**
+ * Schnorr proof of knowledge of the ElGamal randomness `r` behind
+ * `c1 = r·G`, bound to `(epochId, aid, c1, c2)`. Every committee node
+ * verifies it before releasing a partial decryption, so a ciphertext
+ * submitted without a valid proof is never decrypted. Build it with
+ * `encryptWithProof` (or `proveCiphertext` if you already hold `r`).
+ * Coordinates are in on-chain (RTE) form, exactly as `submitCiphertext`
+ * sends them and `CiphertextSubmitted` reports them.
+ */
+export interface CiphertextPoK {
+  /** Witness point A = w·G. */
+  ax: bigint;
+  ay: bigint;
+  /** Response z = w + c·r mod L. */
+  z: bigint;
 }
 
 // ── Monitor types ─────────────────────────────────────────────────────────────

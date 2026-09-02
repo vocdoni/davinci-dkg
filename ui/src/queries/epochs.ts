@@ -12,6 +12,17 @@ export function useRecentEpochs(limit = 20) {
   })
 }
 
+// Deploy-time createEpoch bounds (MIN_THRESHOLD / MIN_COMMITTEE_SIZE /
+// MAX_LOTTERY_ALPHA_BPS). Immutables on the manager, so never refetched.
+export function useEpochBounds() {
+  const { dkg } = useDkgClient()
+  return useQuery({
+    queryKey: QueryKeys.epochBounds,
+    queryFn: () => dkg.getEpochBounds(),
+    staleTime: Infinity,
+  })
+}
+
 export function useEpoch(id: `0x${string}` | undefined) {
   const { dkg } = useDkgClient()
   return useQuery({

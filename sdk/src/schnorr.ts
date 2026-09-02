@@ -9,6 +9,11 @@
 // need the corresponding secret scalar; DLEQ (`dleqChallenge`, `verifyDleq`)
 // is verify-only here because organizer shares are produced by the Go
 // tooling together with their Groth16 wrapper.
+//
+// `proveCiphertext` / `verifyCiphertextPoK` cover the submitter-side Schnorr
+// proof of knowledge of a ciphertext's ElGamal randomness (mirrors
+// `crypto/elgamal/elgamal.go`); the SDK writer refuses to send a ciphertext
+// whose proof does not verify, since the committee would never decrypt it.
 
 import {
   Base8,
@@ -20,14 +25,18 @@ import {
   type Point,
 } from '@zk-kit/baby-jubjub';
 import { poseidon2, poseidon3, poseidon4, poseidon5, poseidon6 } from 'poseidon-lite';
-import { keccak256, toHex, type Hex } from 'viem';
+import { keccak256, type Hex } from 'viem';
 import {
+  DomainCiphertextPoKV1,
   DomainOperatorRegisterV1,
   DomainOrganizerRegisterV1,
   Role,
   type RoleValue,
 } from './protocol.js';
 import { fromRTEtoTE, fromTEtoRTE } from './crypto/babyjub-form.js';
+import type { CiphertextPoK, ElGamalCiphertext } from './types.js';
+
+export type { CiphertextPoK } from './types.js';
 
 // BN254 scalar field prime — matches `BabyJubJub.Q` in Solidity and the
 // modulus the on-chain `_*SchnorrChallenge` reduces the keccak digest into.
@@ -307,6 +316,114 @@ export function proveOrganizer(
   return { pkOrgX: pkX, pkOrgY: pkY, proof: { ax: aX, ay: aY, z } };
 }
 
+// ─── ciphertext PoK (submitCiphertext) ──────────────────────────────────────
+
+/**
+ * Re-derive the ciphertext proof-of-knowledge challenge. Mirrors
+ * `pokChallenge` in `crypto/elgamal/elgamal.go`:
+ *
+ *   c = keccak256(DOMAIN_CIPHERTEXT_POK_V1 || epochId || aid
+ *                 || c1x || c1y || c2x || c2y || ax || ay) mod L
+ *
+ * with `epochId` as 12 bytes, `aid` as 32 bytes and the six coordinates as
+ * 32-byte big-endian words in the on-chain (RTE) form — exactly what
+ * `submitCiphertext` sends and `CiphertextSubmitted` reports.
+ */
+export function ciphertextPoKChallenge(
+  epochId: Hex,
+  aid: Hex,
+  c1x: bigint,
+  c1y: bigint,
+  c2x: bigint,
+  c2y: bigint,
+  ax: bigint,
+  ay: bigint,
+): bigint {
+  const buf = new Uint8Array(32 + 12 + 32 + 32 * 6);
+  buf.set(hexToBytes(DomainCiphertextPoKV1, 32), 0);
+  buf.set(hexToBytes(epochId, 12), 32);
+  buf.set(hexToBytes(aid, 32), 32 + 12);
+  let off = 32 + 12 + 32;
+  for (const v of [c1x, c1y, c2x, c2y, ax, ay]) {
+    buf.set(uint256ToBytes32(v), off);
+    off += 32;
+  }
+  return BigInt(keccak256(buf)) % subOrder;
+}
+
+/**
+ * Prove knowledge of the ElGamal randomness `r` behind `ciphertext.c1 = r·G`,
+ * bound to `(epochId, aid, c1, c2)`. Mirrors Go `elgamal.ProveKnowledge`.
+ *
+ * `ciphertext` is in TE form (what `buildElGamal().encrypt` returns); the
+ * returned witness `(ax, ay)` is in RTE form so the proof can be passed to
+ * `DKGWriter.submitCiphertext` as is. Throws if `r` does not actually open
+ * `c1` — a proof for the wrong randomness would be accepted by the chain
+ * but the committee would never decrypt the ciphertext.
+ *
+ * `nonce` pins the witness `w` and exists only for tests.
+ */
+export function proveCiphertext(
+  epochId: Hex,
+  aid: Hex,
+  ciphertext: ElGamalCiphertext,
+  r: bigint,
+  nonce?: bigint,
+): CiphertextPoK {
+  requireScalarInRange('ciphertext randomness r', r);
+  const rG = mulPointEscalar(Base8, r);
+  if (!pointEq(rG, ciphertext.c1)) {
+    throw new Error('proveCiphertext: r does not open c1 (expected c1 = r·G in TE form)');
+  }
+  let w = nonce ?? randomScalar();
+  while (w === 0n) w = randomScalar();
+  requireScalarInRange('ciphertext PoK witness w', w);
+  const A_TE = mulPointEscalar(Base8, w);
+
+  // The transcript binds the on-chain (RTE) words.
+  const [c1x, c1y] = fromTEtoRTE(ciphertext.c1[0], ciphertext.c1[1]);
+  const [c2x, c2y] = fromTEtoRTE(ciphertext.c2[0], ciphertext.c2[1]);
+  const [ax, ay] = fromTEtoRTE(A_TE[0], A_TE[1]);
+
+  const c = ciphertextPoKChallenge(epochId, aid, c1x, c1y, c2x, c2y, ax, ay);
+  const z = (w + (c * r) % subOrder) % subOrder;
+  return { ax, ay, z };
+}
+
+/**
+ * Verify a ciphertext proof of knowledge: `z·G == A + c·C1` over the
+ * transcript `(epochId, aid, C1, C2, A)`. Mirrors Go `elgamal.VerifyPoK`.
+ *
+ * All coordinates arrive in on-chain (RTE) form — pass the values from a
+ * `CiphertextSubmitted` event (or `fromTEtoRTE` of an SDK ciphertext)
+ * directly. Returns `false` (never throws) for off-curve or out-of-range
+ * inputs.
+ */
+export function verifyCiphertextPoK(
+  epochId: Hex,
+  aid: Hex,
+  c1x: bigint,
+  c1y: bigint,
+  c2x: bigint,
+  c2y: bigint,
+  proof: CiphertextPoK,
+): boolean {
+  let C1: Point<bigint>, A: Point<bigint>;
+  try {
+    C1 = rteToTe([c1x, c1y]);
+    A = rteToTe([proof.ax, proof.ay]);
+    requireOnCurveSubgroup('ciphertext C1', C1);
+    requireOnCurveSubgroup('ciphertext PoK witness A', A);
+    requireScalarInRange('ciphertext PoK response z', proof.z);
+  } catch {
+    return false;
+  }
+  const c = ciphertextPoKChallenge(epochId, aid, c1x, c1y, c2x, c2y, proof.ax, proof.ay);
+  const lhs = mulPointEscalar(Base8, proof.z);
+  const rhs = addPoint(A, mulPointEscalar(C1, c));
+  return pointEq(lhs, rhs);
+}
+
 // ─── Chaum-Pedersen DLEQ (committee + organizer partial decryptions) ────────
 
 export interface DleqPoints {
@@ -416,7 +533,3 @@ function randomScalar(): bigint {
   return bi % subOrder;
 }
 
-// Touch keccak256/toHex so they remain importable without unused warnings
-// when the future organizer-side ABI helpers move into this module.
-void keccak256;
-void toHex;

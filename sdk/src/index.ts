@@ -1,17 +1,17 @@
 // ── Core clients ──────────────────────────────────────────────────────────────
 export { DKGClient } from './client.js';
-export { DKGWriter } from './writer.js';
+export { DKGWriter, type SubmitCiphertextResult } from './writer.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 export {
   EpochPhase,
   NodeStatus,
-  OpenDecryptionPolicy,
   roundStatusLabel,
   type EpochPhaseValue,
   type NodeStatusValue,
   type EpochPolicy,
-  type DecryptionPolicy,
+  type CreateEpochParams,
+  type EpochBounds,
   type Epoch,
   type ContributionRecord,
   type PartialDecryptionRecord,
@@ -21,6 +21,7 @@ export {
   type DKGWriterConfig,
   type BabyJubPoint,
   type ElGamalCiphertext,
+  type CiphertextPoK,
   type PollOptions,
   type EpochEvent,
   type EpochEntry,
@@ -29,7 +30,7 @@ export {
 } from './types.js';
 
 // ── ABI ───────────────────────────────────────────────────────────────────────
-export { dkgManagerAbi, dkgRegistryAbi } from './abi.js';
+export { dkgManagerAbi, dkgRegistryAbi, dkgAppManagerAbi } from './abi.js';
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
 export { buildEpochId, parseEpochId } from './utils.js';
@@ -48,6 +49,7 @@ export {
 // ── High-level flow helpers ───────────────────────────────────────────────────
 export {
   encrypt,
+  encryptWithProof,
   decrypt,
   waitForCollectivePublicKeyHash,
   waitForCombinedDecryption,
@@ -66,9 +68,11 @@ export {
   DomainOperatorRegisterV1,
   DomainOrganizerRegisterV1,
   DomainDLEQV1,
+  DomainCiphertextPoKV1,
   DomainOperatorRegisterV1Str,
   DomainOrganizerRegisterV1Str,
   DomainDLEQV1Str,
+  DomainCiphertextPoKV1Str,
   type AppModeValue,
   type RoleValue,
 } from './protocol.js';
@@ -76,13 +80,17 @@ export {
 export { computeS, validateDerivePKAppInput, SUBGROUP_ORDER } from './derive.js';
 export type { DerivePKAppInput } from './derive.js';
 
-// ── Schnorr / DLEQ verifiers ─────────────────────────────────────────────────
+// ── Schnorr / DLEQ provers and verifiers ─────────────────────────────────────
 export {
   verifyOperatorSchnorr,
   operatorSchnorrChallenge,
+  proveOperator,
   verifyOrganizerSchnorr,
   organizerSchnorrChallenge,
   proveOrganizer,
+  proveCiphertext,
+  verifyCiphertextPoK,
+  ciphertextPoKChallenge,
   verifyDleq,
   dleqChallenge,
   DOMAIN_PARTIAL_DECRYPT,

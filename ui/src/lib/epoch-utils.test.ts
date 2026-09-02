@@ -1,6 +1,13 @@
 import { describe, it, expect } from 'vitest'
 import { EpochPhase, type Epoch } from '@vocdoni/davinci-dkg-sdk'
-import { phaseSequence, roundPhase, roundPhaseColor, roundPhaseLabel, roundSummary } from './epoch-utils'
+import {
+  phaseSequence,
+  roundFailure,
+  roundPhase,
+  roundPhaseColor,
+  roundPhaseLabel,
+  roundSummary,
+} from './epoch-utils'
 
 function mkRound(overrides: Partial<Epoch> = {}): Epoch {
   return {
@@ -23,14 +30,6 @@ function mkRound(overrides: Partial<Epoch> = {}): Epoch {
       committeeSelectionDeadlineBlock: 200n,
       keyAssemblyDeadlineBlock: 300n,
       liveNotBeforeBlock: 305n,
-    },
-    decryptionPolicy: {
-      ownerOnly: false,
-      maxDecryptions: 0,
-      notBeforeBlock: 0n,
-      notBeforeTimestamp: 0n,
-      notAfterBlock: 0n,
-      notAfterTimestamp: 0n,
     },
     ...overrides,
   }
@@ -81,5 +80,39 @@ describe('roundSummary', () => {
 
   it('says aborted when in Aborted', () => {
     expect(roundSummary(mkRound({ status: EpochPhase.Aborted }), 100n)).toMatch(/aborted/i)
+  })
+})
+
+// Mirrors DKGManager.abortEpoch: the epoch is dead (and anyone may abort it)
+// exactly when roundFailure is non-null.
+describe('roundFailure', () => {
+  it('is null without a current block', () => {
+    expect(roundFailure(mkRound(), null)).toBeNull()
+  })
+
+  it('is null while the committee-selection deadline has not passed', () => {
+    expect(roundFailure(mkRound({ status: EpochPhase.CommitteeSelection }), 200n)).toBeNull()
+  })
+
+  it('flags CommitteeSelection past its deadline regardless of how many slots were claimed', () => {
+    // A full committee would have moved the epoch to KeyAssembly, so still
+    // being in CommitteeSelection past the deadline means it never filled —
+    // even when claimed >= minValidContributions.
+    const r = mkRound({ status: EpochPhase.CommitteeSelection, claimedCount: 2 })
+    expect(roundFailure(r, 201n)).toEqual({ kind: 'committee-selection', have: 2, need: 3, total: 3 })
+  })
+
+  it('flags KeyAssembly past its deadline only when contributions are below minValidContributions', () => {
+    const short = mkRound({ status: EpochPhase.KeyAssembly, contributionCount: 1 })
+    expect(roundFailure(short, 301n)).toEqual({ kind: 'key-assembly', have: 1, need: 2, total: 3 })
+    const enough = mkRound({ status: EpochPhase.KeyAssembly, contributionCount: 2 })
+    expect(roundFailure(enough, 301n)).toBeNull()
+    expect(roundFailure(short, 300n)).toBeNull()
+  })
+
+  it('is null for Live, Completed and Aborted epochs', () => {
+    for (const status of [EpochPhase.Live, EpochPhase.Completed, EpochPhase.Aborted] as const) {
+      expect(roundFailure(mkRound({ status }), 10_000n)).toBeNull()
+    }
   })
 })

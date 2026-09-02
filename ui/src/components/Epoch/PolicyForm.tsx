@@ -1,4 +1,5 @@
 import { Alert, Field, NumberInput, SimpleGrid, Stack, Text } from '@chakra-ui/react'
+import type { EpochBounds } from '@vocdoni/davinci-dkg-sdk'
 import { DetailDisclosure } from '~components/Debug/DetailDisclosure'
 
 export interface PolicyFormState {
@@ -27,17 +28,25 @@ export const defaultPolicyForm: PolicyFormState = {
  */
 export const MAX_COMMITTEE_SIZE = 32
 
+/** Lottery α floor: the contract rejects any oversubscription below 1.0×. */
+export const MIN_LOTTERY_ALPHA_BPS = 10000
+
 /**
  * Returns a human-readable error string when the form is in an invalid
- * state, or null when it's safe to submit. Catches the gotchas the
- * contract itself doesn't enforce — most importantly
- * `minValidContributions >= threshold`, without which an epoch can finalize
- * but produce a key nobody can decrypt.
+ * state, or null when it's safe to submit. Mirrors the `InvalidPolicy()`
+ * predicate in `DKGManager.createEpoch` so the user never has to pay for a
+ * revert: `1 ≤ threshold ≤ minValidContributions ≤ committeeSize ≤ MaxN`,
+ * `lotteryAlphaBps ≥ 10000`, plus the deployment's own immutable bounds
+ * (`MIN_THRESHOLD`, `MIN_COMMITTEE_SIZE`, `MAX_LOTTERY_ALPHA_BPS`) when
+ * `bounds` is provided. The `minValidContributions ≥ threshold` rule is the
+ * load-bearing one: without it an epoch could finalize with a key nobody
+ * can decrypt.
  */
-export function validatePolicyForm(v: PolicyFormState): string | null {
+export function validatePolicyForm(v: PolicyFormState, bounds?: EpochBounds | null): string | null {
   const t = Number(v.threshold)
   const n = Number(v.committeeSize)
   const m = Number(v.minValidContributions)
+  const a = Number(v.lotteryAlphaBps)
   if (!Number.isFinite(t) || t < 1) return 'Threshold must be at least 1.'
   if (!Number.isFinite(n) || n < 1) return 'Committee size must be at least 1.'
   if (n > MAX_COMMITTEE_SIZE) {
@@ -49,6 +58,20 @@ export function validatePolicyForm(v: PolicyFormState): string | null {
   if (m < t) {
     return `Min valid contributions (${m}) must be ≥ threshold (${t}). Otherwise the epoch can finalize but no one will be able to decrypt.`
   }
+  if (!Number.isFinite(a) || a < MIN_LOTTERY_ALPHA_BPS) {
+    return `Lottery α must be at least ${MIN_LOTTERY_ALPHA_BPS} bps (1.0×).`
+  }
+  if (bounds) {
+    if (t < bounds.minThreshold) {
+      return `Threshold must be at least ${bounds.minThreshold} on this deployment (MIN_THRESHOLD).`
+    }
+    if (n < bounds.minCommitteeSize) {
+      return `Committee size must be at least ${bounds.minCommitteeSize} on this deployment (MIN_COMMITTEE_SIZE).`
+    }
+    if (a > bounds.maxLotteryAlphaBps) {
+      return `Lottery α cannot exceed ${bounds.maxLotteryAlphaBps} bps on this deployment (MAX_LOTTERY_ALPHA_BPS).`
+    }
+  }
   return null
 }
 
@@ -56,6 +79,8 @@ interface Props {
   value: PolicyFormState
   onChange: (next: PolicyFormState) => void
   disabled?: boolean
+  /** Deploy-time createEpoch bounds; tightens the numeric inputs when known. */
+  bounds?: EpochBounds | null
 }
 
 // Two-tier policy form. The basics most users care about (committee size,
@@ -67,8 +92,11 @@ interface Props {
 // the UI doesn't expose them per-epoch because every caller would have to
 // agree on the same numbers anyway, and a per-epoch override would just
 // be discarded by the writer.
-export function PolicyForm({ value, onChange, disabled }: Props) {
+export function PolicyForm({ value, onChange, disabled, bounds }: Props) {
   const set = <K extends keyof PolicyFormState>(key: K, v: PolicyFormState[K]) => onChange({ ...value, [key]: v })
+  const minThreshold = bounds?.minThreshold ?? 1
+  const minCommittee = bounds?.minCommitteeSize ?? 1
+  const maxAlpha = bounds?.maxLotteryAlphaBps
 
   // Auto-track min valid contributions to the threshold when the user
   // hasn't manually overridden it. This keeps the basic UX two-knobs
@@ -88,20 +116,27 @@ export function PolicyForm({ value, onChange, disabled }: Props) {
       <SimpleGrid columns={{ base: 1, md: 2 }} gap={3}>
         <SmallNumberField
           label='Committee size'
-          help={`How many nodes share the key. Capped at ${MAX_COMMITTEE_SIZE} (circuit limit).`}
+          help={
+            minCommittee > 1
+              ? `How many nodes share the key. This deployment requires at least ${minCommittee}; capped at ${MAX_COMMITTEE_SIZE} (circuit limit).`
+              : `How many nodes share the key. Capped at ${MAX_COMMITTEE_SIZE} (circuit limit).`
+          }
           value={value.committeeSize}
           onChange={(v) => set('committeeSize', v)}
           disabled={disabled}
-          min={1}
+          min={minCommittee}
           max={MAX_COMMITTEE_SIZE}
         />
         <SmallNumberField
           label='Threshold'
-          help='Members needed to decrypt later. By default this is also the minimum number of contributions required for the epoch to go Live (override under Advanced for extra redundancy).'
+          help={
+            (minThreshold > 1 ? `At least ${minThreshold} on this deployment. ` : '') +
+            'Members needed to decrypt later. By default this is also the minimum number of contributions required for the epoch to go Live (override under Advanced for extra redundancy).'
+          }
           value={value.threshold}
           onChange={setThreshold}
           disabled={disabled}
-          min={1}
+          min={minThreshold}
         />
       </SimpleGrid>
 
@@ -152,10 +187,15 @@ export function PolicyForm({ value, onChange, disabled }: Props) {
             />
             <SmallNumberField
               label='Lottery α (bps)'
-              help='Candidate-pool size = α × committee. 10 000 = 1.0×.'
+              help={
+                `Candidate-pool size = α × committee. 10 000 = 1.0× (the floor)` +
+                (maxAlpha != null ? `; this deployment caps it at ${maxAlpha}.` : '.')
+              }
               value={value.lotteryAlphaBps}
               onChange={(v) => set('lotteryAlphaBps', v)}
               disabled={disabled}
+              min={MIN_LOTTERY_ALPHA_BPS}
+              max={maxAlpha}
             />
           </SimpleGrid>
         </Stack>

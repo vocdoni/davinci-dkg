@@ -2,7 +2,7 @@ import { useCallback, useState } from 'react'
 import { Box, Grid, GridItem, HStack, Stack, Text } from '@chakra-ui/react'
 import { useAccount } from 'wagmi'
 import type { Hex } from 'viem'
-import { EpochPhase, type ElGamalCiphertext } from '@vocdoni/davinci-dkg-sdk'
+import { EpochPhase, type CiphertextPoK, type ElGamalCiphertext } from '@vocdoni/davinci-dkg-sdk'
 import { ConnectStep } from '~components/Playground/steps/ConnectStep'
 import { CreateEpochStep } from '~components/Playground/steps/CreateEpochStep'
 import { WatchProgressStep } from '~components/Playground/steps/WatchProgressStep'
@@ -31,6 +31,7 @@ export function Playground() {
   const [epochId, setRoundId] = useState<Hex | null>(null)
   const [collectivePubKey, setCollectivePubKey] = useState<{ x: bigint; y: bigint } | null>(null)
   const [ciphertext, setCiphertext] = useState<ElGamalCiphertext | null>(null)
+  const [pok, setPok] = useState<CiphertextPoK | null>(null)
   const [plaintext, setPlaintext] = useState<bigint | null>(null)
   const [submittedIndex, setSubmittedIndex] = useState<number | null>(null)
   const [log, setLog] = useState<LogEntry[]>([])
@@ -65,8 +66,8 @@ export function Playground() {
         ? 'done'
         : 'active'
   const stepEncrypt: StepStatus = !collectivePubKey || blocked ? 'pending' : ciphertext ? 'done' : 'active'
-  const stepSubmit: StepStatus = !ciphertext || blocked ? 'pending' : submittedIndex ? 'done' : 'active'
-  const stepVerify: StepStatus = !submittedIndex || blocked ? 'pending' : 'active'
+  const stepSubmit: StepStatus = !ciphertext || blocked ? 'pending' : submittedIndex != null ? 'done' : 'active'
+  const stepVerify: StepStatus = submittedIndex == null || blocked ? 'pending' : 'active'
 
   const onSubmitted = useCallback((idx: number, _hash: Hex) => {
     setSubmittedIndex(idx)
@@ -88,10 +89,12 @@ export function Playground() {
             <KeyAvailableStep status={stepKey} epochId={epochId} onKeyReady={setCollectivePubKey} log={addLog} />
             <EncryptStep
               status={stepEncrypt}
+              epochId={epochId}
               collectivePubKey={collectivePubKey}
-              onEncrypted={(m, ct) => {
+              onEncrypted={(m, ct, proof) => {
                 setPlaintext(m)
                 setCiphertext(ct)
+                setPok(proof)
                 setSubmittedIndex(null)
               }}
               log={addLog}
@@ -100,6 +103,7 @@ export function Playground() {
               status={stepSubmit}
               epochId={epochId}
               ciphertext={ciphertext}
+              pok={pok}
               onSubmitted={onSubmitted}
               log={addLog}
             />

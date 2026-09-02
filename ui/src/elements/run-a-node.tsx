@@ -113,6 +113,13 @@ DAVINCI_DKG_NETWORK=sepolia
             Polls the chain for epoch events at the configured interval (default: 20 seconds).
           </List.Item>
         </List.Root>
+        <Text fontSize='sm' color='ink.2'>
+          Registration takes effect for <em>future</em> epochs only: the lottery of an epoch is
+          drawn over the nodes registered before that epoch was created (the registry records
+          your <Code>registeredAtBlock</Code>; a later <Code>claimSlot</Code> against an older
+          epoch reverts with <Code>NotInSnapshot</Code>). Expect the node to join its first
+          committee in the epoch after the one running when it came up.
+        </Text>
       </Section>
 
       <Section heading='4. (Optional) Host an explorer alongside it'>
@@ -129,7 +136,7 @@ DAVINCI_DKG_NETWORK=sepolia
           {`# 1. Build the bundle with the chain config you want.
 make ui-build \\
   RPC_URL=https://eth-sepolia.public.blastapi.io \\
-  MANAGER_ADDRESS=0xfb2CfAE24506D2978Cf4d0f8898F0E33aA744969 \\
+  MANAGER_ADDRESS=0x92d324254ef12e4392d54c771b121cc976682340 \\
   CHAIN_ID=11155111 CHAIN_NAME=sepolia
 
 # 2. Run nginx alongside the node.
@@ -182,6 +189,26 @@ docker compose --profile node --profile ui up -d
             Capped at <Code>32</Code> per epoch (the circuits' compile-time <Code>MaxN</Code>). The
             contract enforces this in <Code>createEpoch</Code>; raising the cap requires a fresh
             trusted setup, redeployed verifier contracts, and a redeployed manager.
+          </List.Item>
+          <List.Item>
+            <Text as='span' fontWeight='semibold' color='ink.0'>
+              Ciphertext proofs.
+            </Text>{' '}
+            Before releasing a partial decryption the node verifies the submitter's Schnorr
+            proof of knowledge of the ciphertext randomness (emitted alongside the ciphertext in{' '}
+            <Code>CiphertextSubmitted</Code>). Ciphertexts without a valid proof are ignored
+            rather than decrypted, so a <Code>C1</Code> copied from another application cannot
+            turn the committee into a decryption oracle. Producers get the proof for free from
+            the SDK's <Code>encryptWithProof</Code>.
+          </List.Item>
+          <List.Item>
+            <Text as='span' fontWeight='semibold' color='ink.0'>
+              Dead epochs.
+            </Text>{' '}
+            An epoch whose committee never filled, or whose key assembly closed below{' '}
+            <Code>minValidContributions</Code>, just sits until anyone calls{' '}
+            <Code>abortEpoch</Code> (permissionless; it reverts for a healthy epoch). The next
+            epoch is created on the normal cadence regardless.
           </List.Item>
           <List.Item>
             <Text as='span' fontWeight='semibold' color='ink.0'>

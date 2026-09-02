@@ -1,6 +1,12 @@
 import { useState } from 'react'
 import { Box, Button, Field, HStack, Input, Stack, Text } from '@chakra-ui/react'
-import { buildElGamal, type BabyJubPoint, type ElGamalCiphertext } from '@vocdoni/davinci-dkg-sdk'
+import {
+  encryptWithProof,
+  type BabyJubPoint,
+  type CiphertextPoK,
+  type ElGamalCiphertext,
+} from '@vocdoni/davinci-dkg-sdk'
+import type { Hex } from 'viem'
 import { LuFile, LuLock, LuPackage } from 'react-icons/lu'
 import { StepCard, type StepStatus } from '../StepCard'
 import { DetailDisclosure } from '~components/Debug/DetailDisclosure'
@@ -15,16 +21,23 @@ import { bigIntToHex } from '~lib/format'
 // instead of waiting for the chain to finalize a doomed epoch.
 const MAX_PLAINTEXT = 1n << 50n // 1,125,899,906,842,624
 
+// The playground encrypts under the bare epoch key, i.e. application id 0.
+// The proof of knowledge is bound to (epochId, aid), so the same pair must
+// be used when the ciphertext is submitted.
+const ZERO_AID = ('0x' + '00'.repeat(32)) as Hex
+
 interface Props {
   status: StepStatus
+  epochId: Hex | null
   collectivePubKey: { x: bigint; y: bigint } | null
-  onEncrypted: (plaintext: bigint, ct: ElGamalCiphertext) => void
+  onEncrypted: (plaintext: bigint, ct: ElGamalCiphertext, pok: CiphertextPoK) => void
   log: (msg: string, level?: 'info' | 'success' | 'error' | 'crypto') => void
 }
 
-export function EncryptStep({ status, collectivePubKey, onEncrypted, log }: Props) {
+export function EncryptStep({ status, epochId, collectivePubKey, onEncrypted, log }: Props) {
   const [plaintext, setPlaintext] = useState('42')
   const [ct, setCt] = useState<ElGamalCiphertext | null>(null)
+  const [pok, setPok] = useState<CiphertextPoK | null>(null)
   const [busy, setBusy] = useState(false)
 
   // Validate on every render so the button reflects current input without
@@ -33,16 +46,19 @@ export function EncryptStep({ status, collectivePubKey, onEncrypted, log }: Prop
   const validation = validatePlaintext(plaintext)
 
   const onEncrypt = async () => {
-    if (!collectivePubKey || validation.error) return
+    if (!collectivePubKey || !epochId || validation.error) return
     setBusy(true)
     try {
       const m = validation.value!
-      const eg = await buildElGamal()
       const pubKey: BabyJubPoint = [collectivePubKey.x, collectivePubKey.y]
-      const result = eg.encrypt(m, pubKey)
-      setCt(result)
-      onEncrypted(m, result)
-      log(`Encrypted plaintext m=${m} as ElGamal ciphertext (c1, c2).`, 'crypto')
+      // encryptWithProof draws the randomness r, encrypts, and proves
+      // knowledge of r for exactly this (epochId, aid). Committee nodes only
+      // decrypt ciphertexts whose proof verifies.
+      const result = await encryptWithProof(epochId, ZERO_AID, m, pubKey)
+      setCt(result.ciphertext)
+      setPok(result.pok)
+      onEncrypted(m, result.ciphertext, result.pok)
+      log(`Encrypted plaintext m=${m} as ElGamal ciphertext (c1, c2) + proof of knowledge for ${epochId}.`, 'crypto')
     } catch (err) {
       log(`Encrypt failed: ${err instanceof Error ? err.message : String(err)}`, 'error')
     } finally {
@@ -74,6 +90,7 @@ export function EncryptStep({ status, collectivePubKey, onEncrypted, log }: Prop
                 onChange={(e) => {
                   setPlaintext(e.target.value)
                   setCt(null)
+                  setPok(null)
                 }}
               />
               {validation.error ? (
@@ -90,7 +107,7 @@ export function EncryptStep({ status, collectivePubKey, onEncrypted, log }: Prop
               size='sm'
               onClick={onEncrypt}
               loading={busy}
-              disabled={!!validation.error || busy}
+              disabled={!!validation.error || busy || !epochId}
             >
               Encrypt →
             </Button>
@@ -116,6 +133,16 @@ export function EncryptStep({ status, collectivePubKey, onEncrypted, log }: Prop
                     <HashCell value={bigIntToHex(ct.c2[0])} head={6} tail={6} />
                     <HashCell value={bigIntToHex(ct.c2[1])} head={6} tail={6} />
                   </Box>
+                  {pok && (
+                    <Box>
+                      <Text fontSize='2xs' color='ink.4'>
+                        Schnorr proof of knowledge of k, bound to this epoch: A = w·G, z = w + c·k
+                      </Text>
+                      <HashCell value={bigIntToHex(pok.ax)} head={6} tail={6} />
+                      <HashCell value={bigIntToHex(pok.ay)} head={6} tail={6} />
+                      <HashCell value={bigIntToHex(pok.z)} head={6} tail={6} />
+                    </Box>
+                  )}
                 </Stack>
               </DetailDisclosure>
             </Box>
@@ -126,7 +153,10 @@ export function EncryptStep({ status, collectivePubKey, onEncrypted, log }: Prop
                 ElGamal encryption mixes your number with a fresh random value and the
                 committee's shared key, producing two points on a curve. Each point looks like
                 noise on its own — only the committee, working together later, can subtract the
-                blinding away and recover your original number.
+                blinding away and recover your original number. Alongside, the SDK produces a
+                tiny proof that you know that random value; the committee refuses to decrypt
+                ciphertexts that lack it, so nobody can copy someone else's ciphertext and have
+                it opened for them.
               </>
             }
             flow={[

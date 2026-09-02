@@ -5,22 +5,28 @@
  * primitives into the common end-to-end flows.
  *
  * Full flow:
- *   1. organizer calls createEpoch()
+ *   1. anyone calls createEpoch() once the cadence window allows it
  *   2. DKG nodes call claimSlot() once the seed block is mined
- *   3. Nodes submit contributions → epoch moves to Contribution phase
- *   4. Nodes finalize epoch → epoch moves to Finalized; collective public key available
- *   5. Anyone can encrypt data using the collective public key (ElGamal)
- *   6. DKG nodes submit partial decryptions for a given ciphertext
- *   7. Any node calls combineDecryption → DecryptionCombined event emitted
+ *   3. Nodes submit contributions → epoch moves to KeyAssembly phase
+ *   4. A node finalizes the epoch → epoch goes Live; collective public key available
+ *   5. Anyone encrypts data under the collective (or per-application) key with
+ *      encryptWithProof() and publishes it via DKGWriter.submitCiphertext(),
+ *      which returns the on-chain-assigned ciphertext index
+ *   6. DKG nodes verify the proof of knowledge and submit partial decryptions
+ *   7. A node calls combineDecryption → DecryptionCombined event emitted
  *   8. Caller can verify the plaintext matches the original message
  */
 
-import { type PublicClient, type Hash } from 'viem';
 import { DKGClient } from './client.js';
-import { type EpochPolicy, type ElGamalCiphertext, type BabyJubPoint } from './types.js';
+import {
+  EpochPhase,
+  type BabyJubPoint,
+  type CiphertextPoK,
+  type ElGamalCiphertext,
+} from './types.js';
 import { waitForEpochPhase, waitForDecryption } from './monitor.js';
 import { buildElGamal } from './crypto/elgamal.js';
-import { EpochPhase } from './types.js';
+import { proveCiphertext } from './schnorr.js';
 
 export interface CollectivePublicKey {
   /**
@@ -73,6 +79,35 @@ export async function encrypt(
 }
 
 /**
+ * Encrypt a message for `(epochId, aid)` and prove knowledge of the ElGamal
+ * randomness. This is the ciphertext producer's entry point: the returned
+ * `pok` is what `DKGWriter.submitCiphertext` needs, and committee nodes only
+ * decrypt ciphertexts whose proof verifies against exactly this epoch and
+ * application id (use the all-zero aid for the bare epoch key).
+ *
+ * @param epochId  bytes12 epoch id the ciphertext is submitted to
+ * @param aid      bytes32 application id (`0x00…00` for the epoch key)
+ * @param message  Small integer plaintext (the committee recovers values < 2^50)
+ * @param pubKey   Key to encrypt under, in TE form (`client.getCollectivePublicKey`
+ *                 for aid 0, or the derived application key)
+ * @param k        Optional randomness; drawn from the CSPRNG when omitted
+ */
+export async function encryptWithProof(
+  epochId: `0x${string}`,
+  aid: `0x${string}`,
+  message: bigint,
+  pubKey: BabyJubPoint,
+  k?: bigint,
+): Promise<{ ciphertext: ElGamalCiphertext; pok: CiphertextPoK }> {
+  const elgamal = await buildElGamal();
+  let r = k ?? elgamal.randomScalar();
+  while (r === 0n) r = elgamal.randomScalar();
+  const ciphertext = elgamal.encrypt(message, pubKey, r);
+  const pok = proveCiphertext(epochId, aid, ciphertext, r);
+  return { ciphertext, pok };
+}
+
+/**
  * Decrypt an ElGamal ciphertext given the private key.
  *
  * Recovery uses baby-step / giant-step DLOG, capped at **2^32** plaintexts.
@@ -116,10 +151,12 @@ export async function waitForCombinedDecryption(
  *
  * @param client         Read-only DKGClient
  * @param epochId        The epoch ID
+ * @param aid            Application id the ciphertext is submitted under
  * @param collectivePub  The collective public key point [x, y] (from
  *                       `client.getCollectivePublicKey(epochId)`)
  * @param plaintext      Small integer to encrypt/decrypt
- * @param ciphertextIndex  Index to identify which ciphertext to wait for (1-based)
+ * @param ciphertextIndex  On-chain-assigned index of the ciphertext to wait for
+ *                         (as returned by `DKGWriter.submitCiphertext`)
  */
 export async function demonstrateEncryptDecryptFlow(
   client: DKGClient,
