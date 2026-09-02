@@ -15,6 +15,7 @@ import { EventLog } from '~components/Epoch/EventLog'
 import { AppRegistrationForm } from '~components/Epoch/AppRegistrationForm'
 import { DecryptionPipeline } from '~components/Epoch/DecryptionPipeline'
 import { AppDecryptionPipeline } from '~components/Epoch/AppDecryptionPipeline'
+import { OrganizerSharePanel } from '~components/Epoch/OrganizerSharePanel'
 import { useCollectivePublicKey } from '~queries/applications'
 import { HashCell } from '~components/ui/HashCell'
 import { DetailDisclosure } from '~components/Debug/DetailDisclosure'
@@ -372,6 +373,7 @@ function ApplicationsSection({ epochId, epoch }: { epochId: Hex; epoch: Epoch })
           />
         </Stack>
         <DecryptionPipeline epochId={epochId} aid={aidUnderInspection} />
+        <OrganizerSharePanel epochId={epochId} aid={aidUnderInspection} />
       </Stack>
     </RoundSection>
   )
