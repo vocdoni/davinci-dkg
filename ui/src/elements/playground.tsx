@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { Box, Grid, GridItem, HStack, Stack, Text } from '@chakra-ui/react'
 import { useAccount } from 'wagmi'
 import type { Hex } from 'viem'
@@ -44,12 +44,17 @@ export function Playground() {
     setLog((prev) => [...prev, { ts: Date.now(), msg, level }])
   }, [])
 
+  // Once an application is registered, every later step must use the epoch it
+  // lives on, even if a newer epoch goes Live while the page is open.
+  const aidRef = useRef<Hex | null>(null)
   const onEpochSelected = useCallback((id: Hex | null, key: { x: bigint; y: bigint } | null) => {
+    if (aidRef.current) return
     setEpochId(id)
     setCollectivePubKey(key)
   }, [])
 
   const onRegistered = useCallback((newAid: Hex, secret: bigint, organizerPK: BabyJubPoint) => {
+    aidRef.current = newAid
     setAid(newAid)
     setSkOrg(secret)
     setPkOrg(organizerPK)
@@ -85,7 +90,12 @@ export function Playground() {
         <GridItem>
           <Stack gap={5}>
             <ConnectStep status={stepWallet} />
-            <LiveEpochStep status={stepEpoch} onEpochSelected={onEpochSelected} log={addLog} />
+            <LiveEpochStep
+              status={stepEpoch}
+              onEpochSelected={onEpochSelected}
+              log={addLog}
+              pinnedEpochId={aid ? epochId : null}
+            />
             <RegisterAppStep
               status={stepRegister}
               epochId={epochId}

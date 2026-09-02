@@ -19,6 +19,8 @@ interface Props {
   status: StepStatus
   /** Reports the epoch the rest of the walkthrough runs against. */
   onEpochSelected: (epochId: Hex | null, key: { x: bigint; y: bigint } | null) => void
+  /** Once an application is registered the walkthrough stays on its epoch. */
+  pinnedEpochId?: Hex | null
   log: (msg: string, level?: 'info' | 'success' | 'error' | 'chain' | 'crypto') => void
 }
 
@@ -31,16 +33,21 @@ interface Props {
  * epoch is already Live. So this step is a read: find that epoch, show its
  * committee, threshold and key, and hand the id to the steps below.
  */
-export function LiveEpochStep({ status, onEpochSelected, log }: Props) {
+export function LiveEpochStep({ status, onEpochSelected, log, pinnedEpochId }: Props) {
   const recent = useRecentEpochs(10)
   const { data: block } = useBlockNumber()
 
   const entries = recent.data ?? []
   const live = entries.find((e) => e.epoch.status === EpochPhase.Live)
   const newest = entries[0]
-  const selected = live?.id
+  const selected = pinnedEpochId ?? live?.id
   const epoch = useEpoch(selected)
   const key = useCollectivePublicKey(selected)
+  // What the card shows: the pinned epoch (registered application) or the newest Live one.
+  const shown: EpochEntry | undefined = pinnedEpochId
+    ? (entries.find((e) => e.id === pinnedEpochId) ?? (epoch.data ? { id: pinnedEpochId, epoch: epoch.data.epoch } : undefined))
+    : live
+  const supersededBy = pinnedEpochId && live && live.id !== pinnedEpochId ? live.id : null
 
   // Report (epoch, key) upwards once both have landed, and again whenever the
   // selection changes — e.g. the next epoch goes Live while the page is open.
@@ -55,8 +62,8 @@ export function LiveEpochStep({ status, onEpochSelected, log }: Props) {
   }, [selected, key.data, onEpochSelected, log])
 
   useEffect(() => {
-    if (recent.data && !live) onEpochSelected(null, null)
-  }, [recent.data, live, onEpochSelected])
+    if (recent.data && !live && !pinnedEpochId) onEpochSelected(null, null)
+  }, [recent.data, live, pinnedEpochId, onEpochSelected])
 
   return (
     <StepCard
@@ -69,41 +76,48 @@ export function LiveEpochStep({ status, onEpochSelected, log }: Props) {
         <Text fontSize='sm' color='ink.4'>
           Looking for the newest Live epoch…
         </Text>
-      ) : !live ? (
+      ) : !shown ? (
         <NoLiveEpoch newest={newest} />
       ) : (
         <Stack gap={5}>
+          {supersededBy && (
+            <Text fontSize='sm' color='ink.3'>
+              Pinned to the epoch your application is registered on. A newer epoch (
+              <HashCell value={supersededBy} head={8} tail={6} />) has gone live meanwhile; reload the page to start
+              over on it.
+            </Text>
+          )}
           <HStack gap={4} wrap='wrap' align='center'>
-            <StatusBadge epoch={live.epoch} />
-            <HashCell value={live.id} head={8} tail={6} />
+            <StatusBadge epoch={shown.epoch} />
+            <HashCell value={shown.id} head={8} tail={6} />
             <Text fontFamily='mono' fontSize='2xs' color='ink.4' letterSpacing='0.06em'>
-              NONCE {live.epoch.nonce.toString()}
+              NONCE {shown.epoch.nonce.toString()}
             </Text>
           </HStack>
 
           <SimpleGrid columns={{ base: 2, md: 4 }} gap={3}>
             <Fact
               label='Threshold'
-              value={`${live.epoch.policy.threshold} of ${live.epoch.policy.committeeSize}`}
+              value={`${shown.epoch.policy.threshold} of ${shown.epoch.policy.committeeSize}`}
               hint='members needed to decrypt'
             />
             <Fact
               label='Committee'
-              value={`${live.epoch.claimedCount}`}
+              value={`${shown.epoch.claimedCount}`}
               hint='slots claimed via lottery'
             />
             <Fact
               label='Live since'
               value={
                 block
-                  ? `${blocksToDuration(Number(block - live.epoch.policy.liveNotBeforeBlock))} ago`
+                  ? `${blocksToDuration(Number(block - shown.epoch.policy.liveNotBeforeBlock))} ago`
                   : '—'
               }
-              hint={`block #${live.epoch.policy.liveNotBeforeBlock.toString()}`}
+              hint={`block #${shown.epoch.policy.liveNotBeforeBlock.toString()}`}
             />
             <Fact
               label='Ciphertexts'
-              value={live.epoch.ciphertextCount.toString()}
+              value={shown.epoch.ciphertextCount.toString()}
               hint='submitted so far'
             />
           </SimpleGrid>
