@@ -113,11 +113,11 @@ export function Home() {
           />
           <Property
             label='Non-interactive'
-            body='Each step is a single self-contained transaction. No complaint or dispute epoch; invalid contributions are rejected at submission time.'
+            body='Each step is a single self-contained transaction. No complaint or dispute phase; invalid contributions are rejected at submission time.'
           />
           <Property
             label='Verified on-chain'
-            body='Every state-changing call is gated by a Groth16 verifier. Correctness is enforced by the EVM, not by an off-chain auditor.'
+            body='Every contribution, finalization and decryption step is gated by a Groth16 verifier. Correctness is enforced by the EVM, not by an off-chain auditor.'
           />
         </Stack>
       </Section>
