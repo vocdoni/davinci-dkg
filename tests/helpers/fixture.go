@@ -50,13 +50,22 @@ func NewTestServicesFromExternal(
 		return nil, nil, err
 	}
 
+	// web3.New fills AppManager in from the manager's `appManager()` view when
+	// the addresses file predates APP_MANAGER, so read it back from there.
+	appManager, err := golangtypes.NewDKGAppManager(contracts.Addresses.AppManager, contracts.Client())
+	if err != nil {
+		_ = contracts.Close()
+		return nil, nil, err
+	}
+
 	services := &TestServices{
-		RPCURL:    rpcURL,
-		Addresses: addresses,
-		Contracts: contracts,
-		Registry:  registry,
-		Manager:   manager,
-		TxManager: txm,
+		RPCURL:     rpcURL,
+		Addresses:  contracts.Addresses,
+		Contracts:  contracts,
+		Registry:   registry,
+		Manager:    manager,
+		AppManager: appManager,
+		TxManager:  txm,
 	}
 
 	if err := bootstrapLocalNodeKeys(ctx, services); err != nil {

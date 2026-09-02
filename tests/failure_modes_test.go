@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	qt "github.com/frankban/quicktest"
+	golangtypes "github.com/vocdoni/davinci-dkg/solidity/golang-types"
 	"github.com/vocdoni/davinci-dkg/tests/helpers"
 	"github.com/vocdoni/davinci-dkg/types"
 )
@@ -204,24 +205,37 @@ func TestPartialDecryptRejectsMalformedProof(t *testing.T) {
 	result, err := helpers.CreateFinalizedSingleParticipantRound(ctx, services, policy, coefficients)
 	c.Assert(err, qt.IsNil)
 
-	partial, err := helpers.BuildPartialDecryptionSubmission(ctx, result.EpochID, 1, 1, big.NewInt(3), coefficients[0], big.NewInt(4))
+	// Register the application and put a real ciphertext on chain, so the
+	// tampered proof reaches the verifier instead of tripping the earlier
+	// "no such ciphertext" gate.
+	aid := randomAid(c)
+	actor := selfActor()
+	c.Assert(helpers.RegisterApplication(
+		ctx, actor, services.AppManager, result.EpochID, aid,
+		randomOrganizerSecret(c), golangtypes.DKGTypesAppPolicy{},
+	), qt.IsNil)
+
+	c1 := helpers.ScalarBasePoint(big.NewInt(3))
+	c2 := helpers.ScalarBasePoint(big.NewInt(19))
+	assignedIdx, err := helpers.SubmitCiphertextAs(ctx, actor, result.EpochID, aid, c1, c2)
+	c.Assert(err, qt.IsNil)
+	c.Assert(assignedIdx, qt.Equals, uint16(1))
+
+	partial, err := helpers.BuildPartialDecryptionSubmission(
+		ctx, result.EpochID, aid, 1, 1, big.NewInt(3), coefficients[0], big.NewInt(4),
+	)
 	c.Assert(err, qt.IsNil)
 	partial.Input = partial.Input[:len(partial.Input)-32]
 
-	// This test deliberately tampers `partial.Input`, so the proof
-	// verifier rejects regardless of whether the on-chain ciphertext
-	// gate fires first. We pass identity coords; the gate may revert
-	// with CiphertextNotSubmitted before the verifier sees the bad
-	// proof, but either revert path satisfies the assertion below.
 	auth, err := services.TxManager.NewTransactOpts(ctx)
 	c.Assert(err, qt.IsNil)
 	tx, err := services.Manager.SubmitPartialDecryption(
 		auth,
 		result.EpochID,
-		[32]byte{}, // legacy per-epoch path: zero aid
+		aid,
 		1,
-		1,
-		big.NewInt(0), big.NewInt(1), big.NewInt(0), big.NewInt(1),
+		assignedIdx,
+		c1.X, c1.Y, c2.X, c2.Y,
 		partial.DeltaHash,
 		partial.Proof,
 		partial.Input,
@@ -272,8 +286,8 @@ func TestRoundCanFinalizeWithMissingContributorWhenPolicyPermits(t *testing.T) {
 	submission1, err := helpers.BuildContributionSubmission(ctx, services, epochID, 2, 3, 2, []*big.Int{big.NewInt(5), big.NewInt(2)}, []uint16{1, 2, 3})
 	c.Assert(err, qt.IsNil)
 
-	selfActor := &helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager}
-	c.Assert(helpers.SubmitContributionAs(ctx, selfActor, epochID, 1, submission0.CommitmentsHash, submission0.EncryptedSharesHash, submission0.Transcript, submission0.Proof, submission0.Input), qt.IsNil)
+	self := selfActor()
+	c.Assert(helpers.SubmitContributionAs(ctx, self, epochID, 1, submission0.CommitmentsHash, submission0.EncryptedSharesHash, submission0.Transcript, submission0.Proof, submission0.Input), qt.IsNil)
 	c.Assert(helpers.SubmitContributionAs(ctx, actor1, epochID, 2, submission1.CommitmentsHash, submission1.EncryptedSharesHash, submission1.Transcript, submission1.Proof, submission1.Input), qt.IsNil)
 
 	output, err := helpers.BuildFinalizeEpochOutput(

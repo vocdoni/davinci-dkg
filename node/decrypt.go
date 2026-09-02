@@ -14,7 +14,7 @@ import (
 	ccommon "github.com/vocdoni/davinci-dkg/circuits/common"
 	"github.com/vocdoni/davinci-dkg/circuits/decryptcombine"
 	"github.com/vocdoni/davinci-dkg/circuits/partialdecrypt"
-	"github.com/vocdoni/davinci-dkg/crypto/elgamal"
+	"github.com/vocdoni/davinci-dkg/crypto/dleq"
 	"github.com/vocdoni/davinci-dkg/crypto/group"
 	"github.com/vocdoni/davinci-dkg/log"
 	nodetypes "github.com/vocdoni/davinci-dkg/types"
@@ -50,7 +50,6 @@ func (k ctKey) String() string {
 // ciphertext is a decoded CiphertextSubmitted event payload.
 type ciphertext struct {
 	c1, c2 nodetypes.CurvePoint
-	pok    elgamal.PoK
 	block  uint64 // block the event was emitted in
 	seq    uint64 // discovery order, used to evict the oldest entry
 }
@@ -119,7 +118,6 @@ func (n *Node) scanCiphertexts(ctx context.Context) error {
 			n.trackCiphertext(key, &ciphertext{
 				c1:    nodetypes.CurvePoint{X: new(big.Int).Set(ev.C1x), Y: new(big.Int).Set(ev.C1y)},
 				c2:    nodetypes.CurvePoint{X: new(big.Int).Set(ev.C2x), Y: new(big.Int).Set(ev.C2y)},
-				pok:   elgamal.PoK{A: nodetypes.CurvePoint{X: new(big.Int).Set(ev.PokAx), Y: new(big.Int).Set(ev.PokAy)}, Z: new(big.Int).Set(ev.PokZ)},
 				block: ev.Raw.BlockNumber,
 			})
 			log.Infow("ciphertext discovered", "ct", key.String(), "block", ev.Raw.BlockNumber)
@@ -178,11 +176,23 @@ type tickCache struct {
 	head    uint64
 	headErr error
 	epochs  map[[12]byte]epochView
+	apps    map[appKey]nodetypes.CurvePoint // (epoch, aid) → PK_org
+}
+
+// appKey identifies one application: (epoch, aid).
+type appKey struct {
+	epoch [12]byte
+	aid   [32]byte
 }
 
 func (n *Node) newTickCache(ctx context.Context) *tickCache {
 	head, err := n.contracts.Client().BlockNumber(ctx)
-	return &tickCache{head: head, headErr: err, epochs: make(map[[12]byte]epochView)}
+	return &tickCache{
+		head:    head,
+		headErr: err,
+		epochs:  make(map[[12]byte]epochView),
+		apps:    make(map[appKey]nodetypes.CurvePoint),
+	}
 }
 
 func (n *Node) cachedEpoch(ctx context.Context, tc *tickCache, epochID [12]byte) (epochView, error) {
@@ -267,7 +277,7 @@ func (n *Node) serviceCiphertext(ctx context.Context, tc *tickCache, key ctKey, 
 	if tc.headErr != nil {
 		return false, fmt.Errorf("read head: %w", tc.headErr)
 	}
-	return n.tryCombine(ctx, key, ct, epoch, idx, uint16(len(selected)), tc.head)
+	return n.tryCombine(ctx, tc, key, ct, epoch, idx, uint16(len(selected)), tc.head)
 }
 
 // selected caches the committee of a Live epoch (it never changes).
@@ -301,18 +311,11 @@ func (n *Node) submitPartial(
 
 	// Refuse small-order / off-curve ciphertexts before touching the share:
 	// δ_i = d_i·C1 for a cofactor point would leak d_i mod 8 on-chain. The
-	// contract performs the same check; repeating it here keeps the share
-	// safe even against a faulty contract deployment.
+	// contract deliberately skips the prime-subgroup check (it costs ~2 M
+	// gas), so this is the only place it happens — it is load-bearing, not
+	// belt-and-braces.
 	if err := group.ValidateCiphertext(ct.c1, ct.c2); err != nil {
 		log.Warnw("rejecting toxic ciphertext — refusing partial decryption", "ct", key.String(), "err", err)
-		return true, nil
-	}
-	// The submitter must prove knowledge of r (C1 = r·G) for this exact
-	// (epoch, aid, C1, C2). Otherwise anyone could copy a C1 from another
-	// application's ciphertext, re-submit it under an application they
-	// control and read sk_ep·C1 off our partial: a decryption oracle.
-	if !elgamal.VerifyPoK(key.epoch, key.aid, ct.c1, ct.c2, ct.pok) {
-		log.Warnw("rejecting ciphertext without a valid proof of knowledge of its randomness", "ct", key.String())
 		return true, nil
 	}
 
@@ -427,32 +430,114 @@ func (n *Node) acceptedPartials(
 	return idxs, deltas, readyBlock, nil
 }
 
-// combineCorrection resolves the per-application correction term:
-// mode 0 → T = S·C1 with S the stored derivation tag; mode 1 → T = Δ_org
-// from the organizer's submitted share. ready=false while the organizer
-// share is still missing.
-func (n *Node) combineCorrection(ctx context.Context, key ctKey) (mode uint8, s *big.Int, deltaOrg nodetypes.CurvePoint, ready bool, err error) {
-	identity := nodetypes.CurvePoint{X: big.NewInt(0), Y: big.NewInt(1)}
-	if key.aid == ([32]byte{}) {
-		return 0, big.NewInt(0), identity, true, nil
+// organizerShare is the organizer's Δ = sk_org·C1 for one ciphertext slot,
+// with the Chaum-Pedersen DLEQ that ties it to the application's registered
+// PK_org and the block the share landed in.
+type organizerShare struct {
+	pkOrg nodetypes.CurvePoint
+	delta nodetypes.CurvePoint
+	proof dleq.Proof
+	block uint64
+}
+
+// organizerPK reads (and memoises for the tick) the application's registered
+// organizer key. Only registered applications can own a ciphertext — the
+// contract rejects submitCiphertext for an unknown aid — so a missing record
+// here means the chain is lying or we are looking at the wrong contract.
+func (n *Node) organizerPK(ctx context.Context, tc *tickCache, key ctKey) (nodetypes.CurvePoint, error) {
+	ak := appKey{epoch: key.epoch, aid: key.aid}
+	if pk, ok := tc.apps[ak]; ok {
+		return pk, nil
 	}
-	corr, err := n.appManager.GetCombineCorrection(&bind.CallOpts{Context: ctx}, key.epoch, key.aid, key.idx)
+	rec, err := n.appManager.GetApplication(&bind.CallOpts{Context: ctx}, key.epoch, key.aid)
 	if err != nil {
-		if strings.Contains(decodeContractError(err), "InsufficientPartialDecryptions") {
-			return 0, nil, identity, false, nil // organizer share not posted yet
-		}
-		return 0, nil, identity, false, fmt.Errorf("combine correction: %w", err)
+		return nodetypes.CurvePoint{}, fmt.Errorf("get application: %w", err)
 	}
-	return corr.Mode, corr.DerivationS, nodetypes.CurvePoint{X: corr.DeltaOrgX, Y: corr.DeltaOrgY}, true, nil
+	if !rec.Exists {
+		return nodetypes.CurvePoint{}, fmt.Errorf("application %x is not registered", key.aid)
+	}
+	pk := nodetypes.CurvePoint{X: new(big.Int).Set(rec.OrganizerPK.X), Y: new(big.Int).Set(rec.OrganizerPK.Y)}
+	tc.apps[ak] = pk
+	return pk, nil
+}
+
+// latestOrganizerShare reads the newest OrganizerShareSubmitted event for the
+// slot and verifies its DLEQ against the application's registered PK_org.
+//
+// ok=false means "not combinable yet": either nobody has posted a share, or
+// the newest one does not verify. The contract stores the share words without
+// checking them, precisely so a malformed submission cannot brick a
+// ciphertext — the organizer can overwrite it, so we simply retry on the next
+// tick instead of giving up on the slot.
+func (n *Node) latestOrganizerShare(
+	ctx context.Context,
+	tc *tickCache,
+	key ctKey,
+	c1 nodetypes.CurvePoint,
+	seedBlock, head uint64,
+) (organizerShare, bool, error) {
+	pkOrg, err := n.organizerPK(ctx, tc, key)
+	if err != nil {
+		return organizerShare{}, false, err
+	}
+
+	start := uint64(0)
+	if seedBlock > 0 {
+		start = seedBlock - 1
+	}
+	var share organizerShare
+	found := false
+	for from := start; from <= head; from += logRangeBlocks {
+		end := min(from+logRangeBlocks-1, head)
+		it, err := n.appManager.FilterOrganizerShareSubmitted(
+			&bind.FilterOpts{Context: ctx, Start: from, End: &end},
+			[][12]byte{key.epoch}, [][32]byte{key.aid}, []uint16{key.idx},
+		)
+		if err != nil {
+			return organizerShare{}, false, fmt.Errorf("filter OrganizerShareSubmitted [%d,%d]: %w", from, end, err)
+		}
+		for it.Next() {
+			e := it.Event
+			share = organizerShare{
+				pkOrg: pkOrg,
+				delta: nodetypes.CurvePoint{X: new(big.Int).Set(e.DeltaX), Y: new(big.Int).Set(e.DeltaY)},
+				proof: dleq.Proof{
+					A1:       nodetypes.CurvePoint{X: new(big.Int).Set(e.A1x), Y: new(big.Int).Set(e.A1y)},
+					A2:       nodetypes.CurvePoint{X: new(big.Int).Set(e.A2x), Y: new(big.Int).Set(e.A2y)},
+					Response: new(big.Int).Set(e.Z),
+				},
+				block: e.Raw.BlockNumber,
+			}
+			found = true
+		}
+		err = it.Error()
+		_ = it.Close()
+		if err != nil {
+			return organizerShare{}, false, fmt.Errorf("iterate OrganizerShareSubmitted: %w", err)
+		}
+	}
+	if !found {
+		log.Debugw("combine: waiting for the organizer share", "ct", key.String())
+		return organizerShare{}, false, nil
+	}
+	if !dleq.VerifyOrganizerShare(key.epoch, key.aid, key.idx, pkOrg, c1, share.delta, share.proof) {
+		log.Warnw("organizer share does not verify — waiting for the organizer to resubmit",
+			"ct", key.String(), "block", share.block)
+		return organizerShare{}, false, nil
+	}
+	return share, true, nil
 }
 
 // tryCombine interpolates threshold partials, recovers the plaintext by BSGS
-// and posts the combine proof. Committee members take turns in a
-// seed-derived rotation (like auto-finalize) starting at the block the
-// threshold-th partial landed, so normally a single member pays for the
-// combine; later slots only step in if the earlier ones did not.
+// and posts the combine proof. A slot becomes combinable only once BOTH
+// `t` partial decryptions and a verifying organizer share are on chain.
+// Committee members take turns in a seed-derived rotation (like
+// auto-finalize) starting at the block the last of those two landed in, so
+// normally a single member pays for the combine; later slots only step in if
+// the earlier ones did not.
 func (n *Node) tryCombine(
 	ctx context.Context,
+	tc *tickCache,
 	key ctKey,
 	ct *ciphertext,
 	epoch epochView,
@@ -467,20 +552,20 @@ func (n *Node) tryCombine(
 	if len(idxs) < int(threshold) {
 		return false, nil
 	}
-	// ponytail: the rotation is anchored on the partial-ready block; a mode-1
-	// organizer share that lands much later makes every slot eligible at
-	// once, and only the pre-send re-check below limits the wasted proofs.
-	slot := staggerSlot(epoch.Seed, uint64(key.idx), myIdx, committeeSize)
-	if waitUntil := readyBlock + slot*staggerBlocks; head < waitUntil {
-		log.Debugw("combine: waiting for our slot", "ct", key.String(), "slot", slot, "head", head, "waitUntil", waitUntil)
-		return false, nil
-	}
-	mode, s, deltaOrg, ready, err := n.combineCorrection(ctx, key)
+	share, ready, err := n.latestOrganizerShare(ctx, tc, key, ct.c1, epoch.SeedBlock, head)
 	if err != nil || !ready {
 		return false, err
 	}
+	// The rotation is anchored on whichever of the two prerequisites landed
+	// last, so an organizer share posted long after the partials does not
+	// make every slot eligible at once.
+	slot := staggerSlot(epoch.Seed, uint64(key.idx), myIdx, committeeSize)
+	if waitUntil := max(readyBlock, share.block) + slot*staggerBlocks; head < waitUntil {
+		log.Debugw("combine: waiting for our slot", "ct", key.String(), "slot", slot, "head", head, "waitUntil", waitUntil)
+		return false, nil
+	}
 
-	// M·G = C2 − Σ λ_k·δ_k − T
+	// M·G = C2 − Σ λ_k·δ_k − Δ_org
 	combinedEnc, err := ccommon.InterpolatePointsAtZeroNative(ccommon.Uint16sToBigInts(idxs), deltas)
 	if err != nil {
 		return false, fmt.Errorf("interpolate partials: %w", err)
@@ -489,22 +574,13 @@ func (n *Node) tryCombine(
 	if err != nil {
 		return false, err
 	}
-	c1, err := group.Decode(ct.c1)
-	if err != nil {
-		return false, err
-	}
 	c2, err := group.Decode(ct.c2)
 	if err != nil {
 		return false, err
 	}
-	correction := group.NewPoint()
-	if mode == 0 {
-		correction.ScalarMult(c1, s)
-	} else {
-		correction, err = group.Decode(deltaOrg)
-		if err != nil {
-			return false, fmt.Errorf("decode organizer share: %w", err)
-		}
+	correction, err := group.Decode(share.delta)
+	if err != nil {
+		return false, fmt.Errorf("decode organizer share: %w", err)
 	}
 	negCombined := group.NewPoint()
 	negCombined.Neg(combined)
@@ -525,9 +601,9 @@ func (n *Node) tryCombine(
 		RoundHash:          roundScalar(key.epoch),
 		Aid:                new(big.Int).SetBytes(key.aid[:]),
 		CtIdx:              new(big.Int).SetUint64(uint64(key.idx)),
-		Mode:               new(big.Int).SetUint64(uint64(mode)),
-		S:                  s,
-		DeltaOrg:           deltaOrg,
+		DeltaOrg:           share.delta,
+		OrganizerPK:        share.pkOrg,
+		OrganizerProof:     share.proof,
 		Threshold:          threshold,
 		CiphertextC1:       ct.c1,
 		CiphertextC2:       ct.c2,

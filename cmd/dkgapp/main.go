@@ -1,8 +1,8 @@
 // dkgapp is the application-side companion of davinci-dkg-node: it registers
-// applications against a live epoch (public derivation or organizer
-// co-decryption), encrypts and submits ciphertexts, posts organizer shares
-// and reads back combined plaintexts. It is what an integrator or an
-// election organizer runs; committee members run davinci-dkg-node.
+// applications against a live epoch, encrypts and submits ciphertexts, posts
+// the organizer share that releases decryption and reads back combined
+// plaintexts. It is what an integrator or an election organizer runs;
+// committee members run davinci-dkg-node.
 package main
 
 import (
@@ -20,14 +20,12 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
-	"github.com/vocdoni/davinci-dkg/circuits/partialdecrypt"
 	"github.com/vocdoni/davinci-dkg/config"
+	"github.com/vocdoni/davinci-dkg/crypto/dleq"
 	"github.com/vocdoni/davinci-dkg/crypto/elgamal"
 	"github.com/vocdoni/davinci-dkg/crypto/group"
 	"github.com/vocdoni/davinci-dkg/crypto/schnorr"
-	"github.com/vocdoni/davinci-dkg/internal/protocol"
 	"github.com/vocdoni/davinci-dkg/log"
-	"github.com/vocdoni/davinci-dkg/prover"
 	gtypes "github.com/vocdoni/davinci-dkg/solidity/golang-types"
 	"github.com/vocdoni/davinci-dkg/types"
 	"github.com/vocdoni/davinci-dkg/web3"
@@ -38,20 +36,24 @@ const usage = `usage: dkgapp [-rpc url[,url]] [-network name | -manager 0x..] [-
 
 commands:
   epoch      [-epoch id]                                   print an epoch (default: latest)
-  register    -epoch id -aid hex32 [-codec] [-org-secret hex] [-submitter 0x..] [-max n]
-                                                            register an application (mode 0, or mode 1 with -codec)
+  register    -epoch id -aid hex32 [-org-secret hex] [-submitter 0x..] [-max n]
+                                                            register an application with an organizer key
+                                                            PK_org = sk_org*G and a Schnorr proof of
+                                                            possession; the secret is generated and printed
+                                                            when -org-secret is omitted
   encrypt     -epoch id -aid hex32 -m int [-org-secret hex]
-                                                            encrypt m under PK_aid with a proof of knowledge of
-                                                            its randomness, submit it (the chain assigns the
-                                                            index) and, for mode 1 with -org-secret, post the
-                                                            organizer share right away (omit it to withhold)
+                                                            encrypt m under PK_aid = PK_ep + PK_org and submit
+                                                            it (the chain assigns the index); with -org-secret
+                                                            the organizer share is posted right away, otherwise
+                                                            it is withheld until you run "share"
   share       -epoch id -aid hex32 -index n -org-secret hex
-                                                            post the organizer share of a mode-1 ciphertext
-                                                            that was submitted earlier (releases decryption)
+                                                            post the organizer share Delta = sk_org*C1 with its
+                                                            DLEQ for a ciphertext submitted earlier; this is
+                                                            what releases decryption (no SNARK, no artifacts)
   plaintext   -epoch id -aid hex32 -index n [-wait dur]    read (or wait for) the combined plaintext
 
-Proofs are generated with the pinned release circuit artifacts; point
-DAVINCI_ARTIFACTS_DIR at a directory holding them (see README, "Circuits").
+Losing sk_org makes every ciphertext of the application permanently
+undecryptable: the committee alone can only recover sk_ep*C1.
 
 Every flag has a DAVINCI_DKG_* environment equivalent for the global options
 (DAVINCI_DKG_WEB3_RPC, DAVINCI_DKG_NETWORK, DAVINCI_DKG_MANAGER, DAVINCI_DKG_PRIVKEY).
@@ -184,15 +186,17 @@ func (a *app) cmdRegister(args []string) error {
 	fs := flag.NewFlagSet("register", flag.ContinueOnError)
 	epochFlag := fs.String("epoch", "latest", "epoch id (hex) or 'latest'")
 	aidFlag := fs.String("aid", "", "32-byte application id (hex), must be non-zero and below the BN254 scalar field")
-	codec := fs.Bool("codec", false, "organizer co-decryption mode (mode 1)")
-	orgSecret := fs.String("org-secret", "", "organizer secret scalar (hex); generated when omitted")
-	submitter := fs.String("submitter", "", "only this address may submit ciphertexts (default: anyone)")
+	orgSecret := fs.String("org-secret", "", "organizer secret scalar (hex); generated and printed when omitted")
+	submitter := fs.String("submitter", "", "only this address may submit ciphertexts (default: the registering address)")
 	maxCt := fs.Uint("max", 0, "maximum ciphertexts (0 = unlimited)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if a.txm == nil {
 		return fmt.Errorf("-privkey is required")
+	}
+	if *maxCt > math.MaxUint16 {
+		return fmt.Errorf("-max must fit in a uint16")
 	}
 	id, err := a.epochID(*epochFlag)
 	if err != nil {
@@ -202,6 +206,22 @@ func (a *app) cmdRegister(args []string) error {
 	if err != nil {
 		return err
 	}
+	sk, generated, err := organizerSecret(*orgSecret)
+	if err != nil {
+		return err
+	}
+	pkX, pkY, proof, err := schnorr.ProveOrganizerRegister(sk, id, aid)
+	if err != nil {
+		return err
+	}
+	if generated {
+		fmt.Printf("organizer secret: %x\n", sk)
+		fmt.Println("WARNING: store this now. It is not derivable from anything on chain, and")
+		fmt.Println("         without it every ciphertext of this application is permanently")
+		fmt.Println("         undecryptable — the committee alone only recovers sk_ep*C1.")
+	}
+	fmt.Printf("organizer key  (%s, %s)\n", pkX, pkY)
+
 	policy := gtypes.DKGTypesAppPolicy{MaxCiphertexts: uint16(*maxCt)}
 	if *submitter != "" {
 		policy.AuthorizedSubmitter = common.HexToAddress(*submitter)
@@ -210,28 +230,7 @@ func (a *app) cmdRegister(args []string) error {
 	if err != nil {
 		return err
 	}
-	var tx *ethtypes.Transaction
-	if !*codec {
-		tx, err = a.appManager.RegisterApplication(auth, id, aid, policy)
-	} else {
-		var sk *big.Int
-		var generated bool
-		sk, generated, err = organizerSecret(*orgSecret)
-		if err != nil {
-			return err
-		}
-		var pkX, pkY *big.Int
-		var proof schnorr.OrganizerProof
-		pkX, pkY, proof, err = schnorr.ProveOrganizerRegister(sk, id, aid)
-		if err != nil {
-			return err
-		}
-		if generated {
-			fmt.Printf("organizer secret (keep it, needed to decrypt): %x\n", sk)
-		}
-		fmt.Printf("organizer key  (%s, %s)\n", pkX, pkY)
-		tx, err = a.appManager.RegisterApplicationCoDec(auth, id, aid, policy, pkX, pkY, proof.Ax, proof.Ay, proof.Z)
-	}
+	tx, err := a.appManager.RegisterApplication(auth, id, aid, policy, pkX, pkY, proof.Ax, proof.Ay, proof.Z)
 	if err != nil {
 		return fmt.Errorf("register: %w", err)
 	}
@@ -247,9 +246,9 @@ func (a *app) cmdRegister(args []string) error {
 func (a *app) cmdEncrypt(args []string) error {
 	fs := flag.NewFlagSet("encrypt", flag.ContinueOnError)
 	epochFlag := fs.String("epoch", "latest", "epoch id (hex) or 'latest'")
-	aidFlag := fs.String("aid", "", "application id (hex); all-zero for the epoch key itself")
+	aidFlag := fs.String("aid", "", "application id (hex)")
 	mFlag := fs.String("m", "", "plaintext as a decimal integer (< 2^50 for committee recovery)")
-	orgSecret := fs.String("org-secret", "", "organizer secret (hex); required for mode-1 applications")
+	orgSecret := fs.String("org-secret", "", "organizer secret (hex); posts the share right after submission")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -264,7 +263,7 @@ func (a *app) cmdEncrypt(args []string) error {
 	if err != nil {
 		return err
 	}
-	aid, err := parseAidAllowZero(*aidFlag)
+	aid, err := parseAid(*aidFlag)
 	if err != nil {
 		return err
 	}
@@ -272,24 +271,21 @@ func (a *app) cmdEncrypt(args []string) error {
 	if err != nil {
 		return err
 	}
-	pkEp := types.CurvePoint{X: pkEpRaw.X, Y: pkEpRaw.Y}
-	var mode uint8
-	pkAid := pkEp
-	if aid != ([32]byte{}) {
-		rec, err := a.appManager.GetApplication(a.callOpts(), id, aid)
-		if err != nil {
-			return err
-		}
-		if !rec.Exists {
-			return fmt.Errorf("application %x is not registered in epoch %x", aid, id)
-		}
-		mode = rec.Mode
-		pkAid, err = elgamal.ApplicationKey(pkEp, mode, rec.DerivationS, types.CurvePoint{X: rec.OrganizerPK.X, Y: rec.OrganizerPK.Y})
-		if err != nil {
-			return err
-		}
+	rec, err := a.appManager.GetApplication(a.callOpts(), id, aid)
+	if err != nil {
+		return err
 	}
-	c1, c2, pok, err := elgamal.EncryptWithProof(id, aid, pkAid, m)
+	if !rec.Exists {
+		return fmt.Errorf("application %x is not registered in epoch %x", aid, id)
+	}
+	pkAid, err := elgamal.ApplicationKey(
+		types.CurvePoint{X: pkEpRaw.X, Y: pkEpRaw.Y},
+		types.CurvePoint{X: rec.OrganizerPK.X, Y: rec.OrganizerPK.Y},
+	)
+	if err != nil {
+		return err
+	}
+	c1, c2, err := elgamal.Encrypt(pkAid, m)
 	if err != nil {
 		return err
 	}
@@ -297,7 +293,7 @@ func (a *app) cmdEncrypt(args []string) error {
 	if err != nil {
 		return err
 	}
-	tx, err := a.manager.SubmitCiphertext(auth, id, aid, c1.X, c1.Y, c2.X, c2.Y, pok.A.X, pok.A.Y, pok.Z)
+	tx, err := a.manager.SubmitCiphertext(auth, id, aid, c1.X, c1.Y, c2.X, c2.Y)
 	if err != nil {
 		return fmt.Errorf("submit ciphertext: %w", err)
 	}
@@ -309,9 +305,6 @@ func (a *app) cmdEncrypt(args []string) error {
 		return err
 	}
 	fmt.Printf("ciphertext %d submitted for %x (tx %s)\n", index, aid, tx.Hash().Hex())
-	if mode != 1 {
-		return nil
-	}
 	if *orgSecret == "" {
 		fmt.Printf("organizer share withheld; release it with: share -epoch %x -aid %x -index %d -org-secret ...\n", id, aid, index)
 		return nil
@@ -334,6 +327,9 @@ func (a *app) cmdShare(args []string) error {
 	}
 	if a.txm == nil {
 		return fmt.Errorf("-privkey is required")
+	}
+	if *orgSecret == "" {
+		return fmt.Errorf("-org-secret is required")
 	}
 	if *indexFlag == 0 || *indexFlag > math.MaxUint16 {
 		return fmt.Errorf("-index must be in [1, %d]", math.MaxUint16)
@@ -371,45 +367,23 @@ func (a *app) cmdShare(args []string) error {
 	return a.submitOrganizerShare(id, aid, index, c1, c2, sk)
 }
 
+// submitOrganizerShare computes Δ = sk_org·C1 with its Chaum-Pedersen DLEQ
+// and posts it. There is no SNARK here: the DLEQ is verified inside the
+// committee's combine proof, so the organizer needs nothing but keccak and
+// BabyJubJub arithmetic (and no circuit artifacts).
 func (a *app) submitOrganizerShare(id [12]byte, aid [32]byte, index uint16, c1, c2 types.CurvePoint, sk *big.Int) error {
-	nonce, err := rand.Int(rand.Reader, group.ScalarField())
-	if err != nil {
-		return err
-	}
-	witness, pi, err := partialdecrypt.BuildWitness(partialdecrypt.Assignment{
-		RoundHash:        new(big.Int).SetBytes(id[:]),
-		Aid:              new(big.Int).SetBytes(aid[:]),
-		CtIdx:            new(big.Int).SetUint64(uint64(index)),
-		Role:             big.NewInt(int64(protocol.RoleOrganizer)),
-		ParticipantIndex: 0,
-		Base:             c1,
-		Secret:           sk,
-		Nonce:            nonce,
-	})
-	if err != nil {
-		return err
-	}
-	runtime, err := partialdecrypt.Artifacts.LoadPinned(a.ctx, &partialdecrypt.PartialDecryptCircuit{})
-	if err != nil {
-		return fmt.Errorf("load partial-decrypt circuit: %w", err)
-	}
-	proof, err := runtime.ProveAndVerify(witness)
+	delta, proof, err := dleq.ProveOrganizerShare(id, aid, index, sk, c1)
 	if err != nil {
 		return fmt.Errorf("prove organizer share: %w", err)
-	}
-	proofBytes, err := prover.MarshalSolidityProof(proof)
-	if err != nil {
-		return err
-	}
-	inputBytes, err := prover.EncodePublicWitness(pi.PublicWitness())
-	if err != nil {
-		return err
 	}
 	auth, err := a.txm.NewTransactOpts(a.ctx)
 	if err != nil {
 		return err
 	}
-	tx, err := a.appManager.SubmitOrganizerShare(auth, id, aid, index, c1.X, c1.Y, c2.X, c2.Y, pi.Delta.X, pi.Delta.Y, proofBytes, inputBytes)
+	tx, err := a.appManager.SubmitOrganizerShare(auth, id, aid, index,
+		c1.X, c1.Y, c2.X, c2.Y,
+		delta.X, delta.Y,
+		proof.A1.X, proof.A1.Y, proof.A2.X, proof.A2.Y, proof.Response)
 	if err != nil {
 		return fmt.Errorf("submit organizer share: %w", err)
 	}
@@ -425,7 +399,7 @@ func (a *app) submitOrganizerShare(id [12]byte, aid [32]byte, index uint16, c1, 
 func (a *app) cmdPlaintext(args []string) error {
 	fs := flag.NewFlagSet("plaintext", flag.ContinueOnError)
 	epochFlag := fs.String("epoch", "latest", "epoch id (hex) or 'latest'")
-	aidFlag := fs.String("aid", "", "application id (hex); all-zero for the epoch key itself")
+	aidFlag := fs.String("aid", "", "application id (hex)")
 	index := fs.Uint("index", 1, "ciphertext index")
 	wait := fs.Duration("wait", 0, "poll until combined for up to this long (0 = read once)")
 	if err := fs.Parse(args); err != nil {
@@ -435,7 +409,7 @@ func (a *app) cmdPlaintext(args []string) error {
 	if err != nil {
 		return err
 	}
-	aid, err := parseAidAllowZero(*aidFlag)
+	aid, err := parseAid(*aidFlag)
 	if err != nil {
 		return err
 	}
@@ -503,14 +477,6 @@ func (a *app) epochID(s string) ([12]byte, error) {
 	return id, nil
 }
 
-func parseAidAllowZero(s string) ([32]byte, error) {
-	var aid [32]byte
-	if s == "" || s == "0" || s == "0x0" {
-		return aid, nil
-	}
-	return parseAid(s)
-}
-
 // parseAid accepts a 32-byte hex id and enforces the on-chain rule that it is
 // non-zero and below the BN254 scalar field (it is a proof public input).
 func parseAid(s string) ([32]byte, error) {
@@ -527,6 +493,9 @@ func parseAid(s string) ([32]byte, error) {
 	return aid, nil
 }
 
+// organizerSecret parses the caller-supplied organizer scalar, or draws a
+// fresh one from crypto/rand. `generated` tells the caller to print it: it is
+// the only copy, and losing it makes the application undecryptable.
 func organizerSecret(hexSecret string) (sk *big.Int, generated bool, err error) {
 	if hexSecret != "" {
 		sk, ok := new(big.Int).SetString(strings.TrimPrefix(hexSecret, "0x"), 16)

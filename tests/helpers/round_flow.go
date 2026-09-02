@@ -158,13 +158,15 @@ func CreateFinalizedSingleParticipantRound(
 	}, nil
 }
 
-// CombineSingleParticipantDecryption drives partial decryption + combine for a
-// ciphertext that is already on-chain at (epochID, ciphertextIndex), assuming
-// the epoch was created by CreateFinalizedSingleParticipantRound (committee=1,
-// threshold=1, single participant index 1 owned by services.TxManager).
+// CombineSingleParticipantDecryption drives partial decryption, the organizer
+// share and the combine for a ciphertext that is already on chain at
+// (epochID, aid, ciphertextIndex), assuming the epoch was created by
+// CreateFinalizedSingleParticipantRound (committee=1, threshold=1, single
+// participant index 1 owned by services.TxManager).
 //
 // `share` is the polynomial share value held by participant 1 — for a single
 // coefficient list `coefficients`, this is f(1) = sum(coefficients).
+// `skOrg` is the organizer secret the application was registered with.
 //
 // Used by the SDK end-to-end ciphertext test (sdk/tests/ciphertext-e2e):
 // the SDK submits an encrypted ciphertext, then this helper drives the
@@ -174,10 +176,12 @@ func CombineSingleParticipantDecryption(
 	ctx context.Context,
 	services *TestServices,
 	epochID [12]byte,
+	aid [32]byte,
 	ciphertextIndex uint16,
 	share *big.Int,
+	skOrg *big.Int,
 ) error {
-	payload, err := PrepareSingleParticipantCombinePayload(ctx, services, epochID, ciphertextIndex, share)
+	payload, err := PrepareSingleParticipantCombinePayload(ctx, services, epochID, aid, ciphertextIndex, share, skOrg)
 	if err != nil {
 		return err
 	}
@@ -186,7 +190,7 @@ func CombineSingleParticipantDecryption(
 		return err
 	}
 	tx, err := services.Manager.CombineDecryption(
-		auth, epochID, [32]byte{}, ciphertextIndex,
+		auth, epochID, aid, ciphertextIndex,
 		payload.CombineHash, payload.Plaintext,
 		payload.Transcript, payload.Proof, payload.Input,
 	)
@@ -213,25 +217,27 @@ type CombinePayload struct {
 }
 
 // PrepareSingleParticipantCombinePayload submits the participant-1 partial
-// decryption on-chain (the gnark proof has to be built in Go) and returns
-// the bytes a caller needs to drive `combineDecryption` themselves. Used
-// by the SDK ciphertext-e2e and combine-e2e tests so the SDK writer is
-// what actually issues the on-chain combine — the same code path
-// production node operators take.
+// decryption and the organizer share on chain (the gnark proof has to be
+// built in Go) and returns the bytes a caller needs to drive
+// `combineDecryption` themselves. Used by the SDK ciphertext-e2e and
+// combine-e2e tests so the SDK writer is what actually issues the on-chain
+// combine — the same code path production node operators take.
 func PrepareSingleParticipantCombinePayload(
 	ctx context.Context,
 	services *TestServices,
 	epochID [12]byte,
+	aid [32]byte,
 	ciphertextIndex uint16,
 	share *big.Int,
+	skOrg *big.Int,
 ) (*CombinePayload, error) {
-	ciphertextHash, err := services.Manager.GetCiphertextHash(services.CallOpts(ctx), epochID, [32]byte{}, ciphertextIndex)
+	ciphertextHash, err := services.Manager.GetCiphertextHash(services.CallOpts(ctx), epochID, aid, ciphertextIndex)
 	if err != nil {
 		return nil, fmt.Errorf("get ciphertext hash: %w", err)
 	}
 	var zero common.Hash
 	if ciphertextHash == zero {
-		return nil, fmt.Errorf("ciphertext at (%x, %d) not yet submitted", epochID, ciphertextIndex)
+		return nil, fmt.Errorf("ciphertext at (%x, %x, %d) not yet submitted", epochID, aid, ciphertextIndex)
 	}
 
 	// Recover the actual ciphertext coordinates from the CiphertextSubmitted
@@ -243,14 +249,14 @@ func PrepareSingleParticipantCombinePayload(
 	}
 	startBlock := uint64(0)
 	if epoch.SeedBlock > 0 {
-		startBlock = uint64(epoch.SeedBlock) - 1
+		startBlock = epoch.SeedBlock - 1
 	}
 	latest, err := services.Contracts.Client().BlockNumber(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("read head: %w", err)
 	}
 	filterOpts := &bind.FilterOpts{Context: ctx, Start: startBlock, End: &latest}
-	it, err := services.Manager.FilterCiphertextSubmitted(filterOpts, [][12]byte{epochID}, [][32]byte{{}}, []uint16{ciphertextIndex})
+	it, err := services.Manager.FilterCiphertextSubmitted(filterOpts, [][12]byte{epochID}, [][32]byte{aid}, []uint16{ciphertextIndex})
 	if err != nil {
 		return nil, fmt.Errorf("filter CiphertextSubmitted: %w", err)
 	}
@@ -259,7 +265,7 @@ func PrepareSingleParticipantCombinePayload(
 		if err := it.Error(); err != nil {
 			return nil, fmt.Errorf("iterate CiphertextSubmitted: %w", err)
 		}
-		return nil, fmt.Errorf("no CiphertextSubmitted event for (%x, %d)", epochID, ciphertextIndex)
+		return nil, fmt.Errorf("no CiphertextSubmitted event for (%x, %x, %d)", epochID, aid, ciphertextIndex)
 	}
 	c1 := types.CurvePoint{X: new(big.Int).Set(it.Event.C1x), Y: new(big.Int).Set(it.Event.C1y)}
 	c2 := types.CurvePoint{X: new(big.Int).Set(it.Event.C2x), Y: new(big.Int).Set(it.Event.C2y)}
@@ -270,7 +276,7 @@ func PrepareSingleParticipantCombinePayload(
 	// share itself), but we still go through both txs so this exercises the
 	// full on-chain decryption path the SDK consumers depend on.
 	const partialNonce = 1
-	partial, err := BuildPartialDecryptionSubmissionFromBase(ctx, epochID, [32]byte{}, ciphertextIndex, 1, c1, c2, share, big.NewInt(partialNonce))
+	partial, err := BuildPartialDecryptionSubmissionFromBase(ctx, epochID, aid, ciphertextIndex, 1, c1, c2, share, big.NewInt(partialNonce))
 	if err != nil {
 		return nil, fmt.Errorf("build partial decryption: %w", err)
 	}
@@ -283,7 +289,7 @@ func PrepareSingleParticipantCombinePayload(
 	if err != nil {
 		return nil, err
 	}
-	tx, err := services.Manager.SubmitPartialDecryption(auth, epochID, [32]byte{}, 1, ciphertextIndex,
+	tx, err := services.Manager.SubmitPartialDecryption(auth, epochID, aid, 1, ciphertextIndex,
 		c1.X, c1.Y, c2.X, c2.Y, partial.DeltaHash, partial.Proof, partial.Input)
 	if err != nil {
 		return nil, fmt.Errorf("submit partial decryption: %w", err)
@@ -292,19 +298,36 @@ func PrepareSingleParticipantCombinePayload(
 		return nil, err
 	}
 
+	// Release the organizer half of the decryption. The words that land on
+	// chain are the ones the combine transcript has to carry.
+	actor := &TestActor{
+		Contracts: services.Contracts,
+		Manager:   services.Manager,
+		Registry:  services.Registry,
+		TxManager: services.TxManager,
+	}
+	deltaOrg, organizerProof, err := SubmitOrganizerShareAs(
+		ctx, actor, services.AppManager, epochID, aid, ciphertextIndex, c1, c2, skOrg,
+	)
+	if err != nil {
+		return nil, err
+	}
+
 	// Recover the plaintext by brute-force discrete log over a small window.
 	// Fixture epochs always submit ciphertexts of small integers so this
 	// terminates immediately; the helper bounds the search to 2^20 and is
-	// deliberately separate from the production node's BSGS (cmd/davinci-dkg-node/dlog.go,
+	// deliberately separate from the production node's BSGS (node/dlog.go,
 	// cap 2^50). Keeping a tiny cap here means tests don't pay the ~30 s
 	// table-build cost the production cap implies.
-	plaintext, err := bruteForceELGamalPlaintext(c2, partial.Delta)
+	plaintext, err := bruteForceELGamalPlaintext(c2, partial.Delta, deltaOrg)
 	if err != nil {
 		return nil, fmt.Errorf("recover plaintext: %w", err)
 	}
 
 	combineOutput, err := BuildDecryptCombineOutputFromCiphertext(
-		ctx, epochID, ciphertextIndex, 1, c1, c2, []uint16{1}, []types.CurvePoint{partial.Delta}, plaintext,
+		ctx, epochID, aid, ciphertextIndex, 1, c1, c2,
+		ScalarBasePoint(skOrg), deltaOrg, organizerProof,
+		[]uint16{1}, []types.CurvePoint{partial.Delta}, plaintext,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("build combine output: %w", err)
@@ -319,35 +342,37 @@ func PrepareSingleParticipantCombinePayload(
 	}, nil
 }
 
-// bruteForceELGamalPlaintext recovers m from c2 - delta = m·G by trying every
-// m in [0, 2^20). Used by CombineSingleParticipantDecryption to discover the
-// plaintext that the SDK encrypted (the SDK chose a random k, so this is the
-// only way the fixture can learn what was sent without epoch-tripping through
-// the original encryption).
+// bruteForceELGamalPlaintext recovers m from c2 − δ − Δ_org = m·G by trying
+// every m in [0, 2^20). Used by CombineSingleParticipantDecryption to
+// discover the plaintext that the SDK encrypted (the SDK chose a random k, so
+// this is the only way the fixture can learn what was sent without
+// round-tripping through the original encryption).
 //
-// Production decryption uses cmd/davinci-dkg-node/dlog.go (BSGS, cap 2^50);
-// this helper deliberately keeps the cheaper linear scan because every
-// fixture submits values well under 2^20.
+// Production decryption uses node/dlog.go (BSGS, cap 2^50); this helper
+// deliberately keeps the cheaper linear scan because every fixture submits
+// values well under 2^20.
 //
 // Note on the loop: gnark's PointAffine zero value is the affine origin (0, 0),
 // which is NOT a point on twisted Edwards (the identity is (0, 1)). We can't
 // start from `group.NewPoint()` and add G repeatedly, because adding (0, 0) + G
 // produces an invalid result. Instead we use the identity encoded as (0, 1)
 // for the m=0 check and start the iteration from G itself for m=1+.
-func bruteForceELGamalPlaintext(c2 types.CurvePoint, delta types.CurvePoint) (*big.Int, error) {
+func bruteForceELGamalPlaintext(c2, delta, deltaOrg types.CurvePoint) (*big.Int, error) {
 	c2Native, err := group.Decode(c2)
 	if err != nil {
 		return nil, fmt.Errorf("decode c2: %w", err)
 	}
-	deltaNative, err := group.Decode(delta)
-	if err != nil {
-		return nil, fmt.Errorf("decode delta: %w", err)
-	}
-	negDelta := group.NewPoint()
-	negDelta.Neg(deltaNative)
-
 	target := group.NewPoint()
-	target.Add(c2Native, negDelta)
+	target.Set(c2Native)
+	for _, term := range []types.CurvePoint{delta, deltaOrg} {
+		native, err := group.Decode(term)
+		if err != nil {
+			return nil, fmt.Errorf("decode subtrahend: %w", err)
+		}
+		neg := group.NewPoint()
+		neg.Neg(native)
+		target.Add(target, neg)
+	}
 	targetEnc := group.Encode(target)
 
 	// m = 0 → target is the curve identity (0, 1)
@@ -370,7 +395,3 @@ func bruteForceELGamalPlaintext(c2 types.CurvePoint, delta types.CurvePoint) (*b
 	}
 	return nil, fmt.Errorf("plaintext out of brute-force range (> 2^20)")
 }
-
-// silence "imported and not used" — `bind` is referenced inside the
-// CombineSingleParticipantDecryption body via &bind.FilterOpts{}.
-var _ = bind.CallOpts{}

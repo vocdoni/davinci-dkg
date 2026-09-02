@@ -14,9 +14,11 @@
 //	--action=decrypt drives the threshold-decryption flow for a
 //	                 ciphertext that the SDK already submitted on-chain:
 //	                 builds the partial decryption proof, calls
-//	                 submitPartialDecryption, then combineDecryption.
+//	                 submitPartialDecryption, releases the organizer share
+//	                 and finally combineDecryption.
 //	                 Required additional flags:
-//	                   --epoch-id, --ciphertext-index, --share
+//	                   --epoch-id, --aid, --ciphertext-index, --share,
+//	                   --org-secret
 //	                 Outputs `{"ok":true}` on success.
 //
 // The TypeScript tests use these together to verify the full epoch-trip
@@ -74,8 +76,10 @@ func main() {
 	var addressesFile string
 	var action string
 	var roundIDHex string
+	var aidHex string
 	var ciphertextIndex int
 	var shareDec string
+	var orgSecretHex string
 
 	flag.StringVar(&rpcURL, "rpc-url", os.Getenv("DAVINCI_DKG_TEST_RPC_URL"),
 		"RPC URL of the Anvil testnet")
@@ -87,8 +91,12 @@ func main() {
 		"(decrypt) epoch id as a 0x-prefixed 12-byte hex string")
 	flag.IntVar(&ciphertextIndex, "ciphertext-index", 0,
 		"(decrypt) ciphertext index to combine (must be > 0)")
+	flag.StringVar(&aidHex, "aid", "",
+		"(decrypt) application id as a 0x-prefixed 32-byte hex string")
 	flag.StringVar(&shareDec, "share", "",
 		"(decrypt) participant 1's polynomial share value, decimal")
+	flag.StringVar(&orgSecretHex, "org-secret", "",
+		"(decrypt) organizer secret the application was registered with, hex scalar")
 	flag.Parse()
 
 	if rpcURL == "" {
@@ -155,15 +163,13 @@ func main() {
 			fmt.Fprintf(os.Stderr, "error: --share %q is not a valid decimal\n", shareDec)
 			os.Exit(1)
 		}
-		raw, err := hex.DecodeString(strings.TrimPrefix(roundIDHex, "0x"))
-		if err != nil || len(raw) != 12 {
-			fmt.Fprintf(os.Stderr, "error: --epoch-id must be 0x-prefixed 12-byte hex, got %q\n", roundIDHex)
-			os.Exit(1)
-		}
-		var epochID [12]byte
-		copy(epochID[:], raw)
+		epochID := mustEpochID(roundIDHex)
+		aid := mustAid(aidHex)
+		skOrg := mustOrganizerSecret(orgSecretHex)
 
-		if err := helpers.CombineSingleParticipantDecryption(ctx, services, epochID, uint16(ciphertextIndex), share); err != nil {
+		if err := helpers.CombineSingleParticipantDecryption(
+			ctx, services, epochID, aid, uint16(ciphertextIndex), share, skOrg,
+		); err != nil {
 			fmt.Fprintf(os.Stderr, "error: combine decryption: %v\n", err)
 			os.Exit(1)
 		}
@@ -192,16 +198,12 @@ func main() {
 			fmt.Fprintf(os.Stderr, "error: --share %q is not a valid decimal\n", shareDec)
 			os.Exit(1)
 		}
-		raw, err := hex.DecodeString(strings.TrimPrefix(roundIDHex, "0x"))
-		if err != nil || len(raw) != 12 {
-			fmt.Fprintf(os.Stderr, "error: --epoch-id must be 0x-prefixed 12-byte hex, got %q\n", roundIDHex)
-			os.Exit(1)
-		}
-		var epochID [12]byte
-		copy(epochID[:], raw)
+		epochID := mustEpochID(roundIDHex)
+		aid := mustAid(aidHex)
+		skOrg := mustOrganizerSecret(orgSecretHex)
 
 		payload, err := helpers.PrepareSingleParticipantCombinePayload(
-			ctx, services, epochID, uint16(ciphertextIndex), share,
+			ctx, services, epochID, aid, uint16(ciphertextIndex), share, skOrg,
 		)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: prepare combine: %v\n", err)
@@ -225,4 +227,46 @@ func main() {
 		fmt.Fprintf(os.Stderr, "error: unknown --action %q (must be 'create' or 'decrypt')\n", action)
 		os.Exit(1)
 	}
+}
+
+// mustEpochID parses a 0x-prefixed 12-byte epoch id or exits.
+func mustEpochID(value string) [12]byte {
+	raw, err := hex.DecodeString(strings.TrimPrefix(value, "0x"))
+	if err != nil || len(raw) != 12 {
+		fmt.Fprintf(os.Stderr, "error: --epoch-id must be 0x-prefixed 12-byte hex, got %q\n", value)
+		os.Exit(1)
+	}
+	var epochID [12]byte
+	copy(epochID[:], raw)
+	return epochID
+}
+
+// mustAid parses a 0x-prefixed application id (right-aligned into 32 bytes)
+// or exits. Every ciphertext belongs to a registered application, so this is
+// required for the decrypt actions.
+func mustAid(value string) [32]byte {
+	raw, err := hex.DecodeString(strings.TrimPrefix(value, "0x"))
+	if err != nil || len(raw) == 0 || len(raw) > 32 {
+		fmt.Fprintf(os.Stderr, "error: --aid must be 1..32 bytes of hex, got %q\n", value)
+		os.Exit(1)
+	}
+	var aid [32]byte
+	copy(aid[32-len(raw):], raw)
+	if aid == ([32]byte{}) {
+		fmt.Fprintln(os.Stderr, "error: --aid must be non-zero")
+		os.Exit(1)
+	}
+	return aid
+}
+
+// mustOrganizerSecret parses the organizer scalar the application was
+// registered with, or exits. Without it the ciphertext cannot be decrypted:
+// the committee alone only recovers sk_ep·C1.
+func mustOrganizerSecret(value string) *big.Int {
+	sk, ok := new(big.Int).SetString(strings.TrimPrefix(value, "0x"), 16)
+	if !ok || sk.Sign() <= 0 {
+		fmt.Fprintf(os.Stderr, "error: --org-secret must be a positive hex scalar, got %q\n", value)
+		os.Exit(1)
+	}
+	return sk
 }

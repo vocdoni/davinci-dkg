@@ -7,7 +7,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/vocdoni/davinci-dkg/crypto/elgamal"
+	"github.com/vocdoni/davinci-dkg/crypto/dleq"
 	"github.com/vocdoni/davinci-dkg/crypto/schnorr"
 	"github.com/vocdoni/davinci-dkg/solidity/golang-types"
 	"github.com/vocdoni/davinci-dkg/types"
@@ -99,6 +99,7 @@ func SubmitPartialDecryptionAs(
 	ctx context.Context,
 	actor *TestActor,
 	epochID [12]byte,
+	aid [32]byte,
 	participantIndex uint16,
 	ciphertextIndex uint16,
 	c1, c2 types.CurvePoint,
@@ -113,7 +114,7 @@ func SubmitPartialDecryptionAs(
 	tx, err := actor.Manager.SubmitPartialDecryption(
 		auth,
 		epochID,
-		[32]byte{}, // legacy per-epoch path: zero aid
+		aid,
 		participantIndex,
 		ciphertextIndex,
 		c1.X, c1.Y, c2.X, c2.Y,
@@ -162,6 +163,7 @@ func CombineDecryptionAs(
 	ctx context.Context,
 	actor *TestActor,
 	epochID [12]byte,
+	aid [32]byte,
 	ciphertextIndex uint16,
 	combineHash [32]byte,
 	plaintext *big.Int,
@@ -173,39 +175,56 @@ func CombineDecryptionAs(
 	if err != nil {
 		return err
 	}
-	tx, err := actor.Manager.CombineDecryption(auth, epochID, [32]byte{}, ciphertextIndex, combineHash, plaintext, transcript, proof, input)
+	tx, err := actor.Manager.CombineDecryption(auth, epochID, aid, ciphertextIndex, combineHash, plaintext, transcript, proof, input)
 	if err != nil {
 		return fmt.Errorf("combine decryption: %w", err)
 	}
 	return actor.TxManager.WaitTxByHash(tx.Hash(), DefaultTxTimeout)
 }
 
-// SubmitCiphertextAs submits a ciphertext on the epoch-key path (aid = 0) and
-// returns the index the contract assigned to it.
+// RegisterApplication registers `aid` against a Live epoch with the organizer
+// key PK_org = skOrg·G and the Schnorr proof of possession the contract
+// verifies. Every application carries an organizer key; there is no other
+// registration path.
+func RegisterApplication(
+	ctx context.Context,
+	actor *TestActor,
+	appManager *golangtypes.DKGAppManager,
+	epochID [12]byte,
+	aid [32]byte,
+	skOrg *big.Int,
+	policy golangtypes.DKGTypesAppPolicy,
+) error {
+	pkX, pkY, proof, err := schnorr.ProveOrganizerRegister(skOrg, epochID, aid)
+	if err != nil {
+		return fmt.Errorf("organizer schnorr proof: %w", err)
+	}
+	auth, err := actor.TxManager.NewTransactOpts(ctx)
+	if err != nil {
+		return err
+	}
+	tx, err := appManager.RegisterApplication(auth, epochID, aid, policy, pkX, pkY, proof.Ax, proof.Ay, proof.Z)
+	if err != nil {
+		return fmt.Errorf("register application: %w", err)
+	}
+	return actor.TxManager.WaitTxByHash(tx.Hash(), DefaultTxTimeout)
+}
+
+// SubmitCiphertextAs submits a ciphertext for a registered application and
+// returns the index the contract assigned to it. There is no proof of
+// knowledge of the randomness — see DKGManager.submitCiphertext.
 func SubmitCiphertextAs(
 	ctx context.Context,
 	actor *TestActor,
 	epochID [12]byte,
-	c1x, c1y, c2x, c2y *big.Int,
-	pok elgamal.PoK,
-) (uint16, error) {
-	return SubmitCiphertextAsApp(ctx, actor, epochID, [32]byte{}, c1x, c1y, c2x, c2y, pok)
-}
-
-// SubmitCiphertextAsApp is the per-application variant of SubmitCiphertextAs.
-func SubmitCiphertextAsApp(
-	ctx context.Context,
-	actor *TestActor,
-	epochID [12]byte,
 	aid [32]byte,
-	c1x, c1y, c2x, c2y *big.Int,
-	pok elgamal.PoK,
+	c1, c2 types.CurvePoint,
 ) (uint16, error) {
 	auth, err := actor.TxManager.NewTransactOpts(ctx)
 	if err != nil {
 		return 0, err
 	}
-	tx, err := actor.Manager.SubmitCiphertext(auth, epochID, aid, c1x, c1y, c2x, c2y, pok.A.X, pok.A.Y, pok.Z)
+	tx, err := actor.Manager.SubmitCiphertext(auth, epochID, aid, c1.X, c1.Y, c2.X, c2.Y)
 	if err != nil {
 		return 0, fmt.Errorf("submit ciphertext: %w", err)
 	}
@@ -222,6 +241,70 @@ func SubmitCiphertextAsApp(
 		}
 	}
 	return 0, fmt.Errorf("CiphertextSubmitted event not found in tx %s", tx.Hash().Hex())
+}
+
+// SubmitOrganizerShareAs posts Δ = skOrg·C1 with its Chaum-Pedersen DLEQ for
+// one ciphertext. It returns the exact share words that landed on chain: the
+// combine transcript must carry those same words, so callers pass them into
+// the combine builder rather than re-proving (the nonce is fresh per call).
+func SubmitOrganizerShareAs(
+	ctx context.Context,
+	actor *TestActor,
+	appManager *golangtypes.DKGAppManager,
+	epochID [12]byte,
+	aid [32]byte,
+	ciphertextIndex uint16,
+	c1, c2 types.CurvePoint,
+	skOrg *big.Int,
+) (types.CurvePoint, dleq.Proof, error) {
+	delta, proof, err := dleq.ProveOrganizerShare(epochID, aid, ciphertextIndex, skOrg, c1)
+	if err != nil {
+		return types.CurvePoint{}, dleq.Proof{}, fmt.Errorf("prove organizer share: %w", err)
+	}
+	auth, err := actor.TxManager.NewTransactOpts(ctx)
+	if err != nil {
+		return types.CurvePoint{}, dleq.Proof{}, err
+	}
+	tx, err := appManager.SubmitOrganizerShare(auth, epochID, aid, ciphertextIndex,
+		c1.X, c1.Y, c2.X, c2.Y,
+		delta.X, delta.Y,
+		proof.A1.X, proof.A1.Y, proof.A2.X, proof.A2.Y, proof.Response)
+	if err != nil {
+		return types.CurvePoint{}, dleq.Proof{}, fmt.Errorf("submit organizer share: %w", err)
+	}
+	if err := actor.TxManager.WaitTxByHash(tx.Hash(), DefaultTxTimeout); err != nil {
+		return types.CurvePoint{}, dleq.Proof{}, err
+	}
+	return delta, proof, nil
+}
+
+// PostOrganizerShare submits the exact organizer-share words a combine output
+// commits to. `combineDecryption` re-hashes them against what
+// `submitOrganizerShare` stored, so the two must be the same share — hence
+// posting the words the builder produced rather than re-proving.
+func PostOrganizerShare(
+	ctx context.Context,
+	actor *TestActor,
+	appManager *golangtypes.DKGAppManager,
+	epochID [12]byte,
+	aid [32]byte,
+	ciphertextIndex uint16,
+	out *DecryptCombineOutput,
+) error {
+	auth, err := actor.TxManager.NewTransactOpts(ctx)
+	if err != nil {
+		return err
+	}
+	tx, err := appManager.SubmitOrganizerShare(auth, epochID, aid, ciphertextIndex,
+		out.CiphertextC1.X, out.CiphertextC1.Y, out.CiphertextC2.X, out.CiphertextC2.Y,
+		out.DeltaOrg.X, out.DeltaOrg.Y,
+		out.OrganizerProof.A1.X, out.OrganizerProof.A1.Y,
+		out.OrganizerProof.A2.X, out.OrganizerProof.A2.Y,
+		out.OrganizerProof.Response)
+	if err != nil {
+		return fmt.Errorf("submit organizer share: %w", err)
+	}
+	return actor.TxManager.WaitTxByHash(tx.Hash(), DefaultTxTimeout)
 }
 
 // EnsureNodeKeyRegistered registers or updates the BJJ key for actor if it is
@@ -334,6 +417,7 @@ func SubmitPartialDecryptionMeasured(
 	services *TestServices,
 	actor *TestActor,
 	epochID [12]byte,
+	aid [32]byte,
 	participantIndex uint16,
 	ciphertextIndex uint16,
 	partial *PartialDecryptionSubmission,
@@ -345,7 +429,7 @@ func SubmitPartialDecryptionMeasured(
 	tx, err := actor.Manager.SubmitPartialDecryption(
 		auth,
 		epochID,
-		[32]byte{}, // legacy per-epoch path: zero aid
+		aid,
 		participantIndex,
 		ciphertextIndex,
 		partial.C1.X, partial.C1.Y, partial.C2.X, partial.C2.Y,

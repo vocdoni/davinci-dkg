@@ -2,14 +2,12 @@ package tests
 
 import (
 	"context"
-	"crypto/rand"
 	"math/big"
 	"testing"
 	"time"
 
 	qt "github.com/frankban/quicktest"
 	"github.com/vocdoni/davinci-dkg/crypto/elgamal"
-	"github.com/vocdoni/davinci-dkg/crypto/schnorr"
 	"github.com/vocdoni/davinci-dkg/node"
 	golangtypes "github.com/vocdoni/davinci-dkg/solidity/golang-types"
 	"github.com/vocdoni/davinci-dkg/tests/helpers"
@@ -20,8 +18,10 @@ import (
 // TestNodesServiceApplicationCiphertexts runs three real node instances
 // against the harness chain and checks the whole production path: lottery
 // claim, contribution, finalize, then partial decryption + combine for
-// ciphertexts submitted under a mode-0 application, a mode-1 (organizer
-// co-decryption) application and the legacy aid=0 path.
+// ciphertexts submitted under two registered applications. The test plays the
+// organizer: it registers each application with its own sk_org, encrypts
+// under PK_aid = PK_ep + PK_org and releases the organizer share. The nodes
+// must not combine anything before that share is on chain.
 func TestNodesServiceApplicationCiphertexts(t *testing.T) {
 	if !helpers.IsIntegrationEnabled() {
 		t.Skip("integration tests disabled")
@@ -76,36 +76,25 @@ func TestNodesServiceApplicationCiphertexts(t *testing.T) {
 	c.Assert(err, qt.IsNil)
 	pkEp := types.CurvePoint{X: pkRaw.X, Y: pkRaw.Y}
 
-	// ── application A: public derivation ──────────────────────────────────
-	aidA := randomAid(c)
-	auth, err = services.TxManager.NewTransactOpts(ctx)
-	c.Assert(err, qt.IsNil)
-	tx, err = services.AppManager.RegisterApplication(auth, epochID, aidA, golangtypes.DKGTypesAppPolicy{})
-	c.Assert(err, qt.IsNil)
-	c.Assert(services.TxManager.WaitTxByHash(tx.Hash(), helpers.DefaultTxTimeout), qt.IsNil)
-	appA, err := services.AppManager.GetApplication(services.CallOpts(ctx), epochID, aidA)
-	c.Assert(err, qt.IsNil)
-	pkA, err := helpers.AddPoints(pkEp, helpers.ScalarBasePoint(appA.DerivationS))
-	c.Assert(err, qt.IsNil)
-
-	// ── application B: organizer co-decryption ────────────────────────────
-	aidB := randomAid(c)
-	skOrg, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 250))
-	c.Assert(err, qt.IsNil)
-	skOrg.Add(skOrg, big.NewInt(1))
-	pkOrgX, pkOrgY, orgProof, err := schnorr.ProveOrganizerRegister(skOrg, epochID, aidB)
-	c.Assert(err, qt.IsNil)
-	auth, err = services.TxManager.NewTransactOpts(ctx)
-	c.Assert(err, qt.IsNil)
-	tx, err = services.AppManager.RegisterApplicationCoDec(auth, epochID, aidB, golangtypes.DKGTypesAppPolicy{},
-		pkOrgX, pkOrgY, orgProof.Ax, orgProof.Ay, orgProof.Z)
-	c.Assert(err, qt.IsNil)
-	c.Assert(services.TxManager.WaitTxByHash(tx.Hash(), helpers.DefaultTxTimeout), qt.IsNil)
-	pkB, err := helpers.AddPoints(pkEp, types.CurvePoint{X: pkOrgX, Y: pkOrgY})
-	c.Assert(err, qt.IsNil)
+	// ── two applications, each with its own organizer key ─────────────────
+	self := selfActor()
+	aidA, skOrgA := randomAid(c), randomOrganizerSecret(c)
+	aidB, skOrgB := randomAid(c), randomOrganizerSecret(c)
+	skOrgFor := map[[32]byte]*big.Int{aidA: skOrgA, aidB: skOrgB}
+	pkFor := map[[32]byte]types.CurvePoint{}
+	for aid, skOrg := range skOrgFor {
+		c.Assert(helpers.RegisterApplication(
+			ctx, self, services.AppManager, epochID, aid, skOrg, golangtypes.DKGTypesAppPolicy{},
+		), qt.IsNil)
+		rec, err := services.AppManager.GetApplication(services.CallOpts(ctx), epochID, aid)
+		c.Assert(err, qt.IsNil)
+		c.Assert(rec.Exists, qt.IsTrue)
+		pkAid, err := elgamal.ApplicationKey(pkEp, types.CurvePoint{X: rec.OrganizerPK.X, Y: rec.OrganizerPK.Y})
+		c.Assert(err, qt.IsNil)
+		pkFor[aid] = pkAid
+	}
 
 	// ── ciphertexts ───────────────────────────────────────────────────────
-	submitter := &helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager}
 	type want struct {
 		aid [32]byte
 		idx uint16
@@ -115,30 +104,24 @@ func TestNodesServiceApplicationCiphertexts(t *testing.T) {
 		{aidA, 1, big.NewInt(42)},
 		{aidA, 2, big.NewInt(1_000_000)},
 		{aidB, 1, big.NewInt(7)},
-		{[32]byte{}, 1, big.NewInt(5)},
 	}
-	pkFor := map[[32]byte]types.CurvePoint{aidA: pkA, aidB: pkB, {}: pkEp}
 	for _, w := range wants {
-		c1, c2, pok, err := elgamal.EncryptWithProof(epochID, w.aid, pkFor[w.aid], w.m)
+		c1, c2, err := elgamal.Encrypt(pkFor[w.aid], w.m)
 		c.Assert(err, qt.IsNil)
-		assigned, err := helpers.SubmitCiphertextAsApp(ctx, submitter, epochID, w.aid, c1.X, c1.Y, c2.X, c2.Y, pok)
+		assigned, err := helpers.SubmitCiphertextAs(ctx, self, epochID, w.aid, c1, c2)
 		c.Assert(err, qt.IsNil)
 		c.Assert(assigned, qt.Equals, w.idx, qt.Commentf("indices are assigned sequentially per application"))
-		if w.aid == aidB {
-			share, err := helpers.BuildOrganizerShareSubmission(ctx, epochID, aidB, w.idx, c1, skOrg)
-			c.Assert(err, qt.IsNil)
-			auth, err = services.TxManager.NewTransactOpts(ctx)
-			c.Assert(err, qt.IsNil)
-			tx, err = services.AppManager.SubmitOrganizerShare(auth, epochID, aidB, w.idx,
-				c1.X, c1.Y, c2.X, c2.Y, share.Delta.X, share.Delta.Y, share.Proof, share.Input)
-			c.Assert(err, qt.IsNil)
-			c.Assert(services.TxManager.WaitTxByHash(tx.Hash(), helpers.DefaultTxTimeout), qt.IsNil)
-		}
+
+		// The organizer half. Until this lands the committee can only
+		// recover sk_ep·C1, so no node may combine.
+		_, _, err = helpers.SubmitOrganizerShareAs(
+			ctx, self, services.AppManager, epochID, w.aid, assigned, c1, c2, skOrgFor[w.aid],
+		)
+		c.Assert(err, qt.IsNil)
 	}
 
 	// ── the committee must decrypt every one of them ──────────────────────
 	for _, w := range wants {
-		w := w
 		c.Assert(helpers.WaitUntilCondition(ctx, time.Second, func() bool {
 			rec, err := services.Manager.GetCombinedDecryption(services.CallOpts(ctx), epochID, w.aid, w.idx)
 			return err == nil && rec.Completed

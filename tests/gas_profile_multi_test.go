@@ -20,6 +20,7 @@ import (
 
 	qt "github.com/frankban/quicktest"
 	"github.com/vocdoni/davinci-dkg/circuits/contribution"
+	golangtypes "github.com/vocdoni/davinci-dkg/solidity/golang-types"
 	"github.com/vocdoni/davinci-dkg/tests/helpers"
 	"github.com/vocdoni/davinci-dkg/types"
 )
@@ -180,53 +181,64 @@ func benchmarkGasForN(t *testing.T, n, threshold int) gasProfileResult {
 	c.Assert(err, qt.IsNil)
 	finalizeGas := finalizeRoundMeasured(t, ctx, epochID, output)
 
-	// ── 5. submitPartialDecryption (first t actors) ─────────────────────────
+	// ── 5. register the application ─────────────────────────────────────────
+	// Every ciphertext belongs to a registered application whose organizer
+	// key completes the decryption; there is no epoch-key path.
+	aid := randomAid(c)
+	skOrg := randomOrganizerSecret(c)
+	self := selfActor()
+	c.Assert(helpers.RegisterApplication(
+		ctx, self, services.AppManager, epochID, aid, skOrg, golangtypes.DKGTypesAppPolicy{},
+	), qt.IsNil)
+
+	// ── 6. build the partials and the combine payload off chain ─────────────
 	recoveredShares, err := helpers.RecoverParticipantShares(coefficients, recipientIndexes)
 	c.Assert(err, qt.IsNil)
 
 	ciphertextBase := big.NewInt(42) // arbitrary C1 scalar
-	var lastPartialGas uint64
 	partialActors := actors[:threshold]
-	partials := make([]struct {
-		delta types.CurvePoint
-		idx   uint16
-	}, threshold)
-	for i, actor := range partialActors {
-		partial, err := helpers.BuildPartialDecryptionSubmission(
-			ctx, epochID, 1, uint16(i+1), ciphertextBase, recoveredShares[i], big.NewInt(int64(i+100)),
-		)
-		c.Assert(err, qt.IsNil)
-		gas, err := helpers.SubmitPartialDecryptionMeasured(ctx, services, actor, epochID, uint16(i+1), 1, partial)
-		c.Assert(err, qt.IsNil)
-		lastPartialGas = gas
-		partials[i].delta = partial.Delta
-		partials[i].idx = uint16(i + 1)
-	}
-
-	// ── 6. combineDecryption ────────────────────────────────────────────────
+	builtPartials := make([]*helpers.PartialDecryptionSubmission, threshold)
 	idxs := make([]uint16, threshold)
 	deltas := make([]types.CurvePoint, threshold)
-	for i := range threshold {
-		idxs[i] = partials[i].idx
-		deltas[i] = partials[i].delta
+	for i := range partialActors {
+		partial, err := helpers.BuildPartialDecryptionSubmission(
+			ctx, epochID, aid, 1, uint16(i+1), ciphertextBase, recoveredShares[i], big.NewInt(int64(i+100)),
+		)
+		c.Assert(err, qt.IsNil)
+		builtPartials[i] = partial
+		idxs[i] = uint16(i + 1)
+		deltas[i] = partial.Delta
 	}
 
 	// BuildDecryptCombineOutput constructs c2 = plaintext*G + Lagrange(deltas)
-	// and proves consistency; any consistent plaintext scalar works here.
+	// + Δ_org and proves consistency; any consistent plaintext scalar works.
 	plaintextScalar := big.NewInt(99)
-
 	combineOut, err := helpers.BuildDecryptCombineOutput(
-		ctx, epochID, 1 /* ciphertextIndex */, uint16(threshold),
-		ciphertextBase, idxs, deltas, plaintextScalar,
+		ctx, epochID, aid, 1 /* ciphertextIndex */, uint16(threshold),
+		ciphertextBase, skOrg, idxs, deltas, plaintextScalar,
 	)
 	c.Assert(err, qt.IsNil)
 
-	// The combine tx is now bound to an on-chain ciphertext; submit it first.
-	assignedIdx, err := helpers.SubmitCiphertextAs(ctx, &helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager}, epochID, combineOut.CiphertextC1.X, combineOut.CiphertextC1.Y, combineOut.CiphertextC2.X, combineOut.CiphertextC2.Y, helpers.ProveCiphertext(epochID, combineOut.CiphertextC1, combineOut.CiphertextC2, ciphertextBase))
+	// ── 7. submitCiphertext ─────────────────────────────────────────────────
+	// Both submitPartialDecryption and combineDecryption bind to the on-chain
+	// ciphertext, so it has to land first.
+	assignedIdx, err := helpers.SubmitCiphertextAs(ctx, self, epochID, aid, combineOut.CiphertextC1, combineOut.CiphertextC2)
 	c.Assert(err, qt.IsNil)
 	c.Assert(assignedIdx, qt.Equals, uint16(1))
 
-	combineGas := combineMeasured(t, ctx, epochID, combineOut)
+	// ── 8. submitPartialDecryption (first t actors) ─────────────────────────
+	var lastPartialGas uint64
+	for i, actor := range partialActors {
+		builtPartials[i].C2 = combineOut.CiphertextC2
+		gas, err := helpers.SubmitPartialDecryptionMeasured(ctx, services, actor, epochID, aid, uint16(i+1), 1, builtPartials[i])
+		c.Assert(err, qt.IsNil)
+		lastPartialGas = gas
+	}
+
+	// ── 9. release the organizer share, then combine ────────────────────────
+	c.Assert(helpers.PostOrganizerShare(ctx, self, services.AppManager, epochID, aid, assignedIdx, combineOut), qt.IsNil)
+
+	combineGas := combineMeasured(t, ctx, epochID, aid, combineOut)
 
 	t.Logf("n=%d t=%d create=%d claim_avg=%d contrib=%d finalize=%d pdecrypt=%d combine=%d",
 		n, threshold, createGas, avgClaimGas, lastContribGas, finalizeGas, lastPartialGas, combineGas)
@@ -284,13 +296,13 @@ func finalizeRoundMeasured(t *testing.T, ctx context.Context, epochID [12]byte, 
 	return receipt.GasUsed
 }
 
-func combineMeasured(t *testing.T, ctx context.Context, epochID [12]byte, output *helpers.DecryptCombineOutput) uint64 {
+func combineMeasured(t *testing.T, ctx context.Context, epochID [12]byte, aid [32]byte, output *helpers.DecryptCombineOutput) uint64 {
 	t.Helper()
 	c := qt.New(t)
 	auth, err := services.TxManager.NewTransactOpts(ctx)
 	c.Assert(err, qt.IsNil)
 	tx, err := services.Manager.CombineDecryption(
-		auth, epochID, [32]byte{}, 1,
+		auth, epochID, aid, 1,
 		output.CombineHash, output.Plaintext,
 		output.Transcript, output.Proof, output.Input,
 	)

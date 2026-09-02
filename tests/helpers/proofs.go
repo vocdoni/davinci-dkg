@@ -2,7 +2,6 @@ package helpers
 
 import (
 	"context"
-	"crypto/rand"
 	"fmt"
 	"math/big"
 	"reflect"
@@ -20,8 +19,8 @@ import (
 	"github.com/vocdoni/davinci-dkg/circuits/decryptcombine"
 	"github.com/vocdoni/davinci-dkg/circuits/finalize"
 	"github.com/vocdoni/davinci-dkg/circuits/partialdecrypt"
+	"github.com/vocdoni/davinci-dkg/crypto/dleq"
 	"github.com/vocdoni/davinci-dkg/crypto/group"
-	"github.com/vocdoni/davinci-dkg/internal/protocol"
 	"github.com/vocdoni/davinci-dkg/types"
 )
 
@@ -67,6 +66,12 @@ type DecryptCombineOutput struct {
 	Plaintext    *big.Int
 	CiphertextC1 types.CurvePoint
 	CiphertextC2 types.CurvePoint
+	// DeltaOrg and OrganizerProof are the exact organizer-share words the
+	// transcript commits to. `submitOrganizerShare` must post these same
+	// words before `combineDecryption`, or the contract's share-hash check
+	// fails.
+	DeltaOrg       types.CurvePoint
+	OrganizerProof dleq.Proof
 }
 
 var (
@@ -235,13 +240,18 @@ func BuildFinalizeEpochOutput(
 	}, nil
 }
 
-// BuildPartialDecryptionSubmission for the legacy per-epoch path —
-// defaults aid/role to (0, COMMITTEE) and lets the caller pick the
-// ciphertextIndex so multi-ciphertext tests can produce proofs that
-// match the on-chain (publicInputs[2]==ctIdx) check.
+// BuildPartialDecryptionSubmission builds a partial decryption over
+// C1 = base·G. `aid` and `ciphertextIndex` are bound into the Fiat-Shamir
+// transcript so the on-chain checks (publicInputs[1]==aid,
+// publicInputs[2]==ctIdx) succeed.
+//
+// C2 is left as the identity: it is not a proof input, it only travels to
+// `submitPartialDecryption` as calldata, and callers that need the real one
+// use BuildPartialDecryptionSubmissionFromBase.
 func BuildPartialDecryptionSubmission(
 	ctx context.Context,
 	epochID [12]byte,
+	aid [32]byte,
 	ciphertextIndex uint16,
 	participantIndex uint16,
 	base *big.Int,
@@ -250,30 +260,21 @@ func BuildPartialDecryptionSubmission(
 ) (*PartialDecryptionSubmission, error) {
 	basePoint := group.Generator()
 	basePoint.ScalarBaseMult(base)
-	// Legacy callers don't have C2; pass identity. The on-chain C1 binding
-	// will still match because the test fixture uses the canonical TEST_CT
-	// vectors with C1 = generator. C2 = identity makes the keccak match
-	// unrealistic in real flows but works for the few unit-test paths
-	// that still go through this entry point.
 	identityC2 := types.CurvePoint{X: big.NewInt(0), Y: big.NewInt(1)}
-	return BuildPartialDecryptionSubmissionFromBase(ctx, epochID, [32]byte{}, ciphertextIndex, participantIndex, group.Encode(basePoint), identityC2, secret, nonce)
+	return BuildPartialDecryptionSubmissionFromBase(
+		ctx, epochID, aid, ciphertextIndex, participantIndex,
+		group.Encode(basePoint), identityC2, secret, nonce,
+	)
 }
 
 // BuildPartialDecryptionSubmissionFromBase is the variant used when the caller
-// already has the c1 ciphertext point (e.g. recovered from a CiphertextSubmitted
-// event log) instead of the scalar k that produced it. The flow.test SDK e2e
-// path goes through this entry point because the SDK encrypts with a random k
-// that the test fixture never sees.
-//
-// `aid` and `ciphertextIndex` are bound into the Fiat-Shamir transcript
-// via the witness builder so the on-chain submitPartialDecryption check
-// (publicInputs[1]==aid, publicInputs[2]==ctIdx, publicInputs[3]==COMMITTEE)
-// succeeds. Pass `[32]byte{}` aid for the legacy per-epoch path.
+// already has the C1 ciphertext point (e.g. recovered from a
+// CiphertextSubmitted event log) instead of the scalar k that produced it.
+// The SDK e2e path goes through this entry point because the SDK encrypts
+// with a random k that the test fixture never sees.
 //
 // `c2` is just stashed on the returned struct so the caller can pass it
-// through to SubmitPartialDecryption. Callers that
-// don't have c2 (legacy single-CT-test paths) can pass the identity
-// point and use the FromBase variant whose API knows the full ct.
+// through to submitPartialDecryption.
 func BuildPartialDecryptionSubmissionFromBase(
 	ctx context.Context,
 	epochID [12]byte,
@@ -290,7 +291,6 @@ func BuildPartialDecryptionSubmissionFromBase(
 		RoundHash:        roundHash,
 		Aid:              new(big.Int).SetBytes(aid[:]),
 		CtIdx:            new(big.Int).SetUint64(uint64(ciphertextIndex)),
-		Role:             big.NewInt(int64(protocol.RoleCommittee)),
 		ParticipantIndex: participantIndex,
 		Base:             base,
 		Secret:           secret,
@@ -333,89 +333,90 @@ func BuildPartialDecryptionSubmissionFromBase(
 	}, nil
 }
 
+// BuildDecryptCombineOutput builds a combine proof for a synthetic ciphertext
+// with C1 = base·G. It derives the organizer share Δ = skOrg·C1 itself and
+// sets C2 = m·G + Σ λ_k δ_k + Δ so the circuit's plaintext equation holds.
+//
+// The caller must post the returned DeltaOrg/OrganizerProof via
+// submitOrganizerShare before calling combineDecryption.
 func BuildDecryptCombineOutput(
 	ctx context.Context,
 	epochID [12]byte,
+	aid [32]byte,
 	ciphertextIndex uint16,
 	threshold uint16,
 	base *big.Int,
+	skOrg *big.Int,
 	participantIndexes []uint16,
 	partialDecryptions []types.CurvePoint,
 	plaintext *big.Int,
 ) (*DecryptCombineOutput, error) {
 	c1Point := group.Generator()
 	c1Point.ScalarBaseMult(base)
+	c1 := group.Encode(c1Point)
+
+	deltaOrg, organizerProof, err := dleq.ProveOrganizerShare(epochID, aid, ciphertextIndex, skOrg, c1)
+	if err != nil {
+		return nil, fmt.Errorf("prove organizer share: %w", err)
+	}
+
+	c2, err := combineCiphertextC2(participantIndexes, partialDecryptions, deltaOrg, plaintext)
+	if err != nil {
+		return nil, err
+	}
+
+	return BuildDecryptCombineOutputFromCiphertext(ctx, epochID, aid, ciphertextIndex, threshold,
+		c1, c2, ScalarBasePoint(skOrg), deltaOrg, organizerProof,
+		participantIndexes, partialDecryptions, plaintext)
+}
+
+// combineCiphertextC2 reconstructs C2 = m·G + Σ λ_k δ_k + Δ_org, the value a
+// real encryption under PK_aid = PK_ep + PK_org would have produced.
+func combineCiphertextC2(
+	participantIndexes []uint16,
+	partialDecryptions []types.CurvePoint,
+	deltaOrg types.CurvePoint,
+	plaintext *big.Int,
+) (types.CurvePoint, error) {
 	messagePoint := group.Generator()
 	messagePoint.ScalarBaseMult(plaintext)
 
 	indexes := ccommon.Uint16sToBigInts(participantIndexes)
 	combinedPoint, err := ccommon.InterpolatePointsAtZeroNative(indexes, partialDecryptions)
 	if err != nil {
-		return nil, fmt.Errorf("interpolate combined partial decryptions: %w", err)
+		return types.CurvePoint{}, fmt.Errorf("interpolate combined partial decryptions: %w", err)
 	}
 	combinedNative, err := group.Decode(combinedPoint)
 	if err != nil {
-		return nil, fmt.Errorf("decode combined point: %w", err)
+		return types.CurvePoint{}, fmt.Errorf("decode combined point: %w", err)
+	}
+	deltaNative, err := group.Decode(deltaOrg)
+	if err != nil {
+		return types.CurvePoint{}, fmt.Errorf("decode organizer share: %w", err)
 	}
 	c2Point := group.NewPoint()
 	c2Point.Set(messagePoint)
 	c2Point.Add(c2Point, combinedNative)
-
-	return BuildDecryptCombineOutputFromCiphertext(ctx, epochID, ciphertextIndex, threshold,
-		group.Encode(c1Point), group.Encode(c2Point),
-		participantIndexes, partialDecryptions, plaintext)
+	c2Point.Add(c2Point, deltaNative)
+	return group.Encode(c2Point), nil
 }
 
 // BuildDecryptCombineOutputFromCiphertext is the variant used when the caller
-// already has c1, c2 as curve points (e.g. recovered from a SDK-submitted
-// CiphertextSubmitted event log) and the plaintext was discovered out-of-band
-// via brute-force discrete log on m·G = c2 - sum(λᵢ·Δᵢ).
-// BuildDecryptCombineOutputFromCiphertext builds the combine proof for the
-// legacy per-epoch path (aid=0, mode=0=PUBLIC_DERIVATION, S=0, no organizer
-// share). The on-chain `combineDecryption` requires publicInputs[1..3] to
-// equal aid / ctIdx / mode, so we set them explicitly even when zero.
-//
-// `ciphertextIndex` is bound into both the contract-side check
-// (publicInputs[2]==ciphertextIndex) and the in-circuit transcript.
+// already has C1, C2 and the organizer share that was (or will be) posted on
+// chain. The witness bindings here MUST match the contract's
+// submitOrganizerShare / combineDecryption checks: the circuit recomputes the
+// DLEQ challenge `e` from exactly these words and the contract pins it.
 func BuildDecryptCombineOutputFromCiphertext(
-	ctx context.Context,
-	epochID [12]byte,
-	ciphertextIndex uint16,
-	threshold uint16,
-	ciphertextC1 types.CurvePoint,
-	ciphertextC2 types.CurvePoint,
-	participantIndexes []uint16,
-	partialDecryptions []types.CurvePoint,
-	plaintext *big.Int,
-) (*DecryptCombineOutput, error) {
-	return BuildDecryptCombineOutputForApp(
-		ctx, epochID, [32]byte{}, ciphertextIndex, 0 /* mode */, big.NewInt(0), /* S */
-		identityPoint(), threshold, ciphertextC1, ciphertextC2,
-		participantIndexes, partialDecryptions, plaintext,
-	)
-}
-
-// identityPoint returns the BabyJubJub identity (0, 1) used as the default
-// DeltaOrg for the legacy mode-0 combine path.
-func identityPoint() types.CurvePoint {
-	return types.CurvePoint{X: big.NewInt(0), Y: big.NewInt(1)}
-}
-
-// BuildDecryptCombineOutputForApp is the per-application variant. Mode 0
-// uses S+identity-DeltaOrg; mode 1 uses S=0+real DeltaOrg from the
-// organizer's submitted share. The witness bindings here MUST match the
-// contract's submitOrganizerShare / combineDecryption checks.
-func BuildDecryptCombineOutputForApp(
 	ctx context.Context,
 	epochID [12]byte,
 	aid [32]byte,
 	ciphertextIndex uint16,
-	mode uint8,
-	s *big.Int,
-	deltaOrg types.CurvePoint,
 	threshold uint16,
 	ciphertextC1 types.CurvePoint,
 	ciphertextC2 types.CurvePoint,
+	organizerPK types.CurvePoint,
+	deltaOrg types.CurvePoint,
+	organizerProof dleq.Proof,
 	participantIndexes []uint16,
 	partialDecryptions []types.CurvePoint,
 	plaintext *big.Int,
@@ -424,9 +425,9 @@ func BuildDecryptCombineOutputForApp(
 		RoundHash:          RoundScalar(epochID),
 		Aid:                new(big.Int).SetBytes(aid[:]),
 		CtIdx:              new(big.Int).SetUint64(uint64(ciphertextIndex)),
-		Mode:               new(big.Int).SetUint64(uint64(mode)),
-		S:                  s,
 		DeltaOrg:           deltaOrg,
+		OrganizerPK:        organizerPK,
+		OrganizerProof:     organizerProof,
 		Threshold:          threshold,
 		CiphertextC1:       ciphertextC1,
 		CiphertextC2:       ciphertextC2,
@@ -461,61 +462,16 @@ func BuildDecryptCombineOutputForApp(
 	}
 
 	return &DecryptCombineOutput{
-		Proof:        proofBytes,
-		Input:        inputBytes,
-		Transcript:   transcriptBytes,
-		CombineHash:  common.BigToHash(publicInputs.CombineHash),
-		Plaintext:    new(big.Int).Set(plaintext),
-		CiphertextC1: ciphertextC1,
-		CiphertextC2: ciphertextC2,
+		Proof:          proofBytes,
+		Input:          inputBytes,
+		Transcript:     transcriptBytes,
+		CombineHash:    common.BigToHash(publicInputs.CombineHash),
+		Plaintext:      new(big.Int).Set(plaintext),
+		CiphertextC1:   ciphertextC1,
+		CiphertextC2:   ciphertextC2,
+		DeltaOrg:       deltaOrg,
+		OrganizerProof: organizerProof,
 	}, nil
-}
-
-// BuildOrganizerShareSubmission proves Δ_org = sk_org·C1 with the organizer
-// role (participant index 0) so it can be posted via submitOrganizerShare.
-func BuildOrganizerShareSubmission(
-	ctx context.Context,
-	epochID [12]byte,
-	aid [32]byte,
-	ciphertextIndex uint16,
-	c1 types.CurvePoint,
-	skOrg *big.Int,
-) (*PartialDecryptionSubmission, error) {
-	nonce, err := rand.Int(rand.Reader, group.ScalarField())
-	if err != nil {
-		return nil, err
-	}
-	assignment := partialdecrypt.Assignment{
-		RoundHash:        RoundScalar(epochID),
-		Aid:              new(big.Int).SetBytes(aid[:]),
-		CtIdx:            new(big.Int).SetUint64(uint64(ciphertextIndex)),
-		Role:             big.NewInt(int64(protocol.RoleOrganizer)),
-		ParticipantIndex: 0,
-		Base:             c1,
-		Secret:           skOrg,
-		Nonce:            nonce,
-	}
-	witness, publicInputs, err := partialdecrypt.BuildWitness(assignment)
-	if err != nil {
-		return nil, err
-	}
-	runtime, err := loadPartialDecryptRuntime(ctx)
-	if err != nil {
-		return nil, err
-	}
-	proof, err := runtime.ProveAndVerify(witness)
-	if err != nil {
-		return nil, fmt.Errorf("prove organizer share: %w", err)
-	}
-	proofBytes, err := marshalSolidityProof(proof)
-	if err != nil {
-		return nil, err
-	}
-	inputBytes, err := encodePublicAssignment(publicInputs.PublicWitness())
-	if err != nil {
-		return nil, err
-	}
-	return &PartialDecryptionSubmission{Proof: proofBytes, Input: inputBytes, Delta: publicInputs.Delta, C1: c1}, nil
 }
 
 func RoundScalar(epochID [12]byte) *big.Int {

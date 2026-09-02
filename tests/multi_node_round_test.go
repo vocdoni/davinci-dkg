@@ -7,6 +7,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	qt "github.com/frankban/quicktest"
+	golangtypes "github.com/vocdoni/davinci-dkg/solidity/golang-types"
 	"github.com/vocdoni/davinci-dkg/tests/helpers"
 	"github.com/vocdoni/davinci-dkg/types"
 )
@@ -70,7 +71,7 @@ func TestCommitteeRoundHappyPath(t *testing.T) {
 	c.Assert(err, qt.IsNil)
 
 	c.Assert(
-		helpers.SubmitContributionAs(ctx, &helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager}, epochID, 1, submission0.CommitmentsHash, submission0.EncryptedSharesHash, submission0.Transcript, submission0.Proof, submission0.Input),
+		helpers.SubmitContributionAs(ctx, selfActor(), epochID, 1, submission0.CommitmentsHash, submission0.EncryptedSharesHash, submission0.Transcript, submission0.Proof, submission0.Input),
 		qt.IsNil,
 	)
 	c.Assert(
@@ -110,17 +111,28 @@ func TestCommitteeRoundHappyPath(t *testing.T) {
 	c.Assert(err, qt.IsNil)
 	c.Assert(len(recoveredShares), qt.Equals, 3)
 
-	partial0, err := helpers.BuildPartialDecryptionSubmission(ctx, epochID, 1, 1, big.NewInt(9), recoveredShares[0], big.NewInt(11))
+	// Every ciphertext belongs to a registered application whose organizer
+	// key completes the decryption.
+	aid := randomAid(c)
+	skOrg := randomOrganizerSecret(c)
+	self := selfActor()
+	c.Assert(helpers.RegisterApplication(
+		ctx, self, services.AppManager, epochID, aid, skOrg, golangtypes.DKGTypesAppPolicy{},
+	), qt.IsNil)
+
+	partial0, err := helpers.BuildPartialDecryptionSubmission(ctx, epochID, aid, 1, 1, big.NewInt(9), recoveredShares[0], big.NewInt(11))
 	c.Assert(err, qt.IsNil)
-	partial1, err := helpers.BuildPartialDecryptionSubmission(ctx, epochID, 1, 2, big.NewInt(9), recoveredShares[1], big.NewInt(13))
+	partial1, err := helpers.BuildPartialDecryptionSubmission(ctx, epochID, aid, 1, 2, big.NewInt(9), recoveredShares[1], big.NewInt(13))
 	c.Assert(err, qt.IsNil)
 
 	combineOutput, err := helpers.BuildDecryptCombineOutput(
 		ctx,
 		epochID,
+		aid,
 		1, // ciphertextIndex
 		2,
 		big.NewInt(9),
+		skOrg,
 		[]uint16{1, 2},
 		[]types.CurvePoint{partial0.Delta, partial1.Delta},
 		big.NewInt(3),
@@ -128,20 +140,24 @@ func TestCommitteeRoundHappyPath(t *testing.T) {
 	c.Assert(err, qt.IsNil)
 
 	// submitCiphertext must precede submitPartialDecryption so the
-	// proof's pi[5..6] can be bound against the on-chain C1.
-	assignedIdx, err := helpers.SubmitCiphertextAs(ctx, &helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager}, epochID, combineOutput.CiphertextC1.X, combineOutput.CiphertextC1.Y, combineOutput.CiphertextC2.X, combineOutput.CiphertextC2.Y, helpers.ProveCiphertext(epochID, combineOutput.CiphertextC1, combineOutput.CiphertextC2, big.NewInt(9)))
+	// proof's pi[4..5] can be bound against the on-chain C1.
+	assignedIdx, err := helpers.SubmitCiphertextAs(ctx, self, epochID, aid, combineOutput.CiphertextC1, combineOutput.CiphertextC2)
 	c.Assert(err, qt.IsNil)
 	c.Assert(assignedIdx, qt.Equals, uint16(1))
 
-	c.Assert(helpers.SubmitPartialDecryptionAs(ctx, &helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager}, epochID, 1, 1, combineOutput.CiphertextC1, combineOutput.CiphertextC2, partial0.DeltaHash, partial0.Proof, partial0.Input), qt.IsNil)
-	c.Assert(helpers.SubmitPartialDecryptionAs(ctx, actor1, epochID, 2, 1, combineOutput.CiphertextC1, combineOutput.CiphertextC2, partial1.DeltaHash, partial1.Proof, partial1.Input), qt.IsNil)
+	c.Assert(helpers.SubmitPartialDecryptionAs(ctx, self, epochID, aid, 1, 1, combineOutput.CiphertextC1, combineOutput.CiphertextC2, partial0.DeltaHash, partial0.Proof, partial0.Input), qt.IsNil)
+	c.Assert(helpers.SubmitPartialDecryptionAs(ctx, actor1, epochID, aid, 2, 1, combineOutput.CiphertextC1, combineOutput.CiphertextC2, partial1.DeltaHash, partial1.Proof, partial1.Input), qt.IsNil)
+
+	// The organizer releases its half; only then can the combine be proven
+	// against the stored share hash.
+	c.Assert(helpers.PostOrganizerShare(ctx, self, services.AppManager, epochID, aid, assignedIdx, combineOutput), qt.IsNil)
 
 	auth, err = services.TxManager.NewTransactOpts(ctx)
 	c.Assert(err, qt.IsNil)
 	tx, err = services.Manager.CombineDecryption(
 		auth,
 		epochID,
-		[32]byte{}, // legacy per-epoch path: zero aid
+		aid,
 		1,
 		combineOutput.CombineHash,
 		combineOutput.Plaintext,
@@ -151,4 +167,9 @@ func TestCommitteeRoundHappyPath(t *testing.T) {
 	)
 	c.Assert(err, qt.IsNil)
 	c.Assert(services.TxManager.WaitTxByHash(tx.Hash(), helpers.DefaultTxTimeout), qt.IsNil)
+
+	record, err := helpers.WaitCombinedDecryption(ctx, services, epochID, aid, assignedIdx)
+	c.Assert(err, qt.IsNil)
+	c.Assert(record.Completed, qt.IsTrue)
+	c.Assert(record.Plaintext.String(), qt.Equals, "3")
 }

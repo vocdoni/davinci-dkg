@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	qt "github.com/frankban/quicktest"
-	"github.com/vocdoni/davinci-dkg/crypto/group"
+	golangtypes "github.com/vocdoni/davinci-dkg/solidity/golang-types"
 	"github.com/vocdoni/davinci-dkg/tests/helpers"
 	"github.com/vocdoni/davinci-dkg/types"
 )
@@ -44,8 +44,7 @@ func TestGasProfiles(t *testing.T) {
 	claimSlotGas := claimSlotForGasProfile(t, ctx, epochID, policy)
 	contributionGas := submitContributionForGasProfile(t, ctx, epochID)
 	finalizeGas := finalizeForGasProfile(t, ctx, epochID)
-	partialDecryptGas := submitPartialDecryptForGasProfile(t, ctx, epochID)
-	combineGas := combineDecryptionForGasProfile(t, ctx, epochID)
+	partialDecryptGas, combineGas := decryptGasProfile(t, ctx, epochID)
 
 	t.Logf(
 		"gas profile create=%d claimSlot=%d contribution=%d finalize=%d partial_decrypt=%d combine=%d",
@@ -173,79 +172,58 @@ func finalizeForGasProfile(t *testing.T, ctx context.Context, epochID [12]byte) 
 	return receipt.GasUsed
 }
 
-func submitPartialDecryptForGasProfile(t *testing.T, ctx context.Context, epochID [12]byte) uint64 {
+// decryptGasProfile registers an application, submits one ciphertext and
+// drives the partial decryption + organizer share + combine for it, returning
+// the partial-decrypt and combine gas.
+//
+// The three calls have to happen in this order: the ciphertext binds both
+// proofs, and combineDecryption reverts with OrganizerShareMissing until the
+// organizer has published Δ = sk_org·C1.
+func decryptGasProfile(t *testing.T, ctx context.Context, epochID [12]byte) (partialGas, combineGas uint64) {
 	t.Helper()
 	c := qt.New(t)
 
-	// submitPartialDecryption requires the ciphertext to exist on-chain
-	// so it can bind C1 into the proof. Submit a small canonical
-	// ciphertext at index 1 first.
-	c1 := group.Generator()
-	c1.ScalarBaseMult(big.NewInt(9))
-	c2 := group.Generator()
-	c2.ScalarBaseMult(big.NewInt(11))
-	c1Enc, c2Enc := group.Encode(c1), group.Encode(c2)
-	assignedIdx, err := helpers.SubmitCiphertextAs(ctx, &helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager}, epochID, c1Enc.X, c1Enc.Y, c2Enc.X, c2Enc.Y, helpers.ProveCiphertext(epochID, c1Enc, c2Enc, big.NewInt(9)))
-	c.Assert(err, qt.IsNil)
-	c.Assert(assignedIdx, qt.Equals, uint16(1))
+	aid := randomAid(c)
+	skOrg := randomOrganizerSecret(c)
+	self := selfActor()
+	c.Assert(helpers.RegisterApplication(
+		ctx, self, services.AppManager, epochID, aid, skOrg, golangtypes.DKGTypesAppPolicy{},
+	), qt.IsNil)
 
-	output, err := helpers.BuildPartialDecryptionSubmission(ctx, epochID, 1, 1, big.NewInt(9), big.NewInt(7), big.NewInt(5))
-	c.Assert(err, qt.IsNil)
-
-	auth, err := services.TxManager.NewTransactOpts(ctx)
-	c.Assert(err, qt.IsNil)
-	tx, err := services.Manager.SubmitPartialDecryption(
-		auth, epochID, [32]byte{}, 1, 1,
-		c1Enc.X, c1Enc.Y, c2Enc.X, c2Enc.Y,
-		output.DeltaHash, output.Proof, output.Input,
+	const ciphertextBase = 9
+	partial, err := helpers.BuildPartialDecryptionSubmission(
+		ctx, epochID, aid, 1, 1, big.NewInt(ciphertextBase), big.NewInt(7), big.NewInt(5),
 	)
 	c.Assert(err, qt.IsNil)
-	c.Assert(services.TxManager.WaitTxByHash(tx.Hash(), helpers.DefaultTxTimeout), qt.IsNil)
-	receipt, err := services.Contracts.Client().TransactionReceipt(ctx, tx.Hash())
-	c.Assert(err, qt.IsNil)
 
-	return receipt.GasUsed
-}
-
-func combineDecryptionForGasProfile(t *testing.T, ctx context.Context, epochID [12]byte) uint64 {
-	t.Helper()
-	c := qt.New(t)
-
-	deltaPoint := group.Generator()
-	deltaPoint.ScalarBaseMult(big.NewInt(63))
 	output, err := helpers.BuildDecryptCombineOutput(
-		ctx,
-		epochID,
-		1, // ciphertextIndex
-		1,
-		big.NewInt(9),
-		[]uint16{1},
-		[]types.CurvePoint{group.Encode(deltaPoint)},
-		big.NewInt(3),
+		ctx, epochID, aid, 1 /* ciphertextIndex */, 1,
+		big.NewInt(ciphertextBase), skOrg,
+		[]uint16{1}, []types.CurvePoint{partial.Delta}, big.NewInt(3),
 	)
 	c.Assert(err, qt.IsNil)
 
-	assignedIdx, err := helpers.SubmitCiphertextAs(ctx, &helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager}, epochID, output.CiphertextC1.X, output.CiphertextC1.Y, output.CiphertextC2.X, output.CiphertextC2.Y, helpers.ProveCiphertext(epochID, output.CiphertextC1, output.CiphertextC2, big.NewInt(9)))
+	assignedIdx, err := helpers.SubmitCiphertextAs(ctx, self, epochID, aid, output.CiphertextC1, output.CiphertextC2)
 	c.Assert(err, qt.IsNil)
 	c.Assert(assignedIdx, qt.Equals, uint16(1))
+
+	partial.C2 = output.CiphertextC2
+	partialGas, err = helpers.SubmitPartialDecryptionMeasured(ctx, services, self, epochID, aid, 1, assignedIdx, partial)
+	c.Assert(err, qt.IsNil)
+
+	c.Assert(helpers.PostOrganizerShare(ctx, self, services.AppManager, epochID, aid, assignedIdx, output), qt.IsNil)
 
 	auth, err := services.TxManager.NewTransactOpts(ctx)
 	c.Assert(err, qt.IsNil)
 	tx, err := services.Manager.CombineDecryption(
-		auth,
-		epochID,
-		[32]byte{}, // legacy per-epoch path: zero aid
-		1,
-		output.CombineHash,
-		output.Plaintext,
-		output.Transcript,
-		output.Proof,
-		output.Input,
+		auth, epochID, aid, assignedIdx,
+		output.CombineHash, output.Plaintext,
+		output.Transcript, output.Proof, output.Input,
 	)
 	c.Assert(err, qt.IsNil)
 	c.Assert(services.TxManager.WaitTxByHash(tx.Hash(), helpers.DefaultTxTimeout), qt.IsNil)
 	receipt, err := services.Contracts.Client().TransactionReceipt(ctx, tx.Hash())
 	c.Assert(err, qt.IsNil)
 
-	return receipt.GasUsed
+	return partialGas, receipt.GasUsed
 }
