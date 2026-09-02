@@ -122,8 +122,8 @@ stop()`}
           Once an epoch is Live, anyone can encrypt for it. ElGamal on BabyJubJub runs entirely
           client-side. Use <Code>encryptWithProof</Code>: besides the ciphertext it returns a
           Schnorr proof that you know the encryption randomness, bound to the epoch and
-          application id. Every committee node verifies that proof before it releases a partial
-          decryption, so a ciphertext submitted without one is never decrypted — that is what
+          application id. The contract rejects a submission whose proof does not verify, and every
+          committee node checks it again before releasing a partial decryption — that is what
           stops a copied <Code>C1</Code> from being used as a decryption oracle.
         </Text>
         <CodeBlock language='tsx'>

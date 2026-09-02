@@ -194,9 +194,9 @@ docker compose --profile node --profile ui up -d
             <Text as='span' fontWeight='semibold' color='ink.0'>
               Ciphertext proofs.
             </Text>{' '}
-            Before releasing a partial decryption the node verifies the submitter's Schnorr
-            proof of knowledge of the ciphertext randomness (emitted alongside the ciphertext in{' '}
-            <Code>CiphertextSubmitted</Code>). Ciphertexts without a valid proof are ignored
+            Before releasing a partial decryption the node re-verifies the submitter's Schnorr
+            proof of knowledge of the ciphertext randomness (checked on chain and emitted alongside
+            the ciphertext in <Code>CiphertextSubmitted</Code>). Ciphertexts without a valid proof are ignored
             rather than decrypted, so a <Code>C1</Code> copied from another application cannot
             turn the committee into a decryption oracle. Producers get the proof for free from
             the SDK's <Code>encryptWithProof</Code>.

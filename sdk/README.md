@@ -197,10 +197,11 @@ const hash = await waitForCollectivePublicKeyHash(client, epochId);
 The proof of knowledge is a Schnorr proof over BabyJubJub that the submitter knows `r` with
 `C1 = r·G`, bound to `keccak256(DOMAIN_CIPHERTEXT_POK_V1 ‖ epochId ‖ aid ‖ C1 ‖ C2 ‖ A)` where the
 coordinates are the on-chain (RTE) words. It mirrors `crypto/elgamal` in the Go node byte for
-byte (`proveCiphertext` / `verifyCiphertextPoK` are exported for auditors). The contract only
-records it in the `CiphertextSubmitted` event; every committee node verifies it before releasing
-a partial decryption, so a ciphertext without a valid proof — for instance a `C1` copied from
-another application's ciphertext as a decryption oracle — is never decrypted.
+byte (`proveCiphertext` / `verifyCiphertextPoK` are exported for auditors). The contract verifies
+it (and that `C1` lies in the prime-order subgroup) before accepting the ciphertext, and every
+committee node verifies it again before releasing a partial decryption, so a ciphertext without
+a valid proof — for instance a `C1` copied from another application's ciphertext as a decryption
+oracle — is rejected at submission and never decrypted.
 
 In the DKG protocol the private key is never held by a single party. To decrypt a ciphertext:
 
