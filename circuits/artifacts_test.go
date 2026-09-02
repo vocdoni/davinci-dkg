@@ -157,6 +157,26 @@ func TestLoadOrSetupForCircuitUsesArtifactsWhenMatching(t *testing.T) {
 	qt.Assert(t, marshalVerifyingKey(t, runtime.VerifyingKey()), qt.DeepEquals, expectedVK)
 }
 
+func TestLoadPinnedRefusesUnpinnedArtifacts(t *testing.T) {
+	oldBaseDir := BaseDir
+	BaseDir = t.TempDir()
+	defer func() { BaseDir = oldBaseDir }()
+
+	placeholder := &artifactsTestCircuit{}
+	// No hashes configured: LoadOrSetup would silently run a local setup.
+	unpinned := NewCircuitArtifacts("test", ecc.BN254, nil, nil, nil, nil, nil)
+	_, err := unpinned.LoadPinned(context.Background(), placeholder)
+	qt.Assert(t, err, qt.Not(qt.IsNil))
+
+	// Hashes configured but not matching the compiled circuit.
+	mismatched := NewCircuitArtifacts(
+		"test", ecc.BN254, nil, nil,
+		&Artifact{Hash: []byte{1}}, &Artifact{Hash: []byte{2}}, &Artifact{Hash: []byte{3}},
+	)
+	_, err = mismatched.LoadPinned(context.Background(), placeholder)
+	qt.Assert(t, err, qt.ErrorMatches, ".*does not match the pinned release hash.*")
+}
+
 func TestLoadOrSetupForCircuitFallsBackToSetupWithoutConfiguredArtifacts(t *testing.T) {
 	placeholder := &artifactsTestCircuit{}
 	artifacts := NewCircuitArtifacts("test", ecc.BN254, nil, nil, nil, nil, nil)
