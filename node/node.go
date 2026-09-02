@@ -78,7 +78,8 @@ type Node struct {
 	ctSeq       uint64
 	pending     map[ctKey]*ciphertext
 	partialDone map[ctKey]bool
-	served      map[ctKey]uint64 // finished slots → discovery block, until out of the re-scan window
+	served      map[ctKey]uint64   // finished slots → discovery block, until out of the re-scan window
+	badShares   map[ctKey][32]byte // last organizer share that failed to verify, to warn once
 	backoff     map[ctKey]*serviceBackoff
 
 	// auto-create-epoch state. autoCreateNextStart is the
@@ -149,6 +150,7 @@ func New(cfg *Config) (*Node, error) {
 		pending:       make(map[ctKey]*ciphertext),
 		partialDone:   make(map[ctKey]bool),
 		served:        make(map[ctKey]uint64),
+		badShares:     make(map[ctKey][32]byte),
 		backoff:       make(map[ctKey]*serviceBackoff),
 	}, nil
 }

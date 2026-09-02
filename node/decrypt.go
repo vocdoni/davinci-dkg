@@ -521,10 +521,17 @@ func (n *Node) latestOrganizerShare(
 		return organizerShare{}, false, nil
 	}
 	if !dleq.VerifyOrganizerShare(key.epoch, key.aid, key.idx, pkOrg, c1, share.delta, share.proof) {
-		log.Warnw("organizer share does not verify — waiting for the organizer to resubmit",
-			"ct", key.String(), "block", share.block)
+		fingerprint := ethcrypto.Keccak256Hash(
+			share.delta.X.Bytes(), share.delta.Y.Bytes(), share.proof.Response.Bytes(),
+		)
+		if n.badShares[key] != fingerprint { // warn once per distinct bad share, not every tick
+			n.badShares[key] = fingerprint
+			log.Warnw("organizer share does not verify — waiting for the organizer to resubmit",
+				"ct", key.String(), "block", share.block)
+		}
 		return organizerShare{}, false, nil
 	}
+	delete(n.badShares, key)
 	return share, true, nil
 }
 
