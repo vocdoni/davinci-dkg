@@ -9,6 +9,11 @@
     "Organizer": 2
   },
   "domains": {
+    "CiphertextPoKV1": {
+      "preimage": "davinci-dkg:ciphertext-pok:v1",
+      "keccak256": "0x459d6189bebb2c0081a105f25a158877a71c77d3d77dca6bdecd5711c0db6d37",
+      "bn254Reduced": "9599411852570977463115645064476216491618550069774105756459116635847848062262"
+    },
     "DLEQV1": {
       "preimage": "davinci-dkg:dleq:v1",
       "keccak256": "0x48fabea26e7a072780483852e403ea60b2f51a07c735c3e4b852ac6bb99b5a91",

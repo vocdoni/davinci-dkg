@@ -86,6 +86,7 @@ func buildProtocol() protocolFile {
 			"OperatorRegisterV1":  domainRow(protocol.DomainOperatorRegisterV1Str, protocol.DomainOperatorRegisterV1),
 			"OrganizerRegisterV1": domainRow(protocol.DomainOrganizerRegisterV1Str, protocol.DomainOrganizerRegisterV1),
 			"DLEQV1":              domainRow(protocol.DomainDLEQV1Str, protocol.DomainDLEQV1),
+			"CiphertextPoKV1":     domainRow(protocol.DomainCiphertextPoKV1Str, protocol.DomainCiphertextPoKV1),
 			// PartialDecrypt domain is consumed by the in-circuit DLEQ
 			// transcript via SetBytes (no keccak); included here so the SDK
 			// can re-derive it without hardcoding the modular reduction.

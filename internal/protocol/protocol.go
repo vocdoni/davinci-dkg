@@ -56,6 +56,9 @@ const (
 	DomainOperatorRegisterV1Str  = "davinci-dkg:operator-register:v1"
 	DomainOrganizerRegisterV1Str = "davinci-dkg:organizer-register:v1"
 	DomainDLEQV1Str              = "davinci-dkg:dleq:v1"
+	// DomainCiphertextPoKV1Str separates the submitter's Schnorr proof of
+	// knowledge of a ciphertext's randomness (C1 = r·G).
+	DomainCiphertextPoKV1Str = "davinci-dkg:ciphertext-pok:v1"
 	// The per-application `S = keccak256(eid || PK_ep || aid) mod q`
 	// derivation deliberately has NO domain prefix (paper §4.3).
 )
@@ -71,6 +74,7 @@ var (
 	DomainOperatorRegisterV1  = crypto.Keccak256Hash([]byte(DomainOperatorRegisterV1Str))
 	DomainOrganizerRegisterV1 = crypto.Keccak256Hash([]byte(DomainOrganizerRegisterV1Str))
 	DomainDLEQV1              = crypto.Keccak256Hash([]byte(DomainDLEQV1Str))
+	DomainCiphertextPoKV1     = crypto.Keccak256Hash([]byte(DomainCiphertextPoKV1Str))
 )
 
 // Hash exposes the canonical hash function used to derive the domain
