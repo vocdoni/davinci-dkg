@@ -106,10 +106,10 @@ watchEpochLive(dkg, '0x82...0001', (collectivePublicKeyHash) => {
   console.log('epoch finalized; key hash:', collectivePublicKeyHash)
 })
 
-// Ciphertexts as they land. pokValid is the same check every committee
-// node runs before releasing a partial decryption.
-watchCiphertextSubmitted(dkg, '0x82...0001', ({ aid, ciphertextIndex, pokValid }) => {
-  console.log('ciphertext', ciphertextIndex, 'for app', aid, pokValid ? 'ok' : 'INVALID PROOF')
+// Ciphertexts as they land. c1/c2 come back in TE form, ready to hand
+// straight to writer.submitOrganizerShare.
+watchCiphertextSubmitted(dkg, '0x82...0001', ({ aid, ciphertextIndex, c1, c2 }) => {
+  console.log('ciphertext', ciphertextIndex, 'for app', aid, c1, c2)
 })
 
 // Later, to clean up:
@@ -117,28 +117,61 @@ stop()`}
         </CodeBlock>
       </Section>
 
-      <Section heading='Encrypting for the committee'>
+      <Section heading='Registering an application'>
         <Text fontSize='sm' color='ink.2'>
-          Once an epoch is Live, anyone can encrypt for it. ElGamal on BabyJubJub runs entirely
-          client-side. Use <Code>encryptWithProof</Code>: besides the ciphertext it returns a
-          Schnorr proof that you know the encryption randomness, bound to the epoch and
-          application id. The contract rejects a submission whose proof does not verify, and every
-          committee node checks it again before releasing a partial decryption — that is what
-          stops a copied <Code>C1</Code> from being used as a decryption oracle.
+          Ciphertexts always belong to a registered application; there is no bare epoch-key
+          path. Registration binds an organizer key so the encryption key becomes{' '}
+          <Code>PK_aid = PK_ep + PK_org</Code>: opening a ciphertext then needs both the
+          committee threshold and the organizer's share. Only <Code>PK_org</Code> and a Schnorr
+          proof of possession go on chain — <Code>sk_org</Code> never leaves the browser.
         </Text>
         <CodeBlock language='tsx'>
-          {`import { encryptWithProof } from '@vocdoni/davinci-dkg-sdk'
+          {`import { randomOrganizerSecret } from '@vocdoni/davinci-dkg-sdk'
 
-const ZERO_AID = '0x' + '00'.repeat(32)   // bare epoch key; or a registered app's aid
-const pk = await dkg.getCollectivePublicKey(epochId)
+const skOrg = randomOrganizerSecret()   // store this before you register
+const aid   = '0x…'                     // your bytes32 application id
+
+await writer.registerApplication(epochId, aid, {
+  authorizedSubmitter: '0x0000000000000000000000000000000000000000', // = the caller
+  maxCiphertexts:      0,     // 0 = unlimited
+  notBeforeBlock:      0n,
+  notAfterBlock:       0n,
+}, skOrg)`}
+        </CodeBlock>
+        <Text fontSize='sm' color='danger.fg'>
+          <strong>Keep sk_org.</strong> It is the application's only decryption capability, it is
+          never transmitted, and nothing on chain can reconstruct it. Lose it and every
+          ciphertext ever submitted under that <Code>aid</Code> is permanently undecryptable —
+          the committee threshold alone cannot open them, by design.
+        </Text>
+      </Section>
+
+      <Section heading='Encrypting for an application'>
+        <Text fontSize='sm' color='ink.2'>
+          ElGamal on BabyJubJub runs entirely client-side.{' '}
+          <Code>encryptForApplication</Code> takes the epoch key and the application's{' '}
+          <Code>PK_org</Code> (both in TE form, both readable from the client) and encrypts
+          under their sum.
+        </Text>
+        <CodeBlock language='tsx'>
+          {`import { encryptForApplication } from '@vocdoni/davinci-dkg-sdk'
+
+const pk  = await dkg.getCollectivePublicKey(epochId)
+const app = await dkg.getApplication(epochId, aid)
 
 // 'message' must be a non-negative integer strictly below 2^50 (≈ 1.13e15).
 // That's the upper bound the committee's BSGS dlog can recover; submitting
 // anything larger leaves the ciphertext unrecoverable.
-const { ciphertext, pok } = await encryptWithProof(epochId, ZERO_AID, 42n, [pk.x, pk.y])
-// ciphertext = { c1: [x, y], c2: [x, y] } — both points on BabyJubJub
-// pok        = { ax, ay, z }              — proof of knowledge of the randomness`}
+const ciphertext = await encryptForApplication(42n, [pk.x, pk.y], app.organizerPK)
+// ciphertext = { c1: [x, y], c2: [x, y] } — both points on BabyJubJub`}
         </CodeBlock>
+        <Text fontSize='sm' color='ink.2'>
+          There is no proof of knowledge of the encryption randomness. The submitter of an
+          aggregated tally cannot know its randomness, so such a proof is incompatible with
+          homomorphic aggregation; a <Code>C1</Code> copied into another application and
+          decrypted there only yields <Code>sk_ep·C1</Code>, useless without that application's{' '}
+          <Code>sk_org·C1</Code>.
+        </Text>
         <Text fontSize='sm' color='ink.2'>
           The matching client-side <Code>decrypt(ct, privKey)</Code> helper (used in tests
           and direct-key recovery, not in the threshold flow) caps at 2<sup>32</sup> ≈ 4.3
@@ -176,25 +209,51 @@ const writer = new DKGWriter({
   managerAddress: '0x92d324254ef12e4392d54c771b121cc976682340',
 })
 
-// Verifies the proof locally, sends, waits for the receipt and reads the
-// on-chain-assigned index from the CiphertextSubmitted event.
-const { hash, ciphertextIndex } = await writer.submitCiphertext(
-  epochId, ZERO_AID, ciphertext, pok,
-)
+// Sends, waits for the receipt and reads the on-chain-assigned index from
+// the CiphertextSubmitted event.
+const { hash, ciphertextIndex } = await writer.submitCiphertext(epochId, aid, ciphertext)
 console.log('submitted in', hash, 'as ciphertext #', ciphertextIndex)`}
         </CodeBlock>
       </Section>
 
-      <Section heading='Awaiting committee decryption'>
+      <Section heading='Releasing the organizer share'>
         <Text fontSize='sm' color='ink.2'>
-          After submission, the committee picks up the new ciphertext, posts partial decryptions,
-          and combines them into the final plaintext on-chain. The flow helper polls the contract
-          until <Code>completed === true</Code> and returns the recovered value.
+          The committee's partial decryptions are not enough on their own. The organizer
+          publishes <Code>Δ = sk_org·C1</Code> with a Chaum–Pedersen DLEQ proving the same
+          secret relates <Code>(G, PK_org)</Code> and <Code>(C1, Δ)</Code>. Until that lands,{' '}
+          <Code>combineDecryption</Code> reverts <Code>OrganizerShareMissing()</Code>.
         </Text>
         <CodeBlock language='tsx'>
-          {`import { waitForCombinedDecryption } from '@vocdoni/davinci-dkg-sdk'
+          {`await writer.submitOrganizerShare(epochId, aid, ciphertextIndex, ciphertext, skOrg)
 
-const record = await waitForCombinedDecryption(dkg, epochId, ZERO_AID, ciphertextIndex, {
+// The challenge is a keccak256 the contract recomputes and the combine
+// circuit consumes:
+//   e = keccak256(DOMAIN_ORGANIZER_SHARE_V1 ‖ eid ‖ aid ‖ uint256(ctIdx)
+//                 ‖ PK_org ‖ C1 ‖ Δ ‖ A1 ‖ A2) mod q
+//   z = w + e·sk_org mod q
+// The contract stores only keccak256(Δ ‖ A1 ‖ A2 ‖ z); the DLEQ itself is
+// verified inside the committee's combine proof.`}
+        </CodeBlock>
+        <Text fontSize='sm' color='ink.2'>
+          Anyone may relay a share — it is self-authenticating — and re-submission overwrites
+          until the ciphertext is combined, so a malformed share cannot brick a ciphertext.
+        </Text>
+      </Section>
+
+      <Section heading='Awaiting committee decryption'>
+        <Text fontSize='sm' color='ink.2'>
+          With the threshold of partial decryptions and the organizer share both on chain, any
+          node combines them and publishes the plaintext. The flow helper polls the contract
+          until <Code>completed === true</Code> and returns the recovered value;{' '}
+          <Code>decryptionProgress</Code> tells you which of the two halves is still missing.
+        </Text>
+        <CodeBlock language='tsx'>
+          {`import { waitForCombinedDecryption, decryptionProgress } from '@vocdoni/davinci-dkg-sdk'
+
+const progress = await decryptionProgress(dkg, epochId, aid, ciphertextIndex)
+console.log(progress.organizerShare ? 'waiting on the committee' : 'waiting on the organizer')
+
+const record = await waitForCombinedDecryption(dkg, epochId, aid, ciphertextIndex, {
   intervalMs: 3000,
   timeoutMs: 5 * 60_000,
 })

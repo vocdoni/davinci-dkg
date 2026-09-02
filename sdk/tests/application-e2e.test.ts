@@ -1,16 +1,14 @@
 // SDK application-lifecycle end-to-end test.
 //
-// Validates the per-application surface added in P8/P9 against a live
-// chain: registerApplication (mode 0), registerApplicationCoDec (mode 1
-// with a Schnorr proof of knowledge of sk_org), and getApplication.
-// Without this, an ABI mismatch in writer.ts would only surface in a
-// downstream consumer hitting the chain.
+// Validates the per-application surface against a live chain:
+// registerApplication (organizer-only, with a Schnorr proof of possession of
+// sk_org) and getApplication. Without this, an ABI mismatch in writer.ts would
+// only surface in a downstream consumer hitting the chain.
 //
-// The Schnorr proof for mode 1 is built entirely in TS via
-// `proveOrganizer` from sdk/src/schnorr.ts; this is the load-bearing
-// cross-impl assertion — the on-chain `_organizerSchnorrChallenge`
-// (Solidity) must agree byte-for-byte with the TS-side Poseidon
-// transcript or the registration reverts.
+// The proof of possession is built entirely in TS via `proveOrganizer` from
+// sdk/src/schnorr.ts; this is the load-bearing cross-impl assertion — the
+// on-chain `_organizerSchnorrChallenge` (Solidity) must agree byte-for-byte
+// with the TS-side keccak transcript or the registration reverts.
 
 import { describe, it, expect, beforeAll } from 'vitest';
 import { inject } from 'vitest';
@@ -20,9 +18,8 @@ import { fileURLToPath } from 'node:url';
 import {
   DKGClient,
   DKGWriter,
-  AppMode,
-  computeS,
   proveOrganizer,
+  randomOrganizerSecret,
   type AppPolicy,
 } from '../src/index.js';
 import { makePublicClient, makeWalletClient } from './helpers/accounts.js';
@@ -96,11 +93,12 @@ describe('SDK application lifecycle end-to-end (live chain)', () => {
     fixture = lastJsonLine<FixtureCreateResult>(out.stdout);
   });
 
-  it('mode 0: writer.registerApplication round-trips through getApplication', async () => {
+  it('writer.registerApplication round-trips through getApplication', async () => {
     const { enabled } = useHarness();
     if (!enabled || !fixture) return;
 
     const aid = randomAid();
+    const skOrg = randomOrganizerSecret();
     const policy: AppPolicy = {
       authorizedSubmitter: ZERO_ADDRESS,
       maxCiphertexts:      0,
@@ -108,93 +106,53 @@ describe('SDK application lifecycle end-to-end (live chain)', () => {
       notAfterBlock:       0n,
     };
 
-    const tx = await writer.registerApplication(fixture.epochId, aid, policy);
+    const tx = await writer.registerApplication(fixture.epochId, aid, policy, skOrg);
     await writer.publicClient.waitForTransactionReceipt({ hash: tx });
 
     const app = await client.getApplication(fixture.epochId, aid);
     expect(app.exists).toBe(true);
-    expect(app.mode).toBe(AppMode.PublicDerivation);
-    expect(app.derivationS).not.toBe(0n);
-    expect(app.policy.authorizedSubmitter.toLowerCase()).toBe(ZERO_ADDRESS);
     expect(app.policy.maxCiphertexts).toBe(0);
+    // The zero submitter resolves on chain to the registering address.
+    expect(app.policy.authorizedSubmitter.toLowerCase()).toBe(
+      writer.walletClient.account!.address.toLowerCase(),
+    );
 
-    // Cross-check: the on-chain S must equal the SDK-derived S over the
-    // collective public key, in the on-chain (RTE) coordinate system.
-    // client.getCollectivePublicKey returns TE coords; the contract's
-    // registerApplication hashes the stored RTE coords. Convert before
-    // calling computeS or the byte encoding diverges.
-    const pkEpTE = await client.getCollectivePublicKey(fixture.epochId);
-    const { fromTEtoRTE } = await import('../src/crypto/babyjub-form.js');
-    const [pkXRte, pkYRte] = fromTEtoRTE(pkEpTE.x, pkEpTE.y);
-    const sExpected = computeS(fixture.epochId, pkXRte, pkYRte, aid);
-    expect(app.derivationS).toBe(sExpected);
-  }, 900_000);
-
-  it('mode 1: writer.registerApplicationCoDec accepts a TS-built Schnorr proof', async () => {
-    const { enabled } = useHarness();
-    if (!enabled || !fixture) return;
-
-    const aid = randomAid();
-    // Random non-zero scalar, small enough that any subgroup-order check
-    // is trivially passed.
-    const sk = BigInt('0x' + Array.from(globalThis.crypto.getRandomValues(new Uint8Array(16)))
-      .map((b) => b.toString(16).padStart(2, '0')).join('')) | 1n;
-
-    const { pkOrgX, pkOrgY, proof } = proveOrganizer(sk, fixture.epochId, aid);
-
-    const policy: AppPolicy = {
-      authorizedSubmitter: ZERO_ADDRESS,
-      maxCiphertexts:      0,
-      notBeforeBlock:      0n,
-      notAfterBlock:       0n,
-    };
-
-    // proveOrganizer returns RTE coords (matching the on-chain transcript);
-    // writer.registerApplicationCoDec wants TE on input and converts back to
-    // RTE before sending. Pass through the form converter to keep the shapes
-    // straight.
+    // The stored PK_org must be sk_org·G. proveOrganizer returns RTE coords
+    // (the on-chain transcript form); client.getApplication converts the
+    // stored record back to TE, so compare through the form converter.
+    const { pkOrgX, pkOrgY } = proveOrganizer(skOrg, fixture.epochId, aid, 1n);
     const { fromRTEtoTE } = await import('../src/crypto/babyjub-form.js');
     const [pkOrgX_TE, pkOrgY_TE] = fromRTEtoTE(pkOrgX, pkOrgY);
-
-    const tx = await writer.registerApplicationCoDec(
-      fixture.epochId, aid, policy,
-      pkOrgX_TE, pkOrgY_TE,
-      proof.ax, proof.ay, proof.z,
-    );
-    await writer.publicClient.waitForTransactionReceipt({ hash: tx });
-
-    const app = await client.getApplication(fixture.epochId, aid);
-    expect(app.exists).toBe(true);
-    expect(app.mode).toBe(AppMode.OrganizerCoDec);
-    // client.getApplication returns organizerPK in TE form (RTE→TE
-    // conversion at the boundary), so compare against TE inputs.
     expect(app.organizerPK[0]).toBe(pkOrgX_TE);
     expect(app.organizerPK[1]).toBe(pkOrgY_TE);
-    expect(app.derivationS).toBe(0n); // mode 1 stores S=0
   }, 900_000);
 
-  it('mode 1: a tampered Schnorr response is rejected on-chain', async () => {
+  it('a tampered Schnorr response is rejected on-chain', async () => {
     const { enabled } = useHarness();
     if (!enabled || !fixture) return;
 
     const aid = randomAid();
     const sk = 1234567890123456789n;
     const { pkOrgX, pkOrgY, proof } = proveOrganizer(sk, fixture.epochId, aid);
-    const { fromRTEtoTE } = await import('../src/crypto/babyjub-form.js');
-    const [pkOrgX_TE, pkOrgY_TE] = fromRTEtoTE(pkOrgX, pkOrgY);
 
     const policy: AppPolicy = {
       authorizedSubmitter: ZERO_ADDRESS, maxCiphertexts: 0,
       notBeforeBlock: 0n, notAfterBlock: 0n,
     };
 
-    // Flip one bit of `z` and confirm the on-chain verifier reverts.
+    // Flip one bit of `z` and confirm the on-chain verifier reverts. The
+    // writer builds the proof itself, so go through the raw ABI here.
     await expect(
-      writer.registerApplicationCoDec(
-        fixture.epochId, aid, policy,
-        pkOrgX_TE, pkOrgY_TE,
-        proof.ax, proof.ay, proof.z + 1n,
-      ),
+      writer.publicClient.simulateContract({
+        address: await client.getAppManagerAddress(),
+        abi: (await import('../src/abi.js')).dkgAppManagerAbi,
+        functionName: 'registerApplication',
+        args: [
+          fixture.epochId, aid, policy,
+          pkOrgX, pkOrgY, proof.ax, proof.ay, proof.z + 1n,
+        ],
+        account: writer.walletClient.account!.address,
+      }),
     ).rejects.toThrow();
   }, 900_000);
 

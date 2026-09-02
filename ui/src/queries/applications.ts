@@ -2,6 +2,9 @@ import { useQuery } from '@tanstack/react-query'
 import { useDkgClient } from '~hooks/use-dkg-client'
 import { Polling } from '~constants/polling'
 
+/** The all-zero bytes32 the app manager returns when no share is stored. */
+export const ZERO_BYTES32 = ('0x' + '00'.repeat(32)) as `0x${string}`
+
 export function useCollectivePublicKey(epochId: `0x${string}` | undefined) {
   const { dkg } = useDkgClient()
   return useQuery({
@@ -32,5 +35,79 @@ export function useApplication(
     },
     enabled: Boolean(epochId && aid),
     refetchInterval: Polling.default,
+  })
+}
+
+/**
+ * Organizer-share status for one ciphertext. `getOrganizerShareHash` returns
+ * `0x00…00` until the organizer releases `Δ = sk_org·C1`; the committee cannot
+ * combine before that (`combineDecryption` reverts `OrganizerShareMissing()`),
+ * so this read is what tells "waiting for the committee" apart from "waiting
+ * for the organizer".
+ */
+export function useOrganizerShareHash(
+  epochId: `0x${string}` | undefined,
+  aid: `0x${string}` | undefined,
+  ciphertextIndex: number | undefined,
+) {
+  const { dkg } = useDkgClient()
+  return useQuery({
+    queryKey: ['organizerShare', epochId, aid, ciphertextIndex],
+    queryFn: () => {
+      if (!epochId || !aid || ciphertextIndex == null) {
+        throw new Error('epochId + aid + ciphertextIndex required')
+      }
+      return dkg.getOrganizerShareHash(epochId, aid, ciphertextIndex)
+    },
+    enabled: Boolean(epochId && aid && ciphertextIndex != null),
+    refetchInterval: (q) => (q.state.data && q.state.data !== ZERO_BYTES32 ? false : Polling.decryption),
+  })
+}
+
+/** Number of ciphertexts accepted under `(epochId, aid)`; indices run 1…count. */
+export function useCiphertextCount(
+  epochId: `0x${string}` | undefined,
+  aid: `0x${string}` | undefined,
+) {
+  const { dkg } = useDkgClient()
+  return useQuery({
+    queryKey: ['ciphertextCount', epochId, aid],
+    queryFn: () => {
+      if (!epochId || !aid) throw new Error('epochId + aid required')
+      return dkg.ciphertextCount(epochId, aid)
+    },
+    enabled: Boolean(epochId && aid),
+    refetchInterval: Polling.default,
+  })
+}
+
+/**
+ * Per-ciphertext decryption pipeline snapshot: is the organizer share stored,
+ * has the committee combined, and what plaintext came out. One query per
+ * ciphertext keeps the cache keys aligned with what the UI renders per row.
+ */
+export function useCiphertextStatus(
+  epochId: `0x${string}` | undefined,
+  aid: `0x${string}` | undefined,
+  ciphertextIndex: number,
+) {
+  const { dkg } = useDkgClient()
+  return useQuery({
+    queryKey: ['ciphertextStatus', epochId, aid, ciphertextIndex],
+    queryFn: async () => {
+      if (!epochId || !aid) throw new Error('epochId + aid required')
+      const [shareHash, combined] = await Promise.all([
+        dkg.getOrganizerShareHash(epochId, aid, ciphertextIndex),
+        dkg.getCombinedDecryption(epochId, aid, ciphertextIndex),
+      ])
+      return {
+        organizerShare: shareHash !== ZERO_BYTES32,
+        organizerShareHash: shareHash,
+        combined: combined.completed,
+        plaintext: combined.plaintext,
+      }
+    },
+    enabled: Boolean(epochId && aid),
+    refetchInterval: (q) => (q.state.data?.combined ? false : Polling.decryption),
   })
 }

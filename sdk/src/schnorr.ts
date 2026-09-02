@@ -3,48 +3,42 @@
 // Mirrors `crypto/schnorr/{operator,organizer}.go` and the in-circuit DLEQ
 // transcript at `circuits/partialdecrypt/circuit.go`. Cross-impl byte
 // equality is the load-bearing property; tests live at sdk/tests/schnorr.test.ts
-// and consume vectors emitted by `cmd/operator-schnorr-vectors`.
+// and consume vectors emitted by `cmd/protocol-vectors`.
 //
-// Provers and verifiers for both roles. `proveOperator` / `proveOrganizer`
-// need the corresponding secret scalar; DLEQ (`dleqChallenge`, `verifyDleq`)
-// is verify-only here because organizer shares are produced by the Go
-// tooling together with their Groth16 wrapper.
+// Provers and verifiers for both registration roles. `proveOperator` /
+// `proveOrganizer` need the corresponding secret scalar; the committee DLEQ
+// (`dleqChallenge`, `verifyDleq`) is verify-only here because committee
+// partial decryptions are produced by the Go node together with their
+// Groth16 wrapper.
 //
-// `proveCiphertext` / `verifyCiphertextPoK` cover the submitter-side Schnorr
-// proof of knowledge of a ciphertext's ElGamal randomness (mirrors
-// `crypto/elgamal/elgamal.go`); the SDK writer refuses to send a ciphertext
-// whose proof does not verify, since the contract would reject it.
+// The organizer's decryption-share DLEQ lives in `dleq.ts`: it is keccak-based
+// (not Poseidon) and the SDK both proves and verifies it, because the
+// organizer runs in a browser.
 
 import {
   Base8,
   addPoint,
   inCurve,
   mulPointEscalar,
-  Fr,
   subOrder,
   type Point,
 } from '@zk-kit/baby-jubjub';
-import { poseidon2, poseidon3, poseidon4, poseidon5, poseidon6 } from 'poseidon-lite';
+import { poseidon3, poseidon5 } from 'poseidon-lite';
 import { keccak256, type Hex } from 'viem';
 import {
-  DomainCiphertextPoKV1,
   DomainOperatorRegisterV1,
   DomainOrganizerRegisterV1,
-  Role,
-  type RoleValue,
 } from './protocol.js';
 import { fromRTEtoTE, fromTEtoRTE } from './crypto/babyjub-form.js';
-import type { CiphertextPoK, ElGamalCiphertext } from './types.js';
-
-export type { CiphertextPoK } from './types.js';
 
 // BN254 scalar field prime — matches `BabyJubJub.Q` in Solidity and the
 // modulus the on-chain `_*SchnorrChallenge` reduces the keccak digest into.
 export const BN254_Q =
   21888242871839275222246405745257275088548364400416034343698204186575808495617n;
 
-// BabyJubJub subgroup order. Re-exported here so callers don't have to
-// reach into derive.ts to range-check a Schnorr response.
+// BabyJubJub prime-order subgroup order `q`. Every Schnorr / DLEQ response is
+// reduced into `[0, q)` and every point the protocol accepts must live in this
+// subgroup.
 export const SUBGROUP_ORDER = subOrder;
 
 // `davinci-dkg/partial-decrypt/v1` reduced into bn254 scalar field. Mirrors
@@ -60,21 +54,20 @@ export const DOMAIN_PARTIAL_DECRYPT = (() => {
 })();
 
 // ─── shared helpers ─────────────────────────────────────────────────────────
+//
+// Exported for `dleq.ts`; not re-exported from the package entry points.
 
-function negate(p: Point<bigint>): Point<bigint> {
-  // In twisted Edwards (a = -1), -(x, y) = (-x, y).
-  return [Fr.neg(p[0]), p[1]];
-}
-
-function pointEq(a: Point<bigint>, b: Point<bigint>): boolean {
+/** @internal Curve-point equality on affine coordinates. */
+export function pointEq(a: Point<bigint>, b: Point<bigint>): boolean {
   return a[0] === b[0] && a[1] === b[1];
 }
 
-function requireOnCurveSubgroup(label: string, p: Point<bigint>): void {
+/** @internal Throws unless `p` is on BabyJubJub and in the prime-order subgroup. */
+export function requireOnCurveSubgroup(label: string, p: Point<bigint>): void {
   if (!inCurve(p)) throw new Error(`${label}: point not on BabyJubJub`);
-  // Subgroup membership: r·P must equal identity (0, 1).
-  const rp = mulPointEscalar(p, subOrder);
-  if (!(rp[0] === 0n && rp[1] === 1n)) {
+  // Subgroup membership: q·P must equal identity (0, 1).
+  const qp = mulPointEscalar(p, subOrder);
+  if (!(qp[0] === 0n && qp[1] === 1n)) {
     throw new Error(`${label}: point not in prime-order subgroup`);
   }
 }
@@ -84,15 +77,56 @@ function requireOnCurveSubgroup(label: string, p: Point<bigint>): void {
 // in-circuit and on-chain over THOSE coordinates, but @zk-kit/baby-jubjub
 // implements curve arithmetic in the iden3/circomlib TE form (a = 168700).
 // The two are isomorphic — convert the X coordinate at the API boundary.
-function rteToTe(p: Point<bigint>): Point<bigint> {
+/** @internal Convert an on-chain (RTE) point into the TE form used for arithmetic. */
+export function rteToTe(p: Point<bigint>): Point<bigint> {
   const [x, y] = fromRTEtoTE(p[0], p[1]);
   return [x, y];
 }
 
-function requireScalarInRange(label: string, s: bigint): void {
+/** @internal Convert a TE point into the on-chain (RTE) form. */
+export function teToRte(p: Point<bigint>): Point<bigint> {
+  const [x, y] = fromTEtoRTE(p[0], p[1]);
+  return [x, y];
+}
+
+/** @internal Throws unless `s` is a canonical scalar in `[0, q)`. */
+export function requireScalarInRange(label: string, s: bigint): void {
   if (s < 0n || s >= subOrder) {
-    throw new Error(`${label}: scalar out of range [0, L)`);
+    throw new Error(`${label}: scalar out of range [0, q)`);
   }
+}
+
+/** @internal Uniform scalar in `[0, q)` drawn from the platform CSPRNG. */
+export function randomScalar(): bigint {
+  const bytes = globalThis.crypto.getRandomValues(new Uint8Array(32));
+  let bi = 0n;
+  for (let i = 0; i < bytes.length; i++) bi += BigInt(bytes[i]) << BigInt(8 * i);
+  return bi % subOrder;
+}
+
+/** @internal big-endian 32-byte encoding of a uint256. */
+export function uint256ToBytes32(v: bigint): Uint8Array {
+  const out = new Uint8Array(32);
+  let x = v;
+  for (let i = 31; i >= 0; i--) {
+    out[i] = Number(x & 0xffn);
+    x >>= 8n;
+  }
+  return out;
+}
+
+/** @internal Strict-length hex → bytes (left-padded if shorter than requested). */
+export function hexToBytes(h: Hex, expectedLen: number): Uint8Array {
+  let s = h.startsWith('0x') ? h.slice(2) : h;
+  if (s.length > expectedLen * 2) {
+    throw new Error(`hexToBytes: input ${h} longer than ${expectedLen} bytes`);
+  }
+  if (s.length < expectedLen * 2) s = s.padStart(expectedLen * 2, '0');
+  const out = new Uint8Array(expectedLen);
+  for (let i = 0; i < expectedLen; i++) {
+    out[i] = parseInt(s.slice(i * 2, i * 2 + 2), 16);
+  }
+  return out;
 }
 
 function reduceHexToBn254(h: Hex): bigint {
@@ -110,7 +144,7 @@ export interface OperatorSchnorrProof {
 /**
  * Re-derive the operator Schnorr challenge. Mirrors
  * `_operatorSchnorrChallenge` in DKGRegistry.sol:
- *   c = keccak256(domain || operator || pubX || pubY || ax || ay) mod L
+ *   c = keccak256(domain || operator || pubX || pubY || ax || ay) mod q
  *
  * keccak256 is used in place of Poseidon — the challenge is only verified
  * on-chain, so SNARK-native compatibility is unnecessary.
@@ -135,31 +169,6 @@ export function operatorSchnorrChallenge(
   }
   const h = BigInt(keccak256(buf));
   return h % subOrder;
-}
-
-/** big-endian 32-byte encoding of a uint256. */
-function uint256ToBytes32(v: bigint): Uint8Array {
-  const out = new Uint8Array(32);
-  let x = v;
-  for (let i = 31; i >= 0; i--) {
-    out[i] = Number(x & 0xffn);
-    x >>= 8n;
-  }
-  return out;
-}
-
-/** Strict-length hex → bytes (left-padded if shorter than the requested width). */
-function hexToBytes(h: Hex, expectedLen: number): Uint8Array {
-  let s = h.startsWith('0x') ? h.slice(2) : h;
-  if (s.length > expectedLen * 2) {
-    throw new Error(`hexToBytes: input ${h} longer than ${expectedLen} bytes`);
-  }
-  if (s.length < expectedLen * 2) s = s.padStart(expectedLen * 2, '0');
-  const out = new Uint8Array(expectedLen);
-  for (let i = 0; i < expectedLen; i++) {
-    out[i] = parseInt(s.slice(i * 2, i * 2 + 2), 16);
-  }
-  return out;
 }
 
 /**
@@ -226,7 +235,7 @@ export function proveOperator(
   return { pubX: pkX, pubY: pkY, proof: { ax: aX, ay: aY, z } };
 }
 
-// ─── organizer Schnorr (registerApplicationCoDec) ───────────────────────────
+// ─── organizer Schnorr (registerApplication proof of possession) ────────────
 
 export interface OrganizerSchnorrProof {
   ax: bigint;
@@ -237,7 +246,7 @@ export interface OrganizerSchnorrProof {
 /**
  * Re-derive the organizer Schnorr challenge. Mirrors
  * `_organizerSchnorrChallenge` in DKGAppManager.sol:
- *   c = keccak256(domain || epochId || aid || pkOrgX || pkOrgY || ax || ay) mod L
+ *   c = keccak256(domain || epochId || aid || pkOrgX || pkOrgY || ax || ay) mod q
  *
  * keccak256 instead of Poseidon — see operatorSchnorrChallenge for rationale.
  */
@@ -287,10 +296,13 @@ export function verifyOrganizerSchnorr(
 }
 
 /**
- * Convenience prover — production organizers should use the Go path. This
- * exists for tests and demos that need to round-trip a proof through the
- * SDK without spinning up the node. `nonce` is exposed so tests can pin
- * the witness; production callers must pass undefined to draw fresh.
+ * Build the organizer's proof of possession of `skOrg`, bound to
+ * `(epochId, aid)`. `DKGWriter.registerApplication` calls this for you; it is
+ * exported so integrators can pre-compute a registration payload offline.
+ *
+ * Returns `PK_org` and the proof in RTE (on-chain) form. `nonce` is exposed so
+ * tests can pin the witness; production callers must leave it undefined so a
+ * fresh value is drawn.
  */
 export function proveOrganizer(
   skOrg: bigint,
@@ -302,7 +314,7 @@ export function proveOrganizer(
   if (skOrg === 0n) throw new Error('organizer secret must be non-zero');
 
   // Curve math is done in TE form, but the on-chain artifact (and therefore
-  // the Poseidon transcript) is in RTE form — convert before hashing.
+  // the keccak transcript) is in RTE form — convert before hashing.
   const PK_TE = mulPointEscalar(Base8, skOrg);
   const w = nonce ?? randomScalar();
   if (w === 0n) throw new Error('zero witness drawn — caller must retry');
@@ -316,120 +328,12 @@ export function proveOrganizer(
   return { pkOrgX: pkX, pkOrgY: pkY, proof: { ax: aX, ay: aY, z } };
 }
 
-// ─── ciphertext PoK (submitCiphertext) ──────────────────────────────────────
-
-/**
- * Re-derive the ciphertext proof-of-knowledge challenge. Mirrors
- * `pokChallenge` in `crypto/elgamal/elgamal.go`:
- *
- *   c = keccak256(DOMAIN_CIPHERTEXT_POK_V1 || epochId || aid
- *                 || c1x || c1y || c2x || c2y || ax || ay) mod L
- *
- * with `epochId` as 12 bytes, `aid` as 32 bytes and the six coordinates as
- * 32-byte big-endian words in the on-chain (RTE) form — exactly what
- * `submitCiphertext` sends and `CiphertextSubmitted` reports.
- */
-export function ciphertextPoKChallenge(
-  epochId: Hex,
-  aid: Hex,
-  c1x: bigint,
-  c1y: bigint,
-  c2x: bigint,
-  c2y: bigint,
-  ax: bigint,
-  ay: bigint,
-): bigint {
-  const buf = new Uint8Array(32 + 12 + 32 + 32 * 6);
-  buf.set(hexToBytes(DomainCiphertextPoKV1, 32), 0);
-  buf.set(hexToBytes(epochId, 12), 32);
-  buf.set(hexToBytes(aid, 32), 32 + 12);
-  let off = 32 + 12 + 32;
-  for (const v of [c1x, c1y, c2x, c2y, ax, ay]) {
-    buf.set(uint256ToBytes32(v), off);
-    off += 32;
-  }
-  return BigInt(keccak256(buf)) % subOrder;
-}
-
-/**
- * Prove knowledge of the ElGamal randomness `r` behind `ciphertext.c1 = r·G`,
- * bound to `(epochId, aid, c1, c2)`. Mirrors Go `elgamal.ProveKnowledge`.
- *
- * `ciphertext` is in TE form (what `buildElGamal().encrypt` returns); the
- * returned witness `(ax, ay)` is in RTE form so the proof can be passed to
- * `DKGWriter.submitCiphertext` as is. Throws if `r` does not actually open
- * `c1` — a proof for the wrong randomness would be accepted by the chain
- * but the committee would never decrypt the ciphertext.
- *
- * `nonce` pins the witness `w` and exists only for tests.
- */
-export function proveCiphertext(
-  epochId: Hex,
-  aid: Hex,
-  ciphertext: ElGamalCiphertext,
-  r: bigint,
-  nonce?: bigint,
-): CiphertextPoK {
-  requireScalarInRange('ciphertext randomness r', r);
-  const rG = mulPointEscalar(Base8, r);
-  if (!pointEq(rG, ciphertext.c1)) {
-    throw new Error('proveCiphertext: r does not open c1 (expected c1 = r·G in TE form)');
-  }
-  let w = nonce ?? randomScalar();
-  while (w === 0n) w = randomScalar();
-  requireScalarInRange('ciphertext PoK witness w', w);
-  const A_TE = mulPointEscalar(Base8, w);
-
-  // The transcript binds the on-chain (RTE) words.
-  const [c1x, c1y] = fromTEtoRTE(ciphertext.c1[0], ciphertext.c1[1]);
-  const [c2x, c2y] = fromTEtoRTE(ciphertext.c2[0], ciphertext.c2[1]);
-  const [ax, ay] = fromTEtoRTE(A_TE[0], A_TE[1]);
-
-  const c = ciphertextPoKChallenge(epochId, aid, c1x, c1y, c2x, c2y, ax, ay);
-  const z = (w + (c * r) % subOrder) % subOrder;
-  return { ax, ay, z };
-}
-
-/**
- * Verify a ciphertext proof of knowledge: `z·G == A + c·C1` over the
- * transcript `(epochId, aid, C1, C2, A)`. Mirrors Go `elgamal.VerifyPoK`.
- *
- * All coordinates arrive in on-chain (RTE) form — pass the values from a
- * `CiphertextSubmitted` event (or `fromTEtoRTE` of an SDK ciphertext)
- * directly. Returns `false` (never throws) for off-curve or out-of-range
- * inputs.
- */
-export function verifyCiphertextPoK(
-  epochId: Hex,
-  aid: Hex,
-  c1x: bigint,
-  c1y: bigint,
-  c2x: bigint,
-  c2y: bigint,
-  proof: CiphertextPoK,
-): boolean {
-  let C1: Point<bigint>, A: Point<bigint>;
-  try {
-    C1 = rteToTe([c1x, c1y]);
-    A = rteToTe([proof.ax, proof.ay]);
-    requireOnCurveSubgroup('ciphertext C1', C1);
-    requireOnCurveSubgroup('ciphertext PoK witness A', A);
-    requireScalarInRange('ciphertext PoK response z', proof.z);
-  } catch {
-    return false;
-  }
-  const c = ciphertextPoKChallenge(epochId, aid, c1x, c1y, c2x, c2y, proof.ax, proof.ay);
-  const lhs = mulPointEscalar(Base8, proof.z);
-  const rhs = addPoint(A, mulPointEscalar(C1, c));
-  return pointEq(lhs, rhs);
-}
-
-// ─── Chaum-Pedersen DLEQ (committee + organizer partial decryptions) ────────
+// ─── Chaum-Pedersen DLEQ (committee partial decryptions) ────────────────────
 
 export interface DleqPoints {
   base: Point<bigint>;      // C_1
-  publicKey: Point<bigint>; // D_i (committee) or PK_org (organizer)
-  delta: Point<bigint>;     // δ_i (committee) or Δ_org (organizer)
+  publicKey: Point<bigint>; // D_i
+  delta: Point<bigint>;     // δ_i
   a1: Point<bigint>;        // w·G
   a2: Point<bigint>;        // w·C_1
 }
@@ -438,17 +342,16 @@ export interface DleqTranscriptInputs {
   epochId: Hex;             // bytes12
   aid: Hex;                 // bytes32
   ctIdx: number | bigint;
-  role: RoleValue;
-  participantIndex: number | bigint; // i (0 for organizer)
+  participantIndex: number | bigint; // i
   points: DleqPoints;
 }
 
 /**
- * Re-derive the DLEQ Fiat-Shamir challenge. Mirrors the in-circuit
+ * Re-derive the committee DLEQ Fiat-Shamir challenge. Mirrors the in-circuit
  * transcript at `circuits/partialdecrypt/circuit.go::Define`:
  *
- *   state = poseidon6(domain, eid, aid, ctIdx, role, i)
- *   c     = HashPointTuple(state, PK, C_1, δ, A1, A2)
+ *   state = poseidon5(domain, eid, aid, ctIdx, i)
+ *   c     = HashPointTuple(state, D_i, C_1, δ, A1, A2)
  *
  * where `HashPointTuple` folds each point as
  *   current = poseidon3(current, p.x, p.y).
@@ -456,12 +359,11 @@ export interface DleqTranscriptInputs {
 export function dleqChallenge(t: DleqTranscriptInputs): bigint {
   const eidField = BigInt(t.epochId);
   const aidField = reduceHexToBn254(t.aid);
-  const state = poseidon6([
+  const state = poseidon5([
     DOMAIN_PARTIAL_DECRYPT,
     eidField,
     aidField,
     BigInt(t.ctIdx),
-    BigInt(t.role),
     BigInt(t.participantIndex),
   ]);
   let cur = state;
@@ -480,19 +382,18 @@ export function dleqChallenge(t: DleqTranscriptInputs): bigint {
 /**
  * Verify a Chaum-Pedersen DLEQ partial-decryption proof. The `response z`
  * proves knowledge of a single discrete log relating two pairs of points
- * (G, PK) and (C_1, δ). Returns `true` only if every point sits on the
+ * (G, D_i) and (C_1, δ_i). Returns `true` only if every point sits on the
  * prime-order subgroup, the response is in range, and the two verifier
  * equations hold.
  *
- * Used by the SDK monitor (audit mode) and by tests; the on-chain combine
- * verifier rejects malformed shares before this would ever fail in a
- * production flow, but offline auditors may want to re-check.
+ * Used by the SDK monitor (audit mode) and by tests; the on-chain
+ * partial-decrypt verifier rejects malformed shares before this would ever
+ * fail in a production flow, but offline auditors may want to re-check.
  */
 export function verifyDleq(
   t: DleqTranscriptInputs,
   z: bigint,
 ): boolean {
-  if (t.role !== Role.Committee && t.role !== Role.Organizer) return false;
   // Inputs come in RTE form (matching on-chain). Convert each to TE for
   // curve arithmetic; the Poseidon transcript (dleqChallenge) consumes the
   // RTE coords as-is.
@@ -523,13 +424,3 @@ export function verifyDleq(
   const rhs2 = addPoint(a2, mulPointEscalar(delta, c));
   return pointEq(lhs2, rhs2);
 }
-
-// ─── small RNG for the convenience prover ───────────────────────────────────
-
-function randomScalar(): bigint {
-  const bytes = globalThis.crypto.getRandomValues(new Uint8Array(32));
-  let bi = 0n;
-  for (let i = 0; i < bytes.length; i++) bi += BigInt(bytes[i]) << BigInt(8 * i);
-  return bi % subOrder;
-}
-

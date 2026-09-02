@@ -21,7 +21,6 @@ export {
   type DKGWriterConfig,
   type BabyJubPoint,
   type ElGamalCiphertext,
-  type CiphertextPoK,
   type PollOptions,
   type EpochEvent,
   type EpochEntry,
@@ -39,7 +38,10 @@ export { buildEpochId, parseEpochId } from './utils.js';
 export {
   waitForEpochPhase,
   waitForDecryption,
+  waitForOrganizerShare,
+  decryptionProgress,
   watchNewRounds,
+  watchNewEpochs,
   watchEpochLive,
   watchDecryptionCombined,
   watchCiphertextSubmitted,
@@ -49,7 +51,7 @@ export {
 // ── High-level flow helpers ───────────────────────────────────────────────────
 export {
   encrypt,
-  encryptWithProof,
+  encryptForApplication,
   decrypt,
   waitForCollectivePublicKeyHash,
   waitForCombinedDecryption,
@@ -58,27 +60,26 @@ export {
 } from './flow.js';
 
 // ── Crypto ────────────────────────────────────────────────────────────────────
-export { buildElGamal } from './crypto/index.js';
+export { buildElGamal, applicationKey, randomOrganizerSecret } from './crypto/index.js';
 export type { ElGamal } from './crypto/index.js';
-
-// ── Protocol constants + per-application derivation ──────────────────────────
 export {
-  AppMode,
-  Role,
+  fromRTEtoTE,
+  fromTEtoRTE,
+  pointFromRTEtoTE,
+  pointFromTEtoRTE,
+} from './crypto/babyjub-form.js';
+
+// ── Protocol constants ────────────────────────────────────────────────────────
+export {
   DomainOperatorRegisterV1,
   DomainOrganizerRegisterV1,
   DomainDLEQV1,
-  DomainCiphertextPoKV1,
+  DomainOrganizerShareV1,
   DomainOperatorRegisterV1Str,
   DomainOrganizerRegisterV1Str,
   DomainDLEQV1Str,
-  DomainCiphertextPoKV1Str,
-  type AppModeValue,
-  type RoleValue,
+  DomainOrganizerShareV1Str,
 } from './protocol.js';
-
-export { computeS, validateDerivePKAppInput, SUBGROUP_ORDER } from './derive.js';
-export type { DerivePKAppInput } from './derive.js';
 
 // ── Schnorr / DLEQ provers and verifiers ─────────────────────────────────────
 export {
@@ -88,15 +89,22 @@ export {
   verifyOrganizerSchnorr,
   organizerSchnorrChallenge,
   proveOrganizer,
-  proveCiphertext,
-  verifyCiphertextPoK,
-  ciphertextPoKChallenge,
   verifyDleq,
   dleqChallenge,
   DOMAIN_PARTIAL_DECRYPT,
   BN254_Q,
+  SUBGROUP_ORDER,
   type OperatorSchnorrProof,
   type OrganizerSchnorrProof,
   type DleqPoints,
   type DleqTranscriptInputs,
 } from './schnorr.js';
+
+// ── Organizer decryption share ───────────────────────────────────────────────
+export {
+  organizerShareChallenge,
+  proveOrganizerShare,
+  verifyOrganizerShare,
+  type OrganizerShare,
+  type OrganizerShareProof,
+} from './dleq.js';

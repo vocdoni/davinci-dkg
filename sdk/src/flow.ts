@@ -9,24 +9,25 @@
  *   2. DKG nodes call claimSlot() once the seed block is mined
  *   3. Nodes submit contributions → epoch moves to KeyAssembly phase
  *   4. A node finalizes the epoch → epoch goes Live; collective public key available
- *   5. Anyone encrypts data under the collective (or per-application) key with
- *      encryptWithProof() and publishes it via DKGWriter.submitCiphertext(),
- *      which returns the on-chain-assigned ciphertext index
- *   6. DKG nodes verify the proof of knowledge and submit partial decryptions
- *   7. A node calls combineDecryption → DecryptionCombined event emitted
- *   8. Caller can verify the plaintext matches the original message
+ *   5. An organizer registers an application (registerApplication) with its
+ *      own secret sk_org; the encryption key is PK_aid = PK_ep + PK_org
+ *   6. The authorised submitter encrypts under PK_aid and publishes the
+ *      ciphertext via DKGWriter.submitCiphertext(), which returns the
+ *      on-chain-assigned ciphertext index
+ *   7. DKG nodes submit partial decryptions; the organizer releases its share
+ *      Δ = sk_org·C1 (submitOrganizerShare)
+ *   8. A node calls combineDecryption → DecryptionCombined event emitted
+ *   9. Caller can verify the plaintext matches the original message
  */
 
 import { DKGClient } from './client.js';
 import {
   EpochPhase,
   type BabyJubPoint,
-  type CiphertextPoK,
   type ElGamalCiphertext,
 } from './types.js';
 import { waitForEpochPhase, waitForDecryption } from './monitor.js';
-import { buildElGamal } from './crypto/elgamal.js';
-import { proveCiphertext } from './schnorr.js';
+import { applicationKey, buildElGamal } from './crypto/elgamal.js';
 
 export interface CollectivePublicKey {
   /**
@@ -79,32 +80,30 @@ export async function encrypt(
 }
 
 /**
- * Encrypt a message for `(epochId, aid)` and prove knowledge of the ElGamal
- * randomness. This is the ciphertext producer's entry point: the returned
- * `pok` is what `DKGWriter.submitCiphertext` needs, and committee nodes only
- * decrypt ciphertexts whose proof verifies against exactly this epoch and
- * application id (use the all-zero aid for the bare epoch key).
+ * Encrypt a message under an application's key.
  *
- * @param epochId  bytes12 epoch id the ciphertext is submitted to
- * @param aid      bytes32 application id (`0x00…00` for the epoch key)
+ * `PK_aid = PK_ep + PK_org`, so both halves are needed: the epoch key from
+ * `client.getCollectivePublicKey(epochId)` and the organizer key from
+ * `client.getApplication(epochId, aid).organizerPK`. Both are returned in TE
+ * form, which is what this helper expects.
+ *
+ * There is no proof of knowledge of the randomness — see
+ * `DKGWriter.submitCiphertext` for why — so the result goes straight to the
+ * writer.
+ *
  * @param message  Small integer plaintext (the committee recovers values < 2^50)
- * @param pubKey   Key to encrypt under, in TE form (`client.getCollectivePublicKey`
- *                 for aid 0, or the derived application key)
+ * @param pkEp     Epoch collective public key, TE form
+ * @param pkOrg    Application organizer public key, TE form
  * @param k        Optional randomness; drawn from the CSPRNG when omitted
  */
-export async function encryptWithProof(
-  epochId: `0x${string}`,
-  aid: `0x${string}`,
+export async function encryptForApplication(
   message: bigint,
-  pubKey: BabyJubPoint,
+  pkEp: BabyJubPoint,
+  pkOrg: BabyJubPoint,
   k?: bigint,
-): Promise<{ ciphertext: ElGamalCiphertext; pok: CiphertextPoK }> {
+): Promise<ElGamalCiphertext> {
   const elgamal = await buildElGamal();
-  let r = k ?? elgamal.randomScalar();
-  while (r === 0n) r = elgamal.randomScalar();
-  const ciphertext = elgamal.encrypt(message, pubKey, r);
-  const pok = proveCiphertext(epochId, aid, ciphertext, r);
-  return { ciphertext, pok };
+  return elgamal.encrypt(message, applicationKey(pkEp, pkOrg), k);
 }
 
 /**
@@ -147,7 +146,8 @@ export async function waitForCombinedDecryption(
  *
  * In production these steps happen across different parties: the data producer
  * encrypts and publishes the ciphertext, DKG nodes submit partial decryptions,
- * and any caller with enough partial decryptions calls combineDecryption.
+ * the organizer releases its share, and any caller with enough partials plus
+ * that share calls combineDecryption.
  *
  * @param client         Read-only DKGClient
  * @param epochId        The epoch ID

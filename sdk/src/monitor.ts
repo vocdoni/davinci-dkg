@@ -1,12 +1,13 @@
 import { type Address } from 'viem';
 import { dkgManagerAbi } from './abi.js';
 import { type DKGClient } from './client.js';
-import { EpochPhase, type CiphertextPoK, type EpochPhaseValue, type PollOptions } from './types.js';
+import { EpochPhase, type EpochPhaseValue, type PollOptions } from './types.js';
 import { sleep } from './utils.js';
 import { fromRTEtoTE } from './crypto/babyjub-form.js';
-import { verifyCiphertextPoK } from './schnorr.js';
 
 const DEFAULT_INTERVAL_MS = 2_000;
+/** All-zero bytes32 — the "nothing stored" sentinel for both hashes below. */
+const ZERO_BYTES32 = ('0x' + '00'.repeat(32)) as `0x${string}`;
 const DEFAULT_TIMEOUT_MS = 120_000;
 
 /**
@@ -181,15 +182,13 @@ export function watchDecryptionCombined(
  * Watch for CiphertextSubmitted events on an epoch (optionally one
  * application via `opts.aid`). The callback receives the application id,
  * the on-chain-assigned ciphertext index, the submitter, the (C1, C2)
- * BabyJubJub coordinates and the submitter's proof of knowledge — the
- * contract stores only the keccak hash, so the event log is the only way to
- * recover the coordinates nodes need for threshold decryption.
+ * BabyJubJub coordinates — the contract stores only the keccak hash, so the
+ * event log is the only way to recover the coordinates the committee and the
+ * organizer need for decryption.
  *
  * `c1`/`c2` are converted from on-chain RTE form to TE form for consistency
- * with the rest of this SDK (see `crypto/babyjub-form.ts`); `pok` stays in
- * RTE form as reported on-chain. `pokValid` is the SDK's verdict on the
- * proof (`verifyCiphertextPoK`, computed over the RTE words): committee
- * nodes run the same check and never decrypt a ciphertext that fails it.
+ * with the rest of this SDK (see `crypto/babyjub-form.ts`), so they can be
+ * handed straight to `writer.submitOrganizerShare`.
  *
  * Returns an unsubscribe function.
  */
@@ -202,8 +201,6 @@ export function watchCiphertextSubmitted(
     submitter: Address;
     c1: { x: bigint; y: bigint };
     c2: { x: bigint; y: bigint };
-    pok: CiphertextPoK;
-    pokValid: boolean;
   }) => void,
   opts?: { aid?: `0x${string}` },
 ): () => void {
@@ -216,13 +213,8 @@ export function watchCiphertextSubmitted(
     args: args as any,
     onLogs: (logs) => {
       for (const log of logs) {
-        const { aid, ciphertextIndex, submitter, c1x, c1y, c2x, c2y, pokAx, pokAy, pokZ } =
-          log.args as any;
+        const { aid, ciphertextIndex, submitter, c1x, c1y, c2x, c2y } = log.args as any;
         if (typeof ciphertextIndex === 'number' && submitter && aid) {
-          const pok: CiphertextPoK = { ax: pokAx as bigint, ay: pokAy as bigint, z: pokZ as bigint };
-          const pokValid = verifyCiphertextPoK(
-            epochId, aid as `0x${string}`, c1x as bigint, c1y as bigint, c2x as bigint, c2y as bigint, pok,
-          );
           const [c1xT, c1yT] = fromRTEtoTE(c1x as bigint, c1y as bigint);
           const [c2xT, c2yT] = fromRTEtoTE(c2x as bigint, c2y as bigint);
           onCiphertext({
@@ -231,13 +223,77 @@ export function watchCiphertextSubmitted(
             submitter: submitter as Address,
             c1: { x: c1xT, y: c1yT },
             c2: { x: c2xT, y: c2yT },
-            pok,
-            pokValid,
           });
         }
       }
     },
   });
+}
+
+/**
+ * One-shot snapshot of a ciphertext's decryption pipeline.
+ *
+ * A ciphertext is only combinable once the committee has posted `threshold`
+ * partial decryptions **and** the organizer has released its share; the
+ * contract reverts `OrganizerShareMissing()` otherwise. `organizerShare`
+ * reports the second condition (`getOrganizerShareHash != 0`) so a UI can
+ * tell "waiting for the committee" apart from "waiting for the organizer".
+ */
+export async function decryptionProgress(
+  client: DKGClient,
+  epochId: `0x${string}`,
+  aid: `0x${string}`,
+  ciphertextIndex: number,
+): Promise<{
+  ciphertext: boolean;
+  organizerShare: boolean;
+  organizerShareHash: `0x${string}`;
+  combined: boolean;
+  plaintext: bigint;
+}> {
+  const [ctHash, shareHash, record] = await Promise.all([
+    client.getCiphertextHash(epochId, aid, ciphertextIndex),
+    client.getOrganizerShareHash(epochId, aid, ciphertextIndex),
+    client.getCombinedDecryption(epochId, aid, ciphertextIndex),
+  ]);
+  return {
+    ciphertext: ctHash !== ZERO_BYTES32,
+    organizerShare: shareHash !== ZERO_BYTES32,
+    organizerShareHash: shareHash,
+    combined: record.completed,
+    plaintext: record.plaintext,
+  };
+}
+
+/**
+ * Poll until the organizer share for a ciphertext is on chain.
+ *
+ * @throws If the epoch is Aborted or the timeout is exceeded.
+ */
+export async function waitForOrganizerShare(
+  client: DKGClient,
+  epochId: `0x${string}`,
+  aid: `0x${string}`,
+  ciphertextIndex: number,
+  options?: PollOptions,
+): Promise<`0x${string}`> {
+  const intervalMs = options?.intervalMs ?? DEFAULT_INTERVAL_MS;
+  const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const hash = await client.getOrganizerShareHash(epochId, aid, ciphertextIndex);
+    if (hash !== ZERO_BYTES32) return hash;
+
+    const epoch = await client.getEpoch(epochId);
+    if (epoch.status === EpochPhase.Aborted) {
+      throw new Error(`Epoch ${epochId} was aborted`);
+    }
+    await sleep(intervalMs);
+  }
+  throw new Error(
+    `Timeout waiting for the organizer share of ciphertext ${ciphertextIndex} in epoch ${epochId}`,
+  );
 }
 
 /**

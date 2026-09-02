@@ -192,14 +192,27 @@ docker compose --profile node --profile ui up -d
           </List.Item>
           <List.Item>
             <Text as='span' fontWeight='semibold' color='ink.0'>
-              Ciphertext proofs.
+              Ciphertext checks.
             </Text>{' '}
-            Before releasing a partial decryption the node re-verifies the submitter's Schnorr
-            proof of knowledge of the ciphertext randomness (checked on chain and emitted alongside
-            the ciphertext in <Code>CiphertextSubmitted</Code>). Ciphertexts without a valid proof are ignored
-            rather than decrypted, so a <Code>C1</Code> copied from another application cannot
-            turn the committee into a decryption oracle. Producers get the proof for free from
-            the SDK's <Code>encryptWithProof</Code>.
+            Ciphertexts are plain <Code>(C1, C2)</Code> calldata — there is no proof of knowledge
+            of the encryption randomness, because the submitter of an aggregated tally cannot
+            know it. Before releasing a partial decryption the node still checks that{' '}
+            <Code>C1</Code> lies in the prime-order subgroup (the contract does not), which stops
+            a small-order point from leaking a node's share. Cross-application replay is stopped
+            by the per-application organizer key instead: a <Code>C1</Code> copied into another
+            application and decrypted there only yields <Code>sk_ep·C1</Code>, useless without
+            that application's <Code>sk_org·C1</Code>.
+          </List.Item>
+          <List.Item>
+            <Text as='span' fontWeight='semibold' color='ink.0'>
+              Organizer shares.
+            </Text>{' '}
+            A ciphertext is only combinable once its application's organizer has published{' '}
+            <Code>Δ = sk_org·C1</Code>. The node reads the share from{' '}
+            <Code>OrganizerShareSubmitted</Code>, verifies its Chaum–Pedersen DLEQ off chain
+            (the contract stores only a hash), and feeds it into the combine witness. An invalid
+            share is logged and skipped; a corrected one can be re-submitted until the ciphertext
+            is combined, so a malformed share cannot brick it.
           </List.Item>
           <List.Item>
             <Text as='span' fontWeight='semibold' color='ink.0'>

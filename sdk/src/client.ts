@@ -12,7 +12,6 @@ import {
   type ContributionRecord,
   type PartialDecryptionRecord,
   type CombinedDecryptionRecord,
-  type CiphertextPoK,
   type NodeKey,
   type DKGConfig,
   type EpochPhaseValue,
@@ -21,11 +20,13 @@ import {
 } from './types.js';
 import { buildEpochId } from './utils.js';
 import { fromRTEtoTE } from './crypto/babyjub-form.js';
-import { verifyCiphertextPoK } from './schnorr.js';
 
 type ManagerContract = GetContractReturnType<typeof dkgManagerAbi, PublicClient>;
 type RegistryContract = GetContractReturnType<typeof dkgRegistryAbi, PublicClient>;
 type AppManagerContract = GetContractReturnType<typeof dkgAppManagerAbi, PublicClient>;
+
+/** All-zero bytes32 — the "no organizer share" sentinel. */
+const ZERO_BYTES32 = ('0x' + '00'.repeat(32)) as `0x${string}`;
 
 /** Default chunk size for chunked getLogs (blocks per request). */
 const DEFAULT_LOG_CHUNK = 2000n;
@@ -215,6 +216,15 @@ export class DKGClient {
     return this._appManager;
   }
 
+  /**
+   * Resolve the DKGAppManager address, reading it from the manager on first
+   * use. Prefer this over the synchronous `appManagerAddress` getter when you
+   * cannot be sure an app-manager call has already run.
+   */
+  async getAppManagerAddress(): Promise<Address> {
+    return this._getAppManagerAddress();
+  }
+
   /** Resolve and return the app manager address, fetching from the manager when needed. */
   protected async _getAppManagerAddress(): Promise<Address> {
     if (this._resolvedAppManagerAddress) return this._resolvedAppManagerAddress;
@@ -331,9 +341,10 @@ export class DKGClient {
   /**
    * Fetch the cached on-chain `Application` record for `(epochId, aid)`.
    * Returns an `exists: false` record when the application has not been
-   * registered. Callers should check `record.exists` before reading
-   * `mode`-specific fields. The `organizerPK` curve point is converted
-   * from on-chain RTE to TE for consistency with `getCollectivePublicKey`.
+   * registered — check `record.exists` before using any other field. The
+   * `organizerPK` curve point is converted from on-chain RTE to TE for
+   * consistency with `getCollectivePublicKey`, so
+   * `applicationKey(pkEp, record.organizerPK)` gives the encryption key.
    */
   async getApplication(
     epochId: `0x${string}`,
@@ -344,8 +355,6 @@ export class DKGClient {
     const [pkX, pkY] = fromRTEtoTE(BigInt(r.organizerPK.x), BigInt(r.organizerPK.y));
     return {
       creator: r.creator,
-      mode: Number(r.mode) as 0 | 1,
-      derivationS: BigInt(r.derivationS),
       organizerPK: [pkX, pkY],
       policy: {
         authorizedSubmitter: r.policy.authorizedSubmitter,
@@ -356,6 +365,38 @@ export class DKGClient {
       createdAtBlock: BigInt(r.createdAtBlock),
       exists: Boolean(r.exists),
     };
+  }
+
+  /**
+   * `keccak256(deltaX, deltaY, a1x, a1y, a2x, a2y, z)` of the organizer share
+   * stored for `(epochId, aid, ciphertextIndex)`, or `0x00…00` when no share
+   * has been posted. The share words themselves live only in the
+   * `OrganizerShareSubmitted` event — see `getOrganizerShareEvents`.
+   *
+   * A zero hash means the committee cannot combine this ciphertext yet: the
+   * contract reverts `OrganizerShareMissing()`.
+   */
+  async getOrganizerShareHash(
+    epochId: `0x${string}`,
+    aid: `0x${string}`,
+    ciphertextIndex: number,
+  ): Promise<`0x${string}`> {
+    const am = await this._getAppManager();
+    return am.read.getOrganizerShareHash([
+      epochId as any,
+      aid as any,
+      ciphertextIndex,
+    ]) as Promise<`0x${string}`>;
+  }
+
+  /** True when an organizer share is on chain for this ciphertext. */
+  async hasOrganizerShare(
+    epochId: `0x${string}`,
+    aid: `0x${string}`,
+    ciphertextIndex: number,
+  ): Promise<boolean> {
+    const h = await this.getOrganizerShareHash(epochId, aid, ciphertextIndex);
+    return h !== ZERO_BYTES32;
   }
 
   /** Fetch the combined decryption record for a ciphertext index. */
@@ -564,14 +605,9 @@ export class DKGClient {
   /**
    * Fetch all CiphertextSubmitted events for a specific epoch, optionally
    * narrowed to one application (`aid`) and/or one `ciphertextIndex`. Each
-   * entry carries the raw (C1, C2) coordinates in on-chain (RTE) form plus
-   * the submitter's proof of knowledge; the contract only stores a keccak
-   * hash, so this log is the only source of the coordinates nodes need for
-   * threshold decryption.
-   *
-   * `pokValid` is the SDK's own verdict on the proof (`verifyCiphertextPoK`).
-   * Committee nodes run the same check and never decrypt a ciphertext whose
-   * proof fails, so a `false` here means the plaintext will never appear.
+   * entry carries the raw (C1, C2) coordinates in on-chain (RTE) form; the
+   * contract only stores a keccak hash, so this log is the only source of the
+   * coordinates the committee and the organizer need to decrypt.
    */
   async getCiphertextSubmittedEvents(
     epochId: `0x${string}`,
@@ -583,8 +619,6 @@ export class DKGClient {
       submitter: Address;
       c1: { x: bigint; y: bigint };
       c2: { x: bigint; y: bigint };
-      pok: CiphertextPoK;
-      pokValid: boolean;
       blockNumber: bigint;
       transactionHash: `0x${string}` | null;
     }>
@@ -606,15 +640,67 @@ export class DKGClient {
     return logs.map((l) => {
       const a = l.args as any;
       const aid = a.aid as `0x${string}`;
-      const pok: CiphertextPoK = { ax: a.pokAx as bigint, ay: a.pokAy as bigint, z: a.pokZ as bigint };
       return {
         aid,
         ciphertextIndex: Number(a.ciphertextIndex),
         submitter: a.submitter as Address,
         c1: { x: a.c1x as bigint, y: a.c1y as bigint },
         c2: { x: a.c2x as bigint, y: a.c2y as bigint },
-        pok,
-        pokValid: verifyCiphertextPoK(epochId, aid, a.c1x, a.c1y, a.c2x, a.c2y, pok),
+        blockNumber: l.blockNumber ?? 0n,
+        transactionHash: (l.transactionHash ?? null) as `0x${string}` | null,
+      };
+    });
+  }
+
+  /**
+   * Fetch all `OrganizerShareSubmitted` events for `(epochId, aid)`,
+   * optionally narrowed to one `ciphertextIndex`. The contract stores only
+   * the keccak hash of the share, so this log is the only source of the
+   * words the combine circuit consumes.
+   *
+   * Coordinates are the on-chain (RTE) words — feed them straight to
+   * `verifyOrganizerShare` together with the application's `organizerPK`
+   * (converted back to RTE) and the ciphertext's `C1`. Re-submission is
+   * allowed until the ciphertext is combined, so several events may exist
+   * for one index; the last one wins.
+   */
+  async getOrganizerShareEvents(
+    epochId: `0x${string}`,
+    aid: `0x${string}`,
+    opts?: { ciphertextIndex?: number },
+  ): Promise<
+    Array<{
+      ciphertextIndex: number;
+      delta: { x: bigint; y: bigint };
+      a1: { x: bigint; y: bigint };
+      a2: { x: bigint; y: bigint };
+      z: bigint;
+      blockNumber: bigint;
+      transactionHash: `0x${string}` | null;
+    }>
+  > {
+    const appManagerAddress = await this._getAppManagerAddress();
+    const args: Record<string, unknown> = { epochId: epochId as any, aid: aid as any };
+    if (opts?.ciphertextIndex != null) args.ctIdx = opts.ciphertextIndex;
+    const logs = await getLogsChunked(
+      this.publicClient,
+      {
+        address: appManagerAddress,
+        event: getAbiItem({ abi: dkgAppManagerAbi, name: 'OrganizerShareSubmitted' }),
+        args,
+        fromBlock: 0n,
+        toBlock: 'latest',
+      },
+      { fallbackWindow: 50_000n },
+    );
+    return logs.map((l) => {
+      const a = l.args as any;
+      return {
+        ciphertextIndex: Number(a.ctIdx),
+        delta: { x: a.deltaX as bigint, y: a.deltaY as bigint },
+        a1: { x: a.a1x as bigint, y: a.a1y as bigint },
+        a2: { x: a.a2x as bigint, y: a.a2y as bigint },
+        z: a.z as bigint,
         blockNumber: l.blockNumber ?? 0n,
         transactionHash: (l.transactionHash ?? null) as `0x${string}` | null,
       };

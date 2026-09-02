@@ -3,18 +3,16 @@
 // byte-for-byte. The same files are consumed by the Foundry suite so a
 // drift in any layer breaks CI in all of them.
 
+
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
-  AppMode,
-  Role,
   DomainOperatorRegisterV1,
   DomainOrganizerRegisterV1,
   DomainDLEQV1,
-  DomainCiphertextPoKV1,
+  DomainOrganizerShareV1,
 } from '../src/protocol';
-import { computeS, SUBGROUP_ORDER } from '../src/derive';
 import {
   verifyOperatorSchnorr,
   verifyOrganizerSchnorr,
@@ -24,7 +22,16 @@ import {
   organizerSchnorrChallenge,
   DOMAIN_PARTIAL_DECRYPT,
   BN254_Q,
+  SUBGROUP_ORDER,
 } from '../src/schnorr';
+import {
+  organizerShareChallenge,
+  proveOrganizerShare,
+  verifyOrganizerShare,
+} from '../src/dleq';
+import { fromRTEtoTE, fromTEtoRTE } from '../src/crypto/babyjub-form';
+import type { BabyJubPoint } from '../src/types';
+import { Base8, mulPointEscalar } from '@zk-kit/baby-jubjub';
 import type { Hex } from 'viem';
 import type { Point } from '@zk-kit/baby-jubjub';
 
@@ -36,31 +43,48 @@ function load<T>(name: string): T {
 
 // ─── protocol.json ─────────────────────────────────────────────────────────
 
+interface OrganizerShareVector {
+  label: string;
+  domain: string;
+  skOrg: string;
+  w: string;
+  epochId: string;
+  aid: string;
+  ctIdx: number;
+  pkOrgX: string;
+  pkOrgY: string;
+  c1x: string;
+  c1y: string;
+  deltaX: string;
+  deltaY: string;
+  a1x: string;
+  a1y: string;
+  a2x: string;
+  a2y: string;
+  e: string;
+  z: string;
+}
+
 interface ProtocolFile {
-  appMode: { PublicDerivation: number; OrganizerCoDec: number };
-  role: { Committee: number; Organizer: number };
   domains: Record<string, { preimage: string; keccak256: string; bn254Reduced: string }>;
   bn254Q: string;
+  subgroupOrderL: string;
+  organizerShare: OrganizerShareVector;
 }
 
 describe('vectors / protocol.json', () => {
   const f = load<ProtocolFile>('protocol.json');
 
-  it('AppMode matches', () => {
-    expect(AppMode.PublicDerivation).toBe(f.appMode.PublicDerivation);
-    expect(AppMode.OrganizerCoDec).toBe(f.appMode.OrganizerCoDec);
-  });
-
-  it('Role matches', () => {
-    expect(Role.Committee).toBe(f.role.Committee);
-    expect(Role.Organizer).toBe(f.role.Organizer);
-  });
-
   it('domain digests match', () => {
     expect(DomainOperatorRegisterV1).toBe(f.domains.OperatorRegisterV1.keccak256);
     expect(DomainOrganizerRegisterV1).toBe(f.domains.OrganizerRegisterV1.keccak256);
     expect(DomainDLEQV1).toBe(f.domains.DLEQV1.keccak256);
-    expect(DomainCiphertextPoKV1).toBe(f.domains.CiphertextPoKV1.keccak256);
+  });
+
+  it('OrganizerShareV1 domain digest matches', () => {
+    const d = f.domains.OrganizerShareV1;
+    expect(d.preimage).toBe('davinci-dkg:organizer-share:v1');
+    expect(DomainOrganizerShareV1).toBe(d.keccak256);
   });
 
   it('PartialDecrypt domain reduction matches', () => {
@@ -72,32 +96,69 @@ describe('vectors / protocol.json', () => {
   it('BN254 Q matches', () => {
     expect(BN254_Q.toString()).toBe(f.bn254Q);
   });
-});
 
-// ─── derivation.json ───────────────────────────────────────────────────────
-
-interface DerivationFile {
-  subgroupOrderL: string;
-  vectors: Array<{
-    label: string;
-    epochId: string;
-    pkEpX: string;
-    pkEpY: string;
-    aid: string;
-    s: string;
-  }>;
-}
-
-describe('vectors / derivation.json', () => {
-  const f = load<DerivationFile>('derivation.json');
-
-  it('subgroup order matches', () => {
+  it('BabyJubJub subgroup order matches', () => {
     expect(SUBGROUP_ORDER.toString()).toBe(f.subgroupOrderL);
   });
+});
 
-  it.each(f.vectors)('S vector "$label"', (v) => {
-    const got = computeS(v.epochId as Hex, BigInt(v.pkEpX), BigInt(v.pkEpY), v.aid as Hex);
-    expect(got.toString()).toBe(v.s);
+// ─── protocol.json → organizer share (spec §3) ─────────────────────────────
+
+describe('vectors / organizer share', () => {
+  const v = load<ProtocolFile>('protocol.json').organizerShare;
+
+  const epochId = v.epochId as Hex;
+  const aid = v.aid as Hex;
+  const skOrg = BigInt(v.skOrg);
+  const w = BigInt(v.w);
+  const pkOrg: BabyJubPoint = [BigInt(v.pkOrgX), BigInt(v.pkOrgY)];
+  const c1: BabyJubPoint = [BigInt(v.c1x), BigInt(v.c1y)];
+  const delta: BabyJubPoint = [BigInt(v.deltaX), BigInt(v.deltaY)];
+  const a1: BabyJubPoint = [BigInt(v.a1x), BigInt(v.a1y)];
+  const a2: BabyJubPoint = [BigInt(v.a2x), BigInt(v.a2y)];
+
+  it('binds the OrganizerShareV1 domain', () => {
+    expect(v.domain).toBe(DomainOrganizerShareV1);
+  });
+
+  it('PK_org in the vector is sk_org·G in on-chain (RTE) form', () => {
+    const pkTE = mulPointEscalar(Base8, skOrg) as Point<bigint>;
+    expect(fromTEtoRTE(pkTE[0], pkTE[1])).toEqual(pkOrg);
+  });
+
+  it('reproduces the Go challenge e byte for byte', () => {
+    expect(
+      organizerShareChallenge(epochId, aid, v.ctIdx, pkOrg, c1, delta, a1, a2).toString(),
+    ).toBe(v.e);
+  });
+
+  it('verifies the Go-produced proof', () => {
+    expect(
+      verifyOrganizerShare(epochId, aid, v.ctIdx, pkOrg, c1, delta, { a1, a2, z: BigInt(v.z) }),
+    ).toBe(true);
+  });
+
+  it('the SDK prover reproduces every word given the same secret and witness', () => {
+    // This is what catches a coordinate-form or reduction drift: the prover
+    // does the curve arithmetic in TE and emits RTE, and every one of those
+    // words has to land on the Go value.
+    const c1TE = fromRTEtoTE(c1[0], c1[1]) as BabyJubPoint;
+    const share = proveOrganizerShare(epochId, aid, v.ctIdx, skOrg, c1TE, w);
+    expect(share.delta).toEqual(delta);
+    expect(share.a1).toEqual(a1);
+    expect(share.a2).toEqual(a2);
+    expect(share.z.toString()).toBe(v.z);
+  });
+
+  it('rejects the vector under a tampered response or a foreign ciphertext index', () => {
+    expect(
+      verifyOrganizerShare(epochId, aid, v.ctIdx, pkOrg, c1, delta, {
+        a1, a2, z: BigInt(v.z) + 1n,
+      }),
+    ).toBe(false);
+    expect(
+      verifyOrganizerShare(epochId, aid, v.ctIdx + 1, pkOrg, c1, delta, { a1, a2, z: BigInt(v.z) }),
+    ).toBe(false);
   });
 });
 
@@ -129,9 +190,8 @@ describe('vectors / schnorr.json', () => {
   const f = load<SchnorrFile>('schnorr.json');
 
   it.each(f.operator)('operator vector "$label" — challenge + verify', (v) => {
-    // Verify is the load-bearing assertion: it both rederives `c` via
-    // Poseidon (transcript correctness) and runs the curve equation
-    // (z·G == A + c·PK).
+    // Verify is the load-bearing assertion: it both rederives `c` over the
+    // keccak transcript and runs the curve equation (z·G == A + c·PK).
     const ok = verifyOperatorSchnorr(v.operator as Hex, BigInt(v.pubX), BigInt(v.pubY), {
       ax: BigInt(v.ax), ay: BigInt(v.ay), z: BigInt(v.z),
     });
@@ -152,13 +212,11 @@ describe('vectors / schnorr.json', () => {
     expect(ok).toBe(true);
   });
 
-  it('operator challenge matches Go for one vector', () => {
+  it('operator challenge is deterministic', () => {
     const v = f.operator[0]!;
     const c = operatorSchnorrChallenge(
       v.operator as Hex, BigInt(v.pubX), BigInt(v.pubY), BigInt(v.ax), BigInt(v.ay),
     );
-    // The challenge is implicit in z = w + c·sk; we don't ship c in the
-    // vector, but we can confirm two SDK runs agree.
     expect(operatorSchnorrChallenge(
       v.operator as Hex, BigInt(v.pubX), BigInt(v.pubY), BigInt(v.ax), BigInt(v.ay),
     )).toBe(c);
@@ -179,7 +237,7 @@ describe('vectors / schnorr.json', () => {
   });
 });
 
-// ─── dleq.json ─────────────────────────────────────────────────────────────
+// ─── dleq.json (committee partial decryptions) ─────────────────────────────
 
 interface DleqFile {
   partialDecryptDomainBn254: string;
@@ -188,7 +246,6 @@ interface DleqFile {
     epochId: string;
     aid: string;
     ctIdx: number;
-    role: number;
     participantIndex: number;
     baseX: string; baseY: string;
     pubX: string; pubY: string;
@@ -212,7 +269,6 @@ describe('vectors / dleq.json', () => {
       epochId: v.epochId as Hex,
       aid: v.aid as Hex,
       ctIdx: v.ctIdx,
-      role: v.role as 1 | 2,
       participantIndex: v.participantIndex,
       points: {
         base: [BigInt(v.baseX), BigInt(v.baseY)] as Point<bigint>,

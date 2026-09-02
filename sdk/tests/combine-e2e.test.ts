@@ -1,7 +1,6 @@
 // SDK combine end-to-end test.
 //
-// Validates that `writer.combineDecryption(...)` — including the new `aid`
-// parameter wired in P9 — actually composes correctly with the on-chain
+// Validates that `writer.combineDecryption(...)` composes correctly with the on-chain
 // `combineDecryption` ABI. The Go fixture builds the Groth16 proof + combine
 // payload (since gnark proving in TS is not feasible), but the on-chain
 // combine call itself goes through the SDK writer. Without this test, an
@@ -10,13 +9,13 @@
 //
 // Flow:
 //   1. Go fixture (`--action=create`) → finalized single-participant epoch.
-//   2. SDK encrypts a plaintext (with its proof of knowledge), calls
-//      writer.submitCiphertext and takes the on-chain-assigned index.
+//   2. SDK registers an application, encrypts a plaintext under PK_aid,
+//      calls writer.submitCiphertext and takes the on-chain-assigned index,
+//      then releases the organizer share.
 //   3. Go fixture (`--action=prepare-combine`) → submits the partial
 //      decryption on-chain and emits the combine payload bytes.
-//   4. SDK calls writer.combineDecryption(epochId, 0x00…00, idx, …) with
-//      those bytes. The 32-byte zero `aid` is the legacy per-epoch path
-//      (no application registered).
+//   4. SDK calls writer.combineDecryption(epochId, aid, idx, …) with those
+//      bytes.
 //   5. SDK reads getPlaintext and asserts the recovered value matches.
 
 import { describe, it, expect, beforeAll } from 'vitest';
@@ -24,7 +23,15 @@ import { inject } from 'vitest';
 import { spawn } from 'node:child_process';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DKGClient, DKGWriter, encryptWithProof } from '../src/index.js';
+import {
+  DKGClient,
+  DKGWriter,
+  applicationKey,
+  encrypt,
+  randomOrganizerSecret,
+  type AppPolicy,
+  type BabyJubPoint,
+} from '../src/index.js';
 import { makePublicClient, makeWalletClient } from './helpers/accounts.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -74,7 +81,14 @@ function lastJsonLine<T>(stdout: string): T | null {
   try { return JSON.parse(line) as T; } catch { return null; }
 }
 
-const ZERO_AID = ('0x' + '00'.repeat(32)) as `0x${string}`;
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000' as const;
+
+function randomAid(): `0x${string}` {
+  const buf = new Uint8Array(32);
+  globalThis.crypto.getRandomValues(buf);
+  buf[0] &= 0x1f; // keep `aid` below the BN254 scalar field modulus
+  return ('0x' + Array.from(buf).map((b) => b.toString(16).padStart(2, '0')).join('')) as `0x${string}`;
+}
 
 describe('SDK combineDecryption end-to-end (writer drives the on-chain combine)', () => {
   let client:  DKGClient;
@@ -100,16 +114,36 @@ describe('SDK combineDecryption end-to-end (writer drives the on-chain combine)'
     fixture = lastJsonLine<FixtureCreateResult>(out.stdout);
   });
 
-  it('SDK writer.combineDecryption with aid=0x00..00 lands a plaintext on-chain', async () => {
+  it('SDK writer.combineDecryption lands a plaintext on-chain', async () => {
     const { enabled, rpcUrl, addressesFile } = useHarness();
     if (!enabled || !fixture) return;
 
-    // 1. SDK encrypts + submits the ciphertext; the contract assigns the index.
+    // 1. Register an application, encrypt under PK_aid, submit; the contract
+    //    assigns the index. Then release the organizer share — combine
+    //    reverts OrganizerShareMissing() without it.
+    const aid = randomAid();
+    const skOrg = randomOrganizerSecret();
+    const policy: AppPolicy = {
+      authorizedSubmitter: ZERO_ADDRESS,
+      maxCiphertexts: 0,
+      notBeforeBlock: 0n,
+      notAfterBlock: 0n,
+    };
+    const regTx = await writer.registerApplication(fixture.epochId, aid, policy, skOrg);
+    await writer.publicClient.waitForTransactionReceipt({ hash: regTx });
+
     const pk = await client.getCollectivePublicKey(fixture.epochId);
+    const app = await client.getApplication(fixture.epochId, aid);
+    const pkEp: BabyJubPoint = [pk.x, pk.y];
     const plaintext = 137n;
-    const { ciphertext, pok } = await encryptWithProof(fixture.epochId, ZERO_AID, plaintext, [pk.x, pk.y]);
-    const { ciphertextIndex } = await writer.submitCiphertext(fixture.epochId, ZERO_AID, ciphertext, pok);
+    const ciphertext = await encrypt(plaintext, applicationKey(pkEp, app.organizerPK));
+    const { ciphertextIndex } = await writer.submitCiphertext(fixture.epochId, aid, ciphertext);
     expect(ciphertextIndex).toBeGreaterThanOrEqual(1);
+
+    const shareTx = await writer.submitOrganizerShare(
+      fixture.epochId, aid, ciphertextIndex, ciphertext, skOrg,
+    );
+    await writer.publicClient.waitForTransactionReceipt({ hash: shareTx });
 
     // 2. Go fixture builds the proof + submits the partial decryption,
     //    then hands back the combine bytes for the SDK to send.
@@ -118,6 +152,7 @@ describe('SDK combineDecryption end-to-end (writer drives the on-chain combine)'
       '--addresses-file', addressesFile,
       '--action=prepare-combine',
       '--epoch-id', fixture.epochId,
+      '--aid', aid,
       '--ciphertext-index', String(ciphertextIndex),
       '--share', fixture.share,
     ]);
@@ -133,7 +168,7 @@ describe('SDK combineDecryption end-to-end (writer drives the on-chain combine)'
     //    would surface as a simulateContract revert here.
     const combineTx = await writer.combineDecryption(
       fixture.epochId,
-      ZERO_AID,
+      aid,
       ciphertextIndex,
       payload!.combineHash,
       BigInt(payload!.plaintext),
@@ -143,7 +178,7 @@ describe('SDK combineDecryption end-to-end (writer drives the on-chain combine)'
     );
     await writer.publicClient.waitForTransactionReceipt({ hash: combineTx });
 
-    const recovered = await client.getPlaintext(fixture.epochId, ZERO_AID, ciphertextIndex);
+    const recovered = await client.getPlaintext(fixture.epochId, aid, ciphertextIndex);
     expect(recovered).toBe(plaintext);
   }, 900_000);
 });

@@ -19,7 +19,7 @@ function eventSummary(ev: EpochEvent): string {
     case 'EpochLive':
       return 'Epoch finalized — collective public key locked in.'
     case 'CiphertextSubmitted':
-      return 'Ciphertext submitted for threshold decryption (with its proof of knowledge).'
+      return 'Ciphertext submitted for threshold decryption.'
     case 'PartialDecryptionSubmitted':
       return 'Committee member submitted a partial decryption.'
     case 'DecryptionCombined':

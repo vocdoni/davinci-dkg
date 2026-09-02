@@ -9,20 +9,14 @@ import {
   proveOrganizer,
   verifyOrganizerSchnorr,
   organizerSchnorrChallenge,
-  proveCiphertext,
-  verifyCiphertextPoK,
-  ciphertextPoKChallenge,
   verifyDleq,
   dleqChallenge,
   DOMAIN_PARTIAL_DECRYPT,
   BN254_Q,
   SUBGROUP_ORDER,
 } from '../src/schnorr';
-import { Role } from '../src/protocol';
-import { buildElGamal } from '../src/crypto/elgamal';
-import { encryptWithProof } from '../src/flow';
 import { Base8, addPoint, mulPointEscalar, type Point } from '@zk-kit/baby-jubjub';
-import { fromRTEtoTE, fromTEtoRTE } from '../src/crypto/babyjub-form';
+import { fromTEtoRTE } from '../src/crypto/babyjub-form';
 
 function teToRte(p: Point<bigint>): Point<bigint> {
   const [x, y] = fromTEtoRTE(p[0], p[1]);
@@ -123,152 +117,7 @@ describe('organizer Schnorr', () => {
   });
 });
 
-// ─── ciphertext PoK (submitCiphertext) ──────────────────────────────────────
-
-// Vector produced by the Go reference (`crypto/elgamal.EncryptWithProof` with
-// sk = 1234567890123456789, m = 42, epochId 0x1122334400…07, aid 0xa0a1…bf).
-// The proof's randomness is fixed in the vector, so the TS verifier must
-// reproduce the Go keccak transcript byte-for-byte to accept it. All
-// coordinates are the on-chain (RTE) words exactly as Go encodes them.
-const GO_POK_VECTOR = {
-  epochId: '0x112233440000000000000007' as const,
-  aid: '0xa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf' as const,
-  pkX: 11211529648744409580389737002763249794516657436529318984204751975600767408943n,
-  pkY: 19315036694604867924412484447665190374303888916962616112358246501479826895183n,
-  c1x: 5327914099698692744718110762585765258609802896790308206290497831138639969986n,
-  c1y: 19555038857321857409029761357904259070423102556686738772266708470204235630342n,
-  c2x: 12317964812382882582192751384315197250526659581219650619219120741818980393620n,
-  c2y: 6025912343892673086328146271441747721213980918426580448329692405187252326198n,
-  ax: 12347161145034160738912429265240534252921277071789451058260893094809551572164n,
-  ay: 16016968412754970057303487590293432601038401756831561809812512656371871988459n,
-  z: 186081488140166616517867504215635649374666064245882754837308212635874187861n,
-};
-
-describe('ciphertext PoK', () => {
-  const eid = '0x0000000000000000000000aa' as const;
-  const aid = ('0x' + 'cd'.repeat(32)) as `0x${string}`;
-  const sk = 987654321987654321n;
-  const r = 4242424242424242n; // ElGamal randomness (C1 = r·G)
-  const w = 7777777n;          // pinned Schnorr witness
-
-  function encryptTE(k: bigint) {
-    const pk = mulPointEscalar(Base8, sk) as Point<bigint>;
-    const c1 = mulPointEscalar(Base8, k) as Point<bigint>;
-    const c2 = addPoint(mulPointEscalar(Base8, 42n), mulPointEscalar(pk, k)) as Point<bigint>;
-    return { c1: [c1[0], c1[1]] as [bigint, bigint], c2: [c2[0], c2[1]] as [bigint, bigint] };
-  }
-
-  function rteCoords(ct: { c1: [bigint, bigint]; c2: [bigint, bigint] }) {
-    const [c1x, c1y] = fromTEtoRTE(ct.c1[0], ct.c1[1]);
-    const [c2x, c2y] = fromTEtoRTE(ct.c2[0], ct.c2[1]);
-    return { c1x, c1y, c2x, c2y };
-  }
-
-  it('accepts the Go-generated vector (byte-for-byte transcript)', () => {
-    const v = GO_POK_VECTOR;
-    expect(
-      verifyCiphertextPoK(v.epochId, v.aid, v.c1x, v.c1y, v.c2x, v.c2y, { ax: v.ax, ay: v.ay, z: v.z }),
-    ).toBe(true);
-    // Sanity: the vector's C2 really is 42·G + r·PK for the vector's PK, i.e. it
-    // is a genuine ElGamal ciphertext and not just a hash-consistent tuple.
-    const pkTE = fromRTEtoTE(v.pkX, v.pkY);
-    expect(mulPointEscalar(Base8, 1234567890123456789n)).toEqual(pkTE);
-  });
-
-  it('rejects the Go vector under another aid, epoch, or a tampered response', () => {
-    const v = GO_POK_VECTOR;
-    const proof = { ax: v.ax, ay: v.ay, z: v.z };
-    const otherAid = ('0x' + 'a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbe' + 'c0') as `0x${string}`;
-    expect(verifyCiphertextPoK(v.epochId, otherAid, v.c1x, v.c1y, v.c2x, v.c2y, proof)).toBe(false);
-    expect(verifyCiphertextPoK('0x112233440000000000000008', v.aid, v.c1x, v.c1y, v.c2x, v.c2y, proof)).toBe(false);
-    expect(verifyCiphertextPoK(v.epochId, v.aid, v.c1x, v.c1y, v.c2x, v.c2y, { ...proof, z: v.z + 1n })).toBe(false);
-  });
-
-  it('round-trips: proveCiphertext → verifyCiphertextPoK', () => {
-    const ct = encryptTE(r);
-    const proof = proveCiphertext(eid, aid, ct, r, w);
-    const { c1x, c1y, c2x, c2y } = rteCoords(ct);
-    expect(verifyCiphertextPoK(eid, aid, c1x, c1y, c2x, c2y, proof)).toBe(true);
-    // Response is reduced into the subgroup order and the witness is A = w·G in RTE.
-    expect(proof.z).toBeLessThan(SUBGROUP_ORDER);
-    const A = mulPointEscalar(Base8, w) as Point<bigint>;
-    expect([proof.ax, proof.ay]).toEqual(fromTEtoRTE(A[0], A[1]));
-  });
-
-  it('rejects when verified against another aid', () => {
-    const ct = encryptTE(r);
-    const proof = proveCiphertext(eid, aid, ct, r, w);
-    const { c1x, c1y, c2x, c2y } = rteCoords(ct);
-    const wrongAid = ('0x' + 'cd'.repeat(31) + 'ce') as `0x${string}`;
-    expect(verifyCiphertextPoK(eid, wrongAid, c1x, c1y, c2x, c2y, proof)).toBe(false);
-  });
-
-  it('rejects when verified against another epoch', () => {
-    const ct = encryptTE(r);
-    const proof = proveCiphertext(eid, aid, ct, r, w);
-    const { c1x, c1y, c2x, c2y } = rteCoords(ct);
-    expect(verifyCiphertextPoK('0x0000000000000000000000ab', aid, c1x, c1y, c2x, c2y, proof)).toBe(false);
-  });
-
-  it('rejects a re-randomised C1 + G (the decryption-oracle replay)', () => {
-    const ct = encryptTE(r);
-    const proof = proveCiphertext(eid, aid, ct, r, w);
-    const shifted = addPoint(ct.c1, Base8) as Point<bigint>;
-    const [c1x, c1y] = fromTEtoRTE(shifted[0], shifted[1]);
-    const [c2x, c2y] = fromTEtoRTE(ct.c2[0], ct.c2[1]);
-    expect(verifyCiphertextPoK(eid, aid, c1x, c1y, c2x, c2y, proof)).toBe(false);
-  });
-
-  it('rejects a swapped C2 (C2 is bound into the transcript)', () => {
-    const ct = encryptTE(r);
-    const proof = proveCiphertext(eid, aid, ct, r, w);
-    const { c1x, c1y } = rteCoords(ct);
-    const other = encryptTE(r + 1n);
-    const [c2x, c2y] = fromTEtoRTE(other.c2[0], other.c2[1]);
-    expect(verifyCiphertextPoK(eid, aid, c1x, c1y, c2x, c2y, proof)).toBe(false);
-  });
-
-  it('rejects a tampered response, an off-curve witness and an out-of-range z', () => {
-    const ct = encryptTE(r);
-    const proof = proveCiphertext(eid, aid, ct, r, w);
-    const { c1x, c1y, c2x, c2y } = rteCoords(ct);
-    expect(verifyCiphertextPoK(eid, aid, c1x, c1y, c2x, c2y, { ...proof, z: proof.z + 1n })).toBe(false);
-    expect(verifyCiphertextPoK(eid, aid, c1x, c1y, c2x, c2y, { ...proof, ax: 1n, ay: 1n })).toBe(false);
-    expect(verifyCiphertextPoK(eid, aid, c1x, c1y, c2x, c2y, { ...proof, z: SUBGROUP_ORDER })).toBe(false);
-  });
-
-  it('proveCiphertext refuses a randomness that does not open c1', () => {
-    const ct = encryptTE(r);
-    expect(() => proveCiphertext(eid, aid, ct, r + 1n, w)).toThrow(/does not open c1/);
-  });
-
-  it('challenge is deterministic and sensitive to every input', () => {
-    const c = ciphertextPoKChallenge(eid, aid, 1n, 2n, 3n, 4n, 5n, 6n);
-    expect(ciphertextPoKChallenge(eid, aid, 1n, 2n, 3n, 4n, 5n, 6n)).toBe(c);
-    expect(c).toBeLessThan(SUBGROUP_ORDER);
-    expect(ciphertextPoKChallenge('0x0000000000000000000000ab', aid, 1n, 2n, 3n, 4n, 5n, 6n)).not.toBe(c);
-    expect(ciphertextPoKChallenge(eid, ('0x' + 'ce'.repeat(32)) as `0x${string}`, 1n, 2n, 3n, 4n, 5n, 6n)).not.toBe(c);
-    const args: bigint[] = [1n, 2n, 3n, 4n, 5n, 6n];
-    for (let i = 0; i < args.length; i++) {
-      const bumped = [...args]; bumped[i] += 1n;
-      const [a, b, cc, d, e, f] = bumped;
-      expect(ciphertextPoKChallenge(eid, aid, a, b, cc, d, e, f)).not.toBe(c);
-    }
-  });
-
-  it('encryptWithProof produces a ciphertext + proof the verifier accepts (TE → RTE boundary)', async () => {
-    const eg = await buildElGamal();
-    const { privKey, pubKey } = eg.generateKeyPair();
-    const { ciphertext, pok } = await encryptWithProof(eid, aid, 42n, pubKey);
-    const { c1x, c1y, c2x, c2y } = rteCoords(ciphertext);
-    expect(verifyCiphertextPoK(eid, aid, c1x, c1y, c2x, c2y, pok)).toBe(true);
-    expect(eg.decrypt(ciphertext, privKey)).toBe(42n);
-    // Proofs are per (epoch, aid): the same ciphertext under a different aid fails.
-    expect(verifyCiphertextPoK(eid, ('0x' + 'ce'.repeat(32)) as `0x${string}`, c1x, c1y, c2x, c2y, pok)).toBe(false);
-  });
-});
-
-// ─── DLEQ round-trip (committee role) ───────────────────────────────────────
+// ─── DLEQ round-trip (committee partial decryption) ─────────────────────────
 
 describe('DLEQ verifier', () => {
   const eid = '0x000000000000000000000077' as const;
@@ -300,7 +149,7 @@ describe('DLEQ verifier', () => {
   function buildProof() {
     const { PK, C1, Delta, A1, A2 } = buildPoints();
     const transcript = {
-      epochId: eid, aid, ctIdx, role: Role.Committee, participantIndex: i,
+      epochId: eid, aid, ctIdx, participantIndex: i,
       points: { base: C1, publicKey: PK, delta: Delta, a1: A1, a2: A2 },
     };
     const c = dleqChallenge(transcript) % SUBGROUP_ORDER;
@@ -318,9 +167,9 @@ describe('DLEQ verifier', () => {
     expect(verifyDleq(transcript, z + 1n)).toBe(false);
   });
 
-  it('rejects when the role is swapped (replay protection)', () => {
+  it('rejects when the participant index changes (replay across committee members)', () => {
     const { transcript, z } = buildProof();
-    const replay = { ...transcript, role: Role.Organizer };
+    const replay = { ...transcript, participantIndex: i + 1n };
     expect(verifyDleq(replay, z)).toBe(false);
   });
 

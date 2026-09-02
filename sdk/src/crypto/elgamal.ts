@@ -167,3 +167,43 @@ export async function buildElGamal(): Promise<ElGamal> {
   };
   return _elgamal;
 }
+
+// ─── application keys and organizer secrets ─────────────────────────────────
+
+/**
+ * Derive the per-application public key from the epoch key and the
+ * application's organizer key:
+ *
+ *   PK_aid = PK_ep + PK_org
+ *
+ * Both inputs and the result are in the circomlib TE form this SDK works in
+ * (`client.getCollectivePublicKey` and `client.getApplication` both return TE),
+ * so the result can be handed straight to `encrypt`.
+ *
+ * There is no public-derivation variant: an application without a registered
+ * organizer key cannot be decrypted, and one cannot be registered without a
+ * proof of possession of `sk_org`.
+ */
+export function applicationKey(pkEp: BabyJubPoint, pkOrg: BabyJubPoint): BabyJubPoint {
+  return addPoint(pkEp, pkOrg) as BabyJubPoint;
+}
+
+/**
+ * Draw a fresh organizer secret `sk_org` uniformly from `[1, q)`.
+ *
+ * **This value is the application's only decryption capability.** It is never
+ * sent anywhere: only `PK_org = sk_org·G` and a proof of possession go on
+ * chain at registration, and only `Δ = sk_org·C1` (plus a DLEQ) goes on chain
+ * per ciphertext. If it is lost, every ciphertext under the application is
+ * permanently undecryptable — the committee threshold alone cannot open them.
+ */
+export function randomOrganizerSecret(): bigint {
+  let s = 0n;
+  while (s === 0n) {
+    const bytes = globalThis.crypto.getRandomValues(new Uint8Array(32));
+    let bi = 0n;
+    for (let i = 0; i < bytes.length; i++) bi += BigInt(bytes[i]) << BigInt(8 * i);
+    s = bi % subOrder;
+  }
+  return s;
+}

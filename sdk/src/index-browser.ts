@@ -1,9 +1,9 @@
 // Browser-safe SDK entry point.
 //
 // Excludes the ElGamal crypto module and the high-level flow helpers; all
-// on-chain read/write, monitoring and proof utilities are included. Note
-// that `DKGWriter.submitCiphertext` needs a `CiphertextPoK`: build it with
-// `proveCiphertext` from the ciphertext's randomness.
+// on-chain read/write, monitoring and proof utilities are included — the
+// organizer's share prover (`proveOrganizerShare`) among them, since the
+// organizer is expected to run in a browser.
 
 export { DKGClient } from './client.js';
 export { DKGWriter, type SubmitCiphertextResult } from './writer.js';
@@ -26,7 +26,6 @@ export {
   type DKGWriterConfig,
   type BabyJubPoint,
   type ElGamalCiphertext,
-  type CiphertextPoK,
   type PollOptions,
   type EpochEvent,
   type EpochEntry,
@@ -35,12 +34,23 @@ export {
 } from './types.js';
 
 export { dkgManagerAbi, dkgRegistryAbi, dkgAppManagerAbi } from './abi.js';
-export { proveCiphertext, verifyCiphertextPoK, ciphertextPoKChallenge } from './schnorr.js';
+export { proveOrganizer, verifyOrganizerSchnorr, organizerSchnorrChallenge } from './schnorr.js';
+export {
+  organizerShareChallenge,
+  proveOrganizerShare,
+  verifyOrganizerShare,
+  type OrganizerShare,
+  type OrganizerShareProof,
+} from './dleq.js';
+export { DomainOrganizerRegisterV1, DomainOrganizerShareV1 } from './protocol.js';
 export { buildEpochId, parseEpochId } from './utils.js';
 export {
   waitForEpochPhase,
   waitForDecryption,
+  waitForOrganizerShare,
+  decryptionProgress,
   watchNewRounds,
+  watchNewEpochs,
   watchEpochLive,
   watchDecryptionCombined,
   watchCiphertextSubmitted,

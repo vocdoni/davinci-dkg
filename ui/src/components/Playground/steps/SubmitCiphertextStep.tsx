@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Box, Button, HStack, Stack, Text } from '@chakra-ui/react'
-import type { CiphertextPoK, ElGamalCiphertext } from '@vocdoni/davinci-dkg-sdk'
+import type { ElGamalCiphertext } from '@vocdoni/davinci-dkg-sdk'
 import type { Hex } from 'viem'
 import { LuPackage, LuUpload, LuRadio } from 'react-icons/lu'
 import { StepCard, type StepStatus } from '../StepCard'
@@ -11,32 +11,30 @@ import { HowItWorks } from '../HowItWorks'
 interface Props {
   status: StepStatus
   epochId: Hex | null
+  /** Application id registered earlier in the flow. */
+  aid: Hex | null
   ciphertext: ElGamalCiphertext | null
-  /** Proof of knowledge of the ciphertext randomness, produced in the encrypt step. */
-  pok: CiphertextPoK | null
   onSubmitted: (ciphertextIndex: number, txHash: Hex) => void
   log: (msg: string, level?: 'info' | 'success' | 'error' | 'tx') => void
 }
 
-// The playground submits under the bare epoch key (aid = 0). The contract
-// assigns the ciphertext index itself (1, 2, … per epoch and aid); we read it
-// back from the CiphertextSubmitted event in the receipt.
-const ZERO_AID = ('0x' + '00'.repeat(32)) as Hex
+// The contract assigns the ciphertext index itself (1, 2, … per epoch and
+// aid); we read it back from the CiphertextSubmitted event in the receipt.
 
-export function SubmitCiphertextStep({ status, epochId, ciphertext, pok, onSubmitted, log }: Props) {
+export function SubmitCiphertextStep({ status, epochId, aid, ciphertext, onSubmitted, log }: Props) {
   const writer = useDkgWriter()
   const [busy, setBusy] = useState(false)
   const [tx, setTx] = useState<Hex | null>(null)
   const [index, setIndex] = useState<number | null>(null)
 
   const onSubmit = async () => {
-    if (!writer || !epochId || !ciphertext || !pok) return
+    if (!writer || !epochId || !aid || !ciphertext) return
     setBusy(true)
     try {
-      log('Sending submitCiphertext (ciphertext + proof of knowledge)…', 'tx')
-      // submitCiphertext verifies the proof locally, waits for the receipt
-      // and returns the on-chain-assigned index.
-      const result = await writer.submitCiphertext(epochId, ZERO_AID, ciphertext, pok)
+      log('Sending submitCiphertext (c1, c2)…', 'tx')
+      // submitCiphertext waits for the receipt and returns the index the
+      // contract assigned.
+      const result = await writer.submitCiphertext(epochId, aid, ciphertext)
       setTx(result.hash)
       setIndex(result.ciphertextIndex)
       log(`submitCiphertext tx: ${result.hash}`, 'tx')
@@ -54,13 +52,13 @@ export function SubmitCiphertextStep({ status, epochId, ciphertext, pok, onSubmi
 
   return (
     <StepCard
-      n={6}
+      n={7}
       title='Publish the ciphertext on-chain'
       status={status}
-      description='The committee watches the chain for new ciphertexts. As soon as yours lands, they check your proof and start cooperating to decrypt it.'
+      description='The committee watches the chain for new ciphertexts. As soon as yours lands, they start producing their half of the decryption.'
     >
       <Stack gap={4}>
-        {!ciphertext || !pok ? (
+        {!ciphertext || !aid ? (
           <Text fontSize='sm' color='ink.4'>
             Encrypt something in the previous step first.
           </Text>
@@ -87,26 +85,25 @@ export function SubmitCiphertextStep({ status, epochId, ciphertext, pok, onSubmi
             </HStack>
           </Stack>
         ) : (
-          <Button colorPalette='cyan' size='sm' onClick={onSubmit} loading={busy} disabled={!writer || !epochId}>
+          <Button colorPalette='cyan' size='sm' onClick={onSubmit} loading={busy} disabled={!writer || !epochId || !aid}>
             Publish ciphertext →
           </Button>
         )}
         <HowItWorks
           body={
             <>
-              Your wallet sends a single transaction that stores the ciphertext on-chain together
-              with a small Schnorr proof that you know the randomness used to encrypt it. The
-              contract numbers ciphertexts itself, so you never pick an index. Each committee node
-              sees the new ciphertext through the contract's event log, verifies the proof (a
-              ciphertext without a valid proof is simply ignored — it stops anyone from replaying
-              someone else's ciphertext to use the committee as a decryption oracle) and
-              spontaneously starts the decryption work — no off-chain coordination needed.
+              Your wallet sends a single transaction carrying just the two ciphertext points.
+              The contract checks they belong to your registered application and numbers them
+              itself, so you never pick an index. Each committee node sees the new ciphertext
+              through the contract's event log and spontaneously starts its share of the
+              decryption — no off-chain coordination needed. Nothing they produce is useful on
+              its own: the last piece is yours, in the next step.
             </>
           }
           flow={[
-            { icon: <LuPackage />, label: 'Sealed ciphertext + proof' },
+            { icon: <LuPackage />, label: 'Sealed ciphertext' },
             { icon: <LuUpload />, label: 'You publish on-chain' },
-            { icon: <LuRadio />, label: 'Committee verifies & picks it up' },
+            { icon: <LuRadio />, label: 'Committee picks it up' },
           ]}
         />
       </Stack>

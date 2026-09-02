@@ -151,7 +151,11 @@ export interface NodeKey {
 
 /** Per-application policy gating submitCiphertext, mirrors `DKGTypes.AppPolicy`. */
 export interface AppPolicy {
-  /** Address authorized to submit ciphertexts; zero address means open. */
+  /**
+   * Address authorized to submit ciphertexts. Passing the zero address means
+   * "the registering address"; the contract stores it resolved, so a record
+   * read back never carries the zero address. There is no open submission.
+   */
   authorizedSubmitter: Address;
   /** Maximum ciphertexts under this aid; 0 means unlimited. */
   maxCiphertexts: number;
@@ -162,15 +166,13 @@ export interface AppPolicy {
 }
 
 /**
- * Cached on-chain `Application` record. `mode === 0` means public derivation
- * (PK_aid = PK_ep + S·G); `mode === 1` means organizer co-decryption
- * (PK_aid = PK_ep + PK_org). `derivationS` is meaningful only in mode 0;
- * `organizerPK` is meaningful only in mode 1.
+ * Cached on-chain `Application` record. Every application is organizer
+ * co-decryption: `PK_aid = PK_ep + PK_org`, and opening a ciphertext needs
+ * both the committee threshold and the organizer's share `Δ = sk_org·C1`.
+ * `organizerPK` is in TE form (converted at the client boundary).
  */
 export interface ApplicationRecord {
   creator: Address;
-  mode: 0 | 1;
-  derivationS: bigint;
   organizerPK: BabyJubPoint;
   policy: AppPolicy;
   createdAtBlock: bigint;
@@ -212,23 +214,6 @@ export interface ElGamalCiphertext {
   c1: BabyJubPoint;
   /** Encrypted message: c2 = m*G + k*PubKey */
   c2: BabyJubPoint;
-}
-
-/**
- * Schnorr proof of knowledge of the ElGamal randomness `r` behind
- * `c1 = r·G`, bound to `(epochId, aid, c1, c2)`. Every committee node
- * verifies it before releasing a partial decryption, so a ciphertext
- * submitted without a valid proof is never decrypted. Build it with
- * `encryptWithProof` (or `proveCiphertext` if you already hold `r`).
- * Coordinates are in on-chain (RTE) form, exactly as `submitCiphertext`
- * sends them and `CiphertextSubmitted` reports them.
- */
-export interface CiphertextPoK {
-  /** Witness point A = w·G. */
-  ax: bigint;
-  ay: bigint;
-  /** Response z = w + c·r mod L. */
-  z: bigint;
 }
 
 // ── Monitor types ─────────────────────────────────────────────────────────────

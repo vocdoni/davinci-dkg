@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import { Box, Button, Field, HStack, Input, Stack, Text } from '@chakra-ui/react'
 import {
-  encryptWithProof,
+  applicationKey,
+  encryptForApplication,
   type BabyJubPoint,
-  type CiphertextPoK,
   type ElGamalCiphertext,
 } from '@vocdoni/davinci-dkg-sdk'
 import type { Hex } from 'viem'
@@ -21,23 +21,22 @@ import { bigIntToHex } from '~lib/format'
 // instead of waiting for the chain to finalize a doomed epoch.
 const MAX_PLAINTEXT = 1n << 50n // 1,125,899,906,842,624
 
-// The playground encrypts under the bare epoch key, i.e. application id 0.
-// The proof of knowledge is bound to (epochId, aid), so the same pair must
-// be used when the ciphertext is submitted.
-const ZERO_AID = ('0x' + '00'.repeat(32)) as Hex
+// The playground encrypts under the application key registered in the
+// previous step: PK_aid = PK_ep + PK_org.
 
 interface Props {
   status: StepStatus
   epochId: Hex | null
   collectivePubKey: { x: bigint; y: bigint } | null
-  onEncrypted: (plaintext: bigint, ct: ElGamalCiphertext, pok: CiphertextPoK) => void
+  /** Organizer public key of the registered application, TE form. */
+  pkOrg: BabyJubPoint | null
+  onEncrypted: (plaintext: bigint, ct: ElGamalCiphertext) => void
   log: (msg: string, level?: 'info' | 'success' | 'error' | 'crypto') => void
 }
 
-export function EncryptStep({ status, epochId, collectivePubKey, onEncrypted, log }: Props) {
+export function EncryptStep({ status, epochId, collectivePubKey, pkOrg, onEncrypted, log }: Props) {
   const [plaintext, setPlaintext] = useState('42')
   const [ct, setCt] = useState<ElGamalCiphertext | null>(null)
-  const [pok, setPok] = useState<CiphertextPoK | null>(null)
   const [busy, setBusy] = useState(false)
 
   // Validate on every render so the button reflects current input without
@@ -46,19 +45,18 @@ export function EncryptStep({ status, epochId, collectivePubKey, onEncrypted, lo
   const validation = validatePlaintext(plaintext)
 
   const onEncrypt = async () => {
-    if (!collectivePubKey || !epochId || validation.error) return
+    if (!collectivePubKey || !pkOrg || !epochId || validation.error) return
     setBusy(true)
     try {
       const m = validation.value!
-      const pubKey: BabyJubPoint = [collectivePubKey.x, collectivePubKey.y]
-      // encryptWithProof draws the randomness r, encrypts, and proves
-      // knowledge of r for exactly this (epochId, aid). Committee nodes only
-      // decrypt ciphertexts whose proof verifies.
-      const result = await encryptWithProof(epochId, ZERO_AID, m, pubKey)
-      setCt(result.ciphertext)
-      setPok(result.pok)
-      onEncrypted(m, result.ciphertext, result.pok)
-      log(`Encrypted plaintext m=${m} as ElGamal ciphertext (c1, c2) + proof of knowledge for ${epochId}.`, 'crypto')
+      const pkEp: BabyJubPoint = [collectivePubKey.x, collectivePubKey.y]
+      // PK_aid = PK_ep + PK_org. There is no proof of knowledge of the
+      // randomness: the submitter of an aggregated tally cannot know it, and
+      // cross-application replay is stopped by the organizer key instead.
+      const ciphertext = await encryptForApplication(m, pkEp, pkOrg)
+      setCt(ciphertext)
+      onEncrypted(m, ciphertext)
+      log(`Encrypted plaintext m=${m} under PK_aid for ${epochId} as ElGamal (c1, c2).`, 'crypto')
     } catch (err) {
       log(`Encrypt failed: ${err instanceof Error ? err.message : String(err)}`, 'error')
     } finally {
@@ -66,16 +64,21 @@ export function EncryptStep({ status, epochId, collectivePubKey, onEncrypted, lo
     }
   }
 
+  const pkAid = collectivePubKey && pkOrg
+    ? applicationKey([collectivePubKey.x, collectivePubKey.y], pkOrg)
+    : null
+
   return (
     <StepCard
-      n={5}
+      n={6}
       title='Encrypt a value for the committee'
       status={status}
-      description='Pick any small number and encrypt it with the shared key. The committee will need to cooperate to decrypt it later.'
+      description='Pick any small number and encrypt it with the application key. Opening it later takes the committee and you, together.'
     >
-      {!collectivePubKey ? (
+      {!collectivePubKey || !pkOrg ? (
         <Text fontSize='sm' color='ink.4'>
-          Waiting for the shared encryption key.
+          Register an application first — ciphertexts are always encrypted under an
+          application key.
         </Text>
       ) : (
         <Stack gap={4}>
@@ -90,7 +93,6 @@ export function EncryptStep({ status, epochId, collectivePubKey, onEncrypted, lo
                 onChange={(e) => {
                   setPlaintext(e.target.value)
                   setCt(null)
-                  setPok(null)
                 }}
               />
               {validation.error ? (
@@ -107,7 +109,7 @@ export function EncryptStep({ status, epochId, collectivePubKey, onEncrypted, lo
               size='sm'
               onClick={onEncrypt}
               loading={busy}
-              disabled={!!validation.error || busy || !epochId}
+              disabled={!!validation.error || busy || !epochId || !pkOrg}
             >
               Encrypt →
             </Button>
@@ -128,19 +130,18 @@ export function EncryptStep({ status, epochId, collectivePubKey, onEncrypted, lo
                   </Box>
                   <Box>
                     <Text fontSize='2xs' color='ink.4'>
-                      c2 = m·G + k·Q (the message, blinded by the shared key)
+                      c2 = m·G + k·PK_aid (the message, blinded by the application key)
                     </Text>
                     <HashCell value={bigIntToHex(ct.c2[0])} head={6} tail={6} />
                     <HashCell value={bigIntToHex(ct.c2[1])} head={6} tail={6} />
                   </Box>
-                  {pok && (
+                  {pkAid && (
                     <Box>
                       <Text fontSize='2xs' color='ink.4'>
-                        Schnorr proof of knowledge of k, bound to this epoch: A = w·G, z = w + c·k
+                        PK_aid = PK_ep + PK_org (the key this ciphertext is bound to)
                       </Text>
-                      <HashCell value={bigIntToHex(pok.ax)} head={6} tail={6} />
-                      <HashCell value={bigIntToHex(pok.ay)} head={6} tail={6} />
-                      <HashCell value={bigIntToHex(pok.z)} head={6} tail={6} />
+                      <HashCell value={bigIntToHex(pkAid[0])} head={6} tail={6} />
+                      <HashCell value={bigIntToHex(pkAid[1])} head={6} tail={6} />
                     </Box>
                   )}
                 </Stack>
@@ -151,17 +152,15 @@ export function EncryptStep({ status, epochId, collectivePubKey, onEncrypted, lo
             body={
               <>
                 ElGamal encryption mixes your number with a fresh random value and the
-                committee's shared key, producing two points on a curve. Each point looks like
-                noise on its own — only the committee, working together later, can subtract the
-                blinding away and recover your original number. Alongside, the SDK produces a
-                tiny proof that you know that random value; the committee refuses to decrypt
-                ciphertexts that lack it, so nobody can copy someone else's ciphertext and have
-                it opened for them.
+                application key, producing two points on a curve. Each point looks like noise
+                on its own. The application key is the committee's key plus your own, so
+                recovering the number later needs both halves: even someone who could get the
+                committee to decrypt on demand learns nothing without your share.
               </>
             }
             flow={[
               { icon: <LuFile />, label: 'Your number' },
-              { icon: <LuLock />, label: 'Mixed with shared key' },
+              { icon: <LuLock />, label: 'Mixed with PK_aid' },
               { icon: <LuPackage />, label: 'Sealed ciphertext' },
             ]}
           />

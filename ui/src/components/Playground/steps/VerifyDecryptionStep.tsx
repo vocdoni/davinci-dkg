@@ -6,6 +6,7 @@ import { LuUsers, LuCombine, LuEye } from 'react-icons/lu'
 import { StepCard, type StepStatus } from '../StepCard'
 import { useDkgClient } from '~hooks/use-dkg-client'
 import { useEpoch } from '~queries/epochs'
+import { useOrganizerShareHash, ZERO_BYTES32 } from '~queries/applications'
 import { Polling } from '~constants/polling'
 import { QueryKeys } from '~queries/keys'
 import { HowItWorks } from '../HowItWorks'
@@ -13,12 +14,20 @@ import { HowItWorks } from '../HowItWorks'
 interface Props {
   status: StepStatus
   epochId: Hex | null
+  aid: Hex | null
   ciphertextIndex: number | null
   expectedPlaintext: bigint | null
   log: (msg: string, level?: 'info' | 'success' | 'error' | 'chain') => void
 }
 
-export function VerifyDecryptionStep({ status, epochId, ciphertextIndex, expectedPlaintext, log }: Props) {
+export function VerifyDecryptionStep({
+  status,
+  epochId,
+  aid,
+  ciphertextIndex,
+  expectedPlaintext,
+  log,
+}: Props) {
   const { dkg } = useDkgClient()
   const epoch = useEpoch((epochId ?? undefined) as `0x${string}` | undefined)
 
@@ -27,13 +36,22 @@ export function VerifyDecryptionStep({ status, epochId, ciphertextIndex, expecte
   const decryption = useQuery({
     queryKey: epochId && ciphertextIndex ? QueryKeys.decryption(epochId, ciphertextIndex) : ['decryption', 'idle'],
     queryFn: () => {
-      if (!epochId || !ciphertextIndex) throw new Error('idle')
-      const ZERO_AID = ('0x' + '00'.repeat(32)) as `0x${string}`
-      return dkg.getCombinedDecryption(epochId, ZERO_AID, ciphertextIndex)
+      if (!epochId || !aid || !ciphertextIndex) throw new Error('idle')
+      return dkg.getCombinedDecryption(epochId, aid, ciphertextIndex)
     },
-    enabled: Boolean(epochId && ciphertextIndex),
+    enabled: Boolean(epochId && aid && ciphertextIndex),
     refetchInterval: (q) => (q.state.data?.completed ? false : Polling.decryption),
   })
+
+  // The organizer share is the other precondition for combining; surfacing it
+  // separately is what tells "the committee is slow" apart from "nobody has
+  // released the share".
+  const share = useOrganizerShareHash(
+    (epochId ?? undefined) as `0x${string}` | undefined,
+    (aid ?? undefined) as `0x${string}` | undefined,
+    ciphertextIndex ?? undefined,
+  )
+  const shareReleased = Boolean(share.data && share.data !== ZERO_BYTES32)
 
   useEffect(() => {
     if (decryption.data?.completed) {
@@ -43,7 +61,7 @@ export function VerifyDecryptionStep({ status, epochId, ciphertextIndex, expecte
 
   return (
     <StepCard
-      n={7}
+      n={9}
       title='Confirm the committee recovered your message'
       status={status}
       description='Each committee member contributes a piece of the decryption. Once enough pieces arrive, the original number is reconstructed on-chain.'
@@ -57,10 +75,13 @@ export function VerifyDecryptionStep({ status, epochId, ciphertextIndex, expecte
           <Stack gap={3}>
             {epoch.data && (
               <Text fontSize='xs' color='ink.3'>
-                Pieces collected: {epoch.data.epoch.partialDecryptionCount.toString()} of{' '}
+                Committee pieces collected: {epoch.data.epoch.partialDecryptionCount.toString()} of{' '}
                 {epoch.data.epoch.policy.threshold} needed
               </Text>
             )}
+            <Text fontSize='xs' color={shareReleased ? 'live.fg' : 'ink.3'}>
+              Organizer share: {shareReleased ? 'released' : 'not on chain yet'}
+            </Text>
             {decryption.isLoading && (
               <Stack gap={2} align='start'>
                 <Spinner size='sm' color='accent.fg' />
@@ -71,7 +92,9 @@ export function VerifyDecryptionStep({ status, epochId, ciphertextIndex, expecte
             )}
             {decryption.data && !decryption.data.completed && (
               <Text fontSize='xs' color='ink.4'>
-                Waiting for the committee to finish combining their pieces…
+                {shareReleased
+                  ? 'Waiting for the committee to finish combining their pieces…'
+                  : 'Waiting for the organizer share — combining reverts until it is on chain.'}
               </Text>
             )}
             {decryption.data?.completed && (
@@ -100,9 +123,11 @@ export function VerifyDecryptionStep({ status, epochId, ciphertextIndex, expecte
           body={
             <>
               No single committee member can decrypt on their own — that's the whole point of a
-              threshold scheme. Each member contributes a partial decryption; once enough have
-              arrived, anyone can combine them on-chain and the original number is published.
-              Until that combine step happens, the ciphertext stays opaque to the world.
+              threshold scheme. Each member contributes a partial decryption, and the
+              application's organizer contributes theirs. Once enough committee pieces and the
+              organizer share are on-chain, anyone can combine them and the original number is
+              published. Until that combine step happens, the ciphertext stays opaque to the
+              world.
             </>
           }
           flow={[

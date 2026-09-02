@@ -88,15 +88,29 @@ export function Home() {
           />
           <Phase
             n={3}
+            title='Per-application keys'
+            body={
+              <>
+                Each application registers its own organizer key with a proof
+                that it holds the secret, and encrypts under{' '}
+                <em>PK_aid = PK_ep + PK_org</em>. One committee therefore serves
+                many independent applications: a ciphertext copied out of one
+                and decrypted under another reveals nothing.
+              </>
+            }
+          />
+          <Phase
+            n={4}
             title='Threshold decryption'
             body={
               <>
                 The private key is never disclosed. Instead, the committee
                 decrypts <em>specific ciphertexts</em>: the result of a vote can
                 be decrypted while the individual ballots remain hidden. Each
-                partial decryption ships with a Chaum–Pedersen DLEQ proof; once
-                the threshold is met, anyone can combine them into the
-                plaintext.
+                partial decryption ships with a Chaum–Pedersen DLEQ proof, and
+                the application's organizer contributes its own share; once the
+                threshold and that share are on chain, anyone can combine them
+                into the plaintext.
               </>
             }
             last
