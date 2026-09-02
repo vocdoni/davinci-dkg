@@ -1,0 +1,181 @@
+/* Tailwind v4 entry.
+ *
+ * The design package in `ui/design/` is the source of truth for the tokens:
+ * `theme.css` is imported verbatim as the `@theme` and `variables.css` gives
+ * the same values as plain custom properties for hand-written CSS (chart
+ * gradients, RainbowKit overrides). Everything below is an *extension* of that
+ * package — surface levels and text greys named in `design/preview.html` but
+ * missing from theme.css, the two semantic colours the explorer spec allows
+ * (one warning amber, one danger red), and the chart companion hues.
+ */
+@import 'tailwindcss';
+@import '../../design/theme.css';
+@import '../../design/variables.css';
+
+@theme {
+  /* ── Surface levels (design/preview.html § Depth & Surfaces) ─────────── */
+  --color-obsidian: #050507; /* level 0 — page canvas */
+  --color-carbon: #101010; /* level 1 — cards, panels */
+  --color-onyx: #1a1a1a; /* level 2 — hover, active, table stripes */
+  --color-translucent: rgba(255, 255, 255, 0.06); /* level 3 — overlays */
+
+  /* ── Lines and text ─────────────────────────────────────────────────── */
+  --color-charcoal: #3d3a39; /* every border */
+  --color-warm-gray: #5c5855; /* hover border */
+  --color-ghost: #ffffff; /* primary text */
+  --color-silver: #dcdcdc; /* secondary UI text */
+  --color-pewter: #b8b3b0; /* labels, muted */
+  --color-ash: #8a8380; /* descriptions */
+
+  /* ── Accent ─────────────────────────────────────────────────────────── */
+  --color-emerald: #00d992;
+  --color-emerald-soft: #10b981;
+  --color-emerald-particle: #22c55e;
+  --color-volt-glow: rgba(0, 217, 146, 0.15);
+
+  /* ── The only two semantic colours beyond emerald (spec § 5) ─────────── */
+  --color-amber: #e3b341;
+  --color-red: #f85149;
+
+  /* ── Chart companions: emerald plus two desaturated hues, then the
+   *    surface levels. Used in this order by kit/charts/colors.ts. ─────── */
+  --color-series-1: #00d992;
+  --color-series-2: #4f9d8a;
+  --color-series-3: #7a8fa6;
+  --color-series-4: #5c5855;
+  --color-series-5: #b8b3b0;
+
+  /* ── Fonts (self-hosted; see src/main.tsx) ──────────────────────────── */
+  --font-sans: 'Inter Variable', Inter, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+
+  /* ── Layout ─────────────────────────────────────────────────────────── */
+  --container-page: 1400px;
+  /* The design package names its spacing steps xs…6xl (theme.css). Tailwind
+   * v4 resolves named width utilities against the spacing scale first, so
+   * max-w-2xl would become 24px. The steps stay available as CSS variables
+   * (variables.css) for hand-written CSS; as utilities use Tailwind's numeric
+   * scale (p-4, gap-3) and named widths (max-w-2xl) resolve to containers. */
+  --spacing-xxs: initial;
+  --spacing-xs: initial;
+  --spacing-sm: initial;
+  --spacing-md: initial;
+  --spacing-lg: initial;
+  --spacing-xl: initial;
+  --spacing-2xl: initial;
+  --spacing-3xl: initial;
+  --spacing-4xl: initial;
+  --spacing-5xl: initial;
+  --spacing-6xl: initial;
+}
+
+@layer base {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+
+  html {
+    color-scheme: dark;
+    scroll-behavior: smooth;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    margin: 0;
+    background: var(--color-obsidian);
+    color: var(--color-ghost);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  ::selection {
+    background: rgba(0, 217, 146, 0.25);
+    color: var(--color-ghost);
+  }
+
+  /* Borders default to charcoal so `border` alone is always on-palette. */
+  *,
+  ::before,
+  ::after {
+    border-color: var(--color-charcoal);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-emerald);
+    outline-offset: 2px;
+  }
+
+  /* Numbers must never jitter in a table. */
+  code,
+  kbd,
+  samp,
+  pre {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@layer components {
+  /* The one repeated composite: a 13px uppercase label. Used by the shell,
+   * every section header and the chart legends. */
+  .label-caps {
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    line-height: 1.2;
+  }
+}
+
+@layer utilities {
+  .tnum {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Thin, dark scrollbars for the panels that scroll horizontally (matrix,
+   * committee grid) so the scrollbar doesn't punch a light hole in the page. */
+  .scroll-slim {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-charcoal) transparent;
+  }
+  .scroll-slim::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  .scroll-slim::-webkit-scrollbar-thumb {
+    background: var(--color-charcoal);
+    border-radius: 9999px;
+  }
+  .scroll-slim::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  @keyframes dkg-pulse {
+    0%,
+    100% {
+      opacity: 0.45;
+    }
+    50% {
+      opacity: 0.9;
+    }
+  }
+  .animate-skeleton {
+    animation: dkg-pulse 1.6s ease-in-out infinite;
+  }
+}
+
+/* RainbowKit renders into its own portal with its own CSS variables; map the
+ * handful that carry the palette onto our tokens so the modal is obsidian +
+ * emerald rather than the library's default blue. */
+[data-rk] {
+  --rk-fonts-body: var(--font-sans);
+  --rk-radii-modal: 8px;
+  --rk-radii-menuButton: 6px;
+  --rk-radii-actionButton: 6px;
+  --rk-radii-connectButton: 6px;
+}

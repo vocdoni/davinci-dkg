@@ -1,9 +1,15 @@
 # davinci-dkg UI
 
 Standalone Vite + React + TypeScript SPA for the davinci-dkg explorer,
-playground, and operator/SDK documentation. Modelled on
-[`vocdoni/vocdoni-app`](https://github.com/vocdoni/vocdoni-app)'s structure
-and conventions.
+playground, and operator/SDK documentation. `EXPLORER.md` is the
+specification it is built against; `design/` is the design package (tokens,
+theme, preview) that defines every colour, radius and type step.
+
+Stack: Vite 5 + React 18 + TypeScript (strict), Tailwind CSS v4 (with
+`design/theme.css` as the `@theme`), react-router v6, TanStack Query /
+Table / Virtual, wagmi + viem + RainbowKit, `@vocdoni/davinci-dkg-sdk`
+(`link:../sdk`), Radix primitives for dialog/tooltip/popover/tabs, and
+hand-rolled SVG charts (no chart library).
 
 The UI is fully decoupled from the `davinci-dkg-node` Go binary. It talks
 to the chain directly via JSON-RPC and ships as its own Docker image
@@ -50,6 +56,14 @@ leaderboard, the per-epoch decryption pipeline, the registry roster. Set it
 and those views cost a handful of `eth_getLogs` calls; leave it at `0` and the
 SDK falls back to scanning a recent-block window instead, which is fast but
 only sees recent history.
+
+## Demo mode
+
+Append `?demo=1` to any URL (or build with `VITE_DEMO=1`) and the whole app
+runs from the synthetic fixture with no RPC at all: 300 operators, 64-member
+committees, applications with partials arriving in waves. `useRuntimeConfig()`
+exposes it as `config.demo`; pages must read it from there rather than parsing
+the URL themselves. Demo mode also survives a missing `/config.json`.
 
 ## Build
 
@@ -129,30 +143,43 @@ its edge.
 
 ```
 src/
-├── App.tsx                 provider tree (Theme → Debug → Config → Wagmi → Query → Router)
-├── main.tsx                entry
-├── router/                 createBrowserRouter + Routes constant + lazy elements
-├── elements/               route-level pages (kebab-case)
-├── components/             reusable, grouped by domain (PascalCase)
-├── providers/              ConfigProvider, DebugModeProvider
-├── queries/                react-query hooks + central QueryKeys
-├── hooks/                  cross-cutting hooks
-├── theme/                  Chakra v3 system + color mode
-├── lib/                    pure helpers (format, error-report, debug, wagmi config)
-├── constants/              chains, polling cadences, route table
-└── types/                  shared TS types
+├── main.tsx                entry: fonts, styles, <App/>
+├── App.tsx                 provider tree (Config → Wagmi → Query → RainbowKit → Tooltip → Router)
+├── styles/index.css        Tailwind v4 entry; imports design/theme.css + design/variables.css
+├── config/                 runtime config loader, <ConfigProvider>, useRuntimeConfig()
+├── app/                    shell: TopBar, ChainPill, WalletButton, GlobalSearch, Footer, wagmi config
+├── routes/                 paths.ts (URL table) + router.tsx (lazy route elements)
+├── pages/                  one file per route
+├── kit/                    design-system primitives (Button, Card, Table, …)
+│   └── charts/             hand-rolled SVG charts + their tested maths
+├── hooks/                  cross-cutting hooks (copy, latest block, measured width)
+├── lib/                    pure helpers (format, explorer URLs, operator stats, cn)
+├── indexer/                in-browser event indexer + selectors
+├── fixtures/               synthetic network for demo mode and tests
+└── data/                   data-source hooks the pages consume
 ```
 
-Path aliases: `~components/*`, `~elements/*`, `~queries/*`, `~theme/*`,
-`~hooks/*`, `~lib/*`, `~providers/*`, `~constants/*`, `~router/*`,
-`~types/*` — defined in `tsconfig.paths.json`, resolved by
-`vite-tsconfig-paths`. Always prefer aliases over relative imports.
+Path aliases: `~app/*`, `~config/*`, `~data/*`, `~fixtures/*`, `~hooks/*`,
+`~indexer/*`, `~kit` (and `~kit/*`), `~lib/*`, `~pages/*`, `~routes/*` —
+defined in `tsconfig.paths.json`, resolved by `vite-tsconfig-paths`. Always
+prefer aliases over relative imports.
 
-## UX rules
+Pages import primitives from `~kit` only, never from a component file
+directly. `/kit` renders every primitive and chart with sample data — open it
+after any change to the design system.
 
-- Every page renders a plain-English summary by default. Hashes are
-  truncated, block deltas are durations, status is a badge.
-- Technical detail (raw hex, BigInt coords, raw event args) lives inside
-  `<DetailDisclosure>` blocks that auto-expand when **debug mode** is on.
-- Errors always offer `<ErrorReportButton>` so users can paste a
-  ready-made markdown blob into a GitHub issue.
+## Design rules
+
+The full statement is `design/preview.html`; the short version:
+
+- Obsidian `#050507` canvas, carbon `#101010` cards, onyx `#1a1a1a` hover,
+  charcoal `#3d3a39` hairlines. Borders and glows, never drop shadows.
+- Emerald `#00d992` is the *only* accent: primary action, active state, brand,
+  and the live/ok semantic. Beyond it there is exactly one amber and one red.
+- Inter for text, JetBrains Mono for every address, hash and number in a
+  table. Labels are 13 px uppercase with 0.1 em tracking (`.label-caps`).
+- 4 px spacing grid, 4–8 px radii, dense rows.
+- Any list that can exceed ~50 rows is virtualised; wide panels scroll inside
+  themselves, the page never scrolls sideways.
+- Every chart has a legend, a skeleton and a tooltip, and its maths lives in
+  `kit/charts/scale.ts` / `colors.ts` with unit tests.

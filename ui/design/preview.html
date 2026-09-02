@@ -1,0 +1,799 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VoltAgent &mdash; Design System</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+
+:root{
+  --obsidian:#050507;
+  --carbon:#101010;
+  --onyx:#1a1a1a;
+  --charcoal:#3d3a39;
+  --warm-gray:#5c5855;
+  --ghost:#ffffff;
+  --silver:#dcdcdc;
+  --pewter:#b8b3b0;
+  --ash:#8a8380;
+  --emerald:#00d992;
+  --emerald-soft:#10B981;
+  --emerald-particle:#22c55e;
+  --volt-glow:rgba(0,217,146,0.15);
+
+  --r-sm:4px;--r-md:6px;--r-lg:8px;--r-xl:12px;--r-2xl:16px;--r-pill:9999px;
+}
+
+::selection{background:rgba(0,217,146,.25);color:var(--ghost)}
+html{scroll-behavior:smooth}
+
+body{
+  font-family:'Inter',system-ui,-apple-system,sans-serif;
+  background:var(--obsidian);color:var(--ghost);
+  font-size:16px;line-height:1.5;
+  -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;
+}
+
+.page{max-width:960px;margin:0 auto;padding:0 32px 120px}
+
+/* ── NAV ── */
+.nav{
+  display:flex;justify-content:space-between;align-items:center;
+  height:56px;padding:0 16px;position:sticky;top:0;z-index:100;
+  background:rgba(5,5,7,.92);backdrop-filter:blur(16px);
+  -webkit-backdrop-filter:blur(16px);border-bottom:1px solid var(--charcoal);
+  margin:0 -32px;
+}
+.nav-left{display:flex;align-items:center;gap:10px}
+.nav-wordmark{
+  font-size:16px;font-weight:700;letter-spacing:-.02em;
+  color:var(--emerald);text-decoration:none;
+}
+.nav-tag{
+  font-size:10px;font-weight:500;color:var(--emerald);
+  background:rgba(0,217,146,.08);padding:3px 10px;border-radius:var(--r-pill);
+  border:1px solid rgba(0,217,146,.2);letter-spacing:.06em;text-transform:uppercase;
+}
+.nav-url{font-size:11px;font-weight:500;color:var(--iron);text-decoration:none;padding:3px 10px;border-radius:var(--r-pill);border:1px solid var(--mist);letter-spacing:.015px;transition:color .2s}
+.nav-url:hover{color:var(--vodafone-red)}
+.nav-right{display:flex;align-items:center;gap:4px}
+.nav-link{
+  font-size:13px;font-weight:500;color:var(--pewter);text-decoration:none;
+  padding:6px 12px;border-radius:var(--r-md);transition:all .2s;
+}
+.nav-link:hover{color:var(--ghost)}
+.nav-link--active{color:var(--emerald)}
+
+/* ── SECTIONS ── */
+.section{
+  padding:64px 0 0;
+  border-top:1px solid var(--charcoal);
+  margin-top:48px;
+}
+.section:first-of-type{border-top:none;margin-top:40px}
+.section-header{margin-bottom:32px}
+.section-label{
+  font-size:11px;font-weight:600;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--emerald);margin-bottom:8px;
+}
+.section-title{
+  font-size:28px;font-weight:600;letter-spacing:-.01em;line-height:1.25;
+  color:var(--ghost);
+}
+.section-desc{
+  font-size:15px;line-height:1.6;color:var(--ash);
+  margin-top:10px;max-width:560px;
+}
+
+/* ── HERO ── */
+.hero{
+  padding:64px 0 40px;
+  border-bottom:1px solid var(--charcoal);
+  margin:0 -32px;padding-left:32px;padding-right:32px;
+  position:relative;overflow:hidden;
+}
+.hero::before{
+  content:'';position:absolute;
+  width:400px;height:400px;
+  background:radial-gradient(circle,rgba(0,217,146,.1),transparent 70%);
+  border-radius:50%;filter:blur(80px);
+  right:-80px;top:-120px;pointer-events:none;
+}
+.hero-label{
+  font-size:11px;font-weight:600;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--emerald);margin-bottom:16px;
+}
+.hero-title{
+  font-size:clamp(36px,6vw,48px);font-weight:700;line-height:1;
+  letter-spacing:-.02em;color:var(--ghost);
+}
+.hero-title em{
+  font-style:normal;
+  color:var(--emerald);
+  text-shadow:0 0 30px rgba(0,217,146,.3);
+}
+.hero-subtitle{
+  font-size:16px;line-height:1.6;color:var(--ash);
+  margin-top:16px;max-width:480px;
+}
+.hero-tags{display:flex;gap:8px;margin-top:24px;flex-wrap:wrap}
+.hero-tag{
+  font-size:11px;font-weight:500;color:var(--pewter);
+  background:var(--carbon);padding:5px 12px;border-radius:var(--r-pill);
+  border:1px solid var(--charcoal);
+}
+.hero-actions{display:flex;gap:12px;margin-top:24px}
+
+/* ── BUTTONS ── */
+.btn{
+  display:inline-flex;align-items:center;gap:6px;
+  font-family:inherit;font-size:13px;font-weight:600;line-height:1;
+  padding:8px 20px;border-radius:var(--r-md);
+  cursor:pointer;text-decoration:none;white-space:nowrap;
+  transition:all .15s ease;
+}
+.btn:active{transform:scale(.97)}
+.btn-primary{background:var(--emerald);color:var(--obsidian);border:1px solid transparent}
+.btn-primary:hover{opacity:.85;box-shadow:0 0 20px rgba(0,217,146,.2)}
+.btn-secondary{background:transparent;color:var(--ghost);border:1px solid var(--charcoal)}
+.btn-secondary:hover{border-color:var(--warm-gray);background:var(--onyx)}
+.btn-ghost{background:transparent;color:var(--emerald);border:1px solid var(--emerald)}
+.btn-ghost:hover{background:rgba(0,217,146,.08)}
+
+/* ── COLOR TOKENS ── */
+.color-grid{
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;
+}
+.color-token{
+  background:var(--carbon);border:1px solid var(--charcoal);
+  border-radius:var(--r-lg);overflow:hidden;transition:border-color .2s;
+}
+.color-token:hover{border-color:var(--warm-gray)}
+.color-swatch{width:100%;height:72px}
+.color-info{padding:12px 14px}
+.color-name{font-size:13px;font-weight:600;color:var(--ghost)}
+.color-hex{
+  font-size:12px;font-weight:500;color:var(--pewter);margin-top:2px;
+  font-variant-numeric:tabular-nums;
+}
+.color-role{font-size:11px;color:var(--ash);margin-top:4px;line-height:1.4}
+
+/* ── GRADIENT TOKENS ── */
+.gradient-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
+.gradient-token{
+  border-radius:var(--r-lg);padding:20px;border:1px solid var(--charcoal);
+  min-height:100px;display:flex;flex-direction:column;justify-content:flex-end;
+}
+.gradient-name{font-size:12px;font-weight:500;color:var(--pewter);margin-bottom:4px}
+.gradient-desc{font-size:12px;color:var(--ash);line-height:1.4}
+
+/* ── TYPE SCALE ── */
+.type-table{
+  display:flex;flex-direction:column;border:1px solid var(--charcoal);
+  border-radius:var(--r-lg);overflow:hidden;
+}
+.type-row{
+  display:grid;grid-template-columns:100px 1fr 200px;align-items:baseline;
+  padding:14px 20px;border-bottom:1px solid var(--charcoal);
+}
+.type-row:last-child{border-bottom:none}
+.type-row:hover{background:rgba(255,255,255,.02)}
+.type-meta{
+  font-size:10px;font-weight:600;color:var(--emerald);
+  letter-spacing:.06em;text-transform:uppercase;
+}
+.type-sample{color:var(--ghost);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.type-specs{
+  font-size:11px;color:var(--pewter);text-align:right;
+  font-variant-numeric:tabular-nums;
+}
+
+/* ── SPACING ── */
+.spacing-bars{display:flex;align-items:flex-end;gap:16px;height:100px}
+.spacing-col{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px}
+.spacing-bar{
+  width:100%;border-radius:var(--r-sm);
+  background:linear-gradient(180deg,var(--emerald),var(--emerald-particle));
+  opacity:.25;transition:opacity .3s;
+}
+.spacing-col:hover .spacing-bar{opacity:.5}
+.spacing-val{font-size:11px;font-weight:600;color:var(--ghost)}
+.spacing-name{font-size:10px;font-weight:500;color:var(--pewter)}
+
+/* ── SHAPES ── */
+.shapes-row{display:flex;flex-wrap:wrap;gap:20px;align-items:flex-end}
+.shape-item{display:flex;flex-direction:column;align-items:center;gap:6px}
+.shape-box{
+  width:64px;height:64px;background:var(--carbon);
+  border:1.5px solid var(--charcoal);transition:all .3s cubic-bezier(.22,1,.36,1);
+}
+.shape-box:hover{border-color:var(--emerald);transform:scale(1.06)}
+.shape-label{font-size:11px;font-weight:500;color:var(--pewter);white-space:nowrap}
+.shape-value{
+  font-size:10px;font-weight:400;color:var(--ash);
+  font-variant-numeric:tabular-nums;
+}
+
+/* ── DEPTH ── */
+.depth-row{
+  display:flex;align-items:center;gap:16px;padding:16px 0;
+  border-bottom:1px solid var(--charcoal);
+}
+.depth-row:last-child{border-bottom:none}
+.depth-swatch{
+  width:48px;height:48px;border-radius:var(--r-md);flex-shrink:0;
+}
+.depth-info{flex:1}
+.depth-name{font-size:14px;font-weight:600;color:var(--ghost)}
+.depth-desc{font-size:12px;color:var(--pewter);margin-top:2px}
+.depth-value{
+  font-size:12px;font-weight:500;color:var(--ash);
+  font-variant-numeric:tabular-nums;
+}
+
+/* ── SURFACES ── */
+.surface-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px}
+.surface-item{
+  border-radius:var(--r-lg);padding:24px 16px;
+  text-align:center;border:1px solid var(--charcoal);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:4px;min-height:100px;transition:transform .3s;
+}
+.surface-item:hover{transform:scale(1.02)}
+.surface-name{font-size:14px;font-weight:600;color:var(--ghost)}
+.surface-val{
+  font-size:11px;font-weight:500;color:var(--pewter);
+  font-variant-numeric:tabular-nums;
+}
+
+/* ── COMPONENTS ── */
+.component-card{
+  background:var(--carbon);border:1px solid var(--charcoal);
+  border-radius:var(--r-lg);padding:28px;margin-bottom:16px;
+  transition:border-color .2s;
+}
+.component-card:hover{border-color:var(--warm-gray)}
+.component-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px}
+.component-name{font-size:15px;font-weight:600;color:var(--ghost)}
+.component-role{font-size:12px;color:var(--pewter);margin-top:4px}
+.component-class{
+  font-size:11px;font-weight:500;color:var(--emerald);
+  background:rgba(0,217,146,.08);padding:3px 10px;border-radius:var(--r-pill);
+  border:1px solid rgba(0,217,146,.15);
+  font-family:'JetBrains Mono',monospace;
+}
+.component-preview{
+  display:flex;gap:12px;align-items:center;flex-wrap:wrap;
+  padding:20px;background:var(--obsidian);border-radius:var(--r-md);
+  border:1px solid var(--charcoal);
+}
+.component-desc{
+  font-size:12px;color:var(--ash);line-height:1.5;
+  margin-top:12px;max-width:480px;
+}
+
+/* ── DO/DON'T ── */
+.guide-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.guide-card{
+  border-radius:var(--r-lg);padding:24px;
+  border:1px solid var(--charcoal);
+}
+.guide-card--do{background:rgba(0,217,146,.03);border-color:rgba(0,217,146,.12)}
+.guide-card--dont{background:rgba(248,81,73,.03);border-color:rgba(248,81,73,.1)}
+.guide-label{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;margin-bottom:14px}
+.guide-card--do .guide-label{color:var(--emerald)}
+.guide-card--dont .guide-label{color:#f85149}
+.guide-list{
+  list-style:none;display:flex;flex-direction:column;gap:8px;
+}
+.guide-list li{
+  font-size:13px;line-height:1.5;padding-left:18px;position:relative;
+  color:var(--silver);
+}
+.guide-card--do .guide-list li::before{
+  content:'\2713';position:absolute;left:0;color:var(--emerald);font-weight:700;font-size:12px;
+}
+.guide-card--dont .guide-list li::before{
+  content:'\2717';position:absolute;left:0;color:#f85149;font-weight:700;font-size:12px;
+}
+
+/* ── FOOTER ── */
+.footer{
+  margin-top:80px;padding:24px 0;
+  border-top:1px solid var(--charcoal);
+  display:flex;justify-content:space-between;align-items:center;
+}
+.footer-left{font-size:13px;font-weight:500;color:var(--pewter);opacity:.6}
+.footer-right{display:flex;gap:16px}
+.footer-link{
+  font-size:12px;font-weight:500;color:var(--pewter);text-decoration:none;
+  transition:color .2s;
+}
+.footer-link:hover{color:var(--emerald)}
+
+/* ── RESPONSIVE ── */
+@media(max-width:768px){
+  .page{padding:0 20px 80px}
+  .hero{margin:0 -20px;padding-left:20px;padding-right:20px;padding-top:48px}
+  .nav{margin:0 -20px}
+  .section-title{font-size:22px}
+  .type-row{grid-template-columns:70px 1fr;gap:8px}
+  .type-specs{display:none}
+  .guide-grid{grid-template-columns:1fr}
+  .color-grid{grid-template-columns:repeat(auto-fill,minmax(160px,1fr))}
+  .hero-title{font-size:32px}
+}
+
+/* ── ENTRANCE ANIMATION ── */
+.section,.hero{opacity:0;transform:translateY(16px);transition:opacity .5s cubic-bezier(.22,1,.36,1),transform .5s cubic-bezier(.22,1,.36,1)}
+.section.visible,.hero.visible{opacity:1;transform:translateY(0)}
+</style>
+</head>
+<body>
+
+<div class="page">
+
+  <!-- NAV -->
+  <nav class="nav">
+    <div class="nav-left">
+      <a href="#" class="nav-wordmark">voltagent</a>
+      <span class="nav-tag">Design System</span>
+      <a href="https://oryzo.ai" class="nav-url" target="_blank">https://oryzo.ai</a>
+    </div>
+    <div class="nav-right">
+      <a href="#colors" class="nav-link nav-link--active">Colors</a>
+      <a href="#typography" class="nav-link">Type</a>
+      <a href="#spacing" class="nav-link">Spacing</a>
+      <a href="#components" class="nav-link">Components</a>
+      <a href="https://github.com/VoltAgent/voltagent" target="_blank" rel="noopener noreferrer" style="display:flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:var(--r-md);color:var(--pewter);transition:color .2s,background .2s;text-decoration:none" title="View on GitHub">
+        <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+      </a>
+    </div>
+  </nav>
+
+  <!-- HERO -->
+  <div class="hero">
+    <div class="hero-label">Design System</div>
+    <h1 class="hero-title">Build agents<br>with <em>precision.</em></h1>
+    <p class="hero-subtitle">An obsidian canvas with electric emerald accents. Minimal, technical, and built for developer-first AI agent platforms.</p>
+    <div class="hero-tags">
+      <span class="hero-tag">13 color tokens</span>
+      <span class="hero-tag">11 type steps</span>
+      <span class="hero-tag">4px grid</span>
+      <span class="hero-tag">4 surface levels</span>
+    </div>
+    <div class="hero-actions">
+      <a href="DESIGN.md" class="btn btn-primary" download>Download Spec</a>
+      <a href="theme.css" class="btn btn-secondary" download>theme.css</a>
+      <a href="tokens.json" class="btn btn-secondary" download>tokens.json</a>
+      <a href="variables.css" class="btn btn-secondary" download>variables.css</a>
+    </div>
+  </div>
+
+  <!-- COLORS -->
+  <section class="section" id="colors">
+    <div class="section-header">
+      <div class="section-label">Foundation</div>
+      <h2 class="section-title">Color Tokens</h2>
+      <p class="section-desc">Deep obsidian neutrals with electric emerald accents. 13 tokens across surfaces, text hierarchy, and interactive states.</p>
+    </div>
+    <div class="color-grid">
+      <div class="color-token">
+        <div class="color-swatch" style="background:#050507"></div>
+        <div class="color-info"><div class="color-name">Obsidian</div><div class="color-hex">#050507</div><div class="color-role">Primary page background</div></div>
+      </div>
+      <div class="color-token">
+        <div class="color-swatch" style="background:#101010"></div>
+        <div class="color-info"><div class="color-name">Carbon</div><div class="color-hex">#101010</div><div class="color-role">Cards, elevated surfaces</div></div>
+      </div>
+      <div class="color-token">
+        <div class="color-swatch" style="background:#1a1a1a"></div>
+        <div class="color-info"><div class="color-name">Onyx</div><div class="color-hex">#1a1a1a</div><div class="color-role">Hover states, active</div></div>
+      </div>
+      <div class="color-token">
+        <div class="color-swatch" style="background:#3d3a39"></div>
+        <div class="color-info"><div class="color-name">Charcoal</div><div class="color-hex">#3d3a39</div><div class="color-role">Borders, dividers</div></div>
+      </div>
+      <div class="color-token">
+        <div class="color-swatch" style="background:#5c5855"></div>
+        <div class="color-info"><div class="color-name">Warm Gray</div><div class="color-hex">#5c5855</div><div class="color-role">Hover borders</div></div>
+      </div>
+      <div class="color-token">
+        <div class="color-swatch" style="background:#ffffff"></div>
+        <div class="color-info"><div class="color-name">Ghost</div><div class="color-hex">#ffffff</div><div class="color-role">Primary text</div></div>
+      </div>
+      <div class="color-token">
+        <div class="color-swatch" style="background:#dcdcdc"></div>
+        <div class="color-info"><div class="color-name">Silver</div><div class="color-hex">#dcdcdc</div><div class="color-role">Secondary UI text</div></div>
+      </div>
+      <div class="color-token">
+        <div class="color-swatch" style="background:#b8b3b0"></div>
+        <div class="color-info"><div class="color-name">Pewter</div><div class="color-hex">#b8b3b0</div><div class="color-role">Labels, muted elements</div></div>
+      </div>
+      <div class="color-token">
+        <div class="color-swatch" style="background:#8a8380"></div>
+        <div class="color-info"><div class="color-name">Ash</div><div class="color-hex">#8a8380</div><div class="color-role">Description text</div></div>
+      </div>
+      <div class="color-token">
+        <div class="color-swatch" style="background:#00d992"></div>
+        <div class="color-info"><div class="color-name">Emerald</div><div class="color-hex">#00d992</div><div class="color-role">Brand accent, CTAs</div></div>
+      </div>
+      <div class="color-token">
+        <div class="color-swatch" style="background:#10B981"></div>
+        <div class="color-info"><div class="color-name">Emerald Soft</div><div class="color-hex">#10B981</div><div class="color-role">Softer accent variant</div></div>
+      </div>
+      <div class="color-token">
+        <div class="color-swatch" style="background:#22c55e"></div>
+        <div class="color-info"><div class="color-name">Emerald Particle</div><div class="color-hex">#22c55e</div><div class="color-role">Decorative particles</div></div>
+      </div>
+      <div class="color-token">
+        <div class="color-swatch" style="background:rgba(0,217,146,0.15)"></div>
+        <div class="color-info"><div class="color-name">Volt Glow</div><div class="color-hex">rgba(0,217,146,0.15)</div><div class="color-role">Glow effects</div></div>
+      </div>
+    </div>
+
+    <h3 style="font-size:15px;font-weight:600;color:var(--ghost);margin:32px 0 16px;letter-spacing:-.01em">Gradients</h3>
+    <div class="gradient-grid">
+      <div class="gradient-token" style="background:radial-gradient(circle at 70% 30%,rgba(0,217,146,.1),transparent 60%),var(--carbon)">
+        <div class="gradient-name">volt</div>
+        <div class="gradient-desc">Background glow orbs for hero sections</div>
+      </div>
+      <div class="gradient-token" style="background:linear-gradient(rgba(255,255,255,.04),rgba(255,255,255,.04)),var(--carbon)">
+        <div class="gradient-name">surface</div>
+        <div class="gradient-desc">Translucent surface overlay on black</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- TYPOGRAPHY -->
+  <section class="section" id="typography">
+    <div class="section-header">
+      <div class="section-label">Typography</div>
+      <h2 class="section-title">Type Scale</h2>
+      <p class="section-desc">Inter as primary typeface. Clean geometric sans-serif with precise weights. JetBrains Mono for code and terminal.</p>
+    </div>
+    <div class="type-table">
+      <div class="type-row">
+        <span class="type-meta">Display-lg</span>
+        <span class="type-sample" style="font-size:28px;font-weight:700;line-height:1;letter-spacing:-.02em">Build agents</span>
+        <span class="type-specs">48px / 1.0 / -0.02em</span>
+      </div>
+      <div class="type-row">
+        <span class="type-meta">Display</span>
+        <span class="type-sample" style="font-size:22px;font-weight:700;line-height:1.15;letter-spacing:-.02em">Ship faster</span>
+        <span class="type-specs">40px / 1.15 / -0.02em</span>
+      </div>
+      <div class="type-row">
+        <span class="type-meta">Heading-xl</span>
+        <span class="type-sample" style="font-size:18px;font-weight:600;line-height:1.15;letter-spacing:-.02em">Section heading</span>
+        <span class="type-specs">32px / 1.15 / -0.02em</span>
+      </div>
+      <div class="type-row">
+        <span class="type-meta">Heading</span>
+        <span class="type-sample" style="font-size:16px;font-weight:600;line-height:1.3;letter-spacing:-.01em">Feature title</span>
+        <span class="type-specs">24px / 1.3 / -0.01em</span>
+      </div>
+      <div class="type-row">
+        <span class="type-meta">Body</span>
+        <span class="type-sample" style="font-size:16px;font-weight:400;line-height:1.5">Default body text for readable content</span>
+        <span class="type-specs">16px / 1.5 / 0</span>
+      </div>
+      <div class="type-row">
+        <span class="type-meta">Body-sm</span>
+        <span class="type-sample" style="font-size:14px;font-weight:400;line-height:1.5">Dense data, comparison rows</span>
+        <span class="type-specs">14px / 1.5 / 0</span>
+      </div>
+      <div class="type-row">
+        <span class="type-meta">Label</span>
+        <span class="type-sample" style="font-size:13px;font-weight:500;line-height:1;letter-spacing:.1em;text-transform:uppercase">SECTION LABEL</span>
+        <span class="type-specs">13px / 1.0 / 0.1em</span>
+      </div>
+      <div class="type-row">
+        <span class="type-meta">Caption</span>
+        <span class="type-sample" style="font-size:12px;font-weight:400;line-height:1.5;letter-spacing:.06em">Meta info · Footer · Labels</span>
+        <span class="type-specs">12px / 1.5 / 0.06em</span>
+      </div>
+    </div>
+
+    <h3 style="font-size:14px;font-weight:600;color:var(--ghost);margin:32px 0 16px">Fonts</h3>
+    <div style="display:flex;flex-direction:column;border:1px solid var(--charcoal);border-radius:var(--r-lg);overflow:hidden">
+      <div style="padding:16px 20px;border-bottom:1px solid var(--charcoal);display:flex;align-items:baseline;gap:12px">
+        <span style="font-size:10px;font-weight:600;color:var(--emerald);letter-spacing:.06em;text-transform:uppercase;flex:0 0 50px">Primary</span>
+        <span style="font-size:16px;font-weight:600;color:var(--ghost)">Inter</span>
+        <span style="font-size:11px;color:var(--pewter)">400-700 &middot; 12-48px</span>
+      </div>
+      <div style="padding:16px 20px;border-bottom:1px solid var(--charcoal);display:flex;align-items:baseline;gap:12px">
+        <span style="font-size:10px;font-weight:600;color:var(--emerald);letter-spacing:.06em;text-transform:uppercase;flex:0 0 50px">Mono</span>
+        <span style="font-size:16px;font-weight:500;color:var(--ghost)">JetBrains Mono</span>
+        <span style="font-size:11px;color:var(--pewter)">400-500 &middot; Code only</span>
+      </div>
+      <div style="padding:16px 20px;display:flex;align-items:baseline;gap:12px">
+        <span style="font-size:10px;font-weight:600;color:var(--emerald);letter-spacing:.06em;text-transform:uppercase;flex:0 0 50px">Fallback</span>
+        <span style="font-size:16px;font-weight:500;color:var(--ghost)">system-ui</span>
+        <span style="font-size:11px;color:var(--pewter)">Substitute for all above</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- SPACING & SHAPES -->
+  <section class="section" id="spacing">
+    <div class="section-header">
+      <div class="section-label">Layout</div>
+      <h2 class="section-title">Spacing & Shapes</h2>
+      <p class="section-desc">Base unit 4px. Compact developer density. 14-step spacing scale, 6 border radius values.</p>
+    </div>
+
+    <h3 style="font-size:14px;font-weight:600;color:var(--ghost);margin-bottom:16px">Spacing Scale (4px base)</h3>
+    <div class="spacing-bars">
+      <div class="spacing-col"><div class="spacing-bar" style="height:6px"></div><span class="spacing-val">4</span><span class="spacing-name">4px</span></div>
+      <div class="spacing-col"><div class="spacing-bar" style="height:12px"></div><span class="spacing-val">8</span><span class="spacing-name">8px</span></div>
+      <div class="spacing-col"><div class="spacing-bar" style="height:18px"></div><span class="spacing-val">12</span><span class="spacing-name">12px</span></div>
+      <div class="spacing-col"><div class="spacing-bar" style="height:24px"></div><span class="spacing-val">16</span><span class="spacing-name">16px</span></div>
+      <div class="spacing-col"><div class="spacing-bar" style="height:36px"></div><span class="spacing-val">24</span><span class="spacing-name">24px</span></div>
+      <div class="spacing-col"><div class="spacing-bar" style="height:48px"></div><span class="spacing-val">32</span><span class="spacing-name">32px</span></div>
+      <div class="spacing-col"><div class="spacing-bar" style="height:64px"></div><span class="spacing-val">48</span><span class="spacing-name">48px</span></div>
+      <div class="spacing-col"><div class="spacing-bar" style="height:80px"></div><span class="spacing-val">80</span><span class="spacing-name">80px</span></div>
+    </div>
+
+    <h3 style="font-size:14px;font-weight:600;color:var(--ghost);margin:32px 0 16px">Border Radius</h3>
+    <div class="shapes-row">
+      <div class="shape-item">
+        <div class="shape-box" style="border-radius:4px"></div>
+        <span class="shape-label">sm</span>
+        <span class="shape-value">4px</span>
+      </div>
+      <div class="shape-item">
+        <div class="shape-box" style="border-radius:6px"></div>
+        <span class="shape-label">md</span>
+        <span class="shape-value">6px</span>
+      </div>
+      <div class="shape-item">
+        <div class="shape-box" style="border-radius:8px"></div>
+        <span class="shape-label">lg</span>
+        <span class="shape-value">8px</span>
+      </div>
+      <div class="shape-item">
+        <div class="shape-box" style="border-radius:12px"></div>
+        <span class="shape-label">xl</span>
+        <span class="shape-value">12px</span>
+      </div>
+      <div class="shape-item">
+        <div class="shape-box" style="border-radius:16px"></div>
+        <span class="shape-label">2xl</span>
+        <span class="shape-value">16px</span>
+      </div>
+      <div class="shape-item">
+        <div class="shape-box" style="border-radius:9999px"></div>
+        <span class="shape-label">pill</span>
+        <span class="shape-value">9999px</span>
+      </div>
+    </div>
+
+    <h3 style="font-size:14px;font-weight:600;color:var(--ghost);margin:32px 0 16px">Shadows</h3>
+    <div style="display:flex;flex-wrap:wrap;gap:12px">
+      <div style="width:130px;height:80px;display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:var(--r-xl);background:var(--carbon);border:1px solid var(--charcoal)">
+        <span style="font-size:11px;font-weight:500;color:var(--pewter);margin-bottom:4px">Subtle</span>
+        <span style="font-size:10px;color:var(--ash)">inset border</span>
+      </div>
+      <div style="width:130px;height:80px;display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:var(--r-xl);background:var(--carbon);box-shadow:0 0 0 1px var(--charcoal),0 8px 24px rgba(0,0,0,.5)">
+        <span style="font-size:11px;font-weight:500;color:var(--pewter);margin-bottom:4px">Elevated</span>
+        <span style="font-size:10px;color:var(--ash)">floating cards</span>
+      </div>
+      <div style="width:130px;height:80px;display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:var(--r-xl);background:var(--carbon);box-shadow:0 0 12px rgba(0,217,146,.15)">
+        <span style="font-size:11px;font-weight:500;color:var(--emerald);margin-bottom:4px">Glow</span>
+        <span style="font-size:10px;color:var(--ash)">emerald accent</span>
+      </div>
+      <div style="width:130px;height:80px;display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:var(--r-xl);background:var(--carbon);box-shadow:0 0 0 2px var(--emerald)">
+        <span style="font-size:11px;font-weight:500;color:var(--emerald);margin-bottom:4px">Focus</span>
+        <span style="font-size:10px;color:var(--ash)">input focus</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- DEPTH & SURFACES -->
+  <section class="section" id="depth">
+    <div class="section-header">
+      <div class="section-label">Elevation</div>
+      <h2 class="section-title">Depth & Surfaces</h2>
+      <p class="section-desc">Borders over shadows. Thin charcoal lines for separation. 4 distinct surface levels.</p>
+    </div>
+
+    <h3 style="font-size:14px;font-weight:600;color:var(--ghost);margin-bottom:12px">Depth Levels</h3>
+    <div style="margin-bottom:32px">
+      <div class="depth-row">
+        <div class="depth-swatch" style="background:#050507;border:1px solid var(--charcoal)"></div>
+        <div class="depth-info"><div class="depth-name">Obsidian</div><div class="depth-desc">Base page background</div></div>
+        <div class="depth-value">Level 0</div>
+      </div>
+      <div class="depth-row">
+        <div class="depth-swatch" style="background:#101010;border:1px solid var(--charcoal)"></div>
+        <div class="depth-info"><div class="depth-name">Carbon</div><div class="depth-desc">Cards, elevated panels</div></div>
+        <div class="depth-value">Level 1</div>
+      </div>
+      <div class="depth-row">
+        <div class="depth-swatch" style="background:#1a1a1a;border:1px solid var(--charcoal)"></div>
+        <div class="depth-info"><div class="depth-name">Onyx</div><div class="depth-desc">Hover states, active surfaces</div></div>
+        <div class="depth-value">Level 2</div>
+      </div>
+      <div class="depth-row">
+        <div class="depth-swatch" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08)"></div>
+        <div class="depth-info"><div class="depth-name">Translucent</div><div class="depth-desc">Floating overlays, glass effects</div></div>
+        <div class="depth-value">Level 3</div>
+      </div>
+    </div>
+
+    <h3 style="font-size:14px;font-weight:600;color:var(--ghost);margin-bottom:12px">Surface System</h3>
+    <div class="surface-grid">
+      <div class="surface-item" style="background:#050507">
+        <span class="surface-name">Obsidian</span>
+        <span class="surface-val">#050507</span>
+      </div>
+      <div class="surface-item" style="background:#101010">
+        <span class="surface-name">Carbon</span>
+        <span class="surface-val">#101010</span>
+      </div>
+      <div class="surface-item" style="background:#1a1a1a">
+        <span class="surface-name">Onyx</span>
+        <span class="surface-val">#1a1a1a</span>
+      </div>
+      <div class="surface-item" style="background:rgba(255,255,255,.04);border-color:rgba(255,255,255,.08)">
+        <span class="surface-name">Translucent</span>
+        <span class="surface-val">rgba(255,255,255,.06)</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- COMPONENTS -->
+  <section class="section" id="components">
+    <div class="section-header">
+      <div class="section-label">Components</div>
+      <h2 class="section-title">Button Variants</h2>
+      <p class="section-desc">Primary (Emerald filled), outlined (Emerald border), ghost (transparent), and secondary (Charcoal border) variants.</p>
+    </div>
+
+    <div class="component-card">
+      <div class="component-header">
+        <div><div class="component-name">Primary CTA Button</div><div class="component-role">Main call to action</div></div>
+        <span class="component-class">.btn-primary</span>
+      </div>
+      <div class="component-preview">
+        <button class="btn btn-primary">Get Started</button>
+        <button class="btn btn-primary" style="opacity:.85">Hover state</button>
+      </div>
+      <div class="component-desc">Emerald (#00d992) background, Obsidian text, 6px radius. Use for the single most important action.</div>
+    </div>
+
+    <div class="component-card">
+      <div class="component-header">
+        <div><div class="component-name">Ghost Button</div><div class="component-role">Secondary interactive actions</div></div>
+        <span class="component-class">.btn-ghost</span>
+      </div>
+      <div class="component-preview">
+        <button class="btn btn-ghost">Documentation</button>
+        <button class="btn btn-ghost" style="background:rgba(0,217,146,.08)">Hover state</button>
+      </div>
+      <div class="component-desc">Emerald text, Emerald border. Clear interactive target without competing with primary.</div>
+    </div>
+
+    <div class="component-card">
+      <div class="component-header">
+        <div><div class="component-name">Secondary Button</div><div class="component-role">Tertiary actions</div></div>
+        <span class="component-class">.btn-secondary</span>
+      </div>
+      <div class="component-preview">
+        <button class="btn btn-secondary">Sign in</button>
+        <button class="btn btn-secondary" style="border-color:var(--warm-gray);background:var(--onyx)">Hover state</button>
+      </div>
+      <div class="component-desc">Ghost text, Charcoal border. For less prominent actions.</div>
+    </div>
+
+    <div class="component-card">
+      <div class="component-header">
+        <div><div class="component-name">Card</div><div class="component-role">Content containers</div></div>
+        <span class="component-class">.card</span>
+      </div>
+      <div class="component-preview">
+        <div style="background:var(--carbon);border:1px solid var(--charcoal);border-radius:var(--r-lg);padding:20px;max-width:280px">
+          <div style="font-size:15px;font-weight:600;color:var(--ghost);margin-bottom:6px">Agent Workflow</div>
+          <div style="font-size:13px;color:var(--ash);line-height:1.5">Build multi-agent systems with supervisor orchestration and observability.</div>
+        </div>
+      </div>
+      <div class="component-desc">Carbon background, Charcoal border, 8px radius. Hover: Warm Gray border, Onyx background.</div>
+    </div>
+
+    <div class="component-card">
+      <div class="component-header">
+        <div><div class="component-name">Input Field</div><div class="component-role">Text input</div></div>
+        <span class="component-class">input</span>
+      </div>
+      <div class="component-preview">
+        <div style="display:flex;flex-direction:column;gap:10px;flex:1;max-width:320px">
+          <input type="text" placeholder="Search agents..." style="background:transparent;border:1px solid var(--charcoal);border-radius:6px;padding:10px 14px;color:var(--ghost);font-size:14px;font-family:inherit;outline:none">
+          <input type="text" value="Focused state" style="background:transparent;border:1px solid var(--emerald);border-radius:6px;padding:10px 14px;color:var(--ghost);font-size:14px;font-family:inherit;outline:none;box-shadow:0 0 8px rgba(0,217,146,.15)">
+        </div>
+      </div>
+      <div class="component-desc">Transparent background, Ghost text, 6px radius. Focus: Emerald border with glow.</div>
+    </div>
+
+    <div class="component-card">
+      <div class="component-header">
+        <div><div class="component-name">Pill Badge</div><div class="component-role">Status indicators, tags</div></div>
+        <span class="component-class">.badge</span>
+      </div>
+      <div class="component-preview">
+        <span style="color:var(--emerald);font-size:11px;font-weight:500;padding:3px 10px;border-radius:var(--r-pill);border:1px solid rgba(0,217,146,.25);letter-spacing:.02em">Active</span>
+        <span style="color:var(--pewter);font-size:11px;font-weight:500;padding:3px 10px;border-radius:var(--r-pill);border:1px solid var(--charcoal);letter-spacing:.02em">Pending</span>
+        <span style="color:#f85149;font-size:11px;font-weight:500;padding:3px 10px;border-radius:var(--r-pill);border:1px solid rgba(248,81,73,.25);letter-spacing:.02em">Error</span>
+      </div>
+      <div class="component-desc">Pill shape (9999px radius). Emerald for active, Charcoal for neutral, red for errors.</div>
+    </div>
+  </section>
+
+  <!-- DO'S & DON'TS -->
+  <section class="section" id="guidelines">
+    <div class="section-header">
+      <div class="section-label">Guidelines</div>
+      <h2 class="section-title">Do's & Don'ts</h2>
+    </div>
+    <div class="guide-grid">
+      <div class="guide-card guide-card--do">
+        <div class="guide-label">Do &mdash; Embrace</div>
+        <ul class="guide-list">
+          <li>Obsidian (#050507) as primary background</li>
+          <li>Ghost (#ffffff) for all primary text</li>
+          <li>Emerald (#00d992) for brand accents and CTAs</li>
+          <li>Charcoal (#3d3a39) for all borders</li>
+          <li>Small border radius (4-8px) for precision</li>
+          <li>4px-based compact spacing</li>
+          <li>Borders and glows over heavy shadows</li>
+        </ul>
+      </div>
+      <div class="guide-card guide-card--dont">
+        <div class="guide-label">Don't &mdash; Avoid</div>
+        <ul class="guide-list">
+          <li>Bright saturated colors beyond emerald</li>
+          <li>Generic gray borders (#e5e5e5, #ccc)</li>
+          <li>Large decorative drop shadows</li>
+          <li>Dense text without breathing room</li>
+          <li>Serif or decorative fonts</li>
+          <li>Emerald for large background areas</li>
+          <li>Hard sharp corners on interactive elements</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- FOOTER -->
+  <footer class="footer">
+    <div class="footer-left">VoltAgent Design System</div>
+    <div class="footer-right">
+      <a href="#colors" class="footer-link">Colors</a>
+      <a href="#typography" class="footer-link">Typography</a>
+      <a href="#spacing" class="footer-link">Spacing</a>
+      <a href="#components" class="footer-link">Components</a>
+      <a href="DESIGN.md" class="footer-link" download>Download Spec</a>
+    </div>
+  </footer>
+
+</div>
+
+<script>
+  const els = document.querySelectorAll('.section, .hero');
+  const obs = new IntersectionObserver(entries => {
+    entries.forEach((entry, i) => {
+      if (entry.isIntersecting) {
+        entry.target.style.transitionDelay = `${i * 50}ms`;
+        entry.target.classList.add('visible');
+        obs.unobserve(entry.target);
+      }
+    });
+  }, { threshold: 0.06, rootMargin: '0px 0px -20px 0px' });
+  els.forEach(el => obs.observe(el));
+</script>
+
+</body>
+</html>

@@ -12,10 +12,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
  * is the caller's cue to render a skeleton of the right height instead of a
  * chart at a guessed size.
  */
-export function useMeasuredWidth<T extends HTMLElement = HTMLDivElement>(): [
-  (node: T | null) => void,
-  number | null,
-] {
+export function useMeasuredWidth<T extends HTMLElement = HTMLDivElement>(): [(node: T | null) => void, number | null] {
   const [width, setWidth] = useState<number | null>(null)
   const observer = useRef<ResizeObserver | null>(null)
 
