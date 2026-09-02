@@ -538,6 +538,7 @@ export const dkgManagerAbi = [
   { type: 'error', name: 'CiphertextAlreadySubmitted', inputs: [] },
   { type: 'error', name: 'CiphertextNotSubmitted', inputs: [] },
   { type: 'error', name: 'InvalidCiphertext', inputs: [] },
+  { type: 'error', name: 'InvalidCiphertextProof', inputs: [] },
   { type: 'error', name: 'AppManagerAlreadySet', inputs: [] },
   { type: 'error', name: 'AppManagerNotSet', inputs: [] },
 ] as const;
@@ -887,6 +888,7 @@ export const dkgAppManagerAbi = [
   { type: 'error', name: 'InvalidAddress', inputs: [] },
   { type: 'error', name: 'InvalidVerifier', inputs: [] },
   { type: 'error', name: 'InvalidCiphertext', inputs: [] },
+  { type: 'error', name: 'InvalidCiphertextProof', inputs: [] },
   { type: 'error', name: 'CiphertextNotSubmitted', inputs: [] },
   { type: 'error', name: 'AlreadyPartiallyDecrypted', inputs: [] },
   { type: 'error', name: 'InvalidProofInput', inputs: [] },

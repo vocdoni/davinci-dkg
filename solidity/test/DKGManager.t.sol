@@ -173,7 +173,7 @@ contract DKGManagerTest is Test, TestHelpers {
         // against ciphertextIndex=1, so submit it as part of the
         // canonical "finalized" fixture. Tests that need an unsubmitted
         // ciphertext use a different index.
-        manager.submitCiphertext(epochId, bytes32(0), TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y, 0, 0, 0);
+        _submitTestCiphertext(epochId, bytes32(0));
     }
 
     function test_CreateEpoch_PersistsPolicy() public {
@@ -582,7 +582,7 @@ contract DKGManagerTest is Test, TestHelpers {
     function test_SubmitPartialDecryption_AllowsDistinctCiphertexts() public {
         bytes12 epochId = createFinalizedRound();
         // ciphertext 2 must also exist on-chain.
-        manager.submitCiphertext(epochId, bytes32(0), TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y, 0, 0, 0);
+        _submitTestCiphertext(epochId, bytes32(0));
 
         manager.submitPartialDecryption(
             epochId,
@@ -836,7 +836,7 @@ contract DKGManagerTest is Test, TestHelpers {
         // another at index 2 to exercise the storage / counter path.
         bytes32 expected = keccak256(abi.encode(TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y));
 
-        manager.submitCiphertext(epochId, bytes32(0), TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y, 0, 0, 0);
+        _submitTestCiphertext(epochId, bytes32(0));
 
         assertEq(uint256(manager.getCiphertextHash(epochId, bytes32(0), 2)), uint256(expected));
         assertEq(uint256(manager.getEpoch(epochId).ciphertextCount), 2);
@@ -845,8 +845,9 @@ contract DKGManagerTest is Test, TestHelpers {
     function test_SubmitCiphertext_RejectsBeforeFinalized() public {
         bytes12 epochId = _createLotteryRound();
 
+        (uint256 ax, uint256 ay, uint256 z) = testCiphertextPoK(epochId, bytes32(0));
         vm.expectRevert(IDKGManager.InvalidPhase.selector);
-        manager.submitCiphertext(epochId, bytes32(0), TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y, 0, 0, 0);
+        manager.submitCiphertext(epochId, bytes32(0), TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y, ax, ay, z);
     }
 
     function test_SubmitCiphertext_RejectsOffCurvePoint() public {
@@ -1085,6 +1086,37 @@ contract DKGManagerTest is Test, TestHelpers {
         manager.claimSlot(epochId);
     }
 
+    function _submitTestCiphertext(bytes12 epochId, bytes32 aid) internal returns (uint16) {
+        (uint256 ax, uint256 ay, uint256 z) = testCiphertextPoK(epochId, aid);
+        return manager.submitCiphertext(epochId, aid, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y, ax, ay, z);
+    }
+
+    function test_SubmitCiphertext_RejectsBadProofOfKnowledge() public {
+        bytes12 epochId = createFinalizedRound();
+        (uint256 ax, uint256 ay, uint256 z) = testCiphertextPoK(epochId, bytes32(0));
+        // wrong response
+        vm.expectRevert(IDKGManager.InvalidCiphertextProof.selector);
+        manager.submitCiphertext(epochId, bytes32(0), TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y, ax, ay, z + 1);
+        // proof bound to another aid
+        (uint256 bx, uint256 by, uint256 bz) = testCiphertextPoK(epochId, bytes32(uint256(7)));
+        vm.expectRevert(IDKGManager.InvalidCiphertextProof.selector);
+        manager.submitCiphertext(epochId, bytes32(0), TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y, bx, by, bz);
+        // commitment off the curve
+        vm.expectRevert(IDKGManager.InvalidCiphertextProof.selector);
+        manager.submitCiphertext(epochId, bytes32(0), TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y, 1, 1, z);
+        // a valid proof still lands
+        assertEq(uint256(_submitTestCiphertext(epochId, bytes32(0))), 2);
+    }
+
+    function test_SubmitCiphertext_RejectsSmallOrderC1() public {
+        bytes12 epochId = createFinalizedRound();
+        uint256 Q = 21888242871839275222246405745257275088548364400416034343698204186575808495617;
+        // (0, -1) is on the curve, is not the identity and has order 2.
+        (uint256 ax, uint256 ay, uint256 z) = ciphertextPoK(epochId, bytes32(0), 0, Q - 1, TEST_CT_C2X, TEST_CT_C2Y, 1);
+        vm.expectRevert(IDKGManager.InvalidCiphertext.selector);
+        manager.submitCiphertext(epochId, bytes32(0), 0, Q - 1, TEST_CT_C2X, TEST_CT_C2Y, ax, ay, z);
+    }
+
     // ── A finalizable epoch can never be aborted, not even in the gap ─────
 
     function test_AbortEpoch_RejectsHealthyEpochDuringFinalizeGap() public {
@@ -1136,8 +1168,8 @@ contract DKGManagerTest is Test, TestHelpers {
     function test_SubmitCiphertext_AssignsSequentialIndicesAndEmitsProof() public {
         bytes12 epochId = createFinalizedRound(); // the fixture already submitted one ciphertext
         uint16 before = manager.ciphertextCount(epochId, bytes32(0));
-        uint16 first = manager.submitCiphertext(epochId, bytes32(0), TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y, 11, 22, 33);
-        uint16 second = manager.submitCiphertext(epochId, bytes32(0), TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y, 0, 0, 0);
+        uint16 first = _submitTestCiphertext(epochId, bytes32(0));
+        uint16 second = _submitTestCiphertext(epochId, bytes32(0));
         assertEq(uint256(first), uint256(before) + 1);
         assertEq(uint256(second), uint256(before) + 2);
         assertEq(uint256(manager.ciphertextCount(epochId, bytes32(0))), uint256(before) + 2);

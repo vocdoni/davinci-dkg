@@ -96,6 +96,7 @@ interface IDKGManager {
     error CiphertextAlreadySubmitted();
     error CiphertextNotSubmitted();
     error InvalidCiphertext();
+    error InvalidCiphertextProof();
 
     /// @notice Create a new epoch. All phase deadlines are derived from
     ///         `EPOCH_DURATION_BLOCKS` (immutable, set at deploy) and the
@@ -120,9 +121,10 @@ interface IDKGManager {
     /// @notice Submit a ciphertext for threshold decryption. The index is
     ///         assigned on chain (1, 2, … per application) and returned.
     ///         `pok*` is a Schnorr proof of knowledge of the randomness r
-    ///         (C1 = r·G) over DOMAIN_CIPHERTEXT_POK_V1; it is stored in the
-    ///         event only and verified by every committee node before it
-    ///         releases a partial decryption.
+    ///         (C1 = r·G) over DOMAIN_CIPHERTEXT_POK_V1. The contract verifies
+    ///         it and the prime-subgroup membership of C1 (InvalidCiphertextProof
+    ///         / InvalidCiphertext); committee nodes repeat both checks before
+    ///         releasing a partial decryption. The proof is emitted, not stored.
     function submitCiphertext(
         bytes12 epochId,
         bytes32 aid,

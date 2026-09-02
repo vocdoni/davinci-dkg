@@ -95,8 +95,8 @@ Anything that touches encodings, hashes or constants has to be changed in all of
 
 - `node/` is the daemon (`cmd/davinci-dkg-node` is a thin main). `node.go` polls the two newest epochs
   and does claimSlot → submitContribution (Groth16) → auto-finalize (via `finalizer/`); `decrypt.go`
-  scans `CiphertextSubmitted` events for every aid, verifies the submitter's proof of knowledge of the
-  randomness and the prime-subgroup membership of C1 (both load-bearing, neither checked on chain),
+  scans `CiphertextSubmitted` events for every aid, re-verifies the submitter's proof of knowledge of
+  the randomness and the prime-subgroup membership of C1 (the contract checks both; nodes repeat them),
   submits partials and combines on a seed-derived stagger (mode 0 tag or mode 1 organizer share
   resolved through `DKGAppManager`). All secret scalars come from `scalars.go` (`crypto/rand`, never
   deterministic); `dlog.go` is a compact parallel BSGS (2^50 cap, ~256 MB). Every flag has a

@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	qt "github.com/frankban/quicktest"
-	"github.com/vocdoni/davinci-dkg/crypto/elgamal"
 	"github.com/vocdoni/davinci-dkg/crypto/group"
 	"github.com/vocdoni/davinci-dkg/tests/helpers"
 	"github.com/vocdoni/davinci-dkg/types"
@@ -186,7 +185,7 @@ func submitPartialDecryptForGasProfile(t *testing.T, ctx context.Context, epochI
 	c2 := group.Generator()
 	c2.ScalarBaseMult(big.NewInt(11))
 	c1Enc, c2Enc := group.Encode(c1), group.Encode(c2)
-	assignedIdx, err := helpers.SubmitCiphertextAs(ctx, &helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager}, epochID, c1Enc.X, c1Enc.Y, c2Enc.X, c2Enc.Y, elgamal.NoPoK())
+	assignedIdx, err := helpers.SubmitCiphertextAs(ctx, &helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager}, epochID, c1Enc.X, c1Enc.Y, c2Enc.X, c2Enc.Y, helpers.ProveCiphertext(epochID, c1Enc, c2Enc, big.NewInt(9)))
 	c.Assert(err, qt.IsNil)
 	c.Assert(assignedIdx, qt.Equals, uint16(1))
 
@@ -226,7 +225,7 @@ func combineDecryptionForGasProfile(t *testing.T, ctx context.Context, epochID [
 	)
 	c.Assert(err, qt.IsNil)
 
-	assignedIdx, err := helpers.SubmitCiphertextAs(ctx, &helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager}, epochID, output.CiphertextC1.X, output.CiphertextC1.Y, output.CiphertextC2.X, output.CiphertextC2.Y, elgamal.NoPoK())
+	assignedIdx, err := helpers.SubmitCiphertextAs(ctx, &helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager}, epochID, output.CiphertextC1.X, output.CiphertextC1.Y, output.CiphertextC2.X, output.CiphertextC2.Y, helpers.ProveCiphertext(epochID, output.CiphertextC1, output.CiphertextC2, big.NewInt(9)))
 	c.Assert(err, qt.IsNil)
 	c.Assert(assignedIdx, qt.Equals, uint16(1))
 

@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	qt "github.com/frankban/quicktest"
-	"github.com/vocdoni/davinci-dkg/crypto/elgamal"
 	"github.com/vocdoni/davinci-dkg/tests/helpers"
 	"github.com/vocdoni/davinci-dkg/types"
 )
@@ -44,7 +43,7 @@ func TestThresholdDecryptionHappyPath(t *testing.T) {
 
 	// submitCiphertext must precede submitPartialDecryption: the
 	// partial-decrypt verifier binds pi[5..6] to the on-chain C1.
-	assignedIdx, err := helpers.SubmitCiphertextAs(ctx, &helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager}, result.EpochID, combine.CiphertextC1.X, combine.CiphertextC1.Y, combine.CiphertextC2.X, combine.CiphertextC2.Y, elgamal.NoPoK())
+	assignedIdx, err := helpers.SubmitCiphertextAs(ctx, &helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager}, result.EpochID, combine.CiphertextC1.X, combine.CiphertextC1.Y, combine.CiphertextC2.X, combine.CiphertextC2.Y, helpers.ProveCiphertext(result.EpochID, combine.CiphertextC1, combine.CiphertextC2, big.NewInt(9)))
 	c.Assert(err, qt.IsNil)
 	c.Assert(assignedIdx, qt.Equals, uint16(1))
 
@@ -143,7 +142,7 @@ func TestThresholdDecryptionSupportsMultipleCiphertextsPerRound(t *testing.T) {
 		c.Assert(err, qt.IsNil)
 
 		// submitCiphertext must precede submitPartialDecryption.
-		assignedIdx, err := helpers.SubmitCiphertextAs(ctx, &helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager}, result.EpochID, combine.CiphertextC1.X, combine.CiphertextC1.Y, combine.CiphertextC2.X, combine.CiphertextC2.Y, elgamal.NoPoK())
+		assignedIdx, err := helpers.SubmitCiphertextAs(ctx, &helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager}, result.EpochID, combine.CiphertextC1.X, combine.CiphertextC1.Y, combine.CiphertextC2.X, combine.CiphertextC2.Y, helpers.ProveCiphertext(result.EpochID, combine.CiphertextC1, combine.CiphertextC2, baseValues[i]))
 		c.Assert(err, qt.IsNil)
 		c.Assert(assignedIdx, qt.Equals, uint16(ciphertextIndex))
 

@@ -13,7 +13,7 @@
 // `proveCiphertext` / `verifyCiphertextPoK` cover the submitter-side Schnorr
 // proof of knowledge of a ciphertext's ElGamal randomness (mirrors
 // `crypto/elgamal/elgamal.go`); the SDK writer refuses to send a ciphertext
-// whose proof does not verify, since the committee would never decrypt it.
+// whose proof does not verify, since the contract would reject it.
 
 import {
   Base8,

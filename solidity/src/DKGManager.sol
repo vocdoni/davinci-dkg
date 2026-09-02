@@ -900,10 +900,21 @@ contract DKGManager is IDKGManager {
         if (epoch.status != DKGTypes.EpochPhase.Live) revert InvalidPhase();
 
         // Well-formedness: coords must be canonical (< Q), on-curve and
-        // non-identity. Prime-subgroup membership is checked by every node
-        // before it multiplies its share into C1 (see _requireValidEncryptionPoint).
+        // non-identity; C1 must additionally lie in the prime-order subgroup
+        // (a cofactor component would leak d_i mod 8 through every partial)
+        // and the submitter must prove knowledge of r with C1 = r·G, which
+        // closes the cross-application partial-decryption oracle. Nodes
+        // repeat both checks before they multiply a share into C1.
         _requireValidEncryptionPoint(c1x, c1y);
         _requireValidEncryptionPoint(c2x, c2y);
+        if (!BabyJubJub.isInPrimeSubgroup(c1x, c1y)) revert InvalidCiphertext();
+        if (!BabyJubJub.isOnCurve(pokAx, pokAy)) revert InvalidCiphertextProof();
+        {
+            uint256 c = uint256(keccak256(abi.encodePacked(
+                DKGProtocol.DOMAIN_CIPHERTEXT_POK_V1, epochId, aid, c1x, c1y, c2x, c2y, pokAx, pokAy
+            ))) % BabyJubJub.SUBGROUP_ORDER;
+            if (!BabyJubJub.verifySchnorrEquation(pokZ, c, pokAx, pokAy, c1x, c1y)) revert InvalidCiphertextProof();
+        }
 
         ciphertextIndex = ciphertextCounts[epochId][aid] + 1;
         if (ciphertextIndex > MAX_CIPHERTEXT_INDEX) revert DecryptionLimitReached();

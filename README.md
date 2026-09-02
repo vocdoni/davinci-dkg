@@ -289,9 +289,10 @@ honest path:
 3. `DKGManager.submitCiphertext(epochId, aid, c1, c2, pok)` — the contract assigns the next
    `ctIdx` for the application and emits `CiphertextSubmitted`. `pok` is a Schnorr proof of
    knowledge of the encryption randomness `r` (`C₁ = r·G`), bound to `(epochId, aid, C₁, C₂)`.
-   Committee nodes verify it before releasing a partial decryption, which is what stops anyone
-   from re-submitting another application's `C₁` (or `C₁ + x·G`) under their own application
-   as a decryption oracle. The SDK and `dkgapp` produce it for you.
+   The contract verifies it, together with the prime-subgroup membership of `C₁`, and committee
+   nodes verify both again before releasing a partial decryption. That is what stops anyone from
+   re-submitting another application's `C₁` (or `C₁ + x·G`) under their own application as a
+   decryption oracle. The SDK and `dkgapp` produce it for you.
 4. Every committee node watches `CiphertextSubmitted` events (for any `aid`), submits its
    partial, and the first node to reach `t` partials calls `combineDecryption`. The recovered
    plaintext is readable on `getPlaintext`. A restarted node re-scans the last

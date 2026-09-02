@@ -5,9 +5,28 @@ import {IZKVerifier} from "../src/interfaces/IZKVerifier.sol";
 import {BRLC} from "../src/libraries/BRLC.sol";
 import {DKGTypes} from "../src/libraries/DKGTypes.sol";
 import {MAX_N} from "../src/libraries/Sizes.sol";
+import {BabyJubJub} from "../src/libraries/BabyJubJub.sol";
+import {DKGProtocol} from "../src/libraries/DKGProtocol.sol";
 import {TestInputs} from "./TestInputs.t.sol";
 
 abstract contract TestHelpers is TestInputs {
+    /// @dev Schnorr proof of knowledge of the randomness r of the canonical test
+    ///      ciphertext (TEST_CT_C1 = 1·G, so r = 1), bound to (epochId, aid).
+    function testCiphertextPoK(bytes12 epochId, bytes32 aid) internal view returns (uint256 ax, uint256 ay, uint256 z) {
+        return ciphertextPoK(epochId, aid, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y, 1);
+    }
+
+    function ciphertextPoK(
+        bytes12 epochId, bytes32 aid, uint256 c1x, uint256 c1y, uint256 c2x, uint256 c2y, uint256 r
+    ) internal view returns (uint256 ax, uint256 ay, uint256 z) {
+        uint256 w = 7;
+        (ax, ay) = BabyJubJub.scalarMulBase(w);
+        uint256 c = uint256(keccak256(abi.encodePacked(
+            DKGProtocol.DOMAIN_CIPHERTEXT_POK_V1, epochId, aid, c1x, c1y, c2x, c2y, ax, ay
+        ))) % BabyJubJub.SUBGROUP_ORDER;
+        z = addmod(w, mulmod(c, r, BabyJubJub.SUBGROUP_ORDER), BabyJubJub.SUBGROUP_ORDER);
+    }
+
     /// @dev All-zero decryption policy: owner-only disabled, no time locks,
     /// no submission cap. Used by tests that don't care about submission gating.
 

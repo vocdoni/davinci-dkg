@@ -20,7 +20,6 @@ import (
 
 	qt "github.com/frankban/quicktest"
 	"github.com/vocdoni/davinci-dkg/circuits/contribution"
-	"github.com/vocdoni/davinci-dkg/crypto/elgamal"
 	"github.com/vocdoni/davinci-dkg/tests/helpers"
 	"github.com/vocdoni/davinci-dkg/types"
 )
@@ -223,7 +222,7 @@ func benchmarkGasForN(t *testing.T, n, threshold int) gasProfileResult {
 	c.Assert(err, qt.IsNil)
 
 	// The combine tx is now bound to an on-chain ciphertext; submit it first.
-	assignedIdx, err := helpers.SubmitCiphertextAs(ctx, &helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager}, epochID, combineOut.CiphertextC1.X, combineOut.CiphertextC1.Y, combineOut.CiphertextC2.X, combineOut.CiphertextC2.Y, elgamal.NoPoK())
+	assignedIdx, err := helpers.SubmitCiphertextAs(ctx, &helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager}, epochID, combineOut.CiphertextC1.X, combineOut.CiphertextC1.Y, combineOut.CiphertextC2.X, combineOut.CiphertextC2.Y, helpers.ProveCiphertext(epochID, combineOut.CiphertextC1, combineOut.CiphertextC2, ciphertextBase))
 	c.Assert(err, qt.IsNil)
 	c.Assert(assignedIdx, qt.Equals, uint16(1))
 

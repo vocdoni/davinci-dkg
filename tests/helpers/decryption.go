@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"math/big"
 
+	"github.com/vocdoni/davinci-dkg/crypto/elgamal"
+
 	"github.com/vocdoni/davinci-dkg/crypto/group"
 	"github.com/vocdoni/davinci-dkg/types"
 	"github.com/vocdoni/davinci-dkg/web3"
@@ -49,6 +51,17 @@ func EncryptScalar(pk types.CurvePoint, m *big.Int) (c1, c2 types.CurvePoint, er
 	c2Point := group.NewPoint()
 	c2Point.Add(mG, rPK)
 	return group.Encode(c1Point), group.Encode(c2Point), nil
+}
+
+// ProveCiphertext returns the Schnorr proof of knowledge of r for a test
+// ciphertext with C1 = r·G, bound to (epochID, aid = 0). Panics on error:
+// test-only helper.
+func ProveCiphertext(epochID [12]byte, c1, c2 types.CurvePoint, r *big.Int) elgamal.PoK {
+	pok, err := elgamal.ProveKnowledge(epochID, [32]byte{}, c1, c2, r)
+	if err != nil {
+		panic(err)
+	}
+	return pok
 }
 
 // AddPoints returns a + b on BabyJubJub (used to derive PK_aid = PK_ep + X).

@@ -301,8 +301,8 @@ func (n *Node) submitPartial(
 
 	// Refuse small-order / off-curve ciphertexts before touching the share:
 	// δ_i = d_i·C1 for a cofactor point would leak d_i mod 8 on-chain. The
-	// contract only checks canonical/on-curve/non-identity, so this is the
-	// load-bearing subgroup check.
+	// contract performs the same check; repeating it here keeps the share
+	// safe even against a faulty contract deployment.
 	if err := group.ValidateCiphertext(ct.c1, ct.c2); err != nil {
 		log.Warnw("rejecting toxic ciphertext — refusing partial decryption", "ct", key.String(), "err", err)
 		return true, nil

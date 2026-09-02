@@ -7,7 +7,6 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	qt "github.com/frankban/quicktest"
-	"github.com/vocdoni/davinci-dkg/crypto/elgamal"
 	"github.com/vocdoni/davinci-dkg/tests/helpers"
 	"github.com/vocdoni/davinci-dkg/types"
 )
@@ -130,7 +129,7 @@ func TestCommitteeRoundHappyPath(t *testing.T) {
 
 	// submitCiphertext must precede submitPartialDecryption so the
 	// proof's pi[5..6] can be bound against the on-chain C1.
-	assignedIdx, err := helpers.SubmitCiphertextAs(ctx, &helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager}, epochID, combineOutput.CiphertextC1.X, combineOutput.CiphertextC1.Y, combineOutput.CiphertextC2.X, combineOutput.CiphertextC2.Y, elgamal.NoPoK())
+	assignedIdx, err := helpers.SubmitCiphertextAs(ctx, &helpers.TestActor{Contracts: services.Contracts, Manager: services.Manager, Registry: services.Registry, TxManager: services.TxManager}, epochID, combineOutput.CiphertextC1.X, combineOutput.CiphertextC1.Y, combineOutput.CiphertextC2.X, combineOutput.CiphertextC2.Y, helpers.ProveCiphertext(epochID, combineOutput.CiphertextC1, combineOutput.CiphertextC2, big.NewInt(9)))
 	c.Assert(err, qt.IsNil)
 	c.Assert(assignedIdx, qt.Equals, uint16(1))
 
