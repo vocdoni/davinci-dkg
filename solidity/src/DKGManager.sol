@@ -13,6 +13,7 @@ import {DKGProtocol} from "./libraries/DKGProtocol.sol";
 import {PhaseLib} from "./libraries/PhaseLib.sol";
 import {
     MAX_N,
+    COMBINE_TRANSCRIPT_WORDS,
     DEFAULT_EPOCH_DURATION_BLOCKS,
     DEFAULT_COMMITTEE_SELECTION_BLOCKS,
     DEFAULT_KEY_ASSEMBLY_BLOCKS,
@@ -33,9 +34,8 @@ import {
 ///         finalize/combine are read straight out of calldata via assembly
 ///         to avoid per-element bounds checks.
 contract DKGManager is IDKGManager {
-    /// @dev Sibling app manager has not been wired yet — any cross-contract
-    ///      path (submitCiphertext / combineDecryption with aid != 0)
-    ///      reverts. The legacy aid == 0 path remains available before wiring.
+    /// @dev Sibling app manager has not been wired yet — every application
+    ///      path (submitCiphertext / combineDecryption) reverts until it is.
     error AppManagerNotSet();
     error AppManagerAlreadySet();
 
@@ -64,11 +64,12 @@ contract DKGManager is IDKGManager {
     //                       contributionCommitments (2N²) ‖
     //                       aggregateCommitments (2N) ‖
     //                       shareCommitments (2N)                         = 2N² + 5N
-    //   combineDecryption:  ciphertext (4) ‖ participantIndexes (N) ‖
-    //                       partialDecryptions (2N)                       = 4 + 3N
+    //   combineDecryption:  ciphertext (4) ‖ PK_org (2) ‖ A1 (2) ‖ A2 (2) ‖
+    //                       z (1) ‖ e (1) ‖ participantIndexes (N) ‖
+    //                       partialDecryptions (2N)                       = 12 + 3N
+    //                       (COMBINE_TRANSCRIPT_WORDS, from Sizes.sol)
     uint256 internal constant CONTRIB_TRANSCRIPT_WORDS     = 8 * MAX_N;
     uint256 internal constant FINALIZE_TRANSCRIPT_WORDS    = 2 * MAX_N * MAX_N + 5 * MAX_N;
-    uint256 internal constant COMBINE_TRANSCRIPT_WORDS     = 4 + 3 * MAX_N;
     // contribution-time per-section byte offsets:
     uint256 internal constant CONTRIB_PUBKEYS_BYTES_OFFSET = (2 * MAX_N + MAX_N) * 32;          // start of recipientPubKeys
     uint256 internal constant CONTRIB_PUBKEYS_BYTES_END    = (2 * MAX_N + MAX_N + 2 * MAX_N) * 32; // end of recipientPubKeys
@@ -80,7 +81,9 @@ contract DKGManager is IDKGManager {
     uint256 internal constant FINALIZE_SHARE_WORDS_OFFSET   = MAX_N + 2 * MAX_N * MAX_N + 2 * MAX_N; // shareCommitments start, in words
     uint256 internal constant FINALIZE_AGG0_WORDS_OFFSET    = MAX_N + 2 * MAX_N * MAX_N;             // aggregateCommitments[0] start, in words
     // combine-time per-section byte offsets:
-    uint256 internal constant COMBINE_PARTIALS_BYTES_OFFSET = (4 + MAX_N) * 32;                 // partialDecryptions start, in bytes
+    uint256 internal constant COMBINE_HEAD_WORDS            = 12;                               // ciphertext (4) + organizer words (8)
+    uint256 internal constant COMBINE_INDEXES_BYTES_OFFSET  = COMBINE_HEAD_WORDS * 32;          // participantIndexes start, in bytes
+    uint256 internal constant COMBINE_PARTIALS_BYTES_OFFSET = (COMBINE_HEAD_WORDS + MAX_N) * 32; // partialDecryptions start, in bytes
 
     /// @dev Upper bound on ciphertext indices accepted by `submitPartialDecryption`
     /// and `combineDecryption`. Prevents unbounded storage spam by a committee member
@@ -685,7 +688,7 @@ contract DKGManager is IDKGManager {
     ) internal view {
         uint256 dOff;
         assembly { dOff := transcript.offset }
-        uint256 piBase = dOff + 4 * 32;                               // participantIndexes start
+        uint256 piBase = dOff + COMBINE_INDEXES_BYTES_OFFSET;         // participantIndexes start
         uint256 pdBase = dOff + COMBINE_PARTIALS_BYTES_OFFSET;        // partialDecryptions start
 
         uint256 cs = epoch.policy.committeeSize;
@@ -791,14 +794,13 @@ contract DKGManager is IDKGManager {
     ///         multiple ciphertexts per epoch. The Groth16 proof is a
     ///         Chaum–Pedersen DLEQ establishing that `δ_i` and the committed
     ///         share `D_i` share a discrete log with respect to `C_1` and `G`.
-    /// @dev `aid` binds the proof transcript to a specific application.
-    ///      Pass `bytes32(0)` for the legacy per-epoch path that
-    ///      pre-dates the application surface; the circuit witness builder
-    ///      defaults Aid/CtIdx/Role to zero/zero/COMMITTEE in that mode.
+    /// @dev `aid` binds the proof transcript to a specific application; only
+    ///      registered applications can own a ciphertext, so an unknown aid
+    ///      fails the ciphertext binding below.
     /// @dev `c1x/c1y/c2x/c2y` are the raw ciphertext coordinates as
     ///      submitted via submitCiphertext. The contract verifies
     ///      `keccak256(abi.encode(...))` matches the stored ciphertext
-    ///      hash and then binds the proof's public-input C1 (pi[5..6])
+    ///      hash and then binds the proof's public-input C1 (pi[4..5])
     ///      to the authoritative on-chain ciphertext.
     function submitPartialDecryption(
         bytes12 epochId,
@@ -838,27 +840,24 @@ contract DKGManager is IDKGManager {
             revert AlreadyPartiallyDecrypted();
         }
 
-        // Layout: [eid, aid, ctIdx, role, i, C1.x, C1.y, D_i.x, D_i.y,
+        // Layout (15 words): [eid, aid, ctIdx, i, C1.x, C1.y, D_i.x, D_i.y,
         // delta.x, delta.y, A1.x, A1.y, A2.x, A2.y, response].
-        // Committee partial decryptions always use role = COMMITTEE = 1
-        // (organizer shares go through submitOrganizerShare instead).
         // Cheap public-input checks fail before the expensive verifier call.
-        uint256[16] memory publicInputs = abi.decode(input, (uint256[16]));
+        uint256[15] memory publicInputs = abi.decode(input, (uint256[15]));
         bytes32 storedScHash = epochShareCommitmentHashes[epochId][participantIndex];
         if (
             publicInputs[0] != _epochScalar(epochId)
                 || publicInputs[1] != uint256(aid)
                 || publicInputs[2] != ciphertextIndex
-                || publicInputs[3] != uint256(DKGProtocol.ROLE_COMMITTEE)
-                || publicInputs[4] != participantIndex
-                // pi[5..6] = base point (C_1) — bind to the just-verified
+                || publicInputs[3] != participantIndex
+                // pi[4..5] = base point (C_1) — bind to the just-verified
                 // on-chain ciphertext.
-                || publicInputs[5] != c1x
-                || publicInputs[6] != c1y
+                || publicInputs[4] != c1x
+                || publicInputs[5] != c1y
                 || storedScHash == bytes32(0)
-                || _hash2(publicInputs[7], publicInputs[8]) != storedScHash
+                || _hash2(publicInputs[6], publicInputs[7]) != storedScHash
         ) revert InvalidProofInput();
-        if (deltaHash != keccak256(abi.encodePacked(publicInputs[9], publicInputs[10]))) revert InvalidProofInput();
+        if (deltaHash != keccak256(abi.encodePacked(publicInputs[8], publicInputs[9]))) revert InvalidProofInput();
         IZKVerifier(PARTIAL_DECRYPT_VERIFIER).verifyProof(proof, input);
 
         // Persist the δ commitment as a single 32-byte hash plus a bitmap bit.
@@ -870,63 +869,55 @@ contract DKGManager is IDKGManager {
 
         emit PartialDecryptionSubmitted(
             epochId, aid, msg.sender, participantIndex, ciphertextIndex,
-            publicInputs[9], publicInputs[10]
+            publicInputs[8], publicInputs[9]
         );
     }
 
-    /// @notice Submit a ciphertext to be threshold-decrypted by the committee.
+    /// @notice Submit a ciphertext to be threshold-decrypted by the committee
+    ///         under the application key `PK_aid = PK_ep + PK_org`.
     /// @dev    The index is assigned on chain per (epoch, aid), so a caller
     ///         cannot squat on or front-run a specific slot. The stored value is
     ///         `keccak256(c1x, c1y, c2x, c2y)`, which binds the partial and
-    ///         combine proofs to this exact ciphertext. The Schnorr proof of
-    ///         knowledge of r is only emitted: committee nodes verify it before
-    ///         releasing δ_i = d_i·C1, which is what stops a C1 taken from
-    ///         another application from being decrypted here as an oracle.
-    ///         Per-application policy is enforced by the app manager; the
-    ///         aid = 0 epoch-key path is open.
+    ///         combine proofs to this exact ciphertext.
+    ///
+    ///         There is no proof of knowledge of the randomness `r`: the
+    ///         submitter of a homomorphically aggregated ciphertext cannot
+    ///         know it. Cross-application replay is instead prevented by the
+    ///         per-application organizer key — decrypting a copied `C_1`
+    ///         under another application only ever yields `sk_ep·C_1`, which
+    ///         is useless without that application's `sk_org·C_1`.
+    ///
+    ///         `aid` must name an application registered on the sibling app
+    ///         manager, which also enforces the per-application submission
+    ///         policy (authorized submitter, block window, ciphertext cap).
     function submitCiphertext(
         bytes12 epochId,
         bytes32 aid,
         uint256 c1x,
         uint256 c1y,
         uint256 c2x,
-        uint256 c2y,
-        uint256 pokAx,
-        uint256 pokAy,
-        uint256 pokZ
+        uint256 c2y
     ) external returns (uint16 ciphertextIndex) {
         Epoch storage epoch = epochs[epochId];
         if (epoch.organizer == address(0)) revert InvalidEpoch();
         if (epoch.status != DKGTypes.EpochPhase.Live) revert InvalidPhase();
 
         // Well-formedness: coords must be canonical (< Q), on-curve and
-        // non-identity; C1 must additionally lie in the prime-order subgroup
-        // (a cofactor component would leak d_i mod 8 through every partial)
-        // and the submitter must prove knowledge of r with C1 = r·G, which
-        // closes the cross-application partial-decryption oracle. Nodes
-        // repeat both checks before they multiply a share into C1.
+        // non-identity. Prime-subgroup membership of C_1 is NOT checked here
+        // — see `_requireValidEncryptionPoint`.
         _requireValidEncryptionPoint(c1x, c1y);
         _requireValidEncryptionPoint(c2x, c2y);
-        if (!BabyJubJub.isInPrimeSubgroup(c1x, c1y)) revert InvalidCiphertext();
-        if (!BabyJubJub.isOnCurve(pokAx, pokAy)) revert InvalidCiphertextProof();
-        {
-            uint256 c = uint256(keccak256(abi.encodePacked(
-                DKGProtocol.DOMAIN_CIPHERTEXT_POK_V1, epochId, aid, c1x, c1y, c2x, c2y, pokAx, pokAy
-            ))) % BabyJubJub.SUBGROUP_ORDER;
-            if (!BabyJubJub.verifySchnorrEquation(pokZ, c, pokAx, pokAy, c1x, c1y)) revert InvalidCiphertextProof();
-        }
 
         ciphertextIndex = ciphertextCounts[epochId][aid] + 1;
         if (ciphertextIndex > MAX_CIPHERTEXT_INDEX) revert DecryptionLimitReached();
-        if (aid != bytes32(0)) {
-            if (!_appManagerSet) revert AppManagerNotSet();
-            IDKGAppManager(appManager).requireCanSubmitCiphertext(epochId, aid, ciphertextIndex, msg.sender);
-        }
+        if (!_appManagerSet) revert AppManagerNotSet();
+        // Reverts InvalidApplication for an unregistered (or zero) aid.
+        IDKGAppManager(appManager).requireCanSubmitCiphertext(epochId, aid, ciphertextIndex, msg.sender);
         ciphertextCounts[epochId][aid] = ciphertextIndex;
         _ciphertexts[epochId][aid][ciphertextIndex] = _hash4(c1x, c1y, c2x, c2y);
         unchecked { epoch.ciphertextCount += 1; }
 
-        emit CiphertextSubmitted(epochId, aid, ciphertextIndex, msg.sender, c1x, c1y, c2x, c2y, pokAx, pokAy, pokZ);
+        emit CiphertextSubmitted(epochId, aid, ciphertextIndex, msg.sender, c1x, c1y, c2x, c2y);
     }
 
     /// @dev Validate that (x, y) is a canonical, on-curve, non-identity point
@@ -963,15 +954,16 @@ contract DKGManager is IDKGManager {
     ///         The proof's ciphertext public inputs are bound to the stored
     ///         ciphertext hash; a combiner cannot substitute a different ct.
     /// @notice Per-application combine. The `aid` parameter selects the
-    ///         application registered against `epochId`; if the app exists
-    ///         in mode 1 (organizer co-decryption), the previously stored
-    ///         `Δ_org` is supplied to the verifier as the correction point;
-    ///         in mode 0, the stored derivation tag `S` is supplied.
-    /// @dev    Public-input layout (13 fields): eid, aid, ctIdx, mode, S,
-    ///         deltaOrgX, deltaOrgY, threshold, shareCount, combineHash,
-    ///         plaintextHash, challenge, transcriptCommitment. Matches the
-    ///         circuit definition in `circuits/decryptcombine/circuit.go`
-    ///         per paper §5.5 lines 1051–1077.
+    ///         application registered against `epochId`; the organizer's
+    ///         share `Δ = sk_org·C_1` enters as public inputs 3/4 and is
+    ///         bound to the hash stored by
+    ///         `DKGAppManager.submitOrganizerShare`. The combine circuit
+    ///         verifies the organizer's Chaum–Pedersen DLEQ against the
+    ///         challenge `e` this contract recomputes from the transcript.
+    /// @dev    Public-input layout (11 fields): eid, aid, ctIdx, Δ.x, Δ.y,
+    ///         threshold, shareCount, combineHash, plaintext, challenge,
+    ///         transcriptCommitment. Matches the circuit definition in
+    ///         `circuits/decryptcombine/circuit.go`.
     function combineDecryption(
         bytes12 epochId,
         bytes32 aid,
@@ -1010,12 +1002,14 @@ contract DKGManager is IDKGManager {
         emit DecryptionCombined(epochId, aid, ciphertextIndex, combineHash, plaintext);
     }
 
-    /// @dev Resolves application correction (mode 0 / mode 1), validates the
-    /// public-input layout against eid/aid/ctIdx/mode/S/Δ_org/threshold/
-    /// combineHash/plaintext/challenge, range-checks shareCount, binds the
-    /// transcript's first 128 bytes to the stored ciphertext hash, and verifies
-    /// the BRLC commitment over the full transcript region. Split out of
-    /// combineDecryption to keep the parent's stack within Yul's depth limit.
+    /// @dev Validates the 11-word public-input vector against
+    /// eid/aid/ctIdx/threshold/combineHash/plaintext/challenge, range-checks
+    /// shareCount, binds the transcript's first 128 bytes to the stored
+    /// ciphertext hash, binds the organizer words to the registered `PK_org`
+    /// and the stored organizer-share hash, recomputes the DLEQ challenge `e`,
+    /// and verifies the BRLC commitment over the full transcript region. Split
+    /// out of combineDecryption to keep the parent's stack within Yul's depth
+    /// limit.
     function _validateAndPostCombine(
         bytes12 epochId,
         bytes32 aid,
@@ -1027,50 +1021,90 @@ contract DKGManager is IDKGManager {
         bytes calldata transcript,
         bytes32 storedCtHash
     ) internal view returns (uint256 shareCount) {
-        // Resolve the application's per-app correction. aid == 0 is the
-        // legacy per-epoch combine path: mode = 0, S = 0, Δ_org = identity.
-        uint8 mode = uint8(DKGProtocol.MODE_PUBLIC_DERIVATION);
-        uint256 derivationS;
-        DKGTypes.Point memory deltaOrg = DKGTypes.Point({x: 0, y: 1});
-        if (aid != bytes32(0)) {
-            if (!_appManagerSet) revert AppManagerNotSet();
-            (uint8 m, uint256 s, uint256 dx, uint256 dy) =
-                IDKGAppManager(appManager).getCombineCorrection(epochId, aid, ciphertextIndex);
-            mode = m;
-            derivationS = s;
-            deltaOrg = DKGTypes.Point({x: dx, y: dy});
-        }
-
-        uint256[13] memory publicInputs = abi.decode(input, (uint256[13]));
+        // Layout (11 words): [eid, aid, ctIdx, Δ.x, Δ.y, threshold,
+        // shareCount, combineHash, plaintext, challenge, transcriptCommitment].
+        uint256[11] memory publicInputs = abi.decode(input, (uint256[11]));
         if (
             publicInputs[0] != _epochScalar(epochId)
                 || publicInputs[1] != uint256(aid)
                 || publicInputs[2] != uint256(ciphertextIndex)
-                || publicInputs[3] != uint256(mode)
-                || publicInputs[4] != derivationS
-                || publicInputs[5] != deltaOrg.x
-                || publicInputs[6] != deltaOrg.y
-                || publicInputs[7] != epoch.policy.threshold
-                || bytes32(publicInputs[9]) != combineHash
-                || publicInputs[10] != plaintext
+                || publicInputs[5] != epoch.policy.threshold
+                || bytes32(publicInputs[7]) != combineHash
+                || publicInputs[8] != plaintext
         ) revert InvalidProofInput();
-        if (publicInputs[8] < epoch.policy.threshold) revert InvalidProofInput();
-        if (publicInputs[8] > MAX_N) revert InvalidProofInput();
+        if (publicInputs[6] < epoch.policy.threshold) revert InvalidProofInput();
+        if (publicInputs[6] > MAX_N) revert InvalidProofInput();
         if (transcript.length != COMBINE_TRANSCRIPT_WORDS * 32) revert InvalidProofInput();
+        if (keccak256(transcript[0:128]) != storedCtHash) revert InvalidProofInput();
+        _verifyOrganizerWords(epochId, aid, ciphertextIndex, publicInputs[3], publicInputs[4], transcript);
         // Fiat–Shamir over the calldata (see submitContribution).
         uint256 challenge = BRLC.deriveChallenge(
             epochId,
             DECRYPT_COMBINE_TRANSCRIPT_DOMAIN,
             keccak256(abi.encodePacked(combineHash, bytes32(plaintext), keccak256(transcript)))
         );
-        if (publicInputs[11] != challenge) revert InvalidProofInput();
-        if (keccak256(transcript[0:128]) != storedCtHash) revert InvalidProofInput();
+        if (publicInputs[9] != challenge) revert InvalidProofInput();
         uint256 dOff;
         assembly { dOff := transcript.offset }
-        if (BRLC.commitCalldata(challenge, dOff, COMBINE_TRANSCRIPT_WORDS) != publicInputs[12]) revert InvalidProofInput();
-        return publicInputs[8];
+        if (BRLC.commitCalldata(challenge, dOff, COMBINE_TRANSCRIPT_WORDS) != publicInputs[10]) revert InvalidProofInput();
+        return publicInputs[6];
     }
 
+    /// @dev Binds the organizer section of the combine transcript
+    ///      (w[4..11] = PK_org ‖ A1 ‖ A2 ‖ z ‖ e) to on-chain state:
+    ///
+    ///        - `w[4..5]` must be the application's registered `PK_org`, so a
+    ///          combiner cannot swap in an organizer key it controls;
+    ///        - `keccak(Δ ‖ A1 ‖ A2 ‖ z)` must equal the hash stored by
+    ///          `DKGAppManager.submitOrganizerShare`, so the DLEQ the circuit
+    ///          verifies is the one the organizer published for this
+    ///          (eid, aid, ctIdx);
+    ///        - `w[11]` must be the Chaum–Pedersen challenge recomputed here
+    ///          (keccak over the domain and every point of the statement),
+    ///          which is what turns the circuit's algebraic check into a
+    ///          sound Fiat–Shamir proof — the circuit consumes `e` as a
+    ///          witness and cannot hash keccak itself.
+    ///
+    ///      `Δ` itself arrives as public inputs 3/4 (the circuit uses it in
+    ///      `C_2 == m·G + Σ λ_k δ_k + Δ`), which is why it is passed in
+    ///      rather than read from the transcript.
+    function _verifyOrganizerWords(
+        bytes12 epochId,
+        bytes32 aid,
+        uint16 ciphertextIndex,
+        uint256 deltaX,
+        uint256 deltaY,
+        bytes calldata transcript
+    ) internal view {
+        if (!_appManagerSet) revert AppManagerNotSet();
+        // w[0..11]: C1.x C1.y C2.x C2.y PK_org.x PK_org.y A1.x A1.y A2.x A2.y z e
+        uint256[12] memory w;
+        assembly ("memory-safe") {
+            calldatacopy(w, transcript.offset, mul(COMBINE_HEAD_WORDS, 0x20))
+        }
+
+        DKGTypes.Point memory pkOrg = IDKGAppManager(appManager).getApplication(epochId, aid).organizerPK;
+        if (w[4] != pkOrg.x || w[5] != pkOrg.y) revert InvalidProofInput();
+
+        bytes32 shareHash = IDKGAppManager(appManager).getOrganizerShareHash(epochId, aid, ciphertextIndex);
+        if (shareHash == bytes32(0)) revert OrganizerShareMissing();
+        if (
+            keccak256(abi.encodePacked(deltaX, deltaY, w[6], w[7], w[8], w[9], w[10])) != shareHash
+        ) revert InvalidProofInput();
+
+        uint256 e = uint256(keccak256(abi.encodePacked(
+            DKGProtocol.DOMAIN_ORGANIZER_SHARE_V1,
+            epochId,
+            aid,
+            uint256(ciphertextIndex),
+            w[4], w[5],   // PK_org
+            w[0], w[1],   // C_1
+            deltaX, deltaY,
+            w[6], w[7],   // A1
+            w[8], w[9]    // A2
+        ))) % BabyJubJub.SUBGROUP_ORDER;
+        if (w[11] != e) revert InvalidProofInput();
+    }
 
     /// @notice Record that an epoch is dead. Permissionless, and only possible
     ///         once the epoch provably cannot progress: the committee did not

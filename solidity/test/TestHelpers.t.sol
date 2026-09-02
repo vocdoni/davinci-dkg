@@ -3,43 +3,146 @@ pragma solidity 0.8.28;
 
 import {IZKVerifier} from "../src/interfaces/IZKVerifier.sol";
 import {BRLC} from "../src/libraries/BRLC.sol";
-import {DKGTypes} from "../src/libraries/DKGTypes.sol";
-import {MAX_N} from "../src/libraries/Sizes.sol";
+import {MAX_N, COMBINE_TRANSCRIPT_WORDS} from "../src/libraries/Sizes.sol";
 import {BabyJubJub} from "../src/libraries/BabyJubJub.sol";
 import {DKGProtocol} from "../src/libraries/DKGProtocol.sol";
 import {TestInputs} from "./TestInputs.t.sol";
 
 abstract contract TestHelpers is TestInputs {
-    /// @dev Schnorr proof of knowledge of the randomness r of the canonical test
-    ///      ciphertext (TEST_CT_C1 = 1·G, so r = 1), bound to (epochId, aid).
-    function testCiphertextPoK(bytes12 epochId, bytes32 aid) internal view returns (uint256 ax, uint256 ay, uint256 z) {
-        return ciphertextPoK(epochId, aid, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y, 1);
-    }
-
-    function ciphertextPoK(
-        bytes12 epochId, bytes32 aid, uint256 c1x, uint256 c1y, uint256 c2x, uint256 c2y, uint256 r
-    ) internal view returns (uint256 ax, uint256 ay, uint256 z) {
-        uint256 w = 7;
-        (ax, ay) = BabyJubJub.scalarMulBase(w);
-        uint256 c = uint256(keccak256(abi.encodePacked(
-            DKGProtocol.DOMAIN_CIPHERTEXT_POK_V1, epochId, aid, c1x, c1y, c2x, c2y, ax, ay
-        ))) % BabyJubJub.SUBGROUP_ORDER;
-        z = addmod(w, mulmod(c, r, BabyJubJub.SUBGROUP_ORDER), BabyJubJub.SUBGROUP_ORDER);
-    }
-
-    /// @dev All-zero decryption policy: owner-only disabled, no time locks,
-    /// no submission cap. Used by tests that don't care about submission gating.
-
-    /// @dev Canonical on-curve ciphertext used by the ZK-mock tests. Both c1
-    /// and c2 must be in the prime-order subgroup of BabyJubJub (gnark RTE
-    /// form) — the DKGManager's `_requireValidEncryptionPoint` enforces this
-    /// at submitCiphertext time. Identity (0, 1) is not acceptable.
+    /// @dev Canonical on-curve ciphertext used by the ZK-mock tests.
     ///   c1 = 1·G  (the gnark RTE generator)
     ///   c2 = 4096·G (the SCHNORR_THIS vector's pubkey, secret = 0x1000)
     uint256 internal constant TEST_CT_C1X = 9671717474070082183213120605117400219616337014328744928644933853176787189663;
     uint256 internal constant TEST_CT_C1Y = 16950150798460657717958625567821834550301663161624707787222815936182638968203;
     uint256 internal constant TEST_CT_C2X = 17765672829315743641357949553430354448961270408100494783209553303687184365803;
     uint256 internal constant TEST_CT_C2Y = 13591243454297365848719372676992908085762757043204242277513940025707896351954;
+
+    /// @dev Organizer secret of every application the tests register. Every
+    ///      organizer artefact (registration PoP, decryption share, DLEQ) is
+    ///      derived from it on the fly with `BabyJubJub`, so the fixtures stay
+    ///      valid for the freshly-minted epoch ids the lottery hands out.
+    uint256 internal constant TEST_ORG_SK = 12345;
+    /// @dev Fixed nonces: the tests never need unpredictability, only
+    ///      reproducibility.
+    uint256 internal constant TEST_ORG_POP_NONCE = 67890;
+    uint256 internal constant TEST_ORG_SHARE_NONCE = 424242;
+
+    /// @notice The organizer's Chaum–Pedersen share of one ciphertext:
+    ///         Δ = sk_org·C_1 with the DLEQ (A1 = w·G, A2 = w·C_1, z), plus
+    ///         the challenge `e` the contract recomputes.
+    struct OrgShare {
+        uint256 deltaX;
+        uint256 deltaY;
+        uint256 a1x;
+        uint256 a1y;
+        uint256 a2x;
+        uint256 a2y;
+        uint256 z;
+        uint256 e;
+    }
+
+    /// @notice Everything `combineDecryption` needs for one ciphertext.
+    struct CombineFixture {
+        bytes12 epochId;
+        bytes32 aid;
+        uint16 ctIdx;
+        uint16 threshold;
+        uint16 shareCount;
+        bytes32 combineHash;
+        uint256 plaintext;
+        uint256 pkOrgX;
+        uint256 pkOrgY;
+        OrgShare share;
+    }
+
+    function testOrganizerPK() internal view returns (uint256 x, uint256 y) {
+        return BabyJubJub.scalarMulBase(TEST_ORG_SK);
+    }
+
+    /// @dev Schnorr proof of possession of `sk_org` bound to (epochId, aid),
+    ///      exactly as `DKGAppManager._organizerSchnorrChallenge` recomputes it.
+    function organizerPoP(bytes12 epochId, bytes32 aid)
+        internal
+        view
+        returns (uint256 pkx, uint256 pky, uint256 ax, uint256 ay, uint256 z)
+    {
+        (pkx, pky) = testOrganizerPK();
+        (ax, ay) = BabyJubJub.scalarMulBase(TEST_ORG_POP_NONCE);
+        uint256 c = uint256(keccak256(abi.encodePacked(
+            DKGProtocol.DOMAIN_ORGANIZER_REGISTER_V1, epochId, aid, pkx, pky, ax, ay
+        ))) % BabyJubJub.SUBGROUP_ORDER;
+        z = addmod(
+            TEST_ORG_POP_NONCE,
+            mulmod(c, TEST_ORG_SK, BabyJubJub.SUBGROUP_ORDER),
+            BabyJubJub.SUBGROUP_ORDER
+        );
+    }
+
+    /// @dev Organizer decryption share of the canonical test ciphertext,
+    ///      with the keccak challenge of protocol §3:
+    ///
+    ///        e = keccak(DOMAIN ‖ eid ‖ aid ‖ ctIdx ‖ PK_org ‖ C_1 ‖ Δ ‖ A1 ‖ A2) mod L
+    ///        z = w + e·sk_org mod L
+    function organizerShare(bytes12 epochId, bytes32 aid, uint16 ctIdx, uint256 c1x, uint256 c1y)
+        internal
+        view
+        returns (OrgShare memory s)
+    {
+        (uint256 pkx, uint256 pky) = testOrganizerPK();
+        (s.deltaX, s.deltaY) = BabyJubJub.scalarMul(TEST_ORG_SK, c1x, c1y);
+        (s.a1x, s.a1y) = BabyJubJub.scalarMulBase(TEST_ORG_SHARE_NONCE);
+        (s.a2x, s.a2y) = BabyJubJub.scalarMul(TEST_ORG_SHARE_NONCE, c1x, c1y);
+        s.e = uint256(keccak256(abi.encodePacked(
+            DKGProtocol.DOMAIN_ORGANIZER_SHARE_V1,
+            epochId,
+            aid,
+            uint256(ctIdx),
+            pkx, pky,
+            c1x, c1y,
+            s.deltaX, s.deltaY,
+            s.a1x, s.a1y,
+            s.a2x, s.a2y
+        ))) % BabyJubJub.SUBGROUP_ORDER;
+        s.z = addmod(
+            TEST_ORG_SHARE_NONCE,
+            mulmod(s.e, TEST_ORG_SK, BabyJubJub.SUBGROUP_ORDER),
+            BabyJubJub.SUBGROUP_ORDER
+        );
+    }
+
+    /// @dev Organizer share of the canonical test ciphertext (c1 = 1·G).
+    function testOrganizerShare(bytes12 epochId, bytes32 aid, uint16 ctIdx)
+        internal
+        view
+        returns (OrgShare memory)
+    {
+        return organizerShare(epochId, aid, ctIdx, TEST_CT_C1X, TEST_CT_C1Y);
+    }
+
+    /// @dev The combine fixture for the canonical test ciphertext.
+    function combineFixture(
+        bytes12 epochId,
+        bytes32 aid,
+        uint16 ctIdx,
+        uint16 threshold,
+        uint16 shareCount,
+        bytes32 combineHash,
+        uint256 plaintext
+    ) internal view returns (CombineFixture memory f) {
+        (uint256 pkx, uint256 pky) = testOrganizerPK();
+        f = CombineFixture({
+            epochId: epochId,
+            aid: aid,
+            ctIdx: ctIdx,
+            threshold: threshold,
+            shareCount: shareCount,
+            combineHash: combineHash,
+            plaintext: plaintext,
+            pkOrgX: pkx,
+            pkOrgY: pky,
+            share: testOrganizerShare(epochId, aid, ctIdx)
+        });
+    }
 
     bytes32 internal constant CONTRIBUTION_TRANSCRIPT_DOMAIN = keccak256("davinci-dkg:contribution:v1");
     bytes32 internal constant DECRYPT_COMBINE_TRANSCRIPT_DOMAIN = keccak256("davinci-dkg:decrypt-combine:v1");
@@ -162,40 +265,38 @@ abstract contract TestHelpers is TestInputs {
         return abi.encode([uint256(11), 12, 13, 14, 15, 16, 17, 18]);
     }
 
-    /// partialdecrypt layout (16 public inputs):
-    ///   [0] eid, [1] aid, [2] ctIdx, [3] role, [4] participantIndex,
-    ///   [5..6] C1.x/y, [7..8] D_i.x/y, [9..10] delta.x/y,
-    ///   [11..12] A1.x/y, [13..14] A2.x/y, [15] response.
-    /// Tests pass aid=0 (legacy path) and role=COMMITTEE=1.
+    /// partialdecrypt layout (15 public inputs):
+    ///   [0] eid, [1] aid, [2] ctIdx, [3] participantIndex,
+    ///   [4..5] C1.x/y, [6..7] D_i.x/y, [8..9] delta.x/y,
+    ///   [10..11] A1.x/y, [12..13] A2.x/y, [14] response.
     /// 3-arg overload defaults ciphertextIndex to 1 for the most common case.
-    function partialDecryptionInput(bytes12 epochId, uint16 participantIndex, bytes32 unused)
+    function partialDecryptionInput(bytes12 epochId, bytes32 aid, uint16 participantIndex)
         internal
         pure
         returns (bytes memory)
     {
-        return partialDecryptionInputCt(epochId, participantIndex, 1, unused);
+        return partialDecryptionInputCt(epochId, aid, participantIndex, 1);
     }
 
     function partialDecryptionInputCt(
         bytes12 epochId,
+        bytes32 aid,
         uint16 participantIndex,
-        uint16 ciphertextIndex,
-        bytes32
+        uint16 ciphertextIndex
     ) internal pure returns (bytes memory) {
-        uint256[16] memory inputs;
+        uint256[15] memory inputs;
         inputs[0] = uint256(uint96(epochId));
-        inputs[1] = 0;                          // aid (legacy)
+        inputs[1] = uint256(aid);
         inputs[2] = ciphertextIndex;
-        inputs[3] = 1;                          // role = COMMITTEE
-        inputs[4] = participantIndex;
-        // pi[5..6] = C1, must match the test ciphertext fixture so
+        inputs[3] = participantIndex;
+        // pi[4..5] = C1, must match the test ciphertext fixture so
         // submitPartialDecryption's ciphertext binding accepts.
-        inputs[5] = TEST_CT_C1X;
-        inputs[6] = TEST_CT_C1Y;
-        inputs[7] = 1000 + participantIndex;    // D_i.x
-        inputs[8] = 2000 + participantIndex;    // D_i.y
-        inputs[9] = 7000 + participantIndex;    // delta.x
-        inputs[10] = 8000 + participantIndex;   // delta.y
+        inputs[4] = TEST_CT_C1X;
+        inputs[5] = TEST_CT_C1Y;
+        inputs[6] = 1000 + participantIndex;    // D_i.x
+        inputs[7] = 2000 + participantIndex;    // D_i.y
+        inputs[8] = 7000 + participantIndex;    // delta.x
+        inputs[9] = 8000 + participantIndex;    // delta.y
         return abi.encode(inputs);
     }
 
@@ -364,104 +465,80 @@ abstract contract TestHelpers is TestInputs {
         return abi.encode([uint256(31), 32, 33, 34, 35, 36, 37, 38]);
     }
 
-    /// @dev 13-element layout matching the P5/P6 combine circuit and verifier:
-    ///      eid, aid, ctIdx, mode, S, deltaOrgX, deltaOrgY, threshold,
-    ///      shareCount, combineHash, plaintextHash, challenge, transcriptCommitment.
-    ///      For the legacy per-epoch tests we pass aid=0, ctIdx=0, mode=0, S=0,
-    ///      deltaOrg=identity (matching the contract's legacy combine path).
-    function decryptCombineInput(
-        bytes12 epochId,
-        uint16 threshold,
-        uint16 shareCount,
-        bytes32 combineHash,
-        uint256 plaintext
-    ) internal pure returns (bytes memory) {
-        // Test fixture default: legacy combine path with aid=0, ctIdx=1 (the
-        // only ciphertext used in DKGManagerTest). Matches the contract's
-        // expectations for `combineDecryption(epoch, bytes32(0), 1, ...)`.
-        return decryptCombineInputFull(
-            epochId, bytes32(0), 1, 0, 0,
-            0, 1,
-            threshold, shareCount, combineHash, plaintext
-        );
+    /// @dev The 12 + 3N transcript words of `combineDecryption`, in the exact
+    ///      order the contract reads them out of calldata:
+    ///        w[0..3]   C1.x C1.y C2.x C2.y
+    ///        w[4..5]   PK_org.x PK_org.y
+    ///        w[6..7]   A1.x A1.y
+    ///        w[8..9]   A2.x A2.y
+    ///        w[10]     z          w[11] e
+    ///        w[12 .. 12+N)        participant indexes (0 when inactive)
+    ///        w[12+N .. 12+3N)     partial decryptions (identity when inactive)
+    function combineWords(CombineFixture memory f) internal pure returns (uint256[] memory v) {
+        v = new uint256[](COMBINE_TRANSCRIPT_WORDS);
+        v[0] = TEST_CT_C1X;
+        v[1] = TEST_CT_C1Y;
+        v[2] = TEST_CT_C2X;
+        v[3] = TEST_CT_C2Y;
+        v[4] = f.pkOrgX;
+        v[5] = f.pkOrgY;
+        v[6] = f.share.a1x;
+        v[7] = f.share.a1y;
+        v[8] = f.share.a2x;
+        v[9] = f.share.a2y;
+        v[10] = f.share.z;
+        v[11] = f.share.e;
+        uint256 partialBase = 12 + MAX_N;
+        for (uint256 i = 0; i < MAX_N; i++) {
+            v[partialBase + i * 2 + 1] = 1; // identity padding
+        }
+        for (uint256 i = 0; i < f.shareCount; i++) {
+            v[12 + i] = i + 1;
+            v[partialBase + i * 2] = 7000 + i + 1;
+            v[partialBase + i * 2 + 1] = 8000 + i + 1;
+        }
     }
 
-    function decryptCombineInputFull(
-        bytes12 epochId,
-        bytes32 aid,
-        uint16 ctIdx,
-        uint8 mode,
-        uint256 derivationS,
-        uint256 deltaOrgX,
-        uint256 deltaOrgY,
-        uint16 threshold,
-        uint16 shareCount,
-        bytes32 combineHash,
-        uint256 plaintext
-    ) internal pure returns (bytes memory) {
+    function combineTranscript(CombineFixture memory f) internal pure returns (bytes memory) {
+        return abi.encodePacked(combineWords(f));
+    }
+
+    /// @dev 11-element public-input vector matching the combine circuit and
+    ///      verifier: eid, aid, ctIdx, Δ.x, Δ.y, threshold, shareCount,
+    ///      combineHash, plaintext, challenge, transcriptCommitment.
+    function combineInput(CombineFixture memory f) internal pure returns (bytes memory) {
+        return combineInputForWords(f, combineWords(f));
+    }
+
+    /// @dev Same, but over an arbitrary (possibly tampered) word vector, so a
+    ///      test can hand the contract a transcript whose ρ and BRLC
+    ///      commitment are internally consistent and still see the on-chain
+    ///      bindings reject it.
+    function combineInputForWords(CombineFixture memory f, uint256[] memory words)
+        internal
+        pure
+        returns (bytes memory)
+    {
         uint256 challenge = BRLC.deriveChallenge(
-            epochId,
+            f.epochId,
             DECRYPT_COMBINE_TRANSCRIPT_DOMAIN,
-            keccak256(abi.encodePacked(combineHash, bytes32(plaintext), keccak256(decryptCombineTranscript(shareCount))))
+            keccak256(abi.encodePacked(
+                f.combineHash, bytes32(f.plaintext), keccak256(abi.encodePacked(words))
+            ))
         );
-        uint256[13] memory v;
-        v[0] = uint256(uint96(epochId));
-        v[1] = uint256(aid);
-        v[2] = uint256(ctIdx);
-        v[3] = uint256(mode);
-        v[4] = derivationS;
-        v[5] = deltaOrgX;
-        v[6] = deltaOrgY;
-        v[7] = uint256(threshold);
-        v[8] = uint256(shareCount);
-        v[9] = uint256(combineHash);
-        v[10] = plaintext;
-        v[11] = challenge;
-        v[12] = decryptCombineTranscriptCommitment(challenge, shareCount);
+        uint256[11] memory v;
+        v[0] = uint256(uint96(f.epochId));
+        v[1] = uint256(f.aid);
+        v[2] = uint256(f.ctIdx);
+        v[3] = f.share.deltaX;
+        v[4] = f.share.deltaY;
+        v[5] = uint256(f.threshold);
+        v[6] = uint256(f.shareCount);
+        v[7] = uint256(f.combineHash);
+        v[8] = f.plaintext;
+        v[9] = challenge;
+        v[10] = BRLC.commit(challenge, words);
         return abi.encode(v);
-    }
-
-    function decryptCombineTranscript(uint16 shareCount) internal pure returns (bytes memory) {
-        uint256[4] memory ciphertext;
-        uint256[MAX_N] memory participantIndexes;
-        uint256[2 * MAX_N] memory partialDecryptions;
-        ciphertext[0] = TEST_CT_C1X;
-        ciphertext[1] = TEST_CT_C1Y;
-        ciphertext[2] = TEST_CT_C2X;
-        ciphertext[3] = TEST_CT_C2Y;
-        for (uint256 i = 0; i < MAX_N; i++) {
-            partialDecryptions[i * 2 + 1] = 1;
-        }
-        for (uint256 i = 0; i < shareCount; i++) {
-            participantIndexes[i] = i + 1;
-            partialDecryptions[i * 2] = 7000 + i + 1;
-            partialDecryptions[i * 2 + 1] = 8000 + i + 1;
-        }
-        return abi.encode(ciphertext, participantIndexes, partialDecryptions);
-    }
-
-    function decryptCombineTranscriptCommitment(uint256 challenge, uint16 shareCount) internal pure returns (uint256) {
-        // Layout (4+3N words): [0..4) ciphertext, [4..4+N) participantIndexes,
-        //                      [4+N..4+3N) partialDecryptions.
-        uint256[] memory values = new uint256[](4 + 3 * MAX_N);
-        values[0] = TEST_CT_C1X;
-        values[1] = TEST_CT_C1Y;
-        values[2] = TEST_CT_C2X;
-        values[3] = TEST_CT_C2Y;
-        uint256 partialBase = 4 + MAX_N; // partialDecryptions start
-        for (uint256 i = 0; i < MAX_N; i++) {
-            values[partialBase + i * 2 + 1] = 1; // y pad
-        }
-        uint256 cursor = 4;
-        for (uint256 i = 0; i < shareCount; i++) {
-            values[cursor++] = i + 1;
-        }
-        cursor = partialBase;
-        for (uint256 i = 0; i < shareCount; i++) {
-            values[cursor++] = 7000 + i + 1;
-            values[cursor++] = 8000 + i + 1;
-        }
-        return BRLC.commit(challenge, values);
     }
 
 }

@@ -53,10 +53,7 @@ interface IDKGManager {
         uint256 c1x,
         uint256 c1y,
         uint256 c2x,
-        uint256 c2y,
-        uint256 pokAx,
-        uint256 pokAy,
-        uint256 pokZ
+        uint256 c2y
     );
     event DecryptionCombined(
         bytes12 indexed epochId, bytes32 indexed aid, uint16 indexed ciphertextIndex, bytes32 combineHash, uint256 plaintext
@@ -96,7 +93,9 @@ interface IDKGManager {
     error CiphertextAlreadySubmitted();
     error CiphertextNotSubmitted();
     error InvalidCiphertext();
-    error InvalidCiphertextProof();
+    /// @dev combineDecryption was called for a ciphertext whose organizer
+    ///      share has not been published yet.
+    error OrganizerShareMissing();
 
     /// @notice Create a new epoch. All phase deadlines are derived from
     ///         `EPOCH_DURATION_BLOCKS` (immutable, set at deploy) and the
@@ -118,23 +117,21 @@ interface IDKGManager {
     function epochDurationBlocks() external view returns (uint256);
 
     function claimSlot(bytes12 epochId) external;
-    /// @notice Submit a ciphertext for threshold decryption. The index is
+    /// @notice Submit a ciphertext for threshold decryption under the
+    ///         application key `PK_aid = PK_ep + PK_org`. The index is
     ///         assigned on chain (1, 2, … per application) and returned.
-    ///         `pok*` is a Schnorr proof of knowledge of the randomness r
-    ///         (C1 = r·G) over DOMAIN_CIPHERTEXT_POK_V1. The contract verifies
-    ///         it and the prime-subgroup membership of C1 (InvalidCiphertextProof
-    ///         / InvalidCiphertext); committee nodes repeat both checks before
-    ///         releasing a partial decryption. The proof is emitted, not stored.
+    ///         `aid` must name a registered application whose policy admits
+    ///         `msg.sender`. Coordinates must be canonical, on-curve and
+    ///         non-identity; prime-subgroup membership of C1 is checked off
+    ///         chain by the committee nodes before they release a partial
+    ///         decryption.
     function submitCiphertext(
         bytes12 epochId,
         bytes32 aid,
         uint256 c1x,
         uint256 c1y,
         uint256 c2x,
-        uint256 c2y,
-        uint256 pokAx,
-        uint256 pokAy,
-        uint256 pokZ
+        uint256 c2y
     ) external returns (uint16 ciphertextIndex);
     function submitContribution(
         bytes12 epochId,

@@ -12,39 +12,8 @@ pragma solidity 0.8.28;
 ///           - `internal/protocol/protocol.go`        (Go node)
 ///           - `sdk/src/protocol.ts`                  (TypeScript SDK)
 ///
-/// @dev    Two modes everywhere, shared role tags, and per-transcript
-///         domain prefixes for cross-protocol replay safety.
+/// @dev    Per-transcript domain prefixes for cross-protocol replay safety.
 library DKGProtocol {
-    // ─── Application registration modes ──────────────────────────────────────
-    //
-    // Selects how the per-application correction term `T` is produced and
-    // consumed by the combine circuit. The flag is stored on each
-    // Application record at registration time and supplied to
-    // `DecryptCombineVerifier` as a public input.
-    //
-    // mode = 0 (public derivation, paper §4.3):
-    //          PK_aid = PK_ep + S·G with S = Hash(eid || PK_ep || aid).
-    //          The contract stores S and the combine circuit computes
-    //          T = S·C_1 in-circuit (paper line 1088).
-    //
-    // mode = 1 (organizer co-decryption, paper §6):
-    //          PK_aid = PK_ep + PK_org. Decryption requires both the
-    //          committee threshold partial decryptions and the organizer's
-    //          Δ_org = sk_org · C_1 with a Chaum-Pedersen DLEQ. The
-    //          combine circuit consumes T = Δ_org as a public-input
-    //          curve point.
-    uint8 internal constant MODE_PUBLIC_DERIVATION = 0;
-    uint8 internal constant MODE_ORGANIZER_CODEC = 1;
-
-    // ─── DLEQ role tags ─────────────────────────────────────────────────────
-    //
-    // Public-input tag distinguishing committee and organizer Chaum-Pedersen
-    // proofs (paper §4.4 lines 695–704). Bound into the Fiat-Shamir transcript
-    // so a committee proof cannot be replayed as an organizer share or vice
-    // versa.
-    uint8 internal constant ROLE_COMMITTEE = 1;
-    uint8 internal constant ROLE_ORGANIZER = 2;
-
     // ─── Fiat-Shamir / Schnorr / DLEQ transcript domain prefixes ─────────────
     //
     // These are versioned `keccak256` digests of the canonical UTF-8 strings.
@@ -55,11 +24,16 @@ library DKGProtocol {
         keccak256("davinci-dkg:operator-register:v1");
     bytes32 internal constant DOMAIN_ORGANIZER_REGISTER_V1 =
         keccak256("davinci-dkg:organizer-register:v1");
-    /// @dev Schnorr proof of knowledge of a ciphertext's randomness r (C1 = r·G),
-    ///      checked off-chain by every committee node before it releases a
-    ///      partial decryption; stops a ciphertext's C1 from being re-submitted
-    ///      under another application as a decryption oracle.
-    bytes32 internal constant DOMAIN_CIPHERTEXT_POK_V1 = keccak256("davinci-dkg:ciphertext-pok:v1");
+    /// @dev Chaum–Pedersen challenge domain of the organizer's decryption
+    ///      share `Δ = sk_org · C_1`. The challenge is keccak (not Poseidon)
+    ///      so a browser-only organizer needs nothing but keccak and
+    ///      BabyJubJub arithmetic to produce it; `DKGManager.combineDecryption`
+    ///      recomputes it from calldata and the combine circuit consumes it
+    ///      from the transcript.
+    bytes32 internal constant DOMAIN_ORGANIZER_SHARE_V1 =
+        keccak256("davinci-dkg:organizer-share:v1");
+    /// @dev In-circuit Poseidon domain of the committee's partial-decryption
+    ///      DLEQ proofs.
     bytes32 internal constant DOMAIN_DLEQ_V1 =
         keccak256("davinci-dkg:dleq:v1");
 }

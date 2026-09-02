@@ -85,14 +85,11 @@ contract DeployAllScript is Script {
         registry.setManager(address(manager));
         console.log("DKGRegistry.setManager:", address(manager));
 
-        // Deploy the sibling app manager (per-application surface). It needs
-        // the manager address (cyclic dependency resolved by setAppManager
-        // afterwards) and the same partial-decrypt verifier the manager uses
-        // for the organizer DLEQ proof.
-        DKGAppManager appManager = new DKGAppManager(
-            address(manager),
-            address(partialDecryptVerifier)
-        );
+        // Deploy the sibling app manager (per-application surface). It only
+        // needs the manager address (cyclic dependency resolved by
+        // setAppManager afterwards); the organizer share is verified inside
+        // the combine circuit, so no verifier is wired here.
+        DKGAppManager appManager = new DKGAppManager(address(manager));
         console.log("DKGAppManager deployed at:", address(appManager));
 
         manager.setAppManager(address(appManager));

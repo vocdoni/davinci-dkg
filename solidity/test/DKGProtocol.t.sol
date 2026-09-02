@@ -11,16 +11,6 @@ import {DKGProtocol} from "../src/libraries/DKGProtocol.sol";
 ///         updating the vector is the canonical way to evolve the protocol —
 ///         all three layers (Solidity, Go, TS) MUST agree on every value.
 contract DKGProtocolTest is Test {
-    function test_AppMode_Constants() public pure {
-        assertEq(uint256(DKGProtocol.MODE_PUBLIC_DERIVATION), 0);
-        assertEq(uint256(DKGProtocol.MODE_ORGANIZER_CODEC), 1);
-    }
-
-    function test_Role_Constants() public pure {
-        assertEq(uint256(DKGProtocol.ROLE_COMMITTEE), 1);
-        assertEq(uint256(DKGProtocol.ROLE_ORGANIZER), 2);
-    }
-
     function test_DomainOperatorRegisterV1_MatchesGoVector() public pure {
         assertEq(
             uint256(DKGProtocol.DOMAIN_OPERATOR_REGISTER_V1),
@@ -42,10 +32,10 @@ contract DKGProtocolTest is Test {
         );
     }
 
-    function test_DomainCiphertextPoKV1_MatchesGoVector() public pure {
+    function test_DomainOrganizerShareV1_MatchesGoVector() public pure {
         assertEq(
-            uint256(DKGProtocol.DOMAIN_CIPHERTEXT_POK_V1),
-            uint256(0x459d6189bebb2c0081a105f25a158877a71c77d3d77dca6bdecd5711c0db6d37)
+            uint256(DKGProtocol.DOMAIN_ORGANIZER_SHARE_V1),
+            uint256(0x1608b6df1dd60f54655f6e7cf082d648cc3ca53756f1527d1f112085c2ddad2d)
         );
     }
 }

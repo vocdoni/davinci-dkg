@@ -6,6 +6,22 @@ pragma solidity 0.8.28;
 ///      and run `make circuits` to regenerate verifier wrappers and bindings.
 uint256 constant MAX_N = 32;
 
+// ─── Derived transcript sizes ────────────────────────────────────────────────
+//
+// Word count (1 word = 32 bytes) of the `combineDecryption` transcript:
+//
+//   w[0..3]    C1.x C1.y C2.x C2.y
+//   w[4..5]    PK_org.x PK_org.y
+//   w[6..7]    A1.x A1.y            (organizer Chaum-Pedersen nonce)
+//   w[8..9]    A2.x A2.y
+//   w[10]      z                    (organizer DLEQ response)
+//   w[11]      e                    (organizer DLEQ challenge, recomputed on chain)
+//   w[12 .. 12+N)        participant indexes x_k (0 in inactive slots)
+//   w[12+N .. 12+3N)     partial decryptions δ_k as (x, y) (identity when inactive)
+//
+// Must equal `len(decryptcombine.TranscriptScalars())` on the Go side.
+uint256 constant COMBINE_TRANSCRIPT_WORDS = 12 + 3 * MAX_N;
+
 // ─── Epoch scheduling ────────────────────────────────────────────────────────
 //
 // Every duration is expressed in BLOCKS (chain-agnostic). The wall-clock time

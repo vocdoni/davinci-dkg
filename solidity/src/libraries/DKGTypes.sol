@@ -57,49 +57,30 @@ library DKGTypes {
         uint256 plaintext;
     }
 
-    // ─── Application surface (paper §4.3) ───────────────────────────────────
+    // ─── Application surface ────────────────────────────────────────────────
     //
-    // An Application is registered against a finalized Epoch and obtains a
-    // unique encryption key derived from `PK_ep` plus a per-application
-    // correction term selected by `mode`. See `solidity/src/libraries/DKGProtocol.sol`
-    // for the canonical mode and role constants.
-
-    /// @notice Application registration mode.
-    /// @dev Values must match `DKGProtocol.MODE_*`. Stored as `uint8` rather
-    ///      than as an enum so the on-chain layout matches the value the
-    ///      combine circuit consumes as a `frontend.Variable`.
-    enum AppMode {
-        PublicDerivation, // = 0, see paper §4.3
-        OrganizerCoDec    // = 1, see paper §6
-    }
-
-    /// @notice DLEQ role for Chaum-Pedersen partial decryptions.
-    /// @dev Values 1 (committee) and 2 (organizer); see paper §4.4 / §6.3.
-    ///      The enum starts at None=0 so an uninitialized record cannot be
-    ///      mistaken for a valid committee proof.
-    enum Role {
-        None,      // = 0  (uninitialized)
-        Committee, // = 1
-        Organizer  // = 2
-    }
+    // An Application is registered against a Live Epoch by its organizer and
+    // obtains the encryption key `PK_aid = PK_ep + PK_org`. Decryption needs
+    // both the committee's threshold partial decryptions and the organizer's
+    // share `Δ = sk_org · C_1`.
 
     /// @notice Per-application access policy. Gates submitCiphertext with the same
     ///         semantics but is scoped per application rather than per epoch.
-    ///         All checks AND together; a zero-valued field is a no-op.
+    ///         All checks AND together; a zero-valued field is a no-op — except
+    ///         `authorizedSubmitter`, which is resolved to the registering
+    ///         address at registration time (there is no open submission).
     struct AppPolicy {
-        address authorizedSubmitter;  // 0 = open (anyone can submitCiphertext)
+        address authorizedSubmitter;  // resolved to the registrant when passed as 0
         uint16  maxCiphertexts;       // 0 = unlimited (capped by MAX_CIPHERTEXT_INDEX)
         uint64  notBeforeBlock;
         uint64  notAfterBlock;
     }
 
-    /// @notice On-chain application record. `aid` is keyed in the manager's
+    /// @notice On-chain application record. `aid` is keyed in the app manager's
     ///         per-epoch mapping; it is not duplicated here.
     struct Application {
-        address creator;       // who called registerApplication / registerApplicationCoDec
-        AppMode mode;          // 0 = public derivation; 1 = organizer co-decryption
-        uint256 derivationS;   // S = keccak256(eid || PK_ep || aid) % q  (mode 0 only; 0 in mode 1)
-        Point   organizerPK;   // PK_org (mode 1 only; identity in mode 0)
+        address creator;       // who called registerApplication
+        Point   organizerPK;   // PK_org, proven at registration
         AppPolicy policy;
         uint64  createdAtBlock;
         bool    exists;
@@ -112,13 +93,5 @@ library DKGTypes {
         address submitter;
         uint64  submittedAtBlock;
         bool    exists;
-    }
-
-    /// @notice Organizer's Δ_org submission (mode 1 only). Verified once via
-    ///         the DLEQ proof at submitOrganizerShare time, then consumed by
-    ///         combineDecryption as the correction point.
-    struct OrganizerShareRecord {
-        Point   deltaOrg;
-        bool    accepted;
     }
 }

@@ -9,17 +9,25 @@ interface IDKGAppManager {
         bytes12 indexed epochId,
         bytes32 indexed aid,
         address indexed creator,
-        uint8 mode,
-        uint256 derivationS,
         uint256 organizerPKx,
         uint256 organizerPKy
     );
+    /// @notice The organizer's decryption share `Δ = sk_org·C_1` for one
+    ///         ciphertext, together with its Chaum–Pedersen DLEQ `(A1, A2, z)`.
+    ///         The contract stores only `keccak256(Δ ‖ A1 ‖ A2 ‖ z)`; the words
+    ///         themselves are only available here, and the DLEQ is verified
+    ///         inside the combine SNARK (and off chain by the committee).
     event OrganizerShareSubmitted(
         bytes12 indexed epochId,
         bytes32 indexed aid,
         uint16 indexed ciphertextIndex,
-        uint256 deltaOrgX,
-        uint256 deltaOrgY
+        uint256 deltaX,
+        uint256 deltaY,
+        uint256 a1x,
+        uint256 a1y,
+        uint256 a2x,
+        uint256 a2y,
+        uint256 z
     );
 
     // ─── Errors ────────────────────────────────────────────────────────────────
@@ -29,25 +37,22 @@ interface IDKGAppManager {
     error InvalidEpoch();
     error InvalidPhase();
     error InvalidAddress();
-    error InvalidVerifier();
     error InvalidCiphertext();
     error CiphertextNotSubmitted();
-    error AlreadyPartiallyDecrypted();
+    error AlreadyCombined();
     error InvalidProofInput();
     error NotOwner();
     error DecryptionNotYetAllowed();
     error DecryptionExpired();
     error DecryptionLimitReached();
-    error InsufficientPartialDecryptions();
 
     // ─── Application lifecycle ────────────────────────────────────────────────
-    function registerApplication(
-        bytes12 epochId,
-        bytes32 aid,
-        DKGTypes.AppPolicy calldata policy
-    ) external;
 
-    function registerApplicationCoDec(
+    /// @notice Register an application against a Live epoch. The caller proves
+    ///         knowledge of `sk_org` with a Schnorr PoP over
+    ///         `DOMAIN_ORGANIZER_REGISTER_V1`; the application key is
+    ///         `PK_aid = PK_ep + PK_org`.
+    function registerApplication(
         bytes12 epochId,
         bytes32 aid,
         DKGTypes.AppPolicy calldata policy,
@@ -58,6 +63,11 @@ interface IDKGAppManager {
         uint256 schnorrZ
     ) external;
 
+    /// @notice Publish the organizer's decryption share for one ciphertext.
+    ///         Permissionless: the share is self-authenticating because the
+    ///         combine SNARK verifies its DLEQ against the registered
+    ///         `PK_org`. Overwrites any previous share until the ciphertext
+    ///         has been combined.
     function submitOrganizerShare(
         bytes12 epochId,
         bytes32 aid,
@@ -66,10 +76,13 @@ interface IDKGAppManager {
         uint256 c1y,
         uint256 c2x,
         uint256 c2y,
-        uint256 deltaOrgX,
-        uint256 deltaOrgY,
-        bytes calldata dleqProof,
-        bytes calldata dleqInput
+        uint256 deltaX,
+        uint256 deltaY,
+        uint256 a1x,
+        uint256 a1y,
+        uint256 a2x,
+        uint256 a2y,
+        uint256 z
     ) external;
 
     function getApplication(bytes12 epochId, bytes32 aid)
@@ -79,17 +92,16 @@ interface IDKGAppManager {
 
     // ─── Cross-contract APIs (called by DKGManager) ───────────────────────────
 
-    /// @notice Returns the per-app correction parameters DKGManager.combineDecryption
-    ///         needs. Reverts if `aid != 0` and the app does not exist.
-    ///         For aid == 0 (legacy per-epoch path) returns (mode=0, S=0, identity).
-    function getCombineCorrection(bytes12 epochId, bytes32 aid, uint16 ciphertextIndex)
+    /// @notice `keccak256(abi.encodePacked(deltaX, deltaY, a1x, a1y, a2x, a2y, z))`
+    ///         of the organizer share stored for `(epochId, aid, ciphertextIndex)`,
+    ///         or `bytes32(0)` if none has been submitted.
+    function getOrganizerShareHash(bytes12 epochId, bytes32 aid, uint16 ciphertextIndex)
         external
         view
-        returns (uint8 mode, uint256 derivationS, uint256 deltaOrgX, uint256 deltaOrgY);
+        returns (bytes32);
 
-    /// @notice Enforce the per-app submitCiphertext access policy. Reverts on policy fail.
-    ///         For aid == 0 the call is a no-op; the caller (DKGManager.submitCiphertext)
-    ///         treats aid == 0 (the epoch key itself) as an open application.
+    /// @notice Enforce the per-app submitCiphertext access policy. Reverts on
+    ///         policy failure, and on an aid that was never registered.
     function requireCanSubmitCiphertext(
         bytes12 epochId,
         bytes32 aid,
@@ -97,6 +109,6 @@ interface IDKGAppManager {
         address sender
     ) external view;
 
-    /// @notice Returns the list of registered aids for an epoch (excluding bytes32(0)).
+    /// @notice Returns the list of registered aids for an epoch.
     function getRegisteredAids(bytes12 epochId) external view returns (bytes32[] memory);
 }
