@@ -138,6 +138,7 @@ contract DKGRegistry is IDKGRegistry {
         node.lastActiveBlock = uint64(block.number);
         if (node.status == NodeStatus.INACTIVE) {
             node.status = NodeStatus.ACTIVE;
+            node.registeredAtBlock = uint64(block.number);
             unchecked {
                 activeCount += 1;
             }
@@ -258,6 +259,10 @@ contract DKGRegistry is IDKGRegistry {
 
         node.status = NodeStatus.ACTIVE;
         node.lastActiveBlock = uint64(block.number);
+        // Re-entering the active set restarts the snapshot clock: a reaped
+        // identity is outside the lottery denominator, so it must not be able
+        // to rejoin against a revealed seed.
+        node.registeredAtBlock = uint64(block.number);
         unchecked {
             activeCount += 1;
         }

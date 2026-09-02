@@ -10,6 +10,10 @@
 #   RPC_URL       JSON-RPC endpoint of the target chain
 #   CHAIN_ID      numeric chain ID (matches RPC_URL)
 #   PRIVATE_KEY   deployer private key (hex, with or without 0x prefix)
+#   MIN_THRESHOLD, MIN_COMMITTEE_SIZE, MAX_LOTTERY_ALPHA_BPS
+#                 createEpoch floors/ceiling baked into DKGManager; required
+#                 here on purpose (the forge script's own defaults 1/1/65535
+#                 are test values that let anyone create a 1-of-1 epoch).
 #
 # Optional:
 #   ETHERSCAN_API_KEY   if set, each contract is submitted to Etherscan
@@ -52,7 +56,7 @@ done
 
 # ── required variables ───────────────────────────────────────────────────
 missing=0
-for var in RPC_URL CHAIN_ID PRIVATE_KEY; do
+for var in RPC_URL CHAIN_ID PRIVATE_KEY MIN_THRESHOLD MIN_COMMITTEE_SIZE MAX_LOTTERY_ALPHA_BPS; do
     if [ -z "${!var:-}" ]; then
         error "$var is not set"
         missing=1

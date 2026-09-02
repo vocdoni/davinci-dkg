@@ -26,9 +26,10 @@ interface IDKGRegistry {
         uint256 pubY;
         NodeStatus status;
         uint64 lastActiveBlock;
-        /// @dev Block of the first registerKey; a node only enters lotteries of
-        ///      epochs created after it (no grinding of fresh identities against
-        ///      a revealed seed).
+        /// @dev Block at which the node last entered the active set (registerKey
+        ///      or reactivation); a node only enters lotteries of epochs created
+        ///      after it, so neither fresh nor dormant identities can be ground
+        ///      against a revealed seed.
         uint64 registeredAtBlock;
     }
 

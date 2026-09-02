@@ -1072,6 +1072,19 @@ contract DKGManagerTest is Test, TestHelpers {
         manager.claimSlot(epochId);
     }
 
+    function test_ClaimSlot_RejectsDormantOperatorReactivatedAfterEpochCreation() public {
+        address dormant = address(0xBEEF);
+        vm.roll(block.number + INACTIVITY_WINDOW + 1);
+        registry.reap(dormant);
+        bytes12 epochId = manager.createEpoch(1, 1, 1, 65535);
+        vm.prank(dormant);
+        registry.reactivate();
+        vm.roll(uint256(manager.getEpoch(epochId).seedBlock) + 1);
+        vm.prank(dormant);
+        vm.expectRevert(IDKGManager.NotInSnapshot.selector);
+        manager.claimSlot(epochId);
+    }
+
     // ── A finalizable epoch can never be aborted, not even in the gap ─────
 
     function test_AbortEpoch_RejectsHealthyEpochDuringFinalizeGap() public {

@@ -306,7 +306,7 @@ ciphertext before the combine can land.
 
 | Network | DKGManager                                 | Notes |
 |---------|--------------------------------------------|-------|
-| Sepolia | `0x92d324254ef12e4392d54c771b121cc976682340` | Built into the node + SDK; just pass `--network sepolia`. Registry `0xd7c1e9d8167a72d780971360efa97828eb57d01e`, app manager `0xc3b5a70301286b47421ba15598d61cff44df96b9`, deployed at block 11,615,847. |
+| Sepolia | `0x613589ea717311d5ddf71f1326c42871576c63a5` | Built into the node + SDK; just pass `--network sepolia`. Registry `0x2638cd0c2432f0af1602b3ecf2dd13a11076981f`, app manager `0xd7115537af9e021c055b0d19d11c29df4c79f25e`, deployed at block 11,616,299 with floors `MIN_THRESHOLD=2`, `MIN_COMMITTEE_SIZE=3`, `MAX_LOTTERY_ALPHA_BPS=20000` and windows 100/25/25/5 blocks. |
 
 `DKGRegistry` and `DKGAppManager` are auto-resolved from `DKGManager` on-chain — only the manager
 address needs to be configured.

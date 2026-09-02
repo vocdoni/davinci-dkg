@@ -337,11 +337,6 @@ contract DKGManager is IDKGManager {
         // reaped stragglers are automatically excluded.
         uint256 registered = uint256(IDKGRegistry(REGISTRY).activeCount());
         if (registered == 0) revert InvalidPolicy();
-        // numerator = α × committeeSize (in basis points domain); 10000 = α × 1.0
-        // expectedPass = registered × (numerator / 10000)
-        // threshold = floor(2^256 × expectedPass / registered)
-        //           = floor(2^256 × numerator / 10000)         when registered > expectedPass
-        // We cap the threshold at type(uint256).max - 1 so the comparison is strict.
         // numerator = α·n in basis points; the admissible fraction of the
         // hash space is numerator / (10000 · registered).
         uint256 numerator = uint256(lotteryAlphaBps) * uint256(committeeSize);
