@@ -246,8 +246,14 @@ go run ./cmd/dkgapp register -aid 0x0a…                     # mode 0 (public d
 go run ./cmd/dkgapp register -aid 0x0b… -codec              # mode 1; prints the organizer secret
 go run ./cmd/dkgapp encrypt  -aid 0x0a… -m 42               # submits; prints the assigned index
 go run ./cmd/dkgapp encrypt  -aid 0x0b… -m 7 -org-secret …  # also posts Δ_org with its DLEQ proof
+go run ./cmd/dkgapp encrypt  -aid 0x0b… -m 7                # mode 1 without the secret: share withheld
+go run ./cmd/dkgapp share    -aid 0x0b… -index 1 -org-secret …  # release it later (polls close, …)
 go run ./cmd/dkgapp plaintext -aid 0x0a… -index 1 -wait 5m
 ```
+
+Organizer shares are Groth16 proofs, so the CLI needs the pinned circuit artifacts:
+`export DAVINCI_ARTIFACTS_DIR=~/.davinci/artifacts` (or wherever `make circuits-compile` put them).
+It refuses to prove with anything else, because a proof from an unpinned setup is rejected on chain.
 
 Application ids must be non-zero and below the BN254 scalar field (clear the top three bits of a
 random or hashed id); `-epoch` defaults to the newest epoch.

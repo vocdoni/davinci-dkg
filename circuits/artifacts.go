@@ -444,6 +444,31 @@ func (ca *CircuitArtifacts) LoadOrSetupForCircuit(ctx context.Context, circuit f
 	return ca.Setup(ccs)
 }
 
+// LoadPinned is the strict variant of LoadOrSetupForCircuit: it only returns a
+// runtime backed by the pinned release artifacts and never falls back to a
+// local setup, whose proofs no deployed verifier would accept.
+func (ca *CircuitArtifacts) LoadPinned(ctx context.Context, circuit frontend.Circuit) (*CircuitRuntime, error) {
+	if circuit == nil {
+		return nil, fmt.Errorf("circuit not provided")
+	}
+	ccs, err := frontend.Compile(ca.Curve().ScalarField(), r1cs.NewBuilder, circuit)
+	if err != nil {
+		return nil, fmt.Errorf("compile circuit: %w", err)
+	}
+	matches, err := ca.Matches(ccs)
+	if err != nil {
+		return nil, fmt.Errorf("match artifacts: %w", err)
+	}
+	if !matches {
+		return nil, fmt.Errorf("compiled %s circuit does not match the pinned release hash", ca.Name())
+	}
+	runtime, err := ca.LoadOrDownload(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("load pinned %s artifacts (set DAVINCI_ARTIFACTS_DIR to the release artifacts): %w", ca.Name(), err)
+	}
+	return runtime, nil
+}
+
 // CircuitRuntime is an in-memory runtime view of a compiled circuit and its keys.
 type CircuitRuntime struct {
 	circuitParams

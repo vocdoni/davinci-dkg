@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"flag"
 	"fmt"
+	"math"
 	"math/big"
 	"os"
 	"strings"
@@ -42,8 +43,15 @@ commands:
   encrypt     -epoch id -aid hex32 -m int [-org-secret hex]
                                                             encrypt m under PK_aid with a proof of knowledge of
                                                             its randomness, submit it (the chain assigns the
-                                                            index) and, for mode 1, post the organizer share
+                                                            index) and, for mode 1 with -org-secret, post the
+                                                            organizer share right away (omit it to withhold)
+  share       -epoch id -aid hex32 -index n -org-secret hex
+                                                            post the organizer share of a mode-1 ciphertext
+                                                            that was submitted earlier (releases decryption)
   plaintext   -epoch id -aid hex32 -index n [-wait dur]    read (or wait for) the combined plaintext
+
+Proofs are generated with the pinned release circuit artifacts; point
+DAVINCI_ARTIFACTS_DIR at a directory holding them (see README, "Circuits").
 
 Every flag has a DAVINCI_DKG_* environment equivalent for the global options
 (DAVINCI_DKG_WEB3_RPC, DAVINCI_DKG_NETWORK, DAVINCI_DKG_MANAGER, DAVINCI_DKG_PRIVKEY).
@@ -122,6 +130,8 @@ func run() error {
 		return a.cmdRegister(args)
 	case "encrypt":
 		return a.cmdEncrypt(args)
+	case "share":
+		return a.cmdShare(args)
 	case "plaintext":
 		return a.cmdPlaintext(args)
 	default:
@@ -279,9 +289,6 @@ func (a *app) cmdEncrypt(args []string) error {
 			return err
 		}
 	}
-	if mode == 1 && *orgSecret == "" {
-		return fmt.Errorf("mode-1 application: -org-secret is required to post the organizer share")
-	}
 	c1, c2, pok, err := elgamal.EncryptWithProof(id, aid, pkAid, m)
 	if err != nil {
 		return err
@@ -305,10 +312,62 @@ func (a *app) cmdEncrypt(args []string) error {
 	if mode != 1 {
 		return nil
 	}
+	if *orgSecret == "" {
+		fmt.Printf("organizer share withheld; release it with: share -epoch %x -aid %x -index %d -org-secret ...\n", id, aid, index)
+		return nil
+	}
 	sk, _, err := organizerSecret(*orgSecret)
 	if err != nil {
 		return err
 	}
+	return a.submitOrganizerShare(id, aid, index, c1, c2, sk)
+}
+
+func (a *app) cmdShare(args []string) error {
+	fs := flag.NewFlagSet("share", flag.ContinueOnError)
+	epochFlag := fs.String("epoch", "latest", "epoch id (hex) or 'latest'")
+	aidFlag := fs.String("aid", "", "application id (hex)")
+	indexFlag := fs.Uint("index", 1, "ciphertext index assigned at submission")
+	orgSecret := fs.String("org-secret", "", "organizer secret (hex)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if a.txm == nil {
+		return fmt.Errorf("-privkey is required")
+	}
+	if *indexFlag == 0 || *indexFlag > math.MaxUint16 {
+		return fmt.Errorf("-index must be in [1, %d]", math.MaxUint16)
+	}
+	id, err := a.epochID(*epochFlag)
+	if err != nil {
+		return err
+	}
+	aid, err := parseAid(*aidFlag)
+	if err != nil {
+		return err
+	}
+	sk, _, err := organizerSecret(*orgSecret)
+	if err != nil {
+		return err
+	}
+	ep, err := a.manager.GetEpoch(a.callOpts(), id)
+	if err != nil {
+		return err
+	}
+	index := uint16(*indexFlag)
+	it, err := a.manager.FilterCiphertextSubmitted(
+		&bind.FilterOpts{Context: a.ctx, Start: ep.StartBlock}, [][12]byte{id}, [][32]byte{aid}, []uint16{index},
+	)
+	if err != nil {
+		return fmt.Errorf("scan ciphertext events: %w", err)
+	}
+	defer func() { _ = it.Close() }()
+	if !it.Next() {
+		return fmt.Errorf("ciphertext %d for application %x not found in epoch %x", index, aid, id)
+	}
+	ev := it.Event
+	c1 := types.CurvePoint{X: ev.C1x, Y: ev.C1y}
+	c2 := types.CurvePoint{X: ev.C2x, Y: ev.C2y}
 	return a.submitOrganizerShare(id, aid, index, c1, c2, sk)
 }
 
@@ -330,7 +389,7 @@ func (a *app) submitOrganizerShare(id [12]byte, aid [32]byte, index uint16, c1, 
 	if err != nil {
 		return err
 	}
-	runtime, err := partialdecrypt.Artifacts.LoadOrSetupForCircuit(a.ctx, &partialdecrypt.PartialDecryptCircuit{})
+	runtime, err := partialdecrypt.Artifacts.LoadPinned(a.ctx, &partialdecrypt.PartialDecryptCircuit{})
 	if err != nil {
 		return fmt.Errorf("load partial-decrypt circuit: %w", err)
 	}
