@@ -48,6 +48,9 @@ Thumbs.db
 # ---- Local state ----------------------------------------------------------
 .davinci/
 data/
+# …but the explorer's data layer is source, not local state: the unanchored
+# `data/` above would otherwise silently exclude the whole hooks package.
+!ui/src/data/
 logs/
 .claude/
 
@@ -66,3 +69,8 @@ logs/
 
 # ---- Operator secrets dropped in the working tree ------------------------
 /sepolia_privkey.txt
+
+# ---- pnpm content-addressable store --------------------------------------
+# Created at the repo root when pnpm runs in a container whose $HOME lives on
+# another filesystem (see the Docker invocations in ui/README.md).
+/.pnpm-store/
