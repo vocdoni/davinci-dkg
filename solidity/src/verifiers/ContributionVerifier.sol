@@ -11,7 +11,7 @@ import {Verifier as BaseContributionVerifier} from "./contribution_vkey.sol";
 ///         instance (no extra address hop).
 contract ContributionVerifier is BaseContributionVerifier, IZKVerifier {
     bytes32 internal constant PROVING_KEY_HASH =
-        hex"406e7e943fbf4713e45e71d369bc810d4f3bfcc2e8b84ed97997cc1c4ac8d455";
+        hex"29317a0df682000be9e499b1e1b6b00047fd97a1120c951d189afd3d7bbda95f";
 
     error InvalidProofEncoding();
     error InvalidInputEncoding();

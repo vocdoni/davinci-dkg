@@ -185,13 +185,19 @@ func (c *ContributionCircuit) Define(api frontend.API) error {
 		maskedKeys[i] = ccommon.MaskPoint(api, recipientMask[i], c.RecipientPubKeys[i])
 		maskedEphemerals[i] = ccommon.MaskPoint(api, recipientMask[i], c.Ephemerals[i])
 		maskedShares[i] = activeMaskedShare
-		shareInputs = append(
-			shareInputs,
+		// One Poseidon per recipient row, one over the row digests: the flat
+		// list would exceed the sponge's input cap at MaxRecipients > 42.
+		rowDigest, err := ccommon.MultiHash(
+			api,
 			maskedIndexes[i],
 			maskedKeys[i].X, maskedKeys[i].Y,
 			maskedEphemerals[i].X, maskedEphemerals[i].Y,
 			maskedShares[i],
 		)
+		if err != nil {
+			return err
+		}
+		shareInputs = append(shareInputs, rowDigest)
 	}
 	shareHash, err := ccommon.MultiHash(api, shareInputs...)
 	if err != nil {

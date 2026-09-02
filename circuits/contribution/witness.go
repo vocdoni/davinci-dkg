@@ -191,8 +191,7 @@ func BuildWitness(a Assignment) (*ContributionCircuit, *PublicInputs, error) {
 
 	shareInputs := []*big.Int{a.RoundHash, contributorIndex, committeeSize}
 	for i := range MaxRecipients {
-		shareInputs = append(
-			shareInputs,
+		rowDigest, err := ccommon.MultiHashNative(
 			recipientIndexes[i],
 			ephemeralCoordinate(paddedRecipientKeys, i, true),
 			ephemeralCoordinate(paddedRecipientKeys, i, false),
@@ -200,6 +199,10 @@ func BuildWitness(a Assignment) (*ContributionCircuit, *PublicInputs, error) {
 			ephemeralCoordinate(paddedEphemerals, i, false),
 			maskedShares[i],
 		)
+		if err != nil {
+			return nil, nil, fmt.Errorf("share row %d digest: %w", i, err)
+		}
+		shareInputs = append(shareInputs, rowDigest)
 	}
 	shareHash, err := ccommon.MultiHashNative(shareInputs...)
 	if err != nil {
