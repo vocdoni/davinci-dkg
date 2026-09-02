@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/big"
 	mrand "math/rand"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -54,7 +55,6 @@ type savedContrib struct {
 // Node participates in every DKG epoch it can find on chain.
 type Node struct {
 	address   common.Address
-	privKey   string
 	bjjSecret *big.Int
 
 	contracts  *web3.Contracts
@@ -75,8 +75,11 @@ type Node struct {
 	// decryption service state (see decrypt.go)
 	lookback    uint64
 	lastCtScan  uint64
+	ctSeq       uint64
 	pending     map[ctKey]*ciphertext
 	partialDone map[ctKey]bool
+	served      map[ctKey]uint64 // finished slots → discovery block, until out of the re-scan window
+	backoff     map[ctKey]*serviceBackoff
 
 	// auto-create-epoch state. autoCreateNextStart is the
 	// nextEpochStartBlock() value the most recent attempt was scheduled
@@ -100,6 +103,7 @@ func New(cfg *Config) (*Node, error) {
 	if err != nil {
 		return nil, fmt.Errorf("tx manager: %w", err)
 	}
+	txm.SetGasMultiplier(cfg.Web3.GasMultiplier)
 	manager, err := gtypes.NewDKGManager(c.Addresses.Manager, c.PooledBackend())
 	if err != nil {
 		return nil, fmt.Errorf("manager binding: %w", err)
@@ -128,7 +132,6 @@ func New(cfg *Config) (*Node, error) {
 
 	return &Node{
 		address:       txm.Address(),
-		privKey:       cfg.PrivKey,
 		bjjSecret:     bjjSecret,
 		contracts:     c,
 		manager:       manager,
@@ -145,6 +148,8 @@ func New(cfg *Config) (*Node, error) {
 		lookback:      cfg.DecryptLookbackBlocks,
 		pending:       make(map[ctKey]*ciphertext),
 		partialDone:   make(map[ctKey]bool),
+		served:        make(map[ctKey]uint64),
+		backoff:       make(map[ctKey]*serviceBackoff),
 	}, nil
 }
 
@@ -184,7 +189,7 @@ func (n *Node) LogStartupSnapshot(ctx context.Context, cfg *Config) {
 	log.Infow("config: chain connection",
 		"network", cfg.Web3.Network,
 		"chainId", n.contracts.ChainID,
-		"rpc", cfg.Web3.RPC[0],
+		"rpcHost", rpcHost(cfg.Web3.RPC[0]),
 		"gasMultiplier", cfg.Web3.GasMultiplier)
 	log.Infow("config: contracts",
 		"registry", n.contracts.Addresses.Registry,
@@ -608,7 +613,6 @@ func (n *Node) fireCreateEpoch(ctx context.Context, cfg *Config) error {
 		cfg.EpochPolicy.CommitteeSize,
 		cfg.EpochPolicy.MinValidContributions,
 		cfg.EpochPolicy.LotteryAlphaBps,
-		gtypes.DKGTypesDecryptionPolicy{},
 	)
 	if err != nil {
 		return fmt.Errorf("create epoch: %w", err)
@@ -795,14 +799,11 @@ func (n *Node) doClaimSlot(ctx context.Context, epochID [12]byte, epoch web3.Epo
 	}
 	n.txm.RecordPending(tx)
 	if err := n.txm.WaitTxByHash(tx.Hash(), 60*time.Second); err != nil {
-		// On-chain revert — committee race or not eligible. Accept and stop retrying.
-		if isPermanentRevert(err) {
-			log.Infow("claim slot: tx reverted on-chain (race condition or not eligible) — will not retry",
-				"epoch", roundHex(epochID), "err", err)
-			n.signaled[epochID] = true
-			return nil
-		}
-		return fmt.Errorf("wait claim slot tx: %w", err)
+		// A mined revert here is a lost race (SlotsFull) or a gas shortfall
+		// (claimSlot grows costlier with every claimed slot, so simultaneous
+		// claims can outgrow the estimate). Retrying next tick is one cheap
+		// simulation that yields the definitive custom error either way.
+		return fmt.Errorf("wait claim slot tx (retrying next tick): %w", err)
 	}
 	n.signaled[epochID] = true
 	log.Infow("slot claimed", "epoch", roundHex(epochID))
@@ -1042,9 +1043,7 @@ func (n *Node) tryAutoFinalize(
 	if committeeSize == 0 {
 		return nil
 	}
-	// Derive the rotation start index from the lottery seed so it varies per epoch.
-	startSlot := new(big.Int).Mod(new(big.Int).SetBytes(epoch.Seed[:]), big.NewInt(int64(committeeSize))).Uint64()
-	mySlot := (uint64(myIdx-1) - startSlot + uint64(committeeSize)) % uint64(committeeSize)
+	mySlot := staggerSlot(epoch.Seed, 0, myIdx, committeeSize)
 	waitUntil := epoch.Policy.LiveNotBeforeBlock + mySlot*staggerBlocks
 
 	head, err := n.contracts.Client().BlockNumber(ctx)
@@ -1070,7 +1069,6 @@ func (n *Node) tryAutoFinalize(
 		"auto-finalize: my turn",
 		"epoch", roundHex(epochID),
 		"myIdx", myIdx,
-		"startSlot", startSlot,
 		"mySlot", mySlot,
 		"head", head,
 		"finalizeNotBefore", epoch.Policy.LiveNotBeforeBlock,
@@ -1081,13 +1079,20 @@ func (n *Node) tryAutoFinalize(
 
 	res, err := finalizer.BuildAndSubmit(ctx, n.contracts, n.manager, n.txm, epochID, t, committeeSizePolicy, selected)
 	if err != nil {
-		// Distinguish AlreadyFinalized (lost the race — benign) from real failures.
-		if strings.Contains(err.Error(), "AlreadyFinalized") || strings.Contains(err.Error(), "execution reverted") {
-			log.Infow("auto-finalize: another node beat us", "epoch", roundHex(epochID), "err", err)
+		// Only a lost race is final: AlreadyLive from the contract, or the
+		// epoch having left KeyAssembly. Anything else (a bad proof, a
+		// mined revert, an RPC hiccup) is retried on the next tick.
+		reason := decodeContractError(err)
+		status := epochKeyAssembly // unknown → assume still open so we retry
+		if cur, rerr := n.contracts.GetEpoch(ctx, epochID); rerr == nil {
+			status = cur.Status
+		}
+		if finalizeRaceLost(reason, status) {
+			log.Infow("auto-finalize: another node beat us", "epoch", roundHex(epochID), "reason", reason)
 			n.finalized[epochID] = true
 			return nil
 		}
-		return fmt.Errorf("auto-finalize submit: %w", err)
+		return fmt.Errorf("auto-finalize submit failed (will retry next tick): %s", reason)
 	}
 	n.finalized[epochID] = true
 	log.Infow("auto-finalize: epoch finalized by us",
@@ -1095,15 +1100,20 @@ func (n *Node) tryAutoFinalize(
 	return nil
 }
 
-// buildPrivateShare computes d_i = Σ_j f_j(i) by:
+// buildPrivateShare computes d_i = Σ_j f_j(i) over every accepted
+// contribution by:
 //   - Own contribution (in-memory cache): evaluate own polynomial directly
 //   - Own contribution (after restart, cache lost): fall back to calldata recovery
 //   - Other contributions: scan on-chain txs for calldata and decrypt
 //
-// fromBlock is used as the lower bound for the calldata scan; passing the epoch's
-// seed block keeps the scan tight while still capturing contributions that arrive
-// during the registration phase (nodes can contribute immediately after claiming a
-// slot, which is only possible from seedBlock onward).
+// The result is cached only when every accepted contribution was recovered;
+// a partial sum is a wrong share, so any failure is returned as a retryable
+// error instead.
+//
+// The calldata scan starts at the epoch's seed block, which keeps it tight
+// while still capturing contributions that arrive during the registration
+// phase (nodes can contribute immediately after claiming a slot, which is
+// only possible from seedBlock onward).
 func (n *Node) buildPrivateShare(
 	ctx context.Context,
 	epochID [12]byte,
@@ -1115,70 +1125,81 @@ func (n *Node) buildPrivateShare(
 	if s, ok := n.privateShares[epochID]; ok {
 		return s, nil
 	}
-	modulus := group.ScalarField()
 	roundHash := roundScalar(epochID)
-	total := new(big.Int)
-
-	// Use seedBlock as the lower bound: no slot claim (and hence no contribution)
-	// can appear before the seed block, so scanning from there is both tight and
-	// correct even when contributions arrive before the registration deadline.
 	fromBlock := epoch.SeedBlock
 
-	recovered := 0
+	shares := make([]*big.Int, 0, len(selected))
 	expected := 0
 	for i, addr := range selected {
 		contribIdx := uint16(i + 1)
 		rec, err := n.manager.GetContribution(callOpts, epochID, addr)
-		if err != nil || !rec.Accepted {
+		if err != nil {
+			return nil, fmt.Errorf("get contribution of %s: %w", addr.Hex(), err)
+		}
+		if !rec.Accepted {
 			continue
 		}
 		expected++
-
 		if addr == n.address {
-			// Own contribution: use in-memory polynomial if available (normal path).
-			if sc := n.ownContribs[epochID]; sc != nil {
-				x := big.NewInt(int64(myIdx))
-				share, err := ccommon.EvaluatePolynomialNative(sc.coefficients, x)
-				if err == nil {
-					total.Add(total, share)
-					total.Mod(total, modulus)
-					recovered++
-					continue
-				}
-				log.Warnw("own polynomial evaluation failed, falling back to calldata",
-					"epoch", roundHex(epochID), "err", err)
-			} else {
-				log.Warnw("own contribution cache missing (node restarted?), recovering from calldata",
-					"epoch", roundHex(epochID))
+			if share, ok := n.ownShare(epochID, myIdx); ok {
+				shares = append(shares, share)
+				continue
 			}
-			// Fall through to calldata recovery for own contribution too.
 		}
-
-		// Recover encrypted share from on-chain calldata.
 		share, err := n.recoverShareFrom(ctx, epochID, addr, contribIdx, roundHash, myIdx, fromBlock)
 		if err != nil {
-			log.Warnw("share recovery failed — contribution will be excluded from private share",
-				"epoch", roundHex(epochID), "contributor", addr.Hex(), "idx", contribIdx, "err", err)
-			continue
+			return nil, fmt.Errorf("recover share from %s (idx %d): %w", addr.Hex(), contribIdx, err)
 		}
+		shares = append(shares, share)
+	}
+	total, err := sumRecoveredShares(shares, expected)
+	if err != nil {
+		return nil, err
+	}
+	log.Infow("private share built", "epoch", roundHex(epochID), "contributions", expected, "myIdx", myIdx)
+	n.privateShares[epochID] = total
+	return total, nil
+}
+
+// ownShare evaluates this node's own polynomial at myIdx from the in-memory
+// contribution cache. ok=false means the caller must recover the share
+// from calldata like any other contribution.
+func (n *Node) ownShare(epochID [12]byte, myIdx uint16) (*big.Int, bool) {
+	sc := n.ownContribs[epochID]
+	if sc == nil {
+		log.Warnw("own contribution cache missing (node restarted?), recovering from calldata",
+			"epoch", roundHex(epochID))
+		return nil, false
+	}
+	share, err := ccommon.EvaluatePolynomialNative(sc.coefficients, big.NewInt(int64(myIdx)))
+	if err != nil {
+		log.Warnw("own polynomial evaluation failed, falling back to calldata",
+			"epoch", roundHex(epochID), "err", err)
+		return nil, false
+	}
+	return share, true
+}
+
+// sumRecoveredShares folds the recovered f_j(i) values into d_i modulo the
+// group order. It refuses anything short of the full set of `expected`
+// accepted contributions: the sum is only a valid share when complete.
+func sumRecoveredShares(shares []*big.Int, expected int) (*big.Int, error) {
+	if expected == 0 {
+		return nil, fmt.Errorf("private share: no accepted contributions")
+	}
+	if len(shares) != expected {
+		return nil, fmt.Errorf("private share: recovered %d/%d contributions — calldata not yet available, retry later",
+			len(shares), expected)
+	}
+	modulus := group.ScalarField()
+	total := new(big.Int)
+	for _, share := range shares {
 		total.Add(total, share)
 		total.Mod(total, modulus)
-		recovered++
-	}
-
-	log.Infow("private share built",
-		"epoch", roundHex(epochID),
-		"recovered", recovered,
-		"expected", expected,
-		"myIdx", myIdx)
-
-	if recovered == 0 {
-		return nil, fmt.Errorf("private share: recovered 0/%d contributions — calldata not yet available or no contributions accepted", expected)
 	}
 	if total.Sign() == 0 {
-		return nil, fmt.Errorf("private share is zero after %d/%d contributions — possible Shamir evaluation issue", recovered, expected)
+		return nil, fmt.Errorf("private share is zero after %d contributions — possible Shamir evaluation issue", expected)
 	}
-	n.privateShares[epochID] = total
 	return total, nil
 }
 
@@ -1194,7 +1215,7 @@ func (n *Node) recoverShareFrom(
 	myIdx uint16,
 	fromBlock uint64,
 ) (*big.Int, error) {
-	data, err := finalizer.ContributionCalldata(ctx, n.contracts, n.manager, epochID, contributor, fromBlock)
+	data, err := finalizer.ContributionCalldata(ctx, n.contracts.Client(), n.manager, epochID, contributor, fromBlock)
 	if err != nil {
 		return nil, err
 	}
@@ -1256,6 +1277,38 @@ func roundScalar(id [12]byte) *big.Int {
 
 func roundHex(id [12]byte) string { return fmt.Sprintf("%x", id) }
 
+// staggerSlot returns myIdx's position in the epoch's rotation: a
+// permutation of [0, committeeSize) whose start is derived from the lottery
+// seed (plus a caller-chosen salt, e.g. the ciphertext index) so that a
+// different member goes first for every epoch and every slot.
+func staggerSlot(seed common.Hash, salt uint64, myIdx, committeeSize uint16) uint64 {
+	n := uint64(committeeSize)
+	if n == 0 {
+		return 0
+	}
+	startSlot := new(big.Int).SetBytes(seed[:])
+	startSlot.Add(startSlot, new(big.Int).SetUint64(salt))
+	start := startSlot.Mod(startSlot, new(big.Int).SetUint64(n)).Uint64()
+	return (uint64(myIdx-1) + n - start) % n
+}
+
+// finalizeRaceLost reports whether a failed finalize attempt is final: the
+// contract said AlreadyLive, or the epoch has left KeyAssembly. Any other
+// failure must be retried.
+func finalizeRaceLost(reason string, status uint8) bool {
+	return strings.Contains(reason, "AlreadyLive") || status != epochKeyAssembly
+}
+
+// rpcHost returns only the host of an RPC URL for logging; provider API
+// keys live in the path or userinfo and must not reach the logs.
+func rpcHost(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return "<unparseable rpc url>"
+	}
+	return u.Host
+}
+
 // isExpectedClaimRevert returns true if a claimSlot revert is "benign" — i.e.
 // the node should silently accept it (not eligible, slot already gone, seed not
 // yet available). The node will retry on the next poll for the SeedNotReady case
@@ -1265,14 +1318,16 @@ func roundHex(id [12]byte) string { return fmt.Sprintf("%x", id) }
 // timeouts, network issues) do NOT match, so the node retries those naturally.
 //
 // We match the exact phrase "execution reverted" (the standard Ethereum error
-// returned by both eth_call simulation and mined-but-reverted receipts).
-// We intentionally do NOT match plain "reverted" to avoid false-positives from
-// RPC provider error messages that happen to contain that word.
+// returned by eth_call / eth_estimateGas simulation) and the tx manager's
+// "reverted (status 0)" for a mined-but-reverted receipt. We intentionally do
+// NOT match plain "reverted" to avoid false-positives from RPC provider error
+// messages that happen to contain that word.
 func isPermanentRevert(err error) bool {
 	if err == nil {
 		return false
 	}
-	return strings.Contains(err.Error(), "execution reverted")
+	s := err.Error()
+	return strings.Contains(s, "execution reverted") || strings.Contains(s, "reverted (status")
 }
 
 func isExpectedClaimRevert(err error) bool {

@@ -48,14 +48,13 @@ func (c *Contracts) GetEpoch(ctx context.Context, epochID [12]byte) (EpochView, 
 		return EpochView{}, fmt.Errorf("unpack getEpoch: %w", err)
 	}
 	// Flat layout (per hand-written ABI; tuples count as single values):
-	//   0  organizer                 7  seed
-	//   1  policy (tuple)            8  lotteryThreshold
-	//   2  decryptionPolicy (tuple)  9  claimedCount
-	//   3  status                   10  contributionCount
-	//   4  nonce                    11  partialDecryptionCount
-	//   5  startBlock               12  ciphertextCount
-	//   6  seedBlock
-	if len(values) != 13 {
+	//   0  organizer         6  seed
+	//   1  policy (tuple)    7  lotteryThreshold
+	//   2  status            8  claimedCount
+	//   3  nonce             9  contributionCount
+	//   4  startBlock       10  partialDecryptionCount
+	//   5  seedBlock        11  ciphertextCount
+	if len(values) != 12 {
 		return EpochView{}, fmt.Errorf("unexpected output count for getEpoch: %d", len(values))
 	}
 	policy, ok := values[1].(struct {
@@ -70,7 +69,7 @@ func (c *Contracts) GetEpoch(ctx context.Context, epochID [12]byte) (EpochView, 
 	if !ok {
 		return EpochView{}, fmt.Errorf("unexpected policy tuple shape")
 	}
-	seedBytes := values[7].([32]byte)
+	seedBytes := values[6].([32]byte)
 	return EpochView{
 		Organizer: values[0].(common.Address),
 		Policy: EpochPolicy{
@@ -82,16 +81,16 @@ func (c *Contracts) GetEpoch(ctx context.Context, epochID [12]byte) (EpochView, 
 			KeyAssemblyDeadlineBlock:        policy.KeyAssemblyDeadlineBlock,
 			LiveNotBeforeBlock:              policy.LiveNotBeforeBlock,
 		},
-		Status:                 values[3].(uint8),
-		Nonce:                  values[4].(uint64),
-		StartBlock:             values[5].(uint64),
-		SeedBlock:              values[6].(uint64),
+		Status:                 values[2].(uint8),
+		Nonce:                  values[3].(uint64),
+		StartBlock:             values[4].(uint64),
+		SeedBlock:              values[5].(uint64),
 		Seed:                   common.BytesToHash(seedBytes[:]),
-		LotteryThreshold:       values[8].(*big.Int),
-		ClaimedCount:           values[9].(uint16),
-		ContributionCount:      values[10].(uint16),
-		PartialDecryptionCount: values[11].(uint16),
-		CiphertextCount:        values[12].(uint16),
+		LotteryThreshold:       values[7].(*big.Int),
+		ClaimedCount:           values[8].(uint16),
+		ContributionCount:      values[9].(uint16),
+		PartialDecryptionCount: values[10].(uint16),
+		CiphertextCount:        values[11].(uint16),
 	}, nil
 }
 

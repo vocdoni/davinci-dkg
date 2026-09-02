@@ -7,18 +7,22 @@
 package finalizer
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math/big"
 	"reflect"
+	"sync"
 	"time"
 
 	gnec "github.com/consensys/gnark-crypto/ecc"
 	groth16backend "github.com/consensys/gnark/backend/groth16"
 	groth16bn254 "github.com/consensys/gnark/backend/groth16/bn254"
 	"github.com/consensys/gnark/frontend"
+	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
+	ethtypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/vocdoni/davinci-dkg/circuits/contribution"
 	"github.com/vocdoni/davinci-dkg/circuits/finalize"
 	"github.com/vocdoni/davinci-dkg/log"
@@ -75,7 +79,7 @@ func BuildAndSubmit(
 		if err != nil || !rec.Accepted {
 			continue
 		}
-		data, err := ContributionCalldata(ctx, c, m, epochID, addr, startBlock)
+		data, err := ContributionCalldata(ctx, c.Client(), m, epochID, addr, startBlock)
 		if err != nil {
 			return nil, fmt.Errorf("contribution calldata for %s: %w", addr, err)
 		}
@@ -149,87 +153,131 @@ func BuildAndSubmit(
 	return res, nil
 }
 
+// LogRangeBlocks bounds each eth_getLogs call; most public RPC providers cap
+// the range at 10k blocks.
+const LogRangeBlocks = 10_000
+
+// chainReader is the slice of ethclient.Client that ContributionCalldata
+// needs, so tests can drive it without an RPC endpoint.
+type chainReader interface {
+	BlockNumber(ctx context.Context) (uint64, error)
+	TransactionByHash(ctx context.Context, hash common.Hash) (*ethtypes.Transaction, bool, error)
+}
+
 // ContributionCalldata locates the submitContribution tx from `contributor`
 // for the given epoch via the ContributionSubmitted event log (indexed by
 // epochId + contributor) and returns that transaction's raw calldata. The
 // encrypted shares and commitment points only live there.
 //
-// The event-log path is O(1) RPC calls regardless of how long ago the
-// contribution landed; scanning blocks serially stalled for minutes on
-// public RPCs.
+// The log scan walks [startBlock, head] in LogRangeBlocks chunks and stops
+// at the first chunk that holds the event, so it stays within provider
+// limits and costs O(epoch age / LogRangeBlocks) RPC calls.
 func ContributionCalldata(
 	ctx context.Context,
-	c *web3.Contracts,
+	client chainReader,
 	m *gtypes.DKGManager,
 	epochID [12]byte,
 	contributor common.Address,
 	startBlock uint64,
 ) ([]byte, error) {
-	client := c.Client()
 	latest, err := client.BlockNumber(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("read head: %w", err)
 	}
-
-	filterOpts := &bind.FilterOpts{
-		Context: ctx,
-		Start:   startBlock,
-		End:     &latest,
+	for start := startBlock; start <= latest; start += LogRangeBlocks {
+		end := min(start+LogRangeBlocks-1, latest)
+		txHash, found, err := findContributionTx(ctx, m, epochID, contributor, start, end)
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			continue
+		}
+		tx, _, err := client.TransactionByHash(ctx, txHash)
+		if err != nil {
+			return nil, fmt.Errorf("fetch contribution tx %s: %w", txHash.Hex(), err)
+		}
+		return tx.Data(), nil
 	}
+	return nil, fmt.Errorf("no ContributionSubmitted event for %s in epoch %x (range %d..%d)",
+		contributor, epochID, startBlock, latest)
+}
+
+// findContributionTx returns the hash of the tx that emitted
+// ContributionSubmitted(epochID, contributor) within [start, end].
+func findContributionTx(
+	ctx context.Context,
+	m *gtypes.DKGManager,
+	epochID [12]byte,
+	contributor common.Address,
+	start, end uint64,
+) (common.Hash, bool, error) {
 	it, err := m.FilterContributionSubmitted(
-		filterOpts,
+		&bind.FilterOpts{Context: ctx, Start: start, End: &end},
 		[][12]byte{epochID},
 		[]common.Address{contributor},
 	)
 	if err != nil {
-		return nil, fmt.Errorf("filter ContributionSubmitted: %w", err)
+		return common.Hash{}, false, fmt.Errorf("filter ContributionSubmitted [%d,%d]: %w", start, end, err)
 	}
 	defer func() { _ = it.Close() }()
-
 	if !it.Next() {
 		if err := it.Error(); err != nil {
-			return nil, fmt.Errorf("iterate ContributionSubmitted: %w", err)
+			return common.Hash{}, false, fmt.Errorf("iterate ContributionSubmitted: %w", err)
 		}
-		return nil, fmt.Errorf("no ContributionSubmitted event for %s in epoch %x (range %d..%d)",
-			contributor, epochID, startBlock, latest)
+		return common.Hash{}, false, nil
 	}
-
-	txHash := it.Event.Raw.TxHash
-	tx, _, err := client.TransactionByHash(ctx, txHash)
-	if err != nil {
-		return nil, fmt.Errorf("fetch contribution tx %s: %w", txHash.Hex(), err)
-	}
-	return tx.Data(), nil
+	return it.Event.Raw.TxHash, true, nil
 }
 
-// ContributionTranscript slices the `transcript` argument out of raw
+// submitContributionMethod resolves the submitContribution ABI method once;
+// its selector and input layout are the only things ContributionTranscript
+// trusts about the calldata it is handed.
+var submitContributionMethod = sync.OnceValues(func() (abi.Method, error) {
+	parsed, err := gtypes.DKGManagerMetaData.GetAbi()
+	if err != nil {
+		return abi.Method{}, fmt.Errorf("parse DKGManager ABI: %w", err)
+	}
+	method, ok := parsed.Methods["submitContribution"]
+	if !ok {
+		return abi.Method{}, fmt.Errorf("submitContribution missing from DKGManager ABI")
+	}
+	return method, nil
+})
+
+// ContributionTranscript extracts the `transcript` argument from raw
 // submitContribution calldata:
 //
 //	submitContribution(bytes12 epochId, uint16 contributorIndex,
 //	    bytes32 commitmentsHash, bytes32 encryptedSharesHash,
 //	    bytes transcript, bytes proof, bytes input)
 //
-// Seven parameters, so the static head is 7×32 bytes and the transcript's
-// offset word is the fifth (bytes 128..160). The returned slice is the
-// 8·MaxN-word layout documented in DKGManager.submitContribution.
+// The calldata is located through an event log and may be anything a
+// transaction sender chose to put there, so the selector is checked against
+// the ABI and the dynamic offsets are decoded by the ABI unpacker, which
+// bounds-checks them without overflow. Any malformed input yields an error,
+// never a panic. The returned slice is the 8·MaxN-word layout documented in
+// DKGManager.submitContribution.
 func ContributionTranscript(data []byte) ([]byte, error) {
-	if len(data) < 4 {
-		return nil, fmt.Errorf("data too short")
+	method, err := submitContributionMethod()
+	if err != nil {
+		return nil, err
 	}
-	payload := data[4:]
-	if len(payload) < 224 {
-		return nil, fmt.Errorf("payload head too short")
+	if len(data) < 4 || !bytes.Equal(data[:4], method.ID) {
+		return nil, fmt.Errorf("calldata is not a submitContribution call")
 	}
-	tOffset := int64(new(big.Int).SetBytes(pad32(payload[128:160])).Uint64())
-	if int(tOffset)+32 > len(payload) {
-		return nil, fmt.Errorf("transcript offset out of bounds")
+	args, err := method.Inputs.Unpack(data[4:])
+	if err != nil {
+		return nil, fmt.Errorf("decode submitContribution calldata: %w", err)
 	}
-	tLen := int64(new(big.Int).SetBytes(pad32(payload[tOffset : tOffset+32])).Uint64())
-	tStart := tOffset + 32
-	if tStart+tLen > int64(len(payload)) {
-		return nil, fmt.Errorf("transcript out of bounds")
+	const transcriptArg = 4
+	if len(args) <= transcriptArg {
+		return nil, fmt.Errorf("submitContribution calldata has %d arguments", len(args))
 	}
-	tr := payload[tStart : tStart+tLen]
+	tr, ok := args[transcriptArg].([]byte)
+	if !ok {
+		return nil, fmt.Errorf("transcript argument is %T, want []byte", args[transcriptArg])
+	}
 	if want := 8 * contribution.MaxRecipients * 32; len(tr) != want {
 		return nil, fmt.Errorf("transcript is %d bytes, want %d", len(tr), want)
 	}
@@ -250,15 +298,6 @@ func parseCommitmentPoints(data []byte, t uint16) ([]nodetypes.CurvePoint, error
 		pts[k] = nodetypes.CurvePoint{X: x, Y: y}
 	}
 	return pts, nil
-}
-
-func pad32(b []byte) []byte {
-	if len(b) >= 32 {
-		return b[:32]
-	}
-	out := make([]byte, 32)
-	copy(out[32-len(b):], b)
-	return out
 }
 
 // ── proof / witness helpers (duplicated from cmd/* until consolidated) ─────

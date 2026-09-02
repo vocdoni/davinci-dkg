@@ -184,6 +184,8 @@ func testRPCServer() *httptest.Server {
 					big.NewInt(11),
 					big.NewInt(12),
 					uint8(1),
+					uint64(7),
+					uint64(3),
 				)
 				resp.Result = "0x" + hex.EncodeToString(output)
 			case strings.HasPrefix(callData, getRoundSelector):
@@ -203,14 +205,6 @@ func testRPCServer() *httptest.Server {
 					KeyAssemblyDeadlineBlock        uint64 `json:"keyAssemblyDeadlineBlock"`
 					LiveNotBeforeBlock              uint64 `json:"liveNotBeforeBlock"`
 				}
-				type dpTuple struct {
-					OwnerOnly          bool   `json:"ownerOnly"`
-					MaxDecryptions     uint16 `json:"maxDecryptions"`
-					NotBeforeBlock     uint64 `json:"notBeforeBlock"`
-					NotBeforeTimestamp uint64 `json:"notBeforeTimestamp"`
-					NotAfterBlock      uint64 `json:"notAfterBlock"`
-					NotAfterTimestamp  uint64 `json:"notAfterTimestamp"`
-				}
 				output, _ := managerABI.Methods["getEpoch"].Outputs.Pack(
 					common.HexToAddress("0x5000000000000000000000000000000000000005"),
 					policyTuple{
@@ -222,7 +216,6 @@ func testRPCServer() *httptest.Server {
 						KeyAssemblyDeadlineBlock:        20,
 						LiveNotBeforeBlock:              21,
 					},
-					dpTuple{},                  // decryptionPolicy — all zero (no gate)
 					uint8(3),                   // status
 					uint64(1),                  // nonce
 					uint64(7),                  // startBlock

@@ -9,6 +9,7 @@ import (
 
 	flag "github.com/spf13/pflag"
 	"github.com/spf13/viper"
+	ccommon "github.com/vocdoni/davinci-dkg/circuits/common"
 	"github.com/vocdoni/davinci-dkg/config"
 )
 
@@ -47,6 +48,30 @@ type EpochPolicyConfig struct {
 	CommitteeSize         uint16 `mapstructure:"committee-size"`
 	MinValidContributions uint16 `mapstructure:"min-valid-contributions"`
 	LotteryAlphaBps       uint16 `mapstructure:"lottery-alpha-bps"`
+}
+
+// validate mirrors the contract's InvalidPolicy checks and the circuit's
+// committee cap so a bad policy fails at startup, not at createEpoch.
+func (p EpochPolicyConfig) validate() error {
+	if p.Threshold < 1 {
+		return fmt.Errorf("threshold must be at least 1")
+	}
+	if p.CommitteeSize < p.Threshold {
+		return fmt.Errorf("committee size %d must be at least the threshold %d", p.CommitteeSize, p.Threshold)
+	}
+	if p.CommitteeSize > ccommon.MaxN {
+		return fmt.Errorf("committee size %d exceeds the circuit cap MaxN=%d", p.CommitteeSize, ccommon.MaxN)
+	}
+	if p.MinValidContributions < p.Threshold {
+		return fmt.Errorf("min valid contributions %d must be at least the threshold %d", p.MinValidContributions, p.Threshold)
+	}
+	if p.MinValidContributions > p.CommitteeSize {
+		return fmt.Errorf("min valid contributions %d cannot exceed the committee size %d", p.MinValidContributions, p.CommitteeSize)
+	}
+	if p.LotteryAlphaBps < 10_000 {
+		return fmt.Errorf("lottery alpha %d bps must be at least 10000 (1.0)", p.LotteryAlphaBps)
+	}
+	return nil
 }
 
 type Web3Config struct {
@@ -143,6 +168,12 @@ func validateConfig(cfg *Config) error {
 	}
 	if len(cfg.Web3.RPC) == 0 {
 		return fmt.Errorf("at least one web3 rpc endpoint is required")
+	}
+	if cfg.PollInterval <= 0 {
+		return fmt.Errorf("poll interval must be greater than 0, got %s", cfg.PollInterval)
+	}
+	if err := cfg.EpochPolicy.validate(); err != nil {
+		return fmt.Errorf("epoch policy: %w", err)
 	}
 	// Validate the network name early so the user gets a clear error message
 	// rather than a confusing failure later during chain connection.

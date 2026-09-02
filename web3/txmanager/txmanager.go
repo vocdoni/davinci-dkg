@@ -23,7 +23,14 @@ const (
 	defaultMaxRetries         = 10
 	defaultFeeIncreasePercent = 50
 	defaultMonitorInterval    = 15 * time.Second
-	defaultTxTimeout          = 90 * time.Second
+	// defaultGasMultiplier is the headroom applied to bind's gas estimate.
+	// The estimate is exact for the state it was simulated against; a
+	// transaction that lands behind others touching the same storage in
+	// one block (three claimSlot calls, each costlier than the last) runs
+	// out of gas without it.
+	defaultGasMultiplier = 1.2
+	// rpcCallTimeout bounds every RPC issued by the background monitor.
+	rpcCallTimeout = 15 * time.Second
 )
 
 // Config holds tunable parameters for the Manager.
@@ -38,6 +45,9 @@ type Config struct {
 	// MonitorInterval controls how often the background goroutine checks for
 	// stuck transactions.
 	MonitorInterval time.Duration
+	// GasMultiplier inflates estimated gas limits (≥ 1). Explicit
+	// TransactOpts.GasLimit values are never touched.
+	GasMultiplier float64
 }
 
 // DefaultConfig returns a sensible default configuration.
@@ -47,24 +57,29 @@ func DefaultConfig() Config {
 		MaxRetries:         defaultMaxRetries,
 		FeeIncreasePercent: defaultFeeIncreasePercent,
 		MonitorInterval:    defaultMonitorInterval,
+		GasMultiplier:      defaultGasMultiplier,
 	}
 }
 
-// pendingTx tracks a submitted transaction that has not yet been confirmed.
+// pendingTx tracks a nonce handed out by the manager until the chain has
+// consumed it. `signed` is nil between allocation and signing.
 type pendingTx struct {
 	hash        common.Hash
 	nonce       uint64
-	to          common.Address
-	data        []byte
-	gasFeeCap   *big.Int
-	gasTipCap   *big.Int
-	gasLimit    uint64
+	signed      *gethtypes.Transaction
 	submittedAt time.Time
 	retries     int
 }
 
 // Manager handles nonce management, EIP-1559 gas estimation, and basic
 // stuck-transaction recovery. It is safe for concurrent use.
+//
+// Nonces are allocated from a local counter, under the lock, at signing
+// time: bind calls the Signer only after gas estimation succeeded, so a
+// call that reverts during estimation never burns a nonce. The counter is
+// initialised from (and never falls behind) the pending nonce bind fetched
+// from the chain, and is reconciled against the confirmed nonce whenever a
+// receipt is observed.
 type Manager struct {
 	clientFn func() *ethclient.Client
 	key      *ecdsa.PrivateKey
@@ -107,6 +122,24 @@ func (m *Manager) Address() common.Address {
 	return m.from
 }
 
+// SetGasMultiplier sets the headroom applied to estimated gas limits.
+// Values below 1 are ignored: headroom never shrinks an estimate.
+func (m *Manager) SetGasMultiplier(x float64) {
+	if x < 1 {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.config.GasMultiplier = x
+}
+
+// gasMultiplier reads the configured headroom under the lock.
+func (m *Manager) gasMultiplier() float64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.config.GasMultiplier
+}
+
 // Start launches a background goroutine that monitors pending transactions
 // and retries any that appear stuck (pending longer than MaxPendingTime).
 func (m *Manager) Start(ctx context.Context) {
@@ -120,9 +153,7 @@ func (m *Manager) Start(ctx context.Context) {
 			case <-monCtx.Done():
 				return
 			case <-ticker.C:
-				m.mu.Lock()
 				_ = m.retryStuck(monCtx)
-				m.mu.Unlock()
 			}
 		}
 	}()
@@ -135,48 +166,110 @@ func (m *Manager) Stop() {
 	}
 }
 
-// NewTransactOpts builds an EIP-1559 TransactOpts.
+// NewTransactOpts builds an EIP-1559 TransactOpts whose Signer allocates the
+// nonce from the manager's counter (see Manager), applies the gas headroom
+// to estimated limits and records the signed transaction for monitoring.
 // Fee caps are estimated from current network conditions.
 func (m *Manager) NewTransactOpts(ctx context.Context) (*bind.TransactOpts, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	auth, err := bind.NewKeyedTransactorWithChainID(m.key, m.chainID)
 	if err != nil {
 		return nil, fmt.Errorf("create transact opts: %w", err)
 	}
 	auth.Context = ctx
-
-	tipCap, feeCap, err := m.suggestFees(ctx)
-	if err != nil {
-		// Non-fatal: let the bound method use default gas price.
-		return auth, nil
+	// Fee estimation is best effort: on failure the bound method falls back
+	// to the node's suggested gas price.
+	if tipCap, feeCap, err := m.suggestFees(ctx); err == nil {
+		auth.GasTipCap = tipCap
+		auth.GasFeeCap = feeCap
 	}
-	auth.GasTipCap = tipCap
-	auth.GasFeeCap = feeCap
 
+	sign := auth.Signer
+	auth.Signer = func(addr common.Address, tx *gethtypes.Transaction) (*gethtypes.Transaction, error) {
+		// bind fetched the chain's pending nonce for tx; treat it as a
+		// lower bound and allocate the real one locally.
+		nonce := m.allocateNonce(tx.Nonce())
+		gas := tx.Gas()
+		if auth.GasLimit == 0 { // estimated, not chosen by the caller
+			gas = uint64(float64(gas) * m.gasMultiplier())
+		}
+		signed, err := sign(addr, rebuildTx(tx, nonce, gas))
+		if err != nil {
+			m.mu.Lock()
+			delete(m.pending, nonce)
+			m.mu.Unlock()
+			return nil, err
+		}
+		m.track(signed)
+		return signed, nil
+	}
 	return auth, nil
 }
 
-// RecordPending stores a submitted transaction for monitoring. Call this
-// after successfully broadcasting a transaction obtained through NewTransactOpts.
-func (m *Manager) RecordPending(tx *gethtypes.Transaction) {
+// allocateNonce hands out the next nonce under the lock. chainPending is
+// the chain's view of the sender's next nonce: the counter never falls
+// behind it, and any nonce between it and the counter that is no longer in
+// flight (a transaction the monitor gave up on) is re-used first so the
+// account cannot stall on a gap.
+func (m *Manager) allocateNonce(chainPending uint64) uint64 {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.pending[tx.Nonce()] = &pendingTx{
-		hash:        tx.Hash(),
-		nonce:       tx.Nonce(),
-		to:          *tx.To(),
-		data:        tx.Data(),
-		gasFeeCap:   tx.GasFeeCap(),
-		gasTipCap:   tx.GasTipCap(),
-		gasLimit:    tx.Gas(),
-		submittedAt: time.Now(),
+	if chainPending > m.nextNonce {
+		m.nextNonce = chainPending
 	}
+	nonce := m.nextNonce
+	for k := chainPending; k < m.nextNonce; k++ {
+		if _, inflight := m.pending[k]; !inflight {
+			nonce = k
+			break
+		}
+	}
+	if nonce == m.nextNonce {
+		m.nextNonce++
+	}
+	m.pending[nonce] = &pendingTx{nonce: nonce, submittedAt: time.Now()}
+	return nonce
+}
+
+// track records a signed transaction against its nonce.
+func (m *Manager) track(tx *gethtypes.Transaction) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ptx, ok := m.pending[tx.Nonce()]
+	if !ok {
+		ptx = &pendingTx{nonce: tx.Nonce(), submittedAt: time.Now()}
+		m.pending[tx.Nonce()] = ptx
+	}
+	ptx.hash = tx.Hash()
+	ptx.signed = tx
+}
+
+// rebuildTx returns tx with its nonce and gas limit replaced (or tx itself
+// when both already match).
+func rebuildTx(tx *gethtypes.Transaction, nonce, gas uint64) *gethtypes.Transaction {
+	if tx.Nonce() == nonce && tx.Gas() == gas {
+		return tx
+	}
+	if tx.Type() == gethtypes.LegacyTxType {
+		return gethtypes.NewTx(&gethtypes.LegacyTx{
+			Nonce: nonce, GasPrice: tx.GasPrice(), Gas: gas, To: tx.To(), Value: tx.Value(), Data: tx.Data(),
+		})
+	}
+	return gethtypes.NewTx(&gethtypes.DynamicFeeTx{
+		ChainID: tx.ChainId(), Nonce: nonce, GasTipCap: tx.GasTipCap(), GasFeeCap: tx.GasFeeCap(),
+		Gas: gas, To: tx.To(), Value: tx.Value(), Data: tx.Data(), AccessList: tx.AccessList(),
+	})
+}
+
+// RecordPending stores a submitted transaction for monitoring. Transactions
+// signed through NewTransactOpts are already tracked; calling this for
+// them is harmless. It remains for transactions signed elsewhere.
+func (m *Manager) RecordPending(tx *gethtypes.Transaction) {
+	m.track(tx)
 }
 
 // WaitTxByHash blocks until the transaction is confirmed or the timeout expires.
 // It returns an error if the transaction reverts or the context/timeout fires.
+// Transient receipt errors are retried until the timeout.
 func (m *Manager) WaitTxByHash(hash common.Hash, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -184,9 +277,13 @@ func (m *Manager) WaitTxByHash(hash common.Hash, timeout time.Duration) error {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 
+	var lastErr error
 	for {
 		select {
 		case <-ctx.Done():
+			if lastErr != nil {
+				return fmt.Errorf("timeout waiting for transaction %s (last error: %w)", hash.Hex(), lastErr)
+			}
 			return fmt.Errorf("timeout waiting for transaction %s", hash.Hex())
 		case <-ticker.C:
 			receipt, err := m.clientFn().TransactionReceipt(ctx, hash)
@@ -194,15 +291,15 @@ func (m *Manager) WaitTxByHash(hash common.Hash, timeout time.Duration) error {
 			case err == nil:
 				// Always record gas cost — reverted txs still consume gas.
 				m.recordGasSpent(receipt)
+				m.pruneConfirmed(receipt.BlockNumber)
 				if receipt.Status != gethtypes.ReceiptStatusSuccessful {
 					return fmt.Errorf("transaction %s reverted (status %d)", hash.Hex(), receipt.Status)
 				}
-				m.pruneConfirmed(receipt.BlockNumber)
 				return nil
 			case errors.Is(err, ethereum.NotFound):
 				// Still pending — keep polling.
 			default:
-				return fmt.Errorf("get receipt for %s: %w", hash.Hex(), err)
+				lastErr = err // transient RPC failure — keep polling
 			}
 		}
 	}
@@ -251,105 +348,154 @@ func (m *Manager) suggestFees(ctx context.Context) (*big.Int, *big.Int, error) {
 	return tipCap, feeCap, nil
 }
 
-// retryStuck resubmits transactions that have been pending longer than
-// MaxPendingTime with a bumped fee cap. Must be called with m.mu held.
+// retryStuck is one monitor pass. It snapshots the pending set under the
+// lock, does all RPC work without it, and applies the outcome per entry
+// only if that entry has not changed meanwhile:
+//
+//   - nonces below the confirmed nonce are done (mined or replaced);
+//   - a transaction at or above the chain's pending nonce is unknown to the
+//     RPC's mempool (lost send or pool failover) and is re-broadcast as-is;
+//   - a transaction pending longer than MaxPendingTime is replaced by a
+//     fee-bumped copy, up to MaxRetries times, after which it is dropped so
+//     its nonce can be re-used.
 func (m *Manager) retryStuck(ctx context.Context) error {
+	m.mu.Lock()
+	snapshot := make([]pendingTx, 0, len(m.pending))
+	for _, ptx := range m.pending {
+		snapshot = append(snapshot, *ptx)
+	}
+	m.mu.Unlock()
+	if len(snapshot) == 0 {
+		return nil
+	}
+
+	client := m.clientFn()
+	confirmed, err := withTimeout(ctx, func(c context.Context) (uint64, error) { return client.NonceAt(c, m.from, nil) })
+	if err != nil {
+		return fmt.Errorf("confirmed nonce: %w", err)
+	}
+	chainPending, err := withTimeout(ctx, func(c context.Context) (uint64, error) { return client.PendingNonceAt(c, m.from) })
+	if err != nil {
+		return fmt.Errorf("pending nonce: %w", err)
+	}
+	m.reconcile(confirmed)
+
 	now := time.Now()
-	for nonce, ptx := range m.pending {
-		if now.Sub(ptx.submittedAt) < m.config.MaxPendingTime {
-			continue
+	for _, ptx := range snapshot {
+		if ptx.nonce < confirmed || ptx.signed == nil {
+			continue // done, or still being signed
 		}
-		if ptx.retries >= m.config.MaxRetries {
-			// Give up and remove from tracking.
-			delete(m.pending, nonce)
-			continue
+		age := now.Sub(ptx.submittedAt)
+		switch {
+		case ptx.retries >= m.config.MaxRetries:
+			m.mu.Lock()
+			if cur, ok := m.pending[ptx.nonce]; ok && cur.hash == ptx.hash {
+				delete(m.pending, ptx.nonce)
+			}
+			m.mu.Unlock()
+		case ptx.nonce >= chainPending && age >= m.config.MonitorInterval:
+			m.resend(ctx, ptx, ptx.signed, false)
+		case age >= m.config.MaxPendingTime:
+			bumped, err := m.bumpedCopy(ptx.signed)
+			if err != nil {
+				continue
+			}
+			m.resend(ctx, ptx, bumped, true)
 		}
-
-		// Check if already confirmed.
-		receipt, err := m.clientFn().TransactionReceipt(ctx, ptx.hash)
-		if err == nil && receipt != nil {
-			// Confirmed — remove.
-			delete(m.pending, nonce)
-			continue
-		}
-
-		// Bump fee and resubmit.
-		bumped, bumpedTip, err := m.bumpedFees(ptx)
-		if err != nil {
-			continue
-		}
-		tx := gethtypes.NewTx(&gethtypes.DynamicFeeTx{
-			ChainID:   m.chainID,
-			Nonce:     ptx.nonce,
-			GasTipCap: bumpedTip,
-			GasFeeCap: bumped,
-			Gas:       ptx.gasLimit,
-			To:        &ptx.to,
-			Data:      ptx.data,
-		})
-		signer := gethtypes.NewCancunSigner(m.chainID)
-		signed, err := gethtypes.SignTx(tx, signer, m.key)
-		if err != nil {
-			continue
-		}
-		if err := m.clientFn().SendTransaction(ctx, signed); err != nil {
-			// Ignore "already known" errors; the original tx may still confirm.
-			continue
-		}
-		ptx.hash = signed.Hash()
-		ptx.gasFeeCap = bumped
-		ptx.gasTipCap = bumpedTip
-		ptx.submittedAt = now
-		ptx.retries++
 	}
 	return nil
 }
 
-// bumpedFees returns fee caps increased by FeeIncreasePercent.
-func (m *Manager) bumpedFees(ptx *pendingTx) (feeCap, tipCap *big.Int, err error) {
-	pct := big.NewInt(int64(100 + m.config.FeeIncreasePercent))
-	feeCap = new(big.Int).Mul(ptx.gasFeeCap, pct)
-	feeCap.Div(feeCap, big.NewInt(100))
-	tipCap = new(big.Int).Mul(ptx.gasTipCap, pct)
-	tipCap.Div(tipCap, big.NewInt(100))
-	return feeCap, tipCap, nil
-}
-
-// pruneConfirmed removes all pending entries with nonce ≤ confirmedBlockNonce.
-// We use the block number as a rough proxy (all txs mined by this block are done).
-func (m *Manager) pruneConfirmed(blockNumber *big.Int) {
+// resend broadcasts tx and, if the pending entry is still the one we
+// snapshotted, records the new hash. A bump restarts the pending clock; a
+// plain re-broadcast does not, so a stuck transaction still gets bumped on
+// schedule.
+func (m *Manager) resend(ctx context.Context, ptx pendingTx, tx *gethtypes.Transaction, bumped bool) {
+	if _, err := withTimeout(ctx, func(c context.Context) (struct{}, error) {
+		return struct{}{}, m.clientFn().SendTransaction(c, tx)
+	}); err != nil {
+		return // "already known" and friends: the original may still confirm
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if blockNumber == nil {
+	cur, ok := m.pending[ptx.nonce]
+	if !ok || cur.hash != ptx.hash {
 		return
 	}
-	// Refresh confirmed nonce to detect externally mined transactions.
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	cur.hash = tx.Hash()
+	cur.signed = tx
+	cur.retries++
+	if bumped {
+		cur.submittedAt = time.Now()
+	}
+}
+
+// withTimeout runs one RPC call under rpcCallTimeout.
+func withTimeout[T any](ctx context.Context, call func(context.Context) (T, error)) (T, error) {
+	cctx, cancel := context.WithTimeout(ctx, rpcCallTimeout)
 	defer cancel()
-	confirmed, err := m.clientFn().NonceAt(ctx, m.from, blockNumber)
-	if err != nil {
-		return
+	return call(cctx)
+}
+
+// bumpedCopy re-signs tx with fee caps increased by FeeIncreasePercent.
+func (m *Manager) bumpedCopy(tx *gethtypes.Transaction) (*gethtypes.Transaction, error) {
+	pct := big.NewInt(int64(100 + m.config.FeeIncreasePercent))
+	bump := func(v *big.Int) *big.Int {
+		out := new(big.Int).Mul(v, pct)
+		return out.Div(out, big.NewInt(100))
 	}
+	raw := gethtypes.NewTx(&gethtypes.DynamicFeeTx{
+		ChainID:    m.chainID,
+		Nonce:      tx.Nonce(),
+		GasTipCap:  bump(tx.GasTipCap()),
+		GasFeeCap:  bump(tx.GasFeeCap()),
+		Gas:        tx.Gas(),
+		To:         tx.To(),
+		Value:      tx.Value(),
+		Data:       tx.Data(),
+		AccessList: tx.AccessList(),
+	})
+	return gethtypes.SignTx(raw, gethtypes.LatestSignerForChainID(m.chainID), m.key)
+}
+
+// reconcile drops every pending entry below the confirmed nonce and keeps
+// the local counter from falling behind it.
+func (m *Manager) reconcile(confirmed uint64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	for nonce := range m.pending {
 		if nonce < confirmed {
 			delete(m.pending, nonce)
 		}
 	}
-	// Advance our local nonce if the confirmed nonce has overtaken it.
 	if confirmed > m.nextNonce {
 		m.nextNonce = confirmed
 	}
 }
 
-// ResetNonce re-reads the confirmed nonce from the chain. Call this after a
-// node restart or when the nonce counter becomes out-of-sync.
+// pruneConfirmed reconciles the pending set against the sender's nonce at
+// blockNumber (all our transactions mined by then are done).
+func (m *Manager) pruneConfirmed(blockNumber *big.Int) {
+	if blockNumber == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), rpcCallTimeout)
+	defer cancel()
+	confirmed, err := m.clientFn().NonceAt(ctx, m.from, blockNumber)
+	if err != nil {
+		return
+	}
+	m.reconcile(confirmed)
+}
+
+// ResetNonce re-reads the confirmed nonce from the chain and reconciles the
+// pending set against it. Call this when the nonce counter is suspected to
+// be out of sync.
 func (m *Manager) ResetNonce(ctx context.Context) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
 	nonce, err := m.clientFn().NonceAt(ctx, m.from, nil)
 	if err != nil {
 		return fmt.Errorf("reset nonce: %w", err)
 	}
-	m.nextNonce = nonce
+	m.reconcile(nonce)
 	return nil
 }

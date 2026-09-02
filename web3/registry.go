@@ -26,7 +26,7 @@ func (c *Contracts) GetNode(ctx context.Context, operator common.Address) (Regis
 	if err != nil {
 		return RegistryNode{}, fmt.Errorf("unpack getNode: %w", err)
 	}
-	if len(values) != 4 {
+	if len(values) < 4 {
 		return RegistryNode{}, fmt.Errorf("unexpected output count for getNode")
 	}
 	return RegistryNode{

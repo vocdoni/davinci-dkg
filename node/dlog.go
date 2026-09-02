@@ -18,25 +18,30 @@ package node
 //
 // Total work is at most 2m point additions and uses O(m) memory for the
 // table. We pick m = ⌈√MaxDLogPlaintext⌉ = 2^25, which makes both costs
-// equal — ~33.5 M point additions and a ~2 GB hash table on the heap.
+// equal: ~33.5 M point additions for the build and, worst case, for a
+// lookup; both are split across every CPU.
+//
+// The table stores one 8-byte key per baby step instead of the 32-byte
+// point encoding: the high (64 − ⌈log2 m⌉) bits are the low bits of the
+// point's y-coordinate and the low bits are the index i. Keys are kept in a
+// sorted vector, so a lookup is a binary search on the y prefix followed by
+// a scalar-multiplication check of each candidate (a false candidate is a
+// 2^-14 event per giant step at m = 2^25). On a twisted Edwards curve P and
+// −P share y, so a hit at T_j = −i·G is useful too (a = j·m − i), which
+// halves the expected number of giant steps. Memory is m × 8 B = 256 MB at
+// m = 2^25.
 //
 // The table is built lazily on the first call (so a node that never combines
-// pays nothing) and cached for the lifetime of the process. After that, every
-// subsequent decryption costs at most m giant-step iterations (~30–60 s wall
-// clock on a modern CPU; faster in practice because most plaintexts land
-// well before the worst case).
-//
-// Memory note for operators: the precomputed table needs roughly
-// (32 + 4) bytes per entry × 33.5 M entries ≈ 1.2 GB raw, which works out
-// to ~2 GB on the Go heap once map overhead is counted. A node operator
-// who never expects to combine won't pay this — initBSGSTable is only run
-// the first time `dlogBSGS` is called. To raise the cap beyond 2^50 we'd
-// need a different algorithm (e.g. Pollard's kangaroo) — see README.
+// pays nothing) and cached for the lifetime of the process.
 
 import (
 	"fmt"
 	"math/big"
+	"math/bits"
+	"runtime"
+	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/vocdoni/davinci-dkg/crypto/group"
@@ -60,37 +65,144 @@ const bsgsM = uint64(1) << 25
 
 var (
 	bsgsOnce  sync.Once
-	bsgsTable map[string]uint32 // 32-byte point Marshal() → baby-step index
-	bsgsNegM  ecc.Point         // -m·G, the giant-step direction
+	bsgsCache *bsgsTable
 )
 
-// initBSGSTable runs the one-time precomputation. Marked package-level so
-// tests and benchmarks can drive it explicitly via dlogBSGS, but it's only
-// ever called via the sync.Once below.
-func initBSGSTable() {
-	start := time.Now()
-	log.Infow("dlog: building BSGS table", "m", bsgsM, "max", MaxDLogPlaintext)
+// bsgsTable is the precomputed baby-step table for a given m.
+type bsgsTable struct {
+	m       uint64
+	idxMask uint64   // low bits of a key hold the baby-step index
+	keys    []uint64 // sorted: (yLow64 &^ idxMask) | i
+	negM    ecc.Point
+}
 
-	gen := group.Generator()
-	cur := group.NewPoint()
-	cur.SetZero()
-	bsgsTable = make(map[string]uint32, bsgsM)
-	for i := uint32(0); uint64(i) < bsgsM; i++ {
-		// Marshal() output is the canonical encoding for the curve, so
-		// equal points always produce equal byte strings. string([]byte)
-		// in Go performs a copy — we need that, otherwise the next loop
-		// iteration would mutate the key in place.
-		bsgsTable[string(cur.Marshal())] = i
-		cur.Add(cur, gen)
+// newBSGSTable builds the baby-step table for m in parallel across CPUs.
+func newBSGSTable(m uint64) *bsgsTable {
+	if m == 0 {
+		panic("bsgs: m must be positive")
 	}
+	start := time.Now()
+	t := &bsgsTable{m: m, keys: make([]uint64, m)}
+	if m > 1 {
+		t.idxMask = uint64(1)<<bits.Len64(m-1) - 1
+	}
+
+	workers := uint64(runtime.NumCPU())
+	workers = max(1, min(workers, m))
+	chunk := (m + workers - 1) / workers
+	var wg sync.WaitGroup
+	for lo := uint64(0); lo < m; lo += chunk {
+		hi := min(lo+chunk, m)
+		wg.Add(1)
+		go func(lo, hi uint64) {
+			defer wg.Done()
+			gen := group.Generator()
+			cur := group.NewPoint()
+			cur.ScalarBaseMult(new(big.Int).SetUint64(lo))
+			for i := lo; i < hi; i++ {
+				t.keys[i] = t.key(cur, i)
+				cur.Add(cur, gen)
+			}
+		}(lo, hi)
+	}
+	wg.Wait()
+	slices.Sort(t.keys)
 
 	// Giant step: M = m·G, then negate so we can advance by repeated
 	// addition rather than subtraction inside the hot loop.
-	bsgsNegM = group.NewPoint()
-	bsgsNegM.ScalarBaseMult(new(big.Int).SetUint64(bsgsM))
-	bsgsNegM.Neg(bsgsNegM)
+	t.negM = group.NewPoint()
+	t.negM.ScalarBaseMult(new(big.Int).SetUint64(m))
+	t.negM.Neg(t.negM)
 
-	log.Infow("dlog: BSGS table ready", "elapsed", time.Since(start).String(), "entries", len(bsgsTable))
+	if m >= 1<<20 {
+		log.Infow("dlog: BSGS table ready", "m", m, "elapsed", time.Since(start).String(),
+			"bytes", len(t.keys)*8, "workers", workers)
+	}
+	return t
+}
+
+// key packs the low 64 bits of p's y-coordinate (above the index bits)
+// together with the baby-step index.
+func (t *bsgsTable) key(p ecc.Point, i uint64) uint64 {
+	return t.prefix(p) | i
+}
+
+// prefix returns the y-coordinate part of a key with the index bits cleared.
+func (t *bsgsTable) prefix(p ecc.Point) uint64 {
+	_, y := p.Point()
+	words := y.Bits()
+	if len(words) == 0 {
+		return 0
+	}
+	return uint64(words[0]) &^ t.idxMask
+}
+
+// lookup recovers a such that a·G = target with 0 ≤ a < m². The giant-step
+// walk is split across CPUs; the first verified hit wins.
+func (t *bsgsTable) lookup(target ecc.Point) (*big.Int, error) {
+	workers := uint64(runtime.NumCPU())
+	workers = max(1, min(workers, t.m))
+	chunk := (t.m + workers - 1) / workers
+
+	var (
+		found  atomic.Bool
+		mu     sync.Mutex
+		result uint64
+		wg     sync.WaitGroup
+	)
+	for j0 := uint64(0); j0 < t.m; j0 += chunk {
+		j1 := min(j0+chunk, t.m)
+		wg.Add(1)
+		go func(j0, j1 uint64) {
+			defer wg.Done()
+			// cur = target − j0·M
+			cur := group.NewPoint()
+			cur.ScalarMult(t.negM, new(big.Int).SetUint64(j0))
+			cur.Add(cur, target)
+			for j := j0; j < j1 && !found.Load(); j++ {
+				if a, ok := t.candidates(cur, target, j); ok {
+					mu.Lock()
+					if !found.Swap(true) {
+						result = a
+					}
+					mu.Unlock()
+					return
+				}
+				cur.Add(cur, t.negM)
+			}
+		}(j0, j1)
+	}
+	wg.Wait()
+	if !found.Load() {
+		return nil, fmt.Errorf("dlog: plaintext out of range (>= %d)", t.m*t.m)
+	}
+	return new(big.Int).SetUint64(result), nil
+}
+
+// candidates checks every baby step whose y prefix matches cur = target −
+// j·M. A match at index i means cur = ±i·G, i.e. a = j·m ± i; each
+// candidate is verified by a scalar multiplication before being accepted.
+func (t *bsgsTable) candidates(cur, target ecc.Point, j uint64) (uint64, bool) {
+	prefix := t.prefix(cur)
+	pos, _ := slices.BinarySearch(t.keys, prefix)
+	check := group.NewPoint()
+	for ; pos < len(t.keys) && t.keys[pos]&^t.idxMask == prefix; pos++ {
+		i := t.keys[pos] & t.idxMask
+		a := j*t.m + i
+		check.ScalarBaseMult(new(big.Int).SetUint64(a))
+		if check.Equal(target) {
+			return a, true
+		}
+		if i == 0 || j*t.m < i {
+			continue
+		}
+		a = j*t.m - i
+		check.ScalarBaseMult(new(big.Int).SetUint64(a))
+		if check.Equal(target) {
+			return a, true
+		}
+	}
+	return 0, false
 }
 
 // dlogBSGS recovers a scalar `a` such that a·G = target with 0 ≤ a <
@@ -99,22 +211,12 @@ func initBSGSTable() {
 // plaintext outside the documented domain and the result is unrecoverable
 // without a different algorithm.
 //
-// First call lazily builds the precomputed table (~30–60 s on a modern
-// CPU, ~2 GB heap). Subsequent calls reuse it and run at most m
-// giant-step iterations (~30–60 s worst case; usually much faster since
-// most plaintexts land well before the upper bound).
+// First call lazily builds the precomputed table (2^25 baby steps spread
+// over every CPU, ~256 MB). Subsequent calls reuse it.
 func dlogBSGS(target ecc.Point) (*big.Int, error) {
-	bsgsOnce.Do(initBSGSTable)
-
-	// Walk T_j = target − j·M for j = 0, 1, …, looking each up in the
-	// baby-step table. Found at index i means a = j·m + i.
-	cur := group.NewPoint()
-	cur.Set(target)
-	for j := uint64(0); j < bsgsM; j++ {
-		if i, ok := bsgsTable[string(cur.Marshal())]; ok {
-			return new(big.Int).SetUint64(j*bsgsM + uint64(i)), nil
-		}
-		cur.Add(cur, bsgsNegM)
-	}
-	return nil, fmt.Errorf("dlog: plaintext out of range (>= 2^50 ≈ 10^15)")
+	bsgsOnce.Do(func() {
+		log.Infow("dlog: building BSGS table", "m", bsgsM, "max", MaxDLogPlaintext)
+		bsgsCache = newBSGSTable(bsgsM)
+	})
+	return bsgsCache.lookup(target)
 }

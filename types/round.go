@@ -54,19 +54,6 @@ type EpochPolicy struct {
 	CommitteeSelectionDeadlineBlock uint64
 	KeyAssemblyDeadlineBlock        uint64
 	LiveNotBeforeBlock              uint64
-	DecryptionPolicy                DecryptionPolicy
-}
-
-// DecryptionPolicy mirrors the on-chain DKGTypes.DecryptionPolicy struct and
-// gates who may call submitCiphertext for a epoch. All checks AND together;
-// a zero-valued field is a no-op for that check.
-type DecryptionPolicy struct {
-	OwnerOnly          bool
-	MaxDecryptions     uint16
-	NotBeforeBlock     uint64
-	NotBeforeTimestamp uint64
-	NotAfterBlock      uint64
-	NotAfterTimestamp  uint64
 }
 
 // Validate checks that the policy is internally coherent.
