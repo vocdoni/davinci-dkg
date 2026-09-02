@@ -174,7 +174,7 @@ circuits-release: ## Compile circuits, upload to CDN, update hashes, rebuild Sol
 testnet-up: ## Start the testnet with N nodes
 	@echo "Starting testnet with $(DKG_NODE_COUNT) nodes..."
 	@cd testnet && \
-	DKG_NODE_COUNT=$(DKG_NODE_COUNT) \
+	DKG_NODE_COUNT=$(DKG_NODE_COUNT) DKG_THRESHOLD=$(DKG_THRESHOLD) \
 	docker compose up -d --scale dkg-node=$(DKG_NODE_COUNT) --build
 
 testnet-run: ## (Deprecated alias) Wait for the running dkg-node fleet to auto-create + drive an epoch

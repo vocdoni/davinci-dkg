@@ -1,0 +1,28 @@
+# Worker-host fleet: only dkg-node replicas, pointed at an Anvil + deployer
+# running elsewhere (see remote-nodes.sh). Addresses come from a copied
+# addresses.env, keys from anvil-keys.txt shifted by DKG_KEY_OFFSET.
+services:
+  dkg-node:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: davinci-dkg:testnet
+    entrypoint: ["/bin/sh", "/testnet/entrypoint-node.sh"]
+    restart: unless-stopped
+    environment:
+      DAVINCI_DKG_WEB3_RPC: "${DKG_RPC_URL:?set DKG_RPC_URL to the anvil endpoint}"
+      DAVINCI_DKG_LOG_LEVEL: "${DKG_LOG_LEVEL:-debug}"
+      DAVINCI_DKG_ARTIFACTS_DIR: /artifacts
+      KEY_OFFSET: "${DKG_KEY_OFFSET:?set DKG_KEY_OFFSET past the primary host's node count}"
+      DAVINCI_DKG_EPOCH_POLICY_THRESHOLD: "${DKG_THRESHOLD:-3}"
+      DAVINCI_DKG_EPOCH_POLICY_COMMITTEE_SIZE: "${DKG_COMMITTEE_SIZE:-4}"
+      DAVINCI_DKG_EPOCH_POLICY_MIN_VALID_CONTRIBUTIONS: "${DKG_MIN_VALID_CONTRIBUTIONS:-3}"
+      DAVINCI_DKG_EPOCH_POLICY_LOTTERY_ALPHA_BPS: "${DKG_ALPHA_BPS:-15000}"
+    volumes:
+      - ./remote-addresses:/addresses:ro
+      - ${DAVINCI_ARTIFACTS_HOST_DIR:-${HOME:-/root}/.davinci/artifacts}:/artifacts:ro
+      - shared:/shared
+      - ../testnet:/testnet:ro
+
+volumes:
+  shared: {}

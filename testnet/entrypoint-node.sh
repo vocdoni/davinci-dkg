@@ -28,7 +28,8 @@ while [ "$INDEX" -le 32 ]; do
   INDEX=$((INDEX+1))
 done
 
-KEY="$(echo "$ANVIL_KEYS" | tr ' ' '\n' | sed -n "${INDEX}p")"
+INDEX=$((INDEX + ${KEY_OFFSET:-0}))
+KEY="$(sed -n "${INDEX}p" /testnet/anvil-keys.txt)"
 if [ -z "$KEY" ]; then
   echo "ERROR: no key available for index $INDEX" >&2
   exit 1
