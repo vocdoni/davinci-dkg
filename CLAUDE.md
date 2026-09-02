@@ -78,7 +78,7 @@ make testnet-logs / testnet-down
 The protocol is implemented in Go (node + circuits), Solidity (contracts), TypeScript (SDK) and the UI.
 Anything that touches encodings, hashes or constants has to be changed in all of them:
 
-- **Protocol constants** (app modes, roles, Fiat–Shamir domain prefixes): source of truth is
+- **Protocol constants** (Fiat–Shamir domain prefixes): source of truth is
   `internal/protocol/protocol.go`; mirrors in `solidity/src/libraries/DKGProtocol.sol` and
   `sdk/src/protocol.ts`. `cmd/protocol-vectors` emits `tests/vectors/*.json` from the Go side; the SDK
   (`sdk/tests/vectors.test.ts`) and Foundry (`DKGProtocol.t.sol`) assert against them.
@@ -87,6 +87,10 @@ Anything that touches encodings, hashes or constants has to be changed in all of
 - **BRLC transcript encoding** (contribution calldata): `circuits/common/brlc.go`, `web3/brlc.go` and
   `solidity/src/libraries/BRLC.sol` must agree bit-for-bit, including the challenge anchor
   `keccak(digests ‖ keccak(transcript))` (`ccommon.ChallengeAnchor`).
+- **Organizer-share DLEQ challenge** `e = keccak(DOMAIN_ORGANIZER_SHARE_V1 ‖ eid ‖ aid ‖ ctIdx ‖ PK_org ‖
+  C1 ‖ Δ ‖ A1 ‖ A2) mod q`: `crypto/dleq/organizer.go`, `DKGManager._verifyOrganizerWords` and
+  `sdk/src/dleq.ts`. The combine circuit consumes `e` as a transcript word and the contract recomputes
+  it from calldata, so a one-byte divergence makes every combine revert.
 - **Circuit ↔ verifier binding**: `config/circuit_artifacts.go` pins SHA-256 hashes of every circuit's
   ccs/pk/vk; `circuits/artifacts.go` verifies them on load (downloads from the CDN, else falls back to a
   local setup). `make circuits-update-hashes` keeps the file in sync.
@@ -95,15 +99,22 @@ Anything that touches encodings, hashes or constants has to be changed in all of
 
 - `node/` is the daemon (`cmd/davinci-dkg-node` is a thin main). `node.go` polls the two newest epochs
   and does claimSlot → submitContribution (Groth16) → auto-finalize (via `finalizer/`); `decrypt.go`
-  scans `CiphertextSubmitted` events for every aid, re-verifies the submitter's proof of knowledge of
-  the randomness and the prime-subgroup membership of C1 (the contract checks both; nodes repeat them),
-  submits partials and combines on a seed-derived stagger (mode 0 tag or mode 1 organizer share
-  resolved through `DKGAppManager`). All secret scalars come from `scalars.go` (`crypto/rand`, never
+  scans `CiphertextSubmitted` events for every aid and checks the prime-subgroup membership of C1/C2
+  before computing a partial — the contract deliberately skips that check (~2 M gas), so this one is
+  load-bearing, not belt-and-braces. A slot becomes combinable only when `t` partials **and** a
+  verifying organizer share are on chain: `latestOrganizerShare` reads the newest
+  `OrganizerShareSubmitted` event, verifies it with `dleq.VerifyOrganizerShare` against the
+  application's registered `PK_org` (read through `DKGAppManager.getApplication`), and skips the slot
+  until the next tick if it does not verify — the organizer may overwrite a malformed share, so this
+  must never be terminal. The combine then runs on a seed-derived stagger anchored on whichever of the
+  two prerequisites landed last. All secret scalars come from `scalars.go` (`crypto/rand`, never
   deterministic); `dlog.go` is a compact parallel BSGS (2^50 cap, ~256 MB). Every flag has a
   `DAVINCI_DKG_*` env equivalent (`config.go`). `--network sepolia` resolves the manager from
   `config/networks.go`; registry, verifiers and app manager are read from the manager on-chain.
-- `cmd/dkgapp` is the application/organizer CLI: register apps (mode 0/1), encrypt + submit ciphertexts
-  with their PoK (`crypto/elgamal`), post organizer shares, read plaintexts.
+- `cmd/dkgapp` is the application/organizer CLI: `register` (organizer key + Schnorr PoP; generates and
+  prints `sk_org` when not given), `encrypt` (ElGamal under `PK_aid = PK_ep + PK_org`, no proof),
+  `share` (posts `Δ = sk_org·C1` with its keccak-challenge DLEQ — no SNARK, no circuit artifacts),
+  `plaintext`. Losing `sk_org` makes the application permanently undecryptable.
 - `circuits/{contribution,finalize,partialdecrypt,decryptcombine}` — gnark circuits (BN254 / BabyJubJub /
   Poseidon). Each has `circuit.go`, `witness.go` (Go-side witness construction), `assignment.go`,
   `artifacts.go`. `circuits/common` has the shared point/hash/Lagrange gadgets.
@@ -119,12 +130,17 @@ Anything that touches encodings, hashes or constants has to be changed in all of
 ### Contracts (`solidity/src`)
 
 `DKGRegistry` (operators, liveness) → `DKGManager` (epoch state machine, ciphertexts, decryption) →
-`DKGAppManager` (per-app registration, organizer co-decryption). Split only for EIP-170; they share one
+`DKGAppManager` (per-app registration, organizer shares). Split only for EIP-170; they share one
 logical storage. Phase windows and policy floors are constructor immutables (`EPOCH_DURATION_BLOCKS`,
 `COMMITTEE_SELECTION_BLOCKS`, `KEY_ASSEMBLY_BLOCKS`, `FINALIZE_GAP_BLOCKS`, `MIN_THRESHOLD`,
 `MIN_COMMITTEE_SIZE`, `MAX_LOTTERY_ALPHA_BPS`; all settable via env in `DeployAll.s.sol`).
 Invariants worth knowing: only operators registered before `createEpoch` may claim; `abortEpoch` only
-works on provably dead epochs; ciphertext indices are assigned on chain; every BRLC challenge is
+works on provably dead epochs; ciphertext indices are assigned on chain; `submitCiphertext` takes no
+proof and only accepts a registered `aid` (there is no `aid = 0` path and no open submission — a zero
+`authorizedSubmitter` resolves to the registrant); `submitOrganizerShare` is permissionless and
+unverified on chain (it only stores `keccak(Δ ‖ A1 ‖ A2 ‖ z)`, and re-submission overwrites until the
+plaintext lands, so a malformed share cannot brick a ciphertext) — the DLEQ is verified inside the
+combine SNARK against the `e` the contract recomputes; every BRLC challenge is
 keccak over the calldata *and* the circuit's digests (Fiat–Shamir on both sides, see BRLC.sol). `interfaces/*.sol` is the
 integration contract for the SDK/UI. Verifier wrappers in `src/verifiers` are generated by
 `cmd/circuit-compile` — don't hand-edit.
@@ -138,6 +154,10 @@ integration contract for the SDK/UI. Verifier wrappers in `src/verifiers` are ge
   epochs; `tests/helpers/proofs.go` builds the proofs. The harness registers only 6 operators and uses
   α=6.5535 so every actor passes the (real) lottery; `tests/node_service_test.go` runs three real
   `node.Node` instances end to end. Application ids in tests must be < the BN254 scalar field.
+  Every decryption test registers an application with `helpers.RegisterApplication` and posts an
+  organizer share (`helpers.SubmitOrganizerShareAs` for a fresh one, `helpers.PostOrganizerShare` to
+  publish the exact words a combine output already committed to — the DLEQ nonce is fresh per call, so
+  re-proving would not match the stored hash).
 - `sdk/tests/*-e2e.test.ts` start their own Anvil stack and use `cmd/sdk-test-fixture` to produce
   proofs.
 - `solidity/test/TestHelpers.t.sol` + `TestInputs.t.sol` hold canned proofs/inputs for Foundry.
