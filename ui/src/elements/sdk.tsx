@@ -62,10 +62,31 @@ export const dkg = new DKGClient({
         </CodeBlock>
       </Section>
 
+      <Section heading='Who does what'>
+        <Text fontSize='sm' color='ink.2'>
+          Two roles, and the SDK sits on the second one. <strong>Operators</strong> run the node
+          binary: they open each epoch on the contract's block cadence, win committee slots by
+          lottery, publish contributions, finalize, and later answer ciphertexts with partial
+          decryptions. <strong>Organizers</strong> — that is what this SDK is for — never create
+          or schedule an epoch. They register an application against whichever epoch is Live,
+          encrypt under <Code>PK_aid = PK_ep + PK_org</Code>, submit ciphertexts, and release
+          their own decryption share whenever they decide the plaintext may exist.
+        </Text>
+        <Text fontSize='sm' color='ink.2'>
+          Only registration carries a proof of possession of <Code>sk_org</Code> (a Schnorr
+          proof, verified on chain). Submitting a ciphertext proves nothing, and the organizer
+          share is a keccak-challenge Chaum–Pedersen DLEQ computed client-side — so an organizer
+          needs no circuit artifacts and no prover at all. Everything expensive is on the
+          committee's side.
+        </Text>
+      </Section>
+
       <Section heading='Reading an epoch'>
         <Text fontSize='sm' color='ink.2'>
           Epoch identifiers are 12-byte values formed from a 4-byte chain prefix and an 8-byte
           nonce. Build one with <Code>buildEpochId</Code> or pass a known one as a hex string.
+          Integrators normally do not pick an epoch at all: they take the newest one whose status
+          is <Code>Live</Code>, which the operator set has already produced and finalized.
         </Text>
         <CodeBlock language='tsx'>
           {`import { buildEpochId, EpochPhase, roundStatusLabel } from '@vocdoni/davinci-dkg-sdk'
@@ -184,11 +205,12 @@ const ciphertext = await encryptForApplication(42n, [pk.x, pk.y], app.organizerP
         <Text fontSize='sm' color='ink.2'>
           Chain-writing operations require a viem <Code>WalletClient</Code>. Wrap it with{' '}
           <Code>DKGWriter</Code>, which extends <Code>DKGClient</Code> with{' '}
-          <Code>createEpoch</Code> (four policy fields, bounded by the deployment's{' '}
-          <Code>getEpochBounds()</Code>), <Code>submitCiphertext</Code>, and{' '}
-          <Code>abortEpoch</Code> (permissionless, but only accepted for a dead epoch whose
-          selection or key-assembly deadline has passed). The contract assigns the ciphertext
-          index; <Code>submitCiphertext</Code> waits for the receipt and returns it.
+          <Code>registerApplication</Code>, <Code>submitCiphertext</Code>,{' '}
+          <Code>submitOrganizerShare</Code> — plus two calls an organizer normally never makes:{' '}
+          <Code>createEpoch</Code> (permissionless but cadence-gated; the nodes fire it
+          themselves) and <Code>abortEpoch</Code> (only accepted for a dead epoch whose selection
+          or key-assembly deadline has passed). The contract assigns the ciphertext index;{' '}
+          <Code>submitCiphertext</Code> waits for the receipt and returns it.
         </Text>
         <CodeBlock language='tsx'>
           {`import { createWalletClient, http } from 'viem'
@@ -221,7 +243,9 @@ console.log('submitted in', hash, 'as ciphertext #', ciphertextIndex)`}
           The committee's partial decryptions are not enough on their own. The organizer
           publishes <Code>Δ = sk_org·C1</Code> with a Chaum–Pedersen DLEQ proving the same
           secret relates <Code>(G, PK_org)</Code> and <Code>(C1, Δ)</Code>. Until that lands,{' '}
-          <Code>combineDecryption</Code> reverts <Code>OrganizerShareMissing()</Code>.
+          <Code>combineDecryption</Code> reverts <Code>OrganizerShareMissing()</Code>. The whole
+          computation is a few curve multiplications and a keccak — it runs in the organizer's
+          browser, so withholding the share until a poll closes costs nothing but a decision.
         </Text>
         <CodeBlock language='tsx'>
           {`await writer.submitOrganizerShare(epochId, aid, ciphertextIndex, ciphertext, skOrg)

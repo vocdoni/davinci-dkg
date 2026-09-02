@@ -105,7 +105,7 @@ export function AppRegistrationForm({ epochId, pkEp, initialAid, onRegistered }:
 
   async function handleSubmit() {
     if (!writer) {
-      setError('Connect a wallet first.')
+      setError('Connect a wallet to sign the registerApplication transaction.')
       return
     }
     if (sk === null) {
@@ -302,7 +302,8 @@ export function AppRegistrationForm({ epochId, pkEp, initialAid, onRegistered }:
         </Button>
         {!writer && (
           <Text fontSize='xs' color='ink.3'>
-            Connect a wallet to enable submission.
+            Connect a wallet to sign the <code>registerApplication</code> transaction — the
+            address you connect with becomes the organizer and the authorised submitter.
           </Text>
         )}
       </HStack>

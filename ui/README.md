@@ -42,6 +42,14 @@ Recognised vars (all optional; defaults match the bundled
 | `CHAIN_NAME` | sepolia |
 | `REGISTRY_ADDRESS` | (auto-derived) |
 | `START_BLOCK` | (none) |
+| `DEPLOY_BLOCK` | `0` |
+
+`DEPLOY_BLOCK` is the block the `DKGManager` was deployed at, and it is the
+floor of every historical log scan the explorer runs — the operator
+leaderboard, the per-epoch decryption pipeline, the registry roster. Set it
+and those views cost a handful of `eth_getLogs` calls; leave it at `0` and the
+SDK falls back to scanning a recent-block window instead, which is fast but
+only sees recent history.
 
 ## Build
 

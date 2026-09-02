@@ -17,6 +17,15 @@ import {
   type EpochPhaseValue,
   type EpochEvent,
   type EpochEntry,
+  type ActivityScanOptions,
+  type SlotClaimedEvent,
+  type ContributionSubmittedEvent,
+  type PartialDecryptionEvent,
+  type EpochLiveEvent,
+  type DecryptionCombinedEvent,
+  type ApplicationRegisteredEvent,
+  type BabyJubPoint,
+  type Hex,
 } from './types.js';
 import { buildEpochId } from './utils.js';
 import { fromRTEtoTE } from './crypto/babyjub-form.js';
@@ -750,6 +759,213 @@ export class DKGClient {
         transactionHash: (l.transactionHash ?? null) as `0x${string}` | null,
       };
     });
+  }
+
+
+  // ── Cross-epoch activity scans ─────────────────────────────────────────────
+  //
+  // The per-epoch getters above answer "what happened in this epoch". The
+  // scans below answer "what has this operator done since the deployment" —
+  // they walk the whole range in chunks and are what an explorer aggregates
+  // into per-operator statistics. Pass the manager's deployment block as
+  // `fromBlock`; `0n` falls back to a recent-block window instead of scanning
+  // from genesis.
+
+  /** Scan `SlotClaimed` across every epoch in the range (or one, via `epochId`). */
+  async getSlotClaimedEvents(opts: ActivityScanOptions = {}): Promise<SlotClaimedEvent[]> {
+    const logs = await this._scanManager('SlotClaimed', opts);
+    return logs.map((l) => {
+      const a = l.args as any;
+      return {
+        epochId: a.epochId as Hex,
+        claimer: a.claimer as Address,
+        slot: Number(a.slot ?? 0),
+        blockNumber: l.blockNumber ?? 0n,
+        transactionHash: (l.transactionHash ?? null) as Hex | null,
+      };
+    });
+  }
+
+  /** Scan `ContributionSubmitted` across every epoch in the range. */
+  async getContributionSubmittedEvents(
+    opts: ActivityScanOptions = {},
+  ): Promise<ContributionSubmittedEvent[]> {
+    const logs = await this._scanManager('ContributionSubmitted', opts);
+    return logs.map((l) => {
+      const a = l.args as any;
+      return {
+        epochId: a.epochId as Hex,
+        contributor: a.contributor as Address,
+        contributorIndex: Number(a.contributorIndex ?? 0),
+        blockNumber: l.blockNumber ?? 0n,
+        transactionHash: (l.transactionHash ?? null) as Hex | null,
+      };
+    });
+  }
+
+  /**
+   * Scan `PartialDecryptionSubmitted`. Unlike `EpochLive` / `DecryptionCombined`
+   * this event names its submitter, so it attributes without a transaction
+   * lookup. Narrow it with `aid` / `ciphertextIndex` to get the participants of
+   * one ciphertext's threshold set.
+   */
+  async getPartialDecryptionEvents(
+    opts: ActivityScanOptions & { aid?: Hex; ciphertextIndex?: number } = {},
+  ): Promise<PartialDecryptionEvent[]> {
+    const args: Record<string, unknown> = {};
+    if (opts.epochId != null) args.epochId = opts.epochId;
+    if (opts.aid != null) args.aid = opts.aid;
+    const logs = await this._scanManager('PartialDecryptionSubmitted', opts, args);
+    return logs
+      .map((l) => {
+        const a = l.args as any;
+        return {
+          epochId: a.epochId as Hex,
+          aid: a.aid as Hex,
+          participant: a.participant as Address,
+          participantIndex: Number(a.participantIndex ?? 0),
+          ciphertextIndex: Number(a.ciphertextIndex ?? 0),
+          delta: { x: a.deltaX as bigint, y: a.deltaY as bigint },
+          blockNumber: l.blockNumber ?? 0n,
+          transactionHash: (l.transactionHash ?? null) as Hex | null,
+        };
+      })
+      .filter((e) => opts.ciphertextIndex == null || e.ciphertextIndex === opts.ciphertextIndex);
+  }
+
+  /**
+   * Scan `EpochLive` across the range — one per finalized epoch. The event has
+   * no submitter field; resolve the finalizer with `getTransactionSenders`.
+   */
+  async getAllEpochLiveEvents(opts: ActivityScanOptions = {}): Promise<EpochLiveEvent[]> {
+    const logs = await this._scanManager('EpochLive', opts);
+    return logs.map((l) => {
+      const a = l.args as any;
+      return {
+        epochId: a.epochId as Hex,
+        aggregateCommitmentsHash: a.aggregateCommitmentsHash as Hex,
+        collectivePublicKeyHash: a.collectivePublicKeyHash as Hex,
+        shareCommitmentHash: a.shareCommitmentHash as Hex,
+        blockNumber: l.blockNumber ?? 0n,
+        transactionHash: (l.transactionHash ?? null) as Hex | null,
+      };
+    });
+  }
+
+  /**
+   * Scan `DecryptionCombined` across the range. Like `EpochLive` it carries no
+   * submitter; resolve the combiner with `getTransactionSenders`.
+   */
+  async getAllDecryptionCombinedEvents(
+    opts: ActivityScanOptions & { aid?: Hex } = {},
+  ): Promise<DecryptionCombinedEvent[]> {
+    const args: Record<string, unknown> = {};
+    if (opts.epochId != null) args.epochId = opts.epochId;
+    if (opts.aid != null) args.aid = opts.aid;
+    const logs = await this._scanManager('DecryptionCombined', opts, args);
+    return logs.map((l) => {
+      const a = l.args as any;
+      return {
+        epochId: a.epochId as Hex,
+        aid: a.aid as Hex,
+        ciphertextIndex: Number(a.ciphertextIndex ?? 0),
+        combineHash: a.combineHash as Hex,
+        plaintext: a.plaintext as bigint,
+        blockNumber: l.blockNumber ?? 0n,
+        transactionHash: (l.transactionHash ?? null) as Hex | null,
+      };
+    });
+  }
+
+  /**
+   * Scan `ApplicationRegistered` on the app manager — the only way to
+   * enumerate the applications of an epoch, since the contract keeps them in a
+   * mapping. `organizerPK` is converted to TE form, matching `getApplication`.
+   */
+  async getApplicationRegisteredEvents(
+    opts: ActivityScanOptions = {},
+  ): Promise<ApplicationRegisteredEvent[]> {
+    const appManagerAddress = await this._getAppManagerAddress();
+    const args: Record<string, unknown> = {};
+    if (opts.epochId != null) args.epochId = opts.epochId;
+    const logs = await getLogsChunked(
+      this.publicClient,
+      {
+        address: appManagerAddress,
+        event: getAbiItem({ abi: dkgAppManagerAbi, name: 'ApplicationRegistered' }),
+        args,
+        fromBlock: opts.fromBlock ?? 0n,
+        toBlock: opts.toBlock ?? 'latest',
+      },
+      { fallbackWindow: 50_000n },
+    );
+    return logs.map((l) => {
+      const a = l.args as any;
+      const [x, y] = fromRTEtoTE(a.organizerPKx as bigint, a.organizerPKy as bigint);
+      return {
+        epochId: a.epochId as Hex,
+        aid: a.aid as Hex,
+        creator: a.creator as Address,
+        organizerPK: [x, y] as BabyJubPoint,
+        blockNumber: l.blockNumber ?? 0n,
+        transactionHash: (l.transactionHash ?? null) as Hex | null,
+      };
+    });
+  }
+
+  /**
+   * Resolve the `from` address of each transaction hash, de-duplicated.
+   *
+   * `EpochLive` and `DecryptionCombined` do not name who submitted them, so
+   * attributing a finalization or a combine to an operator means reading the
+   * transaction. There is one `EpochLive` per epoch and one
+   * `DecryptionCombined` per ciphertext, so the fan-out stays small; results
+   * are keyed by lower-cased hash and unresolvable hashes are omitted.
+   */
+  async getTransactionSenders(hashes: Array<Hex | null>): Promise<Map<string, Address>> {
+    const unique = [...new Set(hashes.filter((h): h is Hex => h != null).map((h) => h.toLowerCase()))];
+    const out = new Map<string, Address>();
+    await Promise.all(
+      unique.map(async (h) => {
+        try {
+          const tx = await this.publicClient.getTransaction({ hash: h as Hex });
+          if (tx?.from) out.set(h, tx.from as Address);
+        } catch {
+          // A pruned or re-orged transaction is simply not attributable.
+        }
+      }),
+    );
+    return out;
+  }
+
+  /**
+   * Chunked scan of one DKGManager event over a block range. `args` narrows by
+   * indexed topic; `opts.epochId` is folded in for callers that don't pass
+   * their own args object.
+   */
+  private async _scanManager(
+    name: string,
+    opts: ActivityScanOptions,
+    args?: Record<string, unknown>,
+  ): Promise<any[]> {
+    const topicArgs = args ?? (opts.epochId != null ? { epochId: opts.epochId } : undefined);
+    // Look the ABI item up by hand rather than through `getAbiItem`: with a
+    // non-literal name viem's generics blow past the instantiation depth limit
+    // (TS2589), and the value we need is just the event fragment.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const event = (dkgManagerAbi as readonly any[]).find((i) => i.type === 'event' && i.name === name);
+    if (!event) throw new Error(`unknown DKGManager event: ${name}`);
+    return getLogsChunked(
+      this.publicClient,
+      {
+        address: this.managerAddress,
+        event,
+        ...(topicArgs && Object.keys(topicArgs).length > 0 ? { args: topicArgs } : {}),
+        fromBlock: opts.fromBlock ?? 0n,
+        toBlock: opts.toBlock ?? 'latest',
+      },
+      { fallbackWindow: 50_000n },
+    );
   }
 
   /**

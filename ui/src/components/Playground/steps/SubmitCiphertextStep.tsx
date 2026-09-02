@@ -52,7 +52,7 @@ export function SubmitCiphertextStep({ status, epochId, aid, ciphertext, onSubmi
 
   return (
     <StepCard
-      n={7}
+      n={5}
       title='Publish the ciphertext on-chain'
       status={status}
       description='The committee watches the chain for new ciphertexts. As soon as yours lands, they start producing their half of the decryption.'
@@ -85,9 +85,23 @@ export function SubmitCiphertextStep({ status, epochId, aid, ciphertext, onSubmi
             </HStack>
           </Stack>
         ) : (
-          <Button colorPalette='cyan' size='sm' onClick={onSubmit} loading={busy} disabled={!writer || !epochId || !aid}>
-            Publish ciphertext →
-          </Button>
+          <HStack gap={3} wrap='wrap'>
+            <Button
+              colorPalette='cyan'
+              size='sm'
+              onClick={onSubmit}
+              loading={busy}
+              disabled={!writer || !epochId || !aid}
+            >
+              Publish ciphertext →
+            </Button>
+            {!writer && (
+              <Text fontSize='xs' color='ink.3'>
+                Connect a wallet to sign the <code>submitCiphertext</code> transaction — it must
+                be the application's authorised submitter.
+              </Text>
+            )}
+          </HStack>
         )}
         <HowItWorks
           body={

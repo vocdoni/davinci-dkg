@@ -31,6 +31,13 @@ export {
   type EpochEntry,
   type AppPolicy,
   type ApplicationRecord,
+  type ActivityScanOptions,
+  type SlotClaimedEvent,
+  type ContributionSubmittedEvent,
+  type PartialDecryptionEvent,
+  type EpochLiveEvent,
+  type DecryptionCombinedEvent,
+  type ApplicationRegisteredEvent,
 } from './types.js';
 
 export { dkgManagerAbi, dkgRegistryAbi, dkgAppManagerAbi } from './abi.js';

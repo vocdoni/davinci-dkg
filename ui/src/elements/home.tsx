@@ -1,4 +1,4 @@
-import { Box, Heading, HStack, Link, SimpleGrid, Stack, Text } from '@chakra-ui/react'
+import { Box, Grid, GridItem, Heading, HStack, Link, SimpleGrid, Stack, Text } from '@chakra-ui/react'
 import { Link as RouterLink } from 'react-router-dom'
 import type { ReactNode } from 'react'
 import { useConfig } from '~providers/ConfigProvider'
@@ -6,6 +6,7 @@ import { useBlockNumber } from '~queries/chain'
 import { useRecentEpochs } from '~queries/epochs'
 import { useRegistryStats, useEpochCount } from '~queries/registry'
 import { StatCard } from '~components/ui/StatCard'
+import { EpochActivityChart } from '~components/Charts/EpochActivityChart'
 import { EpochList } from '~components/Epoch/EpochList'
 import { QueryDataLayout } from '~components/Layout/QueryDataLayout'
 import { Routes } from '~router/routes'
@@ -18,7 +19,9 @@ export function Home() {
   const { data: block } = useBlockNumber()
   const { data: epochNonce } = useEpochCount()
   const stats = useRegistryStats()
-  const recent = useRecentEpochs(5)
+  // One query feeds both the chart and the list below it — the chart plots the
+  // whole window, the list shows the newest few.
+  const recent = useRecentEpochs(10)
 
   return (
     <Stack gap={{ base: 14, md: 20 }}>
@@ -68,9 +71,11 @@ export function Home() {
             body={
               <>
                 Anyone can <RouterQuick to={Routes.runNode}>run a node</RouterQuick>{' '}
-                and join the registry. For each epoch, a verifiable on-chain
-                lottery selects a committee from the registered operators — no
-                gatekeeper, no allowlist.
+                and join the registry. Epochs open on a fixed block cadence —
+                the nodes themselves race to start each one — and a verifiable
+                on-chain lottery selects that epoch's committee from the
+                registered operators. No gatekeeper, no allowlist, and nothing
+                for an application to schedule.
               </>
             }
           />
@@ -91,11 +96,14 @@ export function Home() {
             title='Per-application keys'
             body={
               <>
-                Each application registers its own organizer key with a proof
-                that it holds the secret, and encrypts under{' '}
-                <em>PK_aid = PK_ep + PK_org</em>. One committee therefore serves
-                many independent applications: a ciphertext copied out of one
-                and decrypted under another reveals nothing.
+                Every ciphertext belongs to an application, and every
+                application has an <em>organizer</em>: it registers its own key
+                with a proof that it holds the matching secret, then encrypts
+                under <em>PK_aid = PK_ep + PK_org</em>. One committee therefore
+                serves many independent applications, and a ciphertext copied
+                out of one and decrypted under another reveals nothing. The
+                organizer secret stays with the organizer — lose it and that
+                application's ciphertexts can never be opened.
               </>
             }
           />
@@ -107,10 +115,12 @@ export function Home() {
                 The private key is never disclosed. Instead, the committee
                 decrypts <em>specific ciphertexts</em>: the result of a vote can
                 be decrypted while the individual ballots remain hidden. Each
-                partial decryption ships with a Chaum–Pedersen DLEQ proof, and
-                the application's organizer contributes its own share; once the
-                threshold and that share are on chain, anyone can combine them
-                into the plaintext.
+                partial decryption ships with a Chaum–Pedersen DLEQ proof. The
+                committee answers on its own, but its partials alone open
+                nothing: the organizer releases its share — computed in its own
+                browser from the secret it kept — whenever it decides the
+                ciphertext may be opened. Only then can anyone combine the two
+                halves into the plaintext.
               </>
             }
             last
@@ -141,25 +151,32 @@ export function Home() {
         title='Live deployment'
         subtitle={`Snapshot of ${config.chainName}, refreshed every few seconds.`}
       >
-        <SimpleGrid columns={{ base: 2, md: 4 }} gap={{ base: 3, md: 4 }} mt={1}>
-          <StatCard
-            label='Epochs'
-            value={epochNonce != null ? epochNonce.toString() : '—'}
-            hint='total ever created'
-          />
-          <StatCard
-            label='Active nodes'
-            value={stats.data ? stats.data.active.toString() : '—'}
-            hint={stats.data ? `${stats.data.total.toString()} registered` : undefined}
-          />
-          <StatCard
-            label='Latest block'
-            value={block ? `#${block.toString()}` : '—'}
-            hint={config.chainName}
-            tone='live'
-          />
-          <StatCard label='Chain id' value={config.chainId.toString()} hint='from /config.json' />
-        </SimpleGrid>
+        <Grid templateColumns={{ base: '1fr', lg: '1fr 1fr' }} gap={{ base: 5, lg: 6 }} mt={1}>
+          <GridItem>
+            <SimpleGrid columns={2} gap={{ base: 3, md: 4 }} h='full'>
+              <StatCard
+                label='Epochs'
+                value={epochNonce != null ? epochNonce.toString() : '—'}
+                hint='total ever created'
+              />
+              <StatCard
+                label='Active nodes'
+                value={stats.data ? stats.data.active.toString() : '—'}
+                hint={stats.data ? `${stats.data.total.toString()} registered` : undefined}
+              />
+              <StatCard
+                label='Latest block'
+                value={block ? `#${block.toString()}` : '—'}
+                hint={config.chainName}
+                tone='live'
+              />
+              <StatCard label='Chain id' value={config.chainId.toString()} hint='from /config.json' />
+            </SimpleGrid>
+          </GridItem>
+          <GridItem>
+            <EpochActivityChart epochs={recent.data ?? []} loading={recent.isLoading} />
+          </GridItem>
+        </Grid>
       </Section>
 
       {/* Recent epochs */}
@@ -172,7 +189,7 @@ export function Home() {
             isEmpty={recent.data?.length === 0}
             emptyMessage='No epochs have been created yet.'
           >
-            {recent.data && <EpochList epochs={recent.data} />}
+            {recent.data && <EpochList epochs={recent.data.slice(0, 5)} />}
           </QueryDataLayout>
         </Box>
       </Section>

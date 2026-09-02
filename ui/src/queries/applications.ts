@@ -107,7 +107,36 @@ export function useCiphertextStatus(
         plaintext: combined.plaintext,
       }
     },
-    enabled: Boolean(epochId && aid),
+    // Indices are assigned from 1, so a 0 here means "no ciphertext yet" and
+    // the read would be a wasted round trip.
+    enabled: Boolean(epochId && aid) && ciphertextIndex > 0,
     refetchInterval: (q) => (q.state.data?.combined ? false : Polling.decryption),
+  })
+}
+
+/**
+ * The `CiphertextSubmitted` event for one ciphertext index — the only source of
+ * the actual (C1, C2) coordinates, since the contract stores just their hash.
+ *
+ * The playground uses it to check locally that the ciphertext the chain
+ * decrypted is byte-for-byte the one this browser built. Coordinates come back
+ * in the on-chain (RTE) form.
+ */
+export function useCiphertextRecord(
+  epochId: `0x${string}` | undefined,
+  aid: `0x${string}` | undefined,
+  ciphertextIndex: number | null | undefined,
+) {
+  const { dkg } = useDkgClient()
+  return useQuery({
+    queryKey: ['ciphertextRecord', epochId, aid, ciphertextIndex],
+    queryFn: async () => {
+      if (!epochId || !aid || ciphertextIndex == null) throw new Error('epochId + aid + index required')
+      const events = await dkg.getCiphertextSubmittedEvents(epochId, { aid, ciphertextIndex })
+      return events.at(-1) ?? null
+    },
+    enabled: Boolean(epochId && aid && ciphertextIndex != null),
+    // The coordinates never change once mined; one successful read is enough.
+    staleTime: Infinity,
   })
 }

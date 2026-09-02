@@ -11,9 +11,9 @@ export function ConnectStep({ status }: { status: StepStatus }) {
   return (
     <StepCard
       n={1}
-      title='Connect a wallet'
+      title='Connect a wallet to act as the organizer'
       status={status}
-      description='You need a wallet to create an epoch and submit a ciphertext. Browsing the explorer works without one.'
+      description='Three transactions in this walkthrough come from your wallet: registering your application, publishing the ciphertext, and releasing your organizer share. Reading the explorer needs no wallet at all.'
     >
       <Stack gap={4}>
         {!isConnected ? (
@@ -32,10 +32,12 @@ export function ConnectStep({ status }: { status: StepStatus }) {
         <HowItWorks
           body={
             <>
-              Your wallet signs the two transactions later in this walkthrough — one to create
-              the epoch, and one to publish the ciphertext for the committee to decrypt. Nothing
-              is sent on-chain yet; the connect step just hands the page an address it can sign
-              from.
+              Your wallet is the application's identity here: the address you connect with becomes
+              the organizer that registers the application and, by default, the only address
+              allowed to submit ciphertexts under it. It signs three transactions in all —
+              register, submit, release — and pays their gas. You never create an epoch: the
+              committee nodes do that on their own cadence. Nothing is sent on-chain in this
+              step; it just hands the page an address it can sign from.
             </>
           }
           flow={[

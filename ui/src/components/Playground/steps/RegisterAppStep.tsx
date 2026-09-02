@@ -41,6 +41,10 @@ export function RegisterAppStep({ status, epochId, collectivePubKey, onRegistere
   const { dkg } = useDkgClient()
   const [aid, setAid] = useState<Hex>(randomAid())
   const [secret, setSecret] = useState<string>(() => randomOrganizerSecret().toString())
+  // A small cap is the honest default for a walkthrough: it is enough to try a
+  // second ciphertext under the same application and it makes the policy field
+  // visible instead of leaving it at the silent "unlimited" zero.
+  const [maxCiphertexts, setMaxCiphertexts] = useState('4')
   const [busy, setBusy] = useState(false)
   const [tx, setTx] = useState<Hex | null>(null)
   const [copied, setCopied] = useState(false)
@@ -57,7 +61,7 @@ export function RegisterAppStep({ status, epochId, collectivePubKey, onRegistere
         aid,
         {
           authorizedSubmitter: ZERO_ADDRESS, // resolves on chain to your address
-          maxCiphertexts: 0,
+          maxCiphertexts: parseMaxCiphertexts(maxCiphertexts),
           notBeforeBlock: 0n,
           notAfterBlock: 0n,
         },
@@ -91,10 +95,10 @@ export function RegisterAppStep({ status, epochId, collectivePubKey, onRegistere
 
   return (
     <StepCard
-      n={5}
-      title='Register an application'
+      n={3}
+      title='Register your application'
       status={status}
-      description='Ciphertexts belong to an application, not to the epoch. Registering one mixes your own secret into the encryption key, so nobody can have the committee decrypt your data behind your back.'
+      description='From here on you are the organizer. Ciphertexts belong to an application, not to the epoch, and registering one mixes your own secret into the encryption key — so nobody can have the committee decrypt your data behind your back.'
     >
       {!collectivePubKey ? (
         <Text fontSize='sm' color='ink.4'>
@@ -115,6 +119,32 @@ export function RegisterAppStep({ status, epochId, collectivePubKey, onRegistere
               disabled={Boolean(tx)}
               onChange={(e) => setAid(e.target.value as Hex)}
             />
+            <Text fontSize='2xs' color='ink.4' lineHeight='1.5'>
+              A random 32-byte id with its top three bits cleared: every decryption proof takes
+              the aid as a public input on the BN254 scalar field, so the contract rejects
+              anything at or above the field modulus. Pick your own if you already have one.
+            </Text>
+          </Stack>
+
+          <Stack gap={2}>
+            <Text fontSize='xs' color='ink.4'>
+              Max ciphertexts
+            </Text>
+            <Input
+              size='sm'
+              maxW='140px'
+              fontFamily='mono'
+              fontSize='xs'
+              inputMode='numeric'
+              value={maxCiphertexts}
+              spellCheck={false}
+              disabled={Boolean(tx)}
+              onChange={(e) => setMaxCiphertexts(e.target.value)}
+            />
+            <Text fontSize='2xs' color='ink.4' lineHeight='1.5'>
+              How many ciphertexts this application may ever accept; <code>0</code> means
+              unlimited. The contract counts them and assigns each one its index.
+            </Text>
           </Stack>
 
           <Stack gap={2}>
@@ -158,6 +188,26 @@ export function RegisterAppStep({ status, epochId, collectivePubKey, onRegistere
           </Stack>
 
           <Box
+            borderWidth='1px'
+            borderColor='border.subtle'
+            bg='surface.sunken'
+            px={4}
+            py={3}
+            borderRadius='md'
+          >
+            <Text fontSize='xs' color='ink.2' lineHeight='1.6'>
+              <Box as='span' color='ink.0' fontWeight={500}>
+                Authorised submitter:
+              </Box>{' '}
+              the wallet you are connected with. The policy field goes on chain as the zero
+              address, which the contract resolves to the registering address — there is no open
+              submission, so only you can add ciphertexts to this application. Register from a
+              different wallet than the one that will submit and the submissions revert; a
+              production organizer sets this to whatever service actually posts the ciphertexts.
+            </Text>
+          </Box>
+
+          <Box
             borderLeftWidth='2px'
             borderColor='danger.fg'
             bg='danger.bg'
@@ -194,7 +244,7 @@ export function RegisterAppStep({ status, epochId, collectivePubKey, onRegistere
               </Button>
               {!writer && (
                 <Text fontSize='xs' color='ink.3'>
-                  Connect a wallet to enable submission.
+                  Connect a wallet to sign the <code>registerApplication</code> transaction.
                 </Text>
               )}
             </HStack>
@@ -230,4 +280,14 @@ export function RegisterAppStep({ status, epochId, collectivePubKey, onRegistere
       )}
     </StepCard>
   )
+}
+
+/**
+ * Clamp the max-ciphertexts policy field to the contract's uint16, treating a
+ * blank or unparseable value as 0 (unlimited) rather than failing the tx.
+ */
+function parseMaxCiphertexts(input: string): number {
+  const n = Number(input.trim())
+  if (!Number.isFinite(n) || n < 0) return 0
+  return Math.min(65535, Math.floor(n))
 }

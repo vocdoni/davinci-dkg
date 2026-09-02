@@ -70,7 +70,7 @@ export function EncryptStep({ status, epochId, collectivePubKey, pkOrg, onEncryp
 
   return (
     <StepCard
-      n={6}
+      n={4}
       title='Encrypt a value for the committee'
       status={status}
       description='Pick any small number and encrypt it with the application key. Opening it later takes the committee and you, together.'

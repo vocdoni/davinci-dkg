@@ -21,7 +21,7 @@ export function bigIntToHex(value: bigint): `0x${string}` {
 
 /** Render a (possibly bigint-typed) block delta as a coarse human duration. */
 export function blocksToDuration(blocks: number, secondsPerBlock = 12): string {
-  if (blocks <= 0) return 'now'
+  if (blocks <= 0) return 'passed'
   const seconds = blocks * secondsPerBlock
   if (seconds < 60) return `~${seconds}s`
   const minutes = Math.round(seconds / 60)

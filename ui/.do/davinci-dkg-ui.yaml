@@ -67,6 +67,12 @@ static_sites:
       - key: EXPLORER_URL
         scope: BUILD_TIME
         value: https://sepolia.etherscan.io
+      # Block the DKGManager was deployed at — the floor of every historical
+      # getLogs scan (operator statistics, per-epoch activity). 0 = unknown,
+      # which makes those scans fall back to a recent-block window.
+      - key: DEPLOY_BLOCK
+        scope: BUILD_TIME
+        value: "11619019"
       # Optional — leave unset to let the SDK auto-derive from DKGManager.
       # - key: REGISTRY_ADDRESS
       #   scope: BUILD_TIME

@@ -26,7 +26,11 @@ interface Props {
   ciphertext: ElGamalCiphertext | null
   /** The secret from the registration step; falls back to session storage. */
   skOrg: bigint | null
+  /** True once the user chose to sit on the share for now. */
+  withheld: boolean
   onReleased: (txHash: Hex) => void
+  /** Move on without releasing — the decryption step then shows the deadlock. */
+  onWithhold: () => void
   log: (msg: string, level?: 'info' | 'success' | 'error' | 'tx' | 'crypto') => void
 }
 
@@ -37,7 +41,9 @@ export function ReleaseShareStep({
   ciphertextIndex,
   ciphertext,
   skOrg,
+  withheld,
   onReleased,
+  onWithhold,
   log,
 }: Props) {
   const writer = useDkgWriter()
@@ -73,10 +79,10 @@ export function ReleaseShareStep({
 
   return (
     <StepCard
-      n={8}
-      title='Release your organizer share'
+      n={6}
+      title='Release your organizer share — or hold it back'
       status={status}
-      description='The committee has done its half. Now you contribute yours — without it, the ciphertext stays sealed no matter how many committee members cooperate.'
+      description='The committee does its half on its own schedule. Yours is the half that decides when the ciphertext may be opened at all: until it lands, no amount of committee cooperation reveals anything.'
     >
       <Stack gap={4}>
         {ciphertextIndex == null || !ciphertext ? (
@@ -109,22 +115,58 @@ export function ReleaseShareStep({
             <HashCell value={tx} head={8} tail={6} />
           </Stack>
         ) : (
-          <HStack gap={3}>
-            <Button
-              colorPalette='cyan'
-              size='sm'
-              onClick={onRelease}
-              loading={busy}
-              disabled={!writer || !epochId || !aid}
+          <Stack gap={3}>
+            <HStack gap={3} wrap='wrap'>
+              <Button
+                colorPalette='cyan'
+                size='sm'
+                onClick={onRelease}
+                loading={busy}
+                disabled={!writer || !epochId || !aid}
+              >
+                Release organizer share →
+              </Button>
+              <Button size='sm' variant='outline' onClick={onWithhold} disabled={busy}>
+                Withhold for now
+              </Button>
+              {!writer && (
+                <Text fontSize='xs' color='ink.3'>
+                  Connect a wallet to sign the <code>submitOrganizerShare</code> transaction.
+                </Text>
+              )}
+            </HStack>
+            <Box
+              borderWidth='1px'
+              borderColor={withheld ? 'accent.border' : 'border.subtle'}
+              bg={withheld ? 'accent.bg' : 'surface.sunken'}
+              px={4}
+              py={3}
+              borderRadius='md'
             >
-              Release organizer share →
-            </Button>
-            {!writer && (
-              <Text fontSize='xs' color='ink.3'>
-                Connect a wallet to enable submission.
+              <Text fontSize='xs' color='ink.2' lineHeight='1.6'>
+                {withheld ? (
+                  <>
+                    <Box as='span' color='accent.fg' fontWeight={500}>
+                      Holding the share back.
+                    </Box>{' '}
+                    Watch the next step: committee members keep publishing partial decryptions —
+                    they react to the ciphertext, not to you — but nothing can be combined.
+                    <code> combineDecryption</code> reverts with{' '}
+                    <code>OrganizerShareMissing()</code> until you come back here and release it.
+                    This is exactly how a poll stays sealed until it closes.
+                  </>
+                ) : (
+                  <>
+                    You can wait. The committee publishes its partials as soon as the ciphertext
+                    lands, but the plaintext cannot be assembled from them alone, so releasing
+                    later — after a poll closes, at a deadline, never — is a normal thing for an
+                    organizer to do. Choose <em>Withhold for now</em> to see that state in the
+                    next step; you can release from here whenever you like.
+                  </>
+                )}
               </Text>
-            )}
-          </HStack>
+            </Box>
+          </Stack>
         )}
 
         <DetailDisclosure title='Show the share transcript'>

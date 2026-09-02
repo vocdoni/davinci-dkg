@@ -3,20 +3,24 @@ import { Box, Grid, GridItem, Heading, HStack, Input, SimpleGrid, Stack, Tabs, T
 import { useParams } from 'react-router-dom'
 import type { ReactNode } from 'react'
 import type { Hex } from 'viem'
-import { useEpoch, useEpochEvents } from '~queries/epochs'
+import { useEpoch, useEpochDuration, useEpochEvents } from '~queries/epochs'
 import { useBlockNumber } from '~queries/chain'
 import { QueryDataLayout } from '~components/Layout/QueryDataLayout'
 import { PageHeader } from '~components/Layout/PageHeader'
 import { StatusBadge } from '~components/Epoch/StatusBadge'
 import { PhaseTimeline } from '~components/Epoch/PhaseTimeline'
+import { BlockWindowTimeline } from '~components/Epoch/BlockWindowTimeline'
 import { ParticipantList } from '~components/Epoch/ParticipantList'
 import { EventLog } from '~components/Epoch/EventLog'
 import { AppRegistrationForm } from '~components/Epoch/AppRegistrationForm'
 import { DecryptionPipeline } from '~components/Epoch/DecryptionPipeline'
+import { AppDecryptionPipeline } from '~components/Epoch/AppDecryptionPipeline'
 import { useCollectivePublicKey } from '~queries/applications'
 import { HashCell } from '~components/ui/HashCell'
 import { DetailDisclosure } from '~components/Debug/DetailDisclosure'
 import { RawJson } from '~components/Debug/RawJson'
+import { EpochPhase } from '@vocdoni/davinci-dkg-sdk'
+import type { Epoch } from '@vocdoni/davinci-dkg-sdk'
 import { roundSummary } from '~lib/epoch-utils'
 import { blocksRemaining, blocksToDuration } from '~lib/format'
 
@@ -37,6 +41,7 @@ export function EpochView() {
 
   const epoch = useEpoch(epochId)
   const events = useEpochEvents(epochId)
+  const duration = useEpochDuration()
   const { data: blockNumber } = useBlockNumber()
 
   return (
@@ -80,6 +85,23 @@ export function EpochView() {
                 boxShadow='inset'
               >
                 <PhaseTimeline epoch={epoch.data.epoch} />
+                <Box borderTopWidth='1px' borderColor='rule' mt={6} pt={6}>
+                  <Text
+                    fontFamily='mono'
+                    fontSize='2xs'
+                    color='ink.3'
+                    letterSpacing='0.08em'
+                    textTransform='uppercase'
+                    mb={4}
+                  >
+                    Block windows
+                  </Text>
+                  <BlockWindowTimeline
+                    epoch={epoch.data.epoch}
+                    currentBlock={blockNumber ?? null}
+                    durationBlocks={duration.data ?? null}
+                  />
+                </Box>
               </Box>
             </Box>
 
@@ -180,7 +202,7 @@ export function EpochView() {
               </SimpleGrid>
             </RoundSection>
 
-            <ApplicationsSection epochId={epochId as Hex} />
+            <ApplicationsSection epochId={epochId as Hex} epoch={epoch.data.epoch} />
 
             <RoundSection title='Participants & activity'>
               <Tabs.Root defaultValue='participants' variant='line'>
@@ -311,14 +333,21 @@ function Counter({ label, value }: { label: string; value: string }) {
 // Two stacked panels: a registration form (organizer-driven) and a status
 // pipeline (read-only). The pipeline takes the aid the user has typed into
 // the inspector, so a single page can both register and observe.
-function ApplicationsSection({ epochId }: { epochId: Hex }) {
+function ApplicationsSection({ epochId, epoch }: { epochId: Hex; epoch: Epoch }) {
   const [aidUnderInspection, setAidUnderInspection] = useState<Hex>(
     ('0x' + '00'.repeat(32)) as Hex,
   )
   const pkEp = useCollectivePublicKey(epochId)
+  const isLive = epoch.status === EpochPhase.Live || epoch.status === EpochPhase.Completed
   return (
     <RoundSection title='Per-application keys'>
       <Stack gap={6}>
+        <AppDecryptionPipeline
+          epochId={epochId}
+          threshold={epoch.policy.threshold}
+          committeeSize={epoch.policy.committeeSize}
+          enabled={isLive}
+        />
         <AppRegistrationForm
           epochId={epochId}
           pkEp={pkEp.data ?? null}

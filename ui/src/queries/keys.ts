@@ -16,6 +16,11 @@ export const QueryKeys = {
 
   registryNodes: ['registry', 'nodes'] as const,
   registryStats: ['registry', 'stats'] as const,
+  operatorStats: (fromBlock: bigint) => ['registry', 'operatorStats', fromBlock.toString()] as const,
 
-  decryption: (id: `0x${string}`, ix: number) => ['epochs', id, 'decryption', ix] as const,
+  epochDuration: ['chain', 'epochDuration'] as const,
+  epochDecryption: (id: `0x${string}`) => ['epochs', id, 'decryptionProgress'] as const,
+  ciphertextPartials: (id: `0x${string}`, aid: `0x${string}`, ix: number) =>
+    ['epochs', id, 'partials', aid, ix] as const,
+
 } as const

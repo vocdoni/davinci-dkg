@@ -4,6 +4,7 @@ import { useRecentEpochs } from '~queries/epochs'
 import { EpochList } from '~components/Epoch/EpochList'
 import { QueryDataLayout } from '~components/Layout/QueryDataLayout'
 import { PageHeader } from '~components/Layout/PageHeader'
+import { ManualEpochCreation } from '~components/Epoch/ManualEpochCreation'
 import { roundPhase } from '~lib/epoch-utils'
 import type { EpochPhase } from '~lib/epoch-utils'
 
@@ -58,8 +59,8 @@ export function RoundsList() {
   return (
     <Stack gap={{ base: 8, md: 10 }}>
       <PageHeader
-        title='Rounds'
-        subtitle={`The most recent ${recent.data?.length ?? '…'} epochs from the contract's ring buffer. Older epochs remain valid on-chain but are not enumerated here.`}
+        title='Epochs'
+        subtitle={`The most recent ${recent.data?.length ?? '…'} epochs from the contract's ring buffer, newest first. Epochs open on a fixed block cadence — the committee nodes start each one themselves — so this list grows on its own. Older epochs remain valid on-chain but are not enumerated here.`}
       />
 
       <HStack gap={1.5} wrap='wrap'>
@@ -87,6 +88,8 @@ export function RoundsList() {
       >
         <EpochList epochs={filtered} />
       </QueryDataLayout>
+
+      <ManualEpochCreation />
     </Stack>
   )
 }

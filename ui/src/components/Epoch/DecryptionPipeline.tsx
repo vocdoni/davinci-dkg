@@ -24,6 +24,10 @@ import { RawJson } from '~components/Debug/RawJson'
 // This component is a status panel, not a participant. It does not submit any
 // transactions; the heavy lifting happens in the Go committee node, the
 // organizer's browser, and the on-chain `combineDecryption` call.
+//
+// It answers "what is the state of *this* aid"; the per-application pipeline
+// above it on the epoch page answers "what is happening in this epoch" and
+// carries the per-ciphertext partial counts.
 
 interface Props {
   epochId: Hex
@@ -82,8 +86,6 @@ export function DecryptionPipeline({ epochId, aid }: Props) {
           <Stat label='Partials (epoch-wide)' value={partials.toString()} />
           <Stat label='Organizer' value='required' />
         </SimpleGrid>
-
-        <Stages hasPartials={partials > 0} />
 
         <Stack gap={2}>
           <Text
@@ -291,42 +293,5 @@ function Label({ children }: { children: React.ReactNode }) {
     >
       {children}
     </Text>
-  )
-}
-
-// Stages renders the per-app decryption flow as a horizontal pipeline so the
-// user can see at a glance which step is active:
-//
-//   Ciphertext → { Committee partials, Organizer Δ } → Combine → Plaintext
-//
-// Both branches must complete: the combine SNARK verifies the organizer's DLEQ
-// alongside the Lagrange combination of the committee partials.
-//
-// `hasPartials` is the only epoch-wide signal we have today (the SDK doesn't
-// yet expose per-ciphertext partial counts); the per-ciphertext table below
-// carries the exact organizer-share and combine state.
-function Stages({ hasPartials }: { hasPartials: boolean }) {
-  const stages = ['Ciphertext', 'Committee partials', 'Organizer Δ', 'Combine', 'Plaintext']
-  return (
-    <HStack gap={0} align='stretch' wrap='wrap'>
-      {stages.map((s, i) => (
-        <HStack key={s} gap={2} align='center' minH='32px'>
-          <Box
-            w='10px'
-            h='10px'
-            borderRadius='full'
-            bg={hasPartials && i <= 1 ? 'live.fg' : 'border.subtle'}
-            borderWidth='1px'
-            borderColor={hasPartials && i <= 1 ? 'live.fg' : 'border'}
-          />
-          <Text fontSize='xs' color='ink.1' fontWeight={500} mr={3}>
-            {s}
-          </Text>
-          {i < stages.length - 1 && (
-            <Box w={{ base: 4, md: 8 }} h='1px' bg='rule' mr={3} />
-          )}
-        </HStack>
-      ))}
-    </HStack>
   )
 }

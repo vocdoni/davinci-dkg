@@ -12,8 +12,15 @@
 #   MANAGER_ADDRESS=0x... \
 #   CHAIN_ID=31337 \
 #   CHAIN_NAME=anvil \
+#   DEPLOY_BLOCK=11619019 \
 #   EXPLORER_URL=https://sepolia.etherscan.io \
 #     scripts/render-ui-config.sh [output-path]
+#
+# DEPLOY_BLOCK is the block the DKGManager was deployed at. The explorer starts
+# every historical log scan (operator statistics, per-epoch activity) there. The
+# default of 0 means "unknown": scans then fall back to a recent-block window
+# instead of walking the chain from genesis, which would be slow and would miss
+# nothing only on a freshly deployed chain.
 set -euo pipefail
 
 OUT="${1:-ui/public/config.json}"
@@ -22,6 +29,7 @@ OUT="${1:-ui/public/config.json}"
 : "${MANAGER_ADDRESS:=0x01ee71fdce1705c8823f9f8b2f312100165fdd70}"
 : "${CHAIN_ID:=11155111}"
 : "${CHAIN_NAME:=sepolia}"
+: "${DEPLOY_BLOCK:=0}"
 : "${EXPLORER_URL:=https://sepolia.etherscan.io}"
 REGISTRY_LINE=""
 [ -n "${REGISTRY_ADDRESS:-}" ] && REGISTRY_LINE=$(printf ',\n  "registryAddress": "%s"' "$REGISTRY_ADDRESS")
@@ -36,7 +44,8 @@ cat > "$OUT" <<EOF
   "rpcUrl": "${RPC_URL}",
   "managerAddress": "${MANAGER_ADDRESS}",
   "chainId": ${CHAIN_ID},
-  "chainName": "${CHAIN_NAME}"${REGISTRY_LINE}${START_BLOCK_LINE}${EXPLORER_LINE}
+  "chainName": "${CHAIN_NAME}",
+  "deployBlock": ${DEPLOY_BLOCK}${REGISTRY_LINE}${START_BLOCK_LINE}${EXPLORER_LINE}
 }
 EOF
 

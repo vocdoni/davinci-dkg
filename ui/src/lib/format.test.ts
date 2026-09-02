@@ -40,8 +40,8 @@ describe('bigIntToHex', () => {
 
 describe('blocksToDuration', () => {
   it('returns "now" for zero/negative', () => {
-    expect(blocksToDuration(0)).toBe('now')
-    expect(blocksToDuration(-5)).toBe('now')
+    expect(blocksToDuration(0)).toBe('passed')
+    expect(blocksToDuration(-5)).toBe('passed')
   })
   it('formats sub-minute', () => {
     expect(blocksToDuration(2)).toBe('~24s')

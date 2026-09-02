@@ -2,35 +2,34 @@ import { useCallback, useState } from 'react'
 import { Box, Grid, GridItem, HStack, Stack, Text } from '@chakra-ui/react'
 import { useAccount } from 'wagmi'
 import type { Hex } from 'viem'
-import { EpochPhase, type BabyJubPoint, type ElGamalCiphertext } from '@vocdoni/davinci-dkg-sdk'
+import type { BabyJubPoint, ElGamalCiphertext } from '@vocdoni/davinci-dkg-sdk'
 import { ConnectStep } from '~components/Playground/steps/ConnectStep'
-import { CreateEpochStep } from '~components/Playground/steps/CreateEpochStep'
-import { WatchProgressStep } from '~components/Playground/steps/WatchProgressStep'
-import { KeyAvailableStep } from '~components/Playground/steps/KeyAvailableStep'
+import { LiveEpochStep } from '~components/Playground/steps/LiveEpochStep'
 import { RegisterAppStep } from '~components/Playground/steps/RegisterAppStep'
 import { EncryptStep } from '~components/Playground/steps/EncryptStep'
 import { SubmitCiphertextStep } from '~components/Playground/steps/SubmitCiphertextStep'
 import { ReleaseShareStep } from '~components/Playground/steps/ReleaseShareStep'
-import { VerifyDecryptionStep } from '~components/Playground/steps/VerifyDecryptionStep'
+import { WatchDecryptionStep } from '~components/Playground/steps/WatchDecryptionStep'
 import { ActivityLog, type LogEntry, type LogLevel } from '~components/Playground/ActivityLog'
 import type { StepStatus } from '~components/Playground/StepCard'
 import { DetailDisclosure } from '~components/Debug/DetailDisclosure'
 import { useDebugMode } from '~hooks/use-debug-mode'
 import { PageHeader } from '~components/Layout/PageHeader'
-import { useEpoch } from '~queries/epochs'
-import { useBlockNumber } from '~queries/chain'
-import { roundFailure } from '~lib/epoch-utils'
 
-// Playground page. Editorial masthead, then a two-column layout: the
-// numbered step cards on the left, a sticky activity-log panel on the
-// right. The right rail collapses behind a disclosure when debug mode is
-// off so casual readers don't see a wall of mono terminal output by
-// default.
+// Playground page. You play the organizer of an application: the committee and
+// its key already exist (operators produce epochs on a cadence, and nothing an
+// application does influences that), so the walkthrough starts where an
+// integrator actually starts — registering an application against the epoch
+// that is live right now.
+//
+// Layout: numbered step cards on the left, a sticky activity log on the right.
+// The log collapses behind a disclosure when debug mode is off so a casual
+// reader doesn't get a wall of terminal output by default.
 export function Playground() {
   const { isConnected } = useAccount()
   const { enabled: debug } = useDebugMode()
 
-  const [epochId, setRoundId] = useState<Hex | null>(null)
+  const [epochId, setEpochId] = useState<Hex | null>(null)
   const [collectivePubKey, setCollectivePubKey] = useState<{ x: bigint; y: bigint } | null>(null)
   const [aid, setAid] = useState<Hex | null>(null)
   const [skOrg, setSkOrg] = useState<bigint | null>(null)
@@ -38,48 +37,16 @@ export function Playground() {
   const [ciphertext, setCiphertext] = useState<ElGamalCiphertext | null>(null)
   const [plaintext, setPlaintext] = useState<bigint | null>(null)
   const [submittedIndex, setSubmittedIndex] = useState<number | null>(null)
-  const [shareReleased, setShareReleased] = useState(false)
+  const [share, setShare] = useState<'idle' | 'released' | 'withheld'>('idle')
   const [log, setLog] = useState<LogEntry[]>([])
 
   const addLog = useCallback((msg: string, level: LogLevel = 'info') => {
     setLog((prev) => [...prev, { ts: Date.now(), msg, level }])
   }, [])
 
-  // Surface an epoch-failure state up here so every downstream step can
-  // freeze. Same React Query key as the WatchProgressStep, so this is a
-  // free read from the cache.
-  const epoch = useEpoch((epochId ?? undefined) as `0x${string}` | undefined)
-  const { data: block } = useBlockNumber()
-  const failure = epoch.data ? roundFailure(epoch.data.epoch, block ?? null) : null
-  const aborted = epoch.data?.epoch.status === EpochPhase.Aborted
-  const blocked = Boolean(failure || aborted)
-
-  const stepWallet: StepStatus = isConnected ? 'done' : 'active'
-  const stepCreate: StepStatus = !isConnected ? 'pending' : epochId ? 'done' : 'active'
-  const stepWatch: StepStatus = !epochId
-    ? 'pending'
-    : blocked
-      ? 'error'
-      : collectivePubKey
-        ? 'done'
-        : 'active'
-  const stepKey: StepStatus = !epochId
-    ? 'pending'
-    : blocked
-      ? 'pending'
-      : collectivePubKey
-        ? 'done'
-        : 'active'
-  const stepRegister: StepStatus = !collectivePubKey || blocked ? 'pending' : aid ? 'done' : 'active'
-  const stepEncrypt: StepStatus = !aid || blocked ? 'pending' : ciphertext ? 'done' : 'active'
-  const stepSubmit: StepStatus = !ciphertext || blocked ? 'pending' : submittedIndex != null ? 'done' : 'active'
-  const stepShare: StepStatus =
-    submittedIndex == null || blocked ? 'pending' : shareReleased ? 'done' : 'active'
-  const stepVerify: StepStatus = !shareReleased || blocked ? 'pending' : 'active'
-
-  const onSubmitted = useCallback((idx: number, _hash: Hex) => {
-    setSubmittedIndex(idx)
-    setShareReleased(false)
+  const onEpochSelected = useCallback((id: Hex | null, key: { x: bigint; y: bigint } | null) => {
+    setEpochId(id)
+    setCollectivePubKey(key)
   }, [])
 
   const onRegistered = useCallback((newAid: Hex, secret: bigint, organizerPK: BabyJubPoint) => {
@@ -89,23 +56,36 @@ export function Playground() {
     // A new application invalidates anything produced under the previous one.
     setCiphertext(null)
     setSubmittedIndex(null)
-    setShareReleased(false)
+    setShare('idle')
   }, [])
+
+  const onSubmitted = useCallback((idx: number) => {
+    setSubmittedIndex(idx)
+    setShare('idle')
+  }, [])
+
+  const hasKey = Boolean(epochId && collectivePubKey)
+  const stepWallet: StepStatus = isConnected ? 'done' : 'active'
+  const stepEpoch: StepStatus = !isConnected ? 'pending' : hasKey ? 'done' : 'active'
+  const stepRegister: StepStatus = !hasKey ? 'pending' : aid ? 'done' : 'active'
+  const stepEncrypt: StepStatus = !aid ? 'pending' : ciphertext ? 'done' : 'active'
+  const stepSubmit: StepStatus = !ciphertext ? 'pending' : submittedIndex != null ? 'done' : 'active'
+  const stepShare: StepStatus =
+    submittedIndex == null ? 'pending' : share === 'released' ? 'done' : 'active'
+  const stepWatch: StepStatus = submittedIndex == null || share === 'idle' ? 'pending' : 'active'
 
   return (
     <Stack gap={{ base: 8, md: 12 }}>
       <PageHeader
         title='Playground'
-        subtitle='A guided walkthrough of the full DKG flow: create an epoch, wait for nodes to contribute, read the collective public key, register an application with your own organizer secret, encrypt a value under it, submit the ciphertext, release your organizer share, and watch the committee threshold-decrypt it on-chain.'
+        subtitle='Play the organizer of an application, start to finish: pick up the epoch key the committee has already produced, register an application with your own organizer secret, encrypt a value under the combined key, publish the ciphertext, decide when to release your half of the decryption — and watch the committee open exactly what you sent.'
       />
 
       <Grid templateColumns={{ base: '1fr', lg: '2fr 1fr' }} gap={{ base: 6, lg: 8 }} alignItems='start'>
         <GridItem>
           <Stack gap={5}>
             <ConnectStep status={stepWallet} />
-            <CreateEpochStep status={stepCreate} epochId={epochId} setRoundId={setRoundId} log={addLog} />
-            <WatchProgressStep status={stepWatch} epochId={epochId} log={addLog} />
-            <KeyAvailableStep status={stepKey} epochId={epochId} onKeyReady={setCollectivePubKey} log={addLog} />
+            <LiveEpochStep status={stepEpoch} onEpochSelected={onEpochSelected} log={addLog} />
             <RegisterAppStep
               status={stepRegister}
               epochId={epochId}
@@ -122,7 +102,7 @@ export function Playground() {
                 setPlaintext(m)
                 setCiphertext(ct)
                 setSubmittedIndex(null)
-                setShareReleased(false)
+                setShare('idle')
               }}
               log={addLog}
             />
@@ -141,15 +121,22 @@ export function Playground() {
               ciphertextIndex={submittedIndex}
               ciphertext={ciphertext}
               skOrg={skOrg}
-              onReleased={() => setShareReleased(true)}
+              withheld={share === 'withheld'}
+              onReleased={() => setShare('released')}
+              onWithhold={() => {
+                setShare('withheld')
+                addLog('Organizer share withheld — partials can land, the combine cannot.', 'info')
+              }}
               log={addLog}
             />
-            <VerifyDecryptionStep
-              status={stepVerify}
+            <WatchDecryptionStep
+              status={stepWatch}
               epochId={epochId}
               aid={aid}
               ciphertextIndex={submittedIndex}
+              ciphertext={ciphertext}
               expectedPlaintext={plaintext}
+              shareWithheld={share === 'withheld'}
               log={addLog}
             />
           </Stack>

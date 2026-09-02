@@ -85,6 +85,7 @@ help: ## Show this help message
 	@echo "                     CHAIN_NAME       (default: sepolia)"
 	@echo "                     REGISTRY_ADDRESS (optional)"
 	@echo "                     START_BLOCK      (optional)"
+	@echo "                     DEPLOY_BLOCK     (optional, block DKGManager was deployed at)"
 	@echo "                   ui-build / ui-dev call ui-config automatically when"
 	@echo "                   RPC_URL is set on the command line."
 	@echo ""
@@ -201,7 +202,7 @@ ui-install: ## Install UI dependencies with pnpm
 	@cd ui && pnpm install
 
 # Render ui/public/config.json from RPC_URL / MANAGER_ADDRESS / CHAIN_ID /
-# CHAIN_NAME / REGISTRY_ADDRESS / START_BLOCK env vars. Idempotent and safe
+# CHAIN_NAME / REGISTRY_ADDRESS / START_BLOCK / DEPLOY_BLOCK env vars. Idempotent and safe
 # to call repeatedly. Run as a prerequisite by ui-build / ui-dev whenever
 # the user passes a non-empty RPC_URL on the command line; otherwise we
 # leave the committed default config alone.
@@ -212,6 +213,7 @@ ui-config: ## Re-render ui/public/config.json from RPC_URL et al.
 	 CHAIN_NAME='$(CHAIN_NAME)' \
 	 REGISTRY_ADDRESS='$(REGISTRY_ADDRESS)' \
 	 START_BLOCK='$(START_BLOCK)' \
+	 DEPLOY_BLOCK='$(DEPLOY_BLOCK)' \
 	 bash scripts/render-ui-config.sh ui/public/config.json
 
 ui-build: ## Build the DKG explorer UI to ui/dist

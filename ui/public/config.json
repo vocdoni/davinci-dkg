@@ -3,5 +3,6 @@
   "managerAddress": "0x3f9b338706a31f26d49159478015c8aaeab908ad",
   "chainId": 11155111,
   "chainName": "sepolia",
+  "deployBlock": 11619019,
   "explorerUrl": "https://sepolia.etherscan.io"
 }

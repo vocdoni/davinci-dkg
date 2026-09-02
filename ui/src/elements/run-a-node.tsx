@@ -112,6 +112,12 @@ DAVINCI_DKG_NETWORK=sepolia
           <List.Item>
             Polls the chain for epoch events at the configured interval (default: 20 seconds).
           </List.Item>
+          <List.Item>
+            Races the other nodes to call <Code>createEpoch</Code> once the cadence window opens
+            (with random jitter, so most of the losing calls are never even sent). Epochs are
+            produced by the operator set itself — no application, and no operator, has to
+            schedule them.
+          </List.Item>
         </List.Root>
         <Text fontSize='sm' color='ink.2'>
           Registration takes effect for <em>future</em> epochs only: the lottery of an epoch is

@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useDkgClient } from '~hooks/use-dkg-client'
 import { useConfig } from '~providers/ConfigProvider'
 import { QueryKeys } from './keys'
+import { scanFromBlock } from '~lib/chain-scan'
 import { Polling } from '~constants/polling'
 
 export function useRegistryStats() {
@@ -27,8 +28,9 @@ export function useRegistryNodes() {
     queryKey: QueryKeys.registryNodes,
     // The SDK takes a fromBlock for the event scan; using the manager's
     // deployment block keeps free-tier RPCs happy (most cap getLogs at
-    // ~10k blocks). Falls back to 0 when startBlock isn't configured.
-    queryFn: () => dkg.getRegistryNodes(config.startBlock ? BigInt(config.startBlock) : 0n),
+    // ~10k blocks). `useOperatorStats` fetches through this same key, so the
+    // roster is scanned once no matter how many views want it.
+    queryFn: () => dkg.getRegistryNodes(scanFromBlock(config)),
     refetchInterval: Polling.default,
     staleTime: Polling.default / 2,
   })

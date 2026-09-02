@@ -240,3 +240,87 @@ export interface EpochEntry {
   id: `0x${string}`;
   epoch: Epoch;
 }
+
+// ── Cross-epoch activity scans ───────────────────────────────────────────────
+
+/**
+ * Block range for the cross-epoch event scans used by explorers to build
+ * per-operator statistics. `fromBlock` should be the manager's deployment
+ * block: passing `0n` makes the client fall back to a recent-block window
+ * rather than scanning from genesis.
+ */
+export interface ActivityScanOptions {
+  fromBlock?: bigint;
+  toBlock?: bigint;
+  /** Narrow the scan to a single epoch (uses the indexed topic). */
+  epochId?: Hex;
+}
+
+/** `DKGManager.SlotClaimed` — one committee slot won through the lottery. */
+export interface SlotClaimedEvent {
+  epochId: Hex;
+  claimer: Address;
+  slot: number;
+  blockNumber: bigint;
+  transactionHash: Hex | null;
+}
+
+/** `DKGManager.ContributionSubmitted` — one accepted Feldman VSS contribution. */
+export interface ContributionSubmittedEvent {
+  epochId: Hex;
+  contributor: Address;
+  contributorIndex: number;
+  blockNumber: bigint;
+  transactionHash: Hex | null;
+}
+
+/** `DKGManager.PartialDecryptionSubmitted` — one committee member's `δ_i`. */
+export interface PartialDecryptionEvent {
+  epochId: Hex;
+  aid: Hex;
+  participant: Address;
+  participantIndex: number;
+  ciphertextIndex: number;
+  delta: { x: bigint; y: bigint };
+  blockNumber: bigint;
+  transactionHash: Hex | null;
+}
+
+/**
+ * `DKGManager.EpochLive` — emitted once per epoch by whoever finalized it.
+ * The event carries no submitter, so attribution needs the transaction
+ * sender (see `DKGClient.getTransactionSenders`).
+ */
+export interface EpochLiveEvent {
+  epochId: Hex;
+  aggregateCommitmentsHash: Hex;
+  collectivePublicKeyHash: Hex;
+  shareCommitmentHash: Hex;
+  blockNumber: bigint;
+  transactionHash: Hex | null;
+}
+
+/**
+ * `DKGManager.DecryptionCombined` — the recovered plaintext for one
+ * ciphertext. Like `EpochLive` it carries no submitter; attribute it through
+ * the transaction sender.
+ */
+export interface DecryptionCombinedEvent {
+  epochId: Hex;
+  aid: Hex;
+  ciphertextIndex: number;
+  combineHash: Hex;
+  plaintext: bigint;
+  blockNumber: bigint;
+  transactionHash: Hex | null;
+}
+
+/** `DKGAppManager.ApplicationRegistered` — one application bound to an epoch. */
+export interface ApplicationRegisteredEvent {
+  epochId: Hex;
+  aid: Hex;
+  creator: Address;
+  organizerPK: BabyJubPoint;
+  blockNumber: bigint;
+  transactionHash: Hex | null;
+}

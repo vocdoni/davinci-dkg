@@ -29,3 +29,13 @@ html {
   0%   { opacity: 0; transform: translateY(6px); }
   100% { opacity: 1; transform: translateY(0);   }
 }
+
+/*
+ * Chart skeletons. Slow and shallow — a loading plot should not compete with
+ * the data next to it.
+ */
+@keyframes dkgSkeletonPulse {
+  0%   { opacity: 0.45; }
+  50%  { opacity: 0.8;  }
+  100% { opacity: 0.45; }
+}
