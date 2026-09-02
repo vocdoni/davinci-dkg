@@ -99,6 +99,13 @@ contract DKGManager is IDKGManager {
     ///         constructor argument is 0. Wall-clock duration depends on the
     ///         deployment chain's block time and is estimated off-chain.
     uint256 public immutable EPOCH_DURATION_BLOCKS;
+    /// @notice Deployment floors/ceilings for the per-epoch policy. createEpoch
+    ///         is permissionless, so whoever wins the cadence race must not be
+    ///         able to shrink the committee or widen the lottery below what
+    ///         the deployment intends.
+    uint16 public immutable MIN_THRESHOLD;
+    uint16 public immutable MIN_COMMITTEE_SIZE;
+    uint16 public immutable MAX_LOTTERY_ALPHA_BPS;
     /// @dev Phase deadline offsets, derived from EPOCH_DURATION_BLOCKS at
     ///      construction so we don't pay the BPS division on every createEpoch.
     uint64 internal immutable COMMITTEE_SELECTION_DEADLINE_OFFSET;
@@ -143,7 +150,8 @@ contract DKGManager is IDKGManager {
     // lookup.
     mapping(bytes12 epochId => mapping(bytes32 aid => mapping(uint16 ciphertextIndex => mapping(uint16 participantIndex => bytes32 deltaHash)))) internal epochPartialDeltaHash;
     mapping(bytes12 epochId => mapping(bytes32 aid => mapping(uint16 ciphertextIndex => uint256 bitmap))) internal epochPartialBitmap;
-    mapping(bytes12 epochId => mapping(bytes32 aid => mapping(uint16 ciphertextIndex => uint16 count))) internal epochPartialDecryptionCounts;
+    /// @dev Number of ciphertexts submitted per (epoch, aid); the next index.
+    mapping(bytes12 epochId => mapping(bytes32 aid => uint16 count)) internal ciphertextCounts;
     mapping(bytes12 epochId => mapping(bytes32 aid => mapping(uint16 ciphertextIndex => DKGTypes.CombinedDecryptionRecord combined))) internal
         epochCombinedDecryptions;
     /// @dev Stores _hash2(scX, scY) for each share commitment, packing
@@ -187,7 +195,10 @@ contract DKGManager is IDKGManager {
         uint256 _epochDurationBlocks,
         uint256 _committeeSelectionBlocks,
         uint256 _keyAssemblyBlocks,
-        uint256 _finalizeGapBlocks
+        uint256 _finalizeGapBlocks,
+        uint16 _minThreshold,
+        uint16 _minCommitteeSize,
+        uint16 _maxLotteryAlphaBps
     ) {
         if (uint32(block.chainid) != _chainId) revert InvalidChainId();
         if (_registry == address(0)) revert InvalidAddress();
@@ -231,6 +242,13 @@ contract DKGManager is IDKGManager {
         COMMITTEE_SELECTION_DEADLINE_OFFSET = uint64(csl);
         KEY_ASSEMBLY_DEADLINE_OFFSET        = uint64(csl + keyAsm);
         LIVE_NOT_BEFORE_OFFSET              = uint64(prep);
+
+        MIN_THRESHOLD         = _minThreshold == 0 ? 1 : _minThreshold;
+        MIN_COMMITTEE_SIZE    = _minCommitteeSize == 0 ? 1 : _minCommitteeSize;
+        MAX_LOTTERY_ALPHA_BPS = _maxLotteryAlphaBps == 0 ? type(uint16).max : _maxLotteryAlphaBps;
+        if (MIN_THRESHOLD > MIN_COMMITTEE_SIZE || MIN_COMMITTEE_SIZE > MAX_N || MAX_LOTTERY_ALPHA_BPS < 10000) {
+            revert InvalidPolicy();
+        }
 
         _deployer = msg.sender;
     }
@@ -278,16 +296,13 @@ contract DKGManager is IDKGManager {
     /// @param  lotteryAlphaBps        Oversubscription factor α in basis points
     ///                                (10000 = 1.0). Expected eligible set
     ///                                size is `α · committeeSize`.
-    /// @param  decryptionPolicy       Per-epoch ciphertext-submission policy
-    ///                                (gates the legacy aid=0 path).
     /// @return                        The 12-byte epoch identifier
     ///                                `uint32 prefix || uint64 nonce`.
     function createEpoch(
         uint16 threshold,
         uint16 committeeSize,
         uint16 minValidContributions,
-        uint16 lotteryAlphaBps,
-        DKGTypes.DecryptionPolicy calldata decryptionPolicy
+        uint16 lotteryAlphaBps
     ) external returns (bytes12) {
         // Permissionless cadence guard. The first epoch (lastEpochStartBlock
         // == 0) goes through immediately; subsequent epochs require one full
@@ -300,6 +315,8 @@ contract DKGManager is IDKGManager {
                 || minValidContributions == 0 || minValidContributions > committeeSize
                 || minValidContributions < threshold
                 || lotteryAlphaBps < 10000
+                || threshold < MIN_THRESHOLD || committeeSize < MIN_COMMITTEE_SIZE
+                || lotteryAlphaBps > MAX_LOTTERY_ALPHA_BPS
         ) revert InvalidPolicy();
         // Two invariants worth calling out:
         //   - minValidContributions < threshold would let the epoch finalize
@@ -312,16 +329,6 @@ contract DKGManager is IDKGManager {
         //     would also overflow their hashed-prefix layout. Cap upfront
         //     so the failure is the obvious revert here, not a confusing
         //     ProofInvalid() three transactions deep.
-
-        // DecryptionPolicy sanity: if both directions of the same clock are set,
-        // the window must be non-empty. maxDecryptions is capped at MAX_CIPHERTEXT_INDEX.
-        if (
-            (decryptionPolicy.notBeforeBlock != 0 && decryptionPolicy.notAfterBlock != 0
-                && decryptionPolicy.notAfterBlock <= decryptionPolicy.notBeforeBlock)
-                || (decryptionPolicy.notBeforeTimestamp != 0 && decryptionPolicy.notAfterTimestamp != 0
-                    && decryptionPolicy.notAfterTimestamp <= decryptionPolicy.notBeforeTimestamp)
-                || decryptionPolicy.maxDecryptions > MAX_CIPHERTEXT_INDEX
-        ) revert InvalidDecryptionPolicy();
 
         // Snapshot the currently ACTIVE node count and derive the per-node lottery
         // threshold so that on average `lotteryAlpha × committeeSize` live nodes pass.
@@ -366,7 +373,6 @@ contract DKGManager is IDKGManager {
                 keyAssemblyDeadlineBlock: startBlock + KEY_ASSEMBLY_DEADLINE_OFFSET,
                 liveNotBeforeBlock:    startBlock + LIVE_NOT_BEFORE_OFFSET
             }),
-            decryptionPolicy: decryptionPolicy,
             status: DKGTypes.EpochPhase.CommitteeSelection,
             nonce: epochNonce,
             startBlock: startBlock,
@@ -420,6 +426,9 @@ contract DKGManager is IDKGManager {
         // Caller must be an active registered node.
         IDKGRegistry.NodeKey memory node = IDKGRegistry(REGISTRY).getNode(msg.sender);
         if (node.status != IDKGRegistry.NodeStatus.ACTIVE) revert NotRegistered();
+        // Only identities that existed when the epoch was created may claim:
+        // otherwise fresh addresses could be ground against the revealed seed.
+        if (node.registeredAtBlock >= epoch.startBlock) revert NotInSnapshot();
 
         // Lottery check: hash(seed ‖ caller) must fall under the epoch threshold.
         if (uint256(keccak256(abi.encodePacked(seed, msg.sender))) >= epoch.lotteryThreshold) {
@@ -500,15 +509,6 @@ contract DKGManager is IDKGManager {
                 || publicInputs[2] != epoch.policy.committeeSize || publicInputs[3] != contributorIndex
                 || bytes32(publicInputs[4]) != commitmentsHash || bytes32(publicInputs[5]) != encryptedSharesHash
         ) revert InvalidProofInput();
-        uint256 challenge = BRLC.deriveChallenge(
-            epochId,
-            CONTRIBUTION_TRANSCRIPT_DOMAIN,
-            keccak256(abi.encodePacked(commitmentsHash, encryptedSharesHash))
-        );
-        if (publicInputs[6] != challenge) revert InvalidProofInput();
-        // publicInputs[7] = TranscriptCommitment (verified below via BRLC)
-        IZKVerifier(CONTRIBUTION_VERIFIER).verifyProof(proof, input);
-
         // Transcript layout (8N words = 256 N=32, 128 N=16):
         //   words [0..2N)     commitmentPoints  (N points × 2 coords)
         //   words [2N..3N)    recipientIndexes
@@ -516,6 +516,18 @@ contract DKGManager is IDKGManager {
         //   words [5N..7N)    ephemerals
         //   words [7N..8N)    maskedShares
         if (transcript.length != CONTRIB_TRANSCRIPT_WORDS * 32) revert InvalidProofInput();
+        // The BRLC challenge is Fiat–Shamir over the calldata itself. Deriving
+        // it from the prover's own digests would let the prover know ρ before
+        // choosing the calldata and publish a transcript that differs from the
+        // proven witness while preserving Σ ρ^i·v_i.
+        uint256 challenge = BRLC.deriveChallenge(
+            epochId,
+            CONTRIBUTION_TRANSCRIPT_DOMAIN,
+            keccak256(abi.encodePacked(commitmentsHash, encryptedSharesHash, keccak256(transcript)))
+        );
+        if (publicInputs[6] != challenge) revert InvalidProofInput();
+        // publicInputs[7] = TranscriptCommitment (verified below via BRLC)
+        IZKVerifier(CONTRIBUTION_VERIFIER).verifyProof(proof, input);
         bytes32 commitmentDigest = keccak256(transcript[0:CONTRIB_DIGEST_BYTES_LEN]);
 
         // Single-shot committee verification: bytes [recipientIndexes..recipientPubKeys-end)
@@ -591,7 +603,9 @@ contract DKGManager is IDKGManager {
 
         // Cheap public-input checks first; only invoke the verifier when the
         // proof targets the right epoch / aggregate.
-        uint256[9] memory publicInputs = abi.decode(input, (uint256[9]));
+        // Layout: [eid, t, n, accepted, aggregateHash, pkHash, shareHash,
+        //          contributionRowsHash, challenge, transcriptCommitment].
+        uint256[10] memory publicInputs = abi.decode(input, (uint256[10]));
         if (
             publicInputs[0] != _epochScalar(epochId) || publicInputs[1] != epoch.policy.threshold
                 || publicInputs[2] != epoch.policy.committeeSize || publicInputs[3] != epoch.contributionCount
@@ -600,24 +614,27 @@ contract DKGManager is IDKGManager {
                 || bytes32(publicInputs[6]) != shareCommitmentHash
         ) revert InvalidProofInput();
 
-        uint256 challenge = BRLC.deriveChallenge(
-            epochId,
-            FINALIZE_TRANSCRIPT_DOMAIN,
-            keccak256(abi.encodePacked(aggregateCommitmentsHash, collectivePublicKeyHash, shareCommitmentHash))
-        );
-        if (publicInputs[7] != challenge) revert InvalidProofInput();
-        IZKVerifier(FINALIZE_VERIFIER).verifyProof(proof, input);
-
         // Transcript layout (2N² + 5N words):
         //   words [0..N)              participantIndexes
         //   words [N..N+2N²)          contributionCommitments  (N contributors × N points × 2 coords)
         //   words [N+2N²..N+2N²+2N)   aggregateCommitments     (N points × 2 coords)
         //   words [N+2N²+2N..2N²+5N)  shareCommitments         (N points × 2 coords)
         if (transcript.length != FINALIZE_TRANSCRIPT_WORDS * 32) revert InvalidProofInput();
+        // Fiat–Shamir over the calldata (see submitContribution).
+        uint256 challenge = BRLC.deriveChallenge(
+            epochId,
+            FINALIZE_TRANSCRIPT_DOMAIN,
+            keccak256(abi.encodePacked(
+                aggregateCommitmentsHash, collectivePublicKeyHash, shareCommitmentHash,
+                bytes32(publicInputs[7]), keccak256(transcript)
+            ))
+        );
+        if (publicInputs[8] != challenge) revert InvalidProofInput();
+        IZKVerifier(FINALIZE_VERIFIER).verifyProof(proof, input);
         uint256 dOff;
         assembly { dOff := transcript.offset }
 
-        _verifyFinalizeTranscript(epochId, epoch, challenge, publicInputs[8], transcript);
+        _verifyFinalizeTranscript(epochId, epoch, challenge, publicInputs[9], transcript);
 
         // The collective public key is `aggregateCommitments[0]`. The proof
         // attests that the aggregate is the correctly-summed Σᵢ Cᵢ over the
@@ -854,8 +871,7 @@ contract DKGManager is IDKGManager {
         // re-hashes against the stored value, so we don't store the raw point.
         epochPartialDeltaHash[epochId][aid][ciphertextIndex][participantIndex] = deltaHash;
         epochPartialBitmap[epochId][aid][ciphertextIndex] |= indexBit;
-        epoch.partialDecryptionCount++;
-        epochPartialDecryptionCounts[epochId][aid][ciphertextIndex]++;
+        unchecked { epoch.partialDecryptionCount++; } // informational only
 
         emit PartialDecryptionSubmitted(
             epochId, aid, msg.sender, participantIndex, ciphertextIndex,
@@ -864,57 +880,47 @@ contract DKGManager is IDKGManager {
     }
 
     /// @notice Submit a ciphertext to be threshold-decrypted by the committee.
-    /// @dev    Enforces the epoch's DecryptionPolicy: owner-only, block/timestamp
-    ///         windows, and a cap on accepted ciphertexts per epoch. Write-once
-    ///         per `ciphertextIndex`. Stores `keccak256(c1x, c1y, c2x, c2y)` so
-    ///         `combineDecryption` can bind its proof's ciphertext public inputs
-    ///         to the authoritative on-chain value. The raw coordinates are only
-    ///         exposed via the `CiphertextSubmitted` event (nodes watch it).
+    /// @dev    The index is assigned on chain per (epoch, aid), so a caller
+    ///         cannot squat on or front-run a specific slot. The stored value is
+    ///         `keccak256(c1x, c1y, c2x, c2y)`, which binds the partial and
+    ///         combine proofs to this exact ciphertext. The Schnorr proof of
+    ///         knowledge of r is only emitted: committee nodes verify it before
+    ///         releasing δ_i = d_i·C1, which is what stops a C1 taken from
+    ///         another application from being decrypted here as an oracle.
+    ///         Per-application policy is enforced by the app manager; the
+    ///         aid = 0 epoch-key path is open.
     function submitCiphertext(
         bytes12 epochId,
         bytes32 aid,
-        uint16 ciphertextIndex,
         uint256 c1x,
         uint256 c1y,
         uint256 c2x,
-        uint256 c2y
-    ) external {
+        uint256 c2y,
+        uint256 pokAx,
+        uint256 pokAy,
+        uint256 pokZ
+    ) external returns (uint16 ciphertextIndex) {
         Epoch storage epoch = epochs[epochId];
         if (epoch.organizer == address(0)) revert InvalidEpoch();
         if (epoch.status != DKGTypes.EpochPhase.Live) revert InvalidPhase();
-        if (ciphertextIndex == 0 || ciphertextIndex > MAX_CIPHERTEXT_INDEX) revert InvalidCiphertext();
 
-        // Well-formedness: coords must be canonical (< Q), on-curve, non-identity,
-        // and in the prime-order subgroup. The first three are cheap (4 mulmods per
-        // point); the subgroup check is one full BJJ scalar mul (~60k gas per point)
-        // but is required to honor the paper's group-validation policy at every
-        // entry point (paper §4.1). Without subgroup
-        // membership a griefing submitter could pre-claim every index with a small-
-        // order point the combine circuit can never accept.
+        // Well-formedness: coords must be canonical (< Q), on-curve and
+        // non-identity. Prime-subgroup membership is checked by every node
+        // before it multiplies its share into C1 (see _requireValidEncryptionPoint).
         _requireValidEncryptionPoint(c1x, c1y);
         _requireValidEncryptionPoint(c2x, c2y);
 
-        // Per-epoch DecryptionPolicy gates the legacy aid=0 path; per-application
-        // AppPolicy gates aid != 0.
-        if (aid == bytes32(0)) {
-            DKGTypes.DecryptionPolicy memory p = epoch.decryptionPolicy;
-            if (p.ownerOnly && msg.sender != epoch.organizer) revert NotOwner();
-            if (p.notBeforeBlock     != 0 && uint64(block.number)    < p.notBeforeBlock)     revert DecryptionNotYetAllowed();
-            if (p.notBeforeTimestamp != 0 && uint64(block.timestamp) < p.notBeforeTimestamp) revert DecryptionNotYetAllowed();
-            if (p.notAfterBlock      != 0 && uint64(block.number)    > p.notAfterBlock)      revert DecryptionExpired();
-            if (p.notAfterTimestamp  != 0 && uint64(block.timestamp) > p.notAfterTimestamp)  revert DecryptionExpired();
-            if (p.maxDecryptions     != 0 && epoch.ciphertextCount   >= p.maxDecryptions)    revert DecryptionLimitReached();
-        } else {
+        ciphertextIndex = ciphertextCounts[epochId][aid] + 1;
+        if (ciphertextIndex > MAX_CIPHERTEXT_INDEX) revert DecryptionLimitReached();
+        if (aid != bytes32(0)) {
             if (!_appManagerSet) revert AppManagerNotSet();
             IDKGAppManager(appManager).requireCanSubmitCiphertext(epochId, aid, ciphertextIndex, msg.sender);
         }
-
-        if (_ciphertexts[epochId][aid][ciphertextIndex] != bytes32(0)) revert CiphertextAlreadySubmitted();
-
+        ciphertextCounts[epochId][aid] = ciphertextIndex;
         _ciphertexts[epochId][aid][ciphertextIndex] = _hash4(c1x, c1y, c2x, c2y);
         unchecked { epoch.ciphertextCount += 1; }
 
-        emit CiphertextSubmitted(epochId, aid, ciphertextIndex, msg.sender, c1x, c1y, c2x, c2y);
+        emit CiphertextSubmitted(epochId, aid, ciphertextIndex, msg.sender, c1x, c1y, c2x, c2y, pokAx, pokAy, pokZ);
     }
 
     /// @dev Validate that (x, y) is a canonical, on-curve, non-identity point
@@ -976,7 +982,9 @@ contract DKGManager is IDKGManager {
         if (ciphertextIndex == 0 || ciphertextIndex > MAX_CIPHERTEXT_INDEX || combineHash == bytes32(0)) revert InvalidCombinedDecryption();
         bytes32 storedCtHash = _ciphertexts[epochId][aid][ciphertextIndex];
         if (storedCtHash == bytes32(0)) revert CiphertextNotSubmitted();
-        if (epochPartialDecryptionCounts[epochId][aid][ciphertextIndex] < epoch.policy.threshold) revert InsufficientPartialDecryptions();
+        if (_popcount(epochPartialBitmap[epochId][aid][ciphertextIndex]) < epoch.policy.threshold) {
+            revert InsufficientPartialDecryptions();
+        }
 
         DKGTypes.CombinedDecryptionRecord storage record = epochCombinedDecryptions[epochId][aid][ciphertextIndex];
         if (record.completed) revert AlreadyCombined();
@@ -1042,13 +1050,14 @@ contract DKGManager is IDKGManager {
         ) revert InvalidProofInput();
         if (publicInputs[8] < epoch.policy.threshold) revert InvalidProofInput();
         if (publicInputs[8] > MAX_N) revert InvalidProofInput();
+        if (transcript.length != COMBINE_TRANSCRIPT_WORDS * 32) revert InvalidProofInput();
+        // Fiat–Shamir over the calldata (see submitContribution).
         uint256 challenge = BRLC.deriveChallenge(
             epochId,
             DECRYPT_COMBINE_TRANSCRIPT_DOMAIN,
-            keccak256(abi.encodePacked(combineHash, bytes32(plaintext)))
+            keccak256(abi.encodePacked(combineHash, bytes32(plaintext), keccak256(transcript)))
         );
         if (publicInputs[11] != challenge) revert InvalidProofInput();
-        if (transcript.length != COMBINE_TRANSCRIPT_WORDS * 32) revert InvalidProofInput();
         if (keccak256(transcript[0:128]) != storedCtHash) revert InvalidProofInput();
         uint256 dOff;
         assembly { dOff := transcript.offset }
@@ -1057,27 +1066,25 @@ contract DKGManager is IDKGManager {
     }
 
 
-    /// @notice Abort a non-terminal epoch. The organizer may abort at any
-    ///         time; once `keyAssemblyDeadlineBlock` has passed without the
-    ///         epoch going Live, anyone may (the epoch is dead by then, this
-    ///         just records it).
-    /// @dev    Live epochs may NOT be aborted: the collective public key has
-    ///         already been published and messages may already be encrypted
-    ///         to it.
+    /// @notice Record that an epoch is dead. Permissionless, and only possible
+    ///         once the epoch provably cannot progress: the committee did not
+    ///         fill before the selection deadline, or fewer than
+    ///         `minValidContributions` arrived before the key-assembly
+    ///         deadline. Nobody — not even the creator — can abort an epoch
+    ///         that can still be finalized.
     /// @param  epochId The epoch identifier.
     function abortEpoch(bytes12 epochId) external {
         Epoch storage epoch = epochs[epochId];
         if (epoch.organizer == address(0)) revert InvalidEpoch();
-        if (msg.sender != epoch.organizer && block.number <= uint256(epoch.policy.keyAssemblyDeadlineBlock)) {
-            revert Unauthorized();
-        }
-        if (
-            epoch.status == DKGTypes.EpochPhase.Live
-                || epoch.status == DKGTypes.EpochPhase.Completed
-                || epoch.status == DKGTypes.EpochPhase.Aborted
-        ) {
-            revert InvalidPhase();
-        }
+        bool dead = (
+            epoch.status == DKGTypes.EpochPhase.CommitteeSelection
+                && block.number > uint256(epoch.policy.committeeSelectionDeadlineBlock)
+        ) || (
+            epoch.status == DKGTypes.EpochPhase.KeyAssembly
+                && block.number > uint256(epoch.policy.keyAssemblyDeadlineBlock)
+                && epoch.contributionCount < epoch.policy.minValidContributions
+        );
+        if (!dead) revert InvalidPhase();
 
         epoch.status = DKGTypes.EpochPhase.Aborted;
         emit EpochAborted(epochId);
@@ -1150,8 +1157,16 @@ contract DKGManager is IDKGManager {
         return epochCombinedDecryptions[epochId][aid][ciphertextIndex].plaintext;
     }
 
-    function getDecryptionPolicy(bytes12 epochId) external view returns (DKGTypes.DecryptionPolicy memory) {
-        return epochs[epochId].decryptionPolicy;
+    /// @notice Number of ciphertexts submitted so far for (epochId, aid).
+    function ciphertextCount(bytes12 epochId, bytes32 aid) external view returns (uint16) {
+        return ciphertextCounts[epochId][aid];
+    }
+
+    function _popcount(uint256 x) internal pure returns (uint256 n) {
+        while (x != 0) {
+            x &= x - 1;
+            n++;
+        }
     }
 
     function getContributionVerifierVKeyHash() external view returns (bytes32) {

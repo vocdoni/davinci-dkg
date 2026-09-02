@@ -81,11 +81,13 @@ contract DKGManagerAppTest is Test, TestHelpers {
             partialDecryptVerifier,
             address(new MockFinalizeVerifier()),
             address(new MockDecryptCombineVerifier()),
-            0, 0, 0, 0
+            0, 0, 0, 0, 0, 0, 0
         );
         registry.setManager(address(manager));
         appManager = new DKGAppManager(address(manager), partialDecryptVerifier);
         manager.setAppManager(address(appManager));
+        // Operators only enter lotteries of epochs created after they registered.
+        vm.roll(block.number + 1);
     }
 
     // Helper: build a finalized-enough epoch by going through the full
@@ -96,7 +98,7 @@ contract DKGManagerAppTest is Test, TestHelpers {
     function _finalizedEpoch() internal returns (bytes12 epochId) {
         uint64 next = manager.nextEpochStartBlock();
         if (block.number < uint256(next)) vm.roll(uint256(next));
-        epochId = manager.createEpoch(2, 2, 2, 10000, _emptyDecryptionPolicy());
+        epochId = manager.createEpoch(2, 2, 2, 10000);
         vm.roll(block.number + 2);
         manager.claimSlot(epochId);
         vm.prank(address(0xBEEF));
@@ -239,7 +241,7 @@ contract DKGManagerAppTest is Test, TestHelpers {
     function test_RegisterApplicationCoDec_RejectsBeforeFinalization() public {
         uint64 next = manager.nextEpochStartBlock();
         if (block.number < uint256(next)) vm.roll(uint256(next));
-        bytes12 epochId = manager.createEpoch(2, 2, 2, 10000, _emptyDecryptionPolicy());
+        bytes12 epochId = manager.createEpoch(2, 2, 2, 10000);
         vm.expectRevert(IDKGManager.InvalidPhase.selector);
         appManager.registerApplicationCoDec(
             epochId,

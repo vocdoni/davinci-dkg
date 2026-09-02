@@ -7,7 +7,6 @@ interface IDKGManager {
     struct Epoch {
         address organizer;
         DKGTypes.EpochPolicy policy;
-        DKGTypes.DecryptionPolicy decryptionPolicy;
         DKGTypes.EpochPhase status;
         uint64 nonce;
         uint64 startBlock;           // block.number at createEpoch — anchor for nextEpochStartBlock
@@ -54,7 +53,10 @@ interface IDKGManager {
         uint256 c1x,
         uint256 c1y,
         uint256 c2x,
-        uint256 c2y
+        uint256 c2y,
+        uint256 pokAx,
+        uint256 pokAy,
+        uint256 pokZ
     );
     event DecryptionCombined(
         bytes12 indexed epochId, bytes32 indexed aid, uint16 indexed ciphertextIndex, bytes32 combineHash, uint256 plaintext
@@ -72,6 +74,9 @@ interface IDKGManager {
     error SeedNotReady();
     error SeedExpired();
     error NotRegistered();
+    /// @dev The operator registered after the epoch was created; only the
+    ///      snapshotted registry enters the lottery.
+    error NotInSnapshot();
     error NotSelectedParticipant();
     error AlreadyContributed();
     error AlreadyLive();
@@ -87,10 +92,6 @@ interface IDKGManager {
     error InvalidCombinedDecryption();
     error InsufficientPartialDecryptions();
     error InvalidProofInput();
-    error NotOwner();
-    error InvalidDecryptionPolicy();
-    error DecryptionNotYetAllowed();
-    error DecryptionExpired();
     error DecryptionLimitReached();
     error CiphertextAlreadySubmitted();
     error CiphertextNotSubmitted();
@@ -104,8 +105,7 @@ interface IDKGManager {
         uint16 threshold,
         uint16 committeeSize,
         uint16 minValidContributions,
-        uint16 lotteryAlphaBps,
-        DKGTypes.DecryptionPolicy calldata decryptionPolicy
+        uint16 lotteryAlphaBps
     ) external returns (bytes12);
 
     /// @notice Earliest block at which the next `createEpoch` may succeed.
@@ -117,15 +117,23 @@ interface IDKGManager {
     function epochDurationBlocks() external view returns (uint256);
 
     function claimSlot(bytes12 epochId) external;
+    /// @notice Submit a ciphertext for threshold decryption. The index is
+    ///         assigned on chain (1, 2, … per application) and returned.
+    ///         `pok*` is a Schnorr proof of knowledge of the randomness r
+    ///         (C1 = r·G) over DOMAIN_CIPHERTEXT_POK_V1; it is stored in the
+    ///         event only and verified by every committee node before it
+    ///         releases a partial decryption.
     function submitCiphertext(
         bytes12 epochId,
         bytes32 aid,
-        uint16 ciphertextIndex,
         uint256 c1x,
         uint256 c1y,
         uint256 c2x,
-        uint256 c2y
-    ) external;
+        uint256 c2y,
+        uint256 pokAx,
+        uint256 pokAy,
+        uint256 pokZ
+    ) external returns (uint16 ciphertextIndex);
     function submitContribution(
         bytes12 epochId,
         uint16 contributorIndex,
@@ -182,8 +190,8 @@ interface IDKGManager {
     function getShareCommitmentHash(bytes12 epochId, uint16 participantIndex) external view returns (bytes32);
     function getCollectivePublicKey(bytes12 epochId) external view returns (DKGTypes.Point memory);
     function getCiphertextHash(bytes12 epochId, bytes32 aid, uint16 ciphertextIndex) external view returns (bytes32);
+    function ciphertextCount(bytes12 epochId, bytes32 aid) external view returns (uint16);
     function getPlaintext(bytes12 epochId, bytes32 aid, uint16 ciphertextIndex) external view returns (uint256);
-    function getDecryptionPolicy(bytes12 epochId) external view returns (DKGTypes.DecryptionPolicy memory);
     function getContributionVerifierVKeyHash() external view returns (bytes32);
     function getPartialDecryptVerifierVKeyHash() external view returns (bytes32);
     function getFinalizeVerifierVKeyHash() external view returns (bytes32);

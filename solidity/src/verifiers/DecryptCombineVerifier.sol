@@ -11,7 +11,7 @@ import {Verifier as BaseDecryptCombineVerifier} from "./decryptcombine_vkey.sol"
 ///         combineHash, plaintextHash, challenge, transcriptCommitment.
 contract DecryptCombineVerifier is BaseDecryptCombineVerifier, IZKVerifier {
     bytes32 internal constant PROVING_KEY_HASH =
-        hex"192977b7b1dd4f4acfe86cb9c81cefa38856e9500b2f2168742e609ab3f9bff7";
+        hex"45db382e20ec94816f3fd8bb0fd1c54a5a550eb6a842c26790fac5d5583a442f";
 
     error InvalidProofEncoding();
 

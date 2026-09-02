@@ -89,7 +89,7 @@ interface IDKGAppManager {
 
     /// @notice Enforce the per-app submitCiphertext access policy. Reverts on policy fail.
     ///         For aid == 0 the call is a no-op; the caller (DKGManager.submitCiphertext)
-    ///         applies the per-epoch DecryptionPolicy in that branch.
+    ///         treats aid == 0 (the epoch key itself) as an open application.
     function requireCanSubmitCiphertext(
         bytes12 epochId,
         bytes32 aid,

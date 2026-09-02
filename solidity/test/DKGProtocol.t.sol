@@ -41,4 +41,11 @@ contract DKGProtocolTest is Test {
             uint256(0x48fabea26e7a072780483852e403ea60b2f51a07c735c3e4b852ac6bb99b5a91)
         );
     }
+
+    function test_DomainCiphertextPoKV1_MatchesGoVector() public pure {
+        assertEq(
+            uint256(DKGProtocol.DOMAIN_CIPHERTEXT_POK_V1),
+            uint256(0x459d6189bebb2c0081a105f25a158877a71c77d3d77dca6bdecd5711c0db6d37)
+        );
+    }
 }

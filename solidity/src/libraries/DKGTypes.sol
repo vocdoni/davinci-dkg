@@ -35,19 +35,6 @@ library DKGTypes {
         uint64 liveNotBeforeBlock;               // earliest block at which finalizeEpoch can flip the epoch to Live
     }
 
-    /// @notice Gates `submitCiphertext` for a epoch. All checks AND together; an
-    ///         unset (zero) field is a no-op for that check.
-    ///         The policy only gates SUBMISSION; once a ciphertext is on-chain,
-    ///         decryption by the committee proceeds regardless of these fields.
-    struct DecryptionPolicy {
-        bool   ownerOnly;           // if true, only the epoch organizer can submitCiphertext
-        uint16 maxDecryptions;      // max ciphertexts accepted per epoch; 0 = unlimited (up to MAX_CIPHERTEXT_INDEX)
-        uint64 notBeforeBlock;      // submitCiphertext reverts if block.number < this; 0 = no lock
-        uint64 notBeforeTimestamp;  // submitCiphertext reverts if block.timestamp < this; 0 = no lock
-        uint64 notAfterBlock;       // submitCiphertext reverts if block.number > this; 0 = no deadline
-        uint64 notAfterTimestamp;   // submitCiphertext reverts if block.timestamp > this; 0 = no deadline
-    }
-
     struct ContributionRecord {
         address contributor;
         uint16 contributorIndex;
@@ -96,7 +83,7 @@ library DKGTypes {
         Organizer  // = 2
     }
 
-    /// @notice Per-application access policy. Mirrors DecryptionPolicy
+    /// @notice Per-application access policy. Gates submitCiphertext with the same
     ///         semantics but is scoped per application rather than per epoch.
     ///         All checks AND together; a zero-valued field is a no-op.
     struct AppPolicy {

@@ -101,6 +101,7 @@ contract DKGRegistry is IDKGRegistry {
         node.pubY = pubY;
         node.status = NodeStatus.ACTIVE;
         node.lastActiveBlock = uint64(block.number);
+        node.registeredAtBlock = uint64(block.number);
         unchecked {
             nodeCount += 1;
             activeCount += 1;
@@ -193,7 +194,7 @@ contract DKGRegistry is IDKGRegistry {
         uint256 ax,
         uint256 ay,
         uint256 z
-    ) internal view returns (bool) {
+    ) internal pure returns (bool) {
         uint256 c = _operatorSchnorrChallenge(op, pubX, pubY, ax, ay);
         return BabyJubJub.verifySchnorrEquation(z, c, ax, ay, pubX, pubY);
     }

@@ -69,7 +69,10 @@ contract DeployAllScript is Script {
             epochDurationBlocks,
             committeeSelectionBlocks,
             keyAssemblyBlocks,
-            finalizeGapBlocks
+            finalizeGapBlocks,
+            uint16(vm.envOr("MIN_THRESHOLD", uint256(1))),
+            uint16(vm.envOr("MIN_COMMITTEE_SIZE", uint256(1))),
+            uint16(vm.envOr("MAX_LOTTERY_ALPHA_BPS", uint256(65535)))
         );
         console.log("DKGManager deployed at:", address(manager));
         console.log("DKGManager epochDurationBlocks:", manager.EPOCH_DURATION_BLOCKS());

@@ -315,7 +315,7 @@ contract DKGAppManager is IDKGAppManager {
         uint256 ax,
         uint256 ay,
         uint256 z
-    ) internal view returns (bool) {
+    ) internal pure returns (bool) {
         uint256 c = _organizerSchnorrChallenge(epochId, aid, pkX, pkY, ax, ay);
         return BabyJubJub.verifySchnorrEquation(z, c, ax, ay, pkX, pkY);
     }

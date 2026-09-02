@@ -5,13 +5,13 @@ pragma solidity 0.8.28;
 /// @notice Twisted Edwards elliptic curve arithmetic over the BN254 scalar field
 ///         in the REDUCED form (A = -1) used by gnark-crypto's
 ///         `bn254/twistededwards` curve and by the davinci-dkg ZK circuits.
-///         Adapted from https://github.com/yondonfu/sol-baby-jubjub (MIT) —
-///         the original implementation used the iden3/circomlib chart
-///         (A = 168700, D = 168696). It was switched to the reduced chart
-///         because contributions emit `commitment0X/Y` in reduced form
-///         (`group.Encode(...)` -> gnark `PointAffine`), and the on-chain
-///         accumulator must use the same chart or the resulting point is
-///         meaningless in either form.
+///         Originally adapted from https://github.com/yondonfu/sol-baby-jubjub
+///         (MIT) — that implementation used the iden3/circomlib chart
+///         (A = 168700, D = 168696) and affine coordinates. It was switched to
+///         the reduced chart because contributions emit `commitment0X/Y` in
+///         reduced form (`group.Encode(...)` -> gnark `PointAffine`), and the
+///         on-chain accumulator must use the same chart or the resulting point
+///         is meaningless in either form.
 ///
 /// Curve equation: a·x² + y² = 1 + d·x²·y²
 ///   a = -1 (encoded as Q - 1)
@@ -21,11 +21,27 @@ pragma solidity 0.8.28;
 ///
 /// Identity element: (0, 1)  (unchanged across the two charts).
 ///
-/// The addition formula
+/// External API (affine coordinates, `(x, y)` with `x, y ∈ [0, Q)`) is
+/// unchanged; internally every group operation runs in *extended twisted
+/// Edwards coordinates* `(X : Y : Z : T)` with `x = X/Z`, `y = Y/Z`,
+/// `T = X·Y/Z` (Hisil, Wong, Carter, Dawson, "Twisted Edwards Curves
+/// Revisited", ASIACRYPT 2008, §3; the same coordinates RFC 8032 §5.1.4
+/// prescribes for Ed25519). Addition and doubling are inversion-free and a
+/// single modular inversion (bigModExp) is paid when converting the final
+/// result back to affine — or none at all when the result is only compared
+/// against an affine point, as in `verifySchnorrEquation` and
+/// `isInPrimeSubgroup`.
+///
+/// The addition formula used (HWCD §3.1, EFD "add-2008-hwcd-3", specialised
+/// to a = -1 with k = 2·d) is the projective form of the affine law
 ///   x3 = (x1·y2 + y1·x2) / (1 + d·x1·x2·y1·y2)
 ///   y3 = (y1·y2 - a·x1·x2) / (1 - d·x1·x2·y1·y2)
-/// is shape-identical for any (a, d) twisted-Edwards pair, so the function
-/// signature and body below need no change beyond the constants.
+/// which is *complete* on this curve: a = -1 is a square and d is a
+/// non-square in F_Q (d^((Q-1)/2) ≡ -1), so by Bernstein–Birkner–Joye–
+/// Lange–Peters ("Twisted Edwards Curves", 2008, Thm. 3.3) both denominators
+/// are non-zero for every pair of curve points, including P + P, P + (-P)
+/// and additions involving the identity or the small-order (cofactor)
+/// points. No case distinctions are therefore needed in the group law.
 library BabyJubJub {
     error NotCanonical();
     error NotOnCurve();
@@ -41,6 +57,10 @@ library BabyJubJub {
     /// @dev Curve parameter d (reduced-form value matching gnark BabyJubJub)
     uint256 internal constant D =
         12181644023421730124874158521699555681764249180949974110617291017600649128846;
+    /// @dev 2·d mod Q — the constant `k` of the a = -1 extended addition
+    ///      formula (HWCD 2008 §3.1). Pinned by `test_TwoDConstant`.
+    uint256 internal constant TWO_D =
+        2475045175004185027501911298141836274980133961483913877536377848625489762075;
 
     /// @dev Generator point X coordinate (gnark canonical reduced form).
     uint256 internal constant GENERATOR_X =
@@ -61,13 +81,14 @@ library BabyJubJub {
 
     /// @notice Test whether `(x, y)` satisfies the twisted-Edwards equation
     ///         `a·x² + y² = 1 + d·x²·y²` with `a = -1`.
-    /// @dev    Pure (no precompile use). Returns true for the identity (0, 1).
+    /// @dev    Pure (no precompile use). Returns true for the identity (0, 1)
+    ///         and false for non-canonical encodings (coordinate >= Q).
     function isOnCurve(uint256 x, uint256 y) internal pure returns (bool) {
         if (x >= Q || y >= Q) return false;
         uint256 x2 = mulmod(x, x, Q);
         uint256 y2 = mulmod(y, y, Q);
         // lhs = a·x² + y² = (Q - x²) + y² (mod Q)  (since a = -1)
-        uint256 lhs = addmod(_submod(0, x2), y2, Q);
+        uint256 lhs = addmod(Q - x2, y2, Q);
         // rhs = 1 + d·x²·y²
         uint256 rhs = addmod(1, mulmod(D, mulmod(x2, y2, Q), Q), Q);
         return lhs == rhs;
@@ -88,38 +109,14 @@ library BabyJubJub {
     ///         double-and-add (MSB-first) over the bits of `L`. We walk
     ///         `L` directly — `scalarMul` reduces its scalar mod `L`
     ///         first, which would short-circuit `[L]P` to `[0]P` and
-    ///         render the check vacuous. The window precomputes `2P` and
-    ///         `3P` once and consumes 2 bits per iteration, halving the
-    ///         number of conditional adds compared to bit-by-bit
-    ///         double-and-add. Use only at entry points where prime-
-    ///         subgroup membership is not otherwise enforced.
-    function isInPrimeSubgroup(uint256 x, uint256 y) internal view returns (bool) {
+    ///         render the check vacuous. Non-canonical or off-curve inputs
+    ///         are rejected up front (the group law is only complete for
+    ///         points of the curve). Use only at entry points where
+    ///         prime-subgroup membership is not otherwise enforced.
+    function isInPrimeSubgroup(uint256 x, uint256 y) internal pure returns (bool) {
         if (x == 0 && y == 1) return true; // identity is in every subgroup
-        // Precompute 2P, 3P once.
-        (uint256 p2x, uint256 p2y) = pointAdd(x, y, x, y);
-        (uint256 p3x, uint256 p3y) = pointAdd(p2x, p2y, x, y);
-
-        uint256 k = SUBGROUP_ORDER;
-        uint256 rx = 0;
-        uint256 ry = 1;
-        // L is ~252 bits; 126 windows of 2 bits each. MSB-first.
-        uint256 w = 126;
-        while (w > 0) {
-            unchecked { w--; }
-            uint256 bits = (k >> (w * 2)) & 3;
-            if (rx != 0 || ry != 1) {
-                (rx, ry) = pointAdd(rx, ry, rx, ry);
-                (rx, ry) = pointAdd(rx, ry, rx, ry);
-            }
-            if (bits == 1) {
-                (rx, ry) = pointAdd(rx, ry, x, y);
-            } else if (bits == 2) {
-                (rx, ry) = pointAdd(rx, ry, p2x, p2y);
-            } else if (bits == 3) {
-                (rx, ry) = pointAdd(rx, ry, p3x, p3y);
-            }
-        }
-        return rx == 0 && ry == 1;
+        if (!isOnCurve(x, y)) return false; // also rejects x, y >= Q
+        return _isIdentity(_mulWindow2(SUBGROUP_ORDER, x, y));
     }
 
     /// @notice Validate that `(x, y)` is a canonical, on-curve, non-identity
@@ -136,12 +133,14 @@ library BabyJubJub {
         if (!isOnCurve(x, y)) revert NotOnCurve();
     }
 
-    /// @notice Add two points on the Baby JubJub curve.
-    ///         Implements the unified twisted Edwards addition formula:
-    ///           x3 = (x1·y2 + y1·x2) / (1 + d·x1·x2·y1·y2)
-    ///           y3 = (y1·y2 - a·x1·x2) / (1 - d·x1·x2·y1·y2)
-    /// @dev The formula is complete (works for all points including the identity).
-    ///      The identity element is (0, 1).
+    // ─── Affine group operations ───────────────────────────────────────────────
+
+    /// @notice Add two points on the Baby JubJub curve (affine in, affine out).
+    /// @dev    One extended-coordinate addition plus one modular inversion
+    ///         for the conversion back to affine. The formula is complete
+    ///         (see the library notice), so P + P, P + (-P) and the identity
+    ///         need no special handling; the identity shortcuts below only
+    ///         save the inversion.
     /// @param _x1 x-coordinate of point P1
     /// @param _y1 y-coordinate of point P1
     /// @param _x2 x-coordinate of point P2
@@ -161,51 +160,37 @@ library BabyJubJub {
         if (_x2 == 0 && _y2 == 1) {
             return (_x1, _y1);
         }
-
-        uint256 x1x2 = mulmod(_x1, _x2, Q);
-        uint256 y1y2 = mulmod(_y1, _y2, Q);
-        uint256 dx1x2y1y2 = mulmod(D, mulmod(x1x2, y1y2, Q), Q);
-
-        uint256 x3Num = addmod(mulmod(_x1, _y2, Q), mulmod(_y1, _x2, Q), Q);
-        uint256 y3Num = _submod(y1y2, mulmod(A, x1x2, Q));
-
-        // Single-inverse trick (Montgomery): inv(a) and inv(b) from one
-        // modular inversion via inv(a*b). Saves one bigModExp precompile call
-        // per addition compared to inverting denX and denY independently.
-        uint256 denX = addmod(1, dx1x2y1y2, Q);
-        uint256 denY = _submod(1, dx1x2y1y2);
-        uint256 invProduct = _inverse(mulmod(denX, denY, Q));
-        uint256 invDenX = mulmod(denY, invProduct, Q);
-        uint256 invDenY = mulmod(denX, invProduct, Q);
-
-        x3 = mulmod(x3Num, invDenX, Q);
-        y3 = mulmod(y3Num, invDenY, Q);
+        Field memory fq = _field();
+        ExtPoint memory p = _fromAffine(_x1, _y1, fq);
+        ExtPoint memory q = _fromAffine(_x2, _y2, fq);
+        _add(p, p, q, fq);
+        return _toAffine(p);
     }
 
-    /// @notice Point doubling: P + P. Implemented via `pointAdd`; the
-    ///         twisted-Edwards addition formula is unified, so the same
-    ///         code path is correct for distinct points and equal points.
-    /// @dev    Kept as a named entry point for clarity at call sites and to
-    ///         allow a future optimization that uses the dedicated
-    ///         doubling formula (saves one `mulmod` per double).
+    /// @notice Point doubling: P + P (affine in, affine out).
+    /// @dev    Uses the dedicated extended-coordinate doubling formula
+    ///         (HWCD 2008 §3.3, "dbl-2008-hwcd"), which is valid for every
+    ///         point of the curve, then one inversion to return to affine.
     function pointDouble(uint256 x, uint256 y)
         internal
         view
         returns (uint256, uint256)
     {
-        return pointAdd(x, y, x, y);
+        Field memory fq = _field();
+        ExtPoint memory p = _fromAffine(x, y, fq);
+        _double(p, p, fq);
+        return _toAffine(p);
     }
 
     /// @notice Scalar multiplication `[s] (x, y)` on BabyJubJub.
-    /// @dev    Binary double-and-add, LSB-first. The scalar is reduced
-    ///         modulo `SUBGROUP_ORDER` first; this is sound for points in
-    ///         the prime-order subgroup (every honest call site) and
-    ///         saves an average of ~2 doublings versus the unreduced loop.
+    /// @dev    The scalar is reduced modulo `SUBGROUP_ORDER` first; this is
+    ///         sound for points in the prime-order subgroup (every honest
+    ///         call site). The multiplication itself is a width-2 windowed
+    ///         double-and-add in extended coordinates (see `_mulWindow2`)
+    ///         followed by a single inversion.
     ///
-    ///         Cost: ~`bitlen(s % L)` doublings + popcount adds, each
-    ///         dominated by one bigModExp precompile call (the inverse in
-    ///         `pointAdd`). For a uniformly random scalar this works out to
-    ///         ~250 + ~125 ≈ 375 group operations.
+    ///         Cost: ~`bitlen(s % L)` doublings + ~`bitlen/2 · 3/4`
+    ///         additions, each a handful of `mulmod`s, plus one bigModExp.
     function scalarMul(uint256 s, uint256 x, uint256 y)
         internal
         view
@@ -213,23 +198,7 @@ library BabyJubJub {
     {
         uint256 k = s % SUBGROUP_ORDER;
         if (k == 0) return (0, 1); // identity
-
-        // Identity addend, generator-of-result
-        uint256 rx = 0;
-        uint256 ry = 1;
-        uint256 px = x;
-        uint256 py = y;
-
-        while (k != 0) {
-            if (k & 1 == 1) {
-                (rx, ry) = pointAdd(rx, ry, px, py);
-            }
-            k >>= 1;
-            if (k != 0) {
-                (px, py) = pointAdd(px, py, px, py);
-            }
-        }
-        return (rx, ry);
+        return _toAffine(_mulWindow2(k, x, y));
     }
 
     /// @notice Convenience: `[s] · G` where G is the canonical generator.
@@ -260,19 +229,20 @@ library BabyJubJub {
     /// @dev    Equivalent (in TE arithmetic) to `z · G + c · (-PK) == A`,
     ///         which we evaluate as a single double-and-add over 2-bit
     ///         windows of `z` and `c` simultaneously. Per-window cost is
-    ///         two doublings + at most one conditional add against a
-    ///         16-entry precomputed table `T[i][j] = i·G + j·(-PK)` for
+    ///         two doublings + at most one addition against a 16-entry
+    ///         precomputed table `T[i][j] = i·G + j·(-PK)` for
     ///         `i, j ∈ {0, 1, 2, 3}`. Multiples of `G` are compile-time
     ///         constants; multiples of `-PK` and the cross terms are
-    ///         built once at the top of the call (13 group adds total).
-    ///         Net savings vs. two independent `scalarMul` calls + a
-    ///         `pointAdd`: roughly 2× — a uniformly random scalar pair
-    ///         needs ~250 doublings + ~119 adds, down from ~500 + ~250.
+    ///         built once at the top of the call (13 group additions).
+    ///         Everything runs in extended coordinates and the final
+    ///         comparison against `A` is done projectively, so the whole
+    ///         verification performs no modular inversion at all.
     ///
     ///         Sound for `pk` in the prime-order subgroup. The Schnorr
     ///         verification path satisfies that requirement: any prover
     ///         that can produce a valid `(A, z)` already knows a discrete
-    ///         log of `pk` to base `G`, so `pk` lies in `<G>`.
+    ///         log of `pk` to base `G`, so `pk` lies in `<G>`. Non-canonical
+    ///         encodings of `A` or `PK` (coordinate >= Q) never verify.
     /// @param  z   Schnorr response scalar (will be reduced mod L).
     /// @param  c   Fiat–Shamir challenge scalar (will be reduced mod L).
     /// @param  ax  X coordinate of the Schnorr nonce point A.
@@ -286,7 +256,8 @@ library BabyJubJub {
         uint256 ay,
         uint256 pkx,
         uint256 pky
-    ) internal view returns (bool) {
+    ) internal pure returns (bool) {
+        if (!isCanonical(ax, ay) || !isCanonical(pkx, pky)) return false;
         z = z % SUBGROUP_ORDER;
         c = c % SUBGROUP_ORDER;
 
@@ -294,60 +265,246 @@ library BabyJubJub {
         // itself; honest paths reject identity at point validation, so the
         // branch is for completeness rather than a hot path.
         uint256 npkx = pkx == 0 ? 0 : Q - pkx;
-        uint256 npky = pky;
 
-        // Build the lookup table T[i][j] = i·G + j·(-PK), i,j ∈ {0,1,2,3}.
-        // Layout: tx[i*4 + j], ty[i*4 + j]. Slot 0 (i = j = 0) is the identity.
-        uint256[16] memory tx;
-        uint256[16] memory ty;
-        // T[i][0] = i·G  (constants for i ≥ 1; identity for i = 0)
-        ty[0]  = 1;
-        tx[4]  = GENERATOR_X;     ty[4]  = GENERATOR_Y;
-        tx[8]  = TWO_G_X;         ty[8]  = TWO_G_Y;
-        tx[12] = THREE_G_X;       ty[12] = THREE_G_Y;
-        // T[0][1] = -PK
-        tx[1] = npkx;             ty[1] = npky;
-        // T[0][2] = 2·(-PK), T[0][3] = 3·(-PK)
-        (tx[2], ty[2]) = pointAdd(npkx, npky, npkx, npky);
-        (tx[3], ty[3]) = pointAdd(tx[2], ty[2], npkx, npky);
-        // T[i][j] = i·G + j·(-PK) for the 9 cross terms.
-        for (uint256 i = 1; i < 4; i++) {
-            uint256 baseX = tx[i * 4];
-            uint256 baseY = ty[i * 4];
+        // Build the lookup table T[i][j] = i·G + j·(-PK), i,j ∈ {0,1,2,3},
+        // in extended coordinates at tbl[i*4 + j]. Slot 0 (i = j = 0) is the
+        // identity (0 : 1 : 1 : 0).
+        Field memory fq = _field();
+        ExtPoint[16] memory tbl;
+        tbl[0].y = 1;
+        tbl[0].z = 1;
+        // T[i][0] = i·G  (constants for i ≥ 1)
+        _setAffine(tbl[4], GENERATOR_X, GENERATOR_Y, fq);
+        _setAffine(tbl[8], TWO_G_X, TWO_G_Y, fq);
+        _setAffine(tbl[12], THREE_G_X, THREE_G_Y, fq);
+        // T[0][1] = -PK, T[0][2] = 2·(-PK), T[0][3] = 3·(-PK)
+        _setAffine(tbl[1], npkx, pky, fq);
+        _double(tbl[2], tbl[1], fq);
+        _add(tbl[3], tbl[2], tbl[1], fq);
+        // T[i][j] = i·G + j·(-PK) for the 9 cross terms. Complete addition
+        // keeps these correct even when PK is a small multiple of G and a
+        // cross term collapses to the identity (e.g. G + (-G)).
+        for (uint256 i = 4; i <= 12; i += 4) {
             for (uint256 j = 1; j < 4; j++) {
-                (tx[i * 4 + j], ty[i * 4 + j]) =
-                    pointAdd(baseX, baseY, tx[j], ty[j]);
+                _add(tbl[i + j], tbl[i], tbl[j], fq);
             }
         }
 
-        // Find the highest non-zero 2-bit window across z and c. Scalars are
-        // ≤ 252 bits, so windows 0..125 cover them. Skipping leading-zero
-        // windows saves the corresponding pairs of doublings.
-        uint256 rx = 0;
-        uint256 ry = 1;
-        uint256 w = 126;
-        while (w > 0) {
-            unchecked { w--; }
-            uint256 shift = w * 2;
-            uint256 idx = (((z >> shift) & 3) << 2) | ((c >> shift) & 3);
-            if (rx != 0 || ry != 1) {
-                (rx, ry) = pointAdd(rx, ry, rx, ry);
-                (rx, ry) = pointAdd(rx, ry, rx, ry);
+        // Walk the 2-bit windows of z and c MSB-first. Scalars are < 2^252
+        // after reduction, so windows 0..125 cover them. Leading windows
+        // that are zero in both scalars cost nothing: the accumulator is
+        // only initialised (copied from the table) on the first non-zero
+        // window, and doubled from then on. If every window is zero
+        // (z ≡ c ≡ 0 mod L) the accumulator stays the identity.
+        ExtPoint memory acc = ExtPoint(0, 1, 1, 0);
+        bool started;
+        for (uint256 shift = 252; shift > 0;) {
+            uint256 idx;
+            unchecked {
+                shift -= 2;
+                idx = (((z >> shift) & 3) << 2) | ((c >> shift) & 3);
             }
-            if (idx != 0) {
-                (rx, ry) = pointAdd(rx, ry, tx[idx], ty[idx]);
+            if (started) {
+                _double(acc, acc, fq);
+                _double(acc, acc, fq);
+                if (idx != 0) _add(acc, acc, tbl[idx], fq);
+            } else if (idx != 0) {
+                _copy(acc, tbl[idx]);
+                started = true;
             }
         }
+        return _equalsAffine(acc, ax, ay);
+    }
 
-        return rx == ax && ry == ay;
+    // ─── Extended twisted-Edwards coordinates (private) ────────────────────────
+    //
+    // Formulas: Hisil–Wong–Carter–Dawson, "Twisted Edwards Curves Revisited",
+    // ASIACRYPT 2008 (EFD entries add-2008-hwcd-3 and dbl-2008-hwcd), as also
+    // specified in RFC 8032 §5.1.4 for the a = -1 Ed25519 curve.
+    //
+    // Points are passed as memory structs (one stack slot each) and results
+    // are written in place; every operation reads all of its inputs before
+    // writing, so the output may alias either input (`_add(p, p, q, fq)`).
+    // All coordinates are kept in [0, Q): every stored value is the output
+    // of mulmod/addmod and affine inputs are reduced in `_setAffine`, which
+    // is what makes the unchecked subtractions `q - x` below valid.
+
+    /// @dev A point in extended coordinates (X : Y : Z : T) with x = X/Z,
+    ///      y = Y/Z, T = X·Y/Z and Z ≠ 0. The identity is (0 : 1 : 1 : 0).
+    struct ExtPoint {
+        uint256 x;
+        uint256 y;
+        uint256 z;
+        uint256 t;
+    }
+
+    /// @dev Field constants handed to the group operations through memory.
+    ///      Each operation references the modulus ~20 times and, with this
+    ///      project's size-oriented optimizer settings (`optimizer_runs = 1`),
+    ///      solc materialises every use of a 32-byte literal through a
+    ///      ~40-gas `codecopy` sequence. Loading it from memory into a stack
+    ///      local once per operation costs a single `mload` instead.
+    struct Field {
+        uint256 q; // Q
+        uint256 twoD; // TWO_D
+    }
+
+    function _field() private pure returns (Field memory) {
+        return Field(Q, TWO_D);
+    }
+
+    /// @dev Set `r` to the affine point (x, y): (x : y : 1 : x·y), reducing
+    ///      the coordinates mod Q.
+    function _setAffine(ExtPoint memory r, uint256 x, uint256 y, Field memory fq) private pure {
+        uint256 q = fq.q;
+        r.x = x % q;
+        r.y = y % q;
+        r.z = 1;
+        r.t = mulmod(r.x, r.y, q);
+    }
+
+    /// @dev Allocate a fresh extended point from affine coordinates.
+    function _fromAffine(uint256 x, uint256 y, Field memory fq)
+        private
+        pure
+        returns (ExtPoint memory r)
+    {
+        r = ExtPoint(0, 0, 0, 0);
+        _setAffine(r, x, y, fq);
+    }
+
+    /// @dev r = p (field-wise copy; assigning the pointer would alias).
+    function _copy(ExtPoint memory r, ExtPoint memory p) private pure {
+        r.x = p.x;
+        r.y = p.y;
+        r.z = p.z;
+        r.t = p.t;
+    }
+
+    /// @dev Convert back to affine with a single inversion of Z.
+    function _toAffine(ExtPoint memory p) private view returns (uint256 x, uint256 y) {
+        uint256 zInv = _inverse(p.z);
+        x = mulmod(p.x, zInv, Q);
+        y = mulmod(p.y, zInv, Q);
+    }
+
+    /// @dev Whether p is the identity, i.e. x = 0 and y = 1: X = 0 and
+    ///      Y = Z (Z ≠ 0). Note the order-2 point (0 : -Z : Z) also has
+    ///      X = 0 but Y ≠ Z.
+    function _isIdentity(ExtPoint memory p) private pure returns (bool) {
+        return p.x == 0 && p.y == p.z && p.z != 0;
+    }
+
+    /// @dev Whether p equals the affine point (x, y) with x, y < Q:
+    ///      X = x·Z and Y = y·Z. Avoids the inversion of `_toAffine`.
+    function _equalsAffine(ExtPoint memory p, uint256 x, uint256 y) private pure returns (bool) {
+        return p.z != 0 && mulmod(x, p.z, Q) == p.x && mulmod(y, p.z, Q) == p.y;
+    }
+
+    /// @dev Unified addition r = p1 + p2 in extended coordinates for a = -1
+    ///      (HWCD 2008 §3.1; EFD "add-2008-hwcd-3"; RFC 8032 §5.1.4), with
+    ///      k = 2·d. Cost 9 mulmod. Complete on this curve (see the library
+    ///      notice): valid for p1 = p2, p1 = -p2 and the identity.
+    ///
+    ///        A = (Y1 - X1)·(Y2 - X2)     B = (Y1 + X1)·(Y2 + X2)
+    ///        C = T1·k·T2                 D = 2·Z1·Z2
+    ///        E = B - A   F = D - C   G = D + C   H = B + A
+    ///        X3 = E·F    Y3 = G·H    T3 = E·H    Z3 = F·G
+    function _add(ExtPoint memory r, ExtPoint memory p1, ExtPoint memory p2, Field memory fq)
+        private
+        pure
+    {
+        uint256 q = fq.q;
+        // Single-letter locals follow the HWCD naming above; they are
+        // unrelated to the curve constants `A` and `D`. Subtractions are
+        // written as `u + (q - v)` with v < q, hence unchecked. Statements
+        // are grouped so that few values are live at once (cheaper stack
+        // scheduling); all inputs are read before `r` is written.
+        unchecked {
+            uint256 a = mulmod(addmod(p1.y, q - p1.x, q), addmod(p2.y, q - p2.x, q), q);
+            uint256 b = mulmod(addmod(p1.y, p1.x, q), addmod(p2.y, p2.x, q), q);
+            uint256 e = addmod(b, q - a, q);
+            uint256 h = addmod(b, a, q);
+            uint256 c = mulmod(mulmod(p1.t, p2.t, q), fq.twoD, q);
+            uint256 d = mulmod(p1.z, p2.z, q);
+            d = addmod(d, d, q);
+            uint256 f = addmod(d, q - c, q);
+            uint256 g = addmod(d, c, q);
+            r.x = mulmod(e, f, q);
+            r.t = mulmod(e, h, q);
+            r.y = mulmod(g, h, q);
+            r.z = mulmod(f, g, q);
+        }
+    }
+
+    /// @dev Doubling r = 2·p in extended coordinates for a = -1
+    ///      (HWCD 2008 §3.3; EFD "dbl-2008-hwcd"; RFC 8032 §5.1.4). Cost
+    ///      8 mulmod. Does not read T1 and does not involve d: it uses the
+    ///      curve equation instead, and is valid for every point of the
+    ///      curve.
+    ///
+    ///        A = X1²   B = Y1²   C = 2·Z1²   D = a·A = -A
+    ///        E = (X1 + Y1)² - A - B
+    ///        G = D + B = B - A   F = G - C   H = D - B = -(A + B)
+    ///        X3 = E·F    Y3 = G·H    T3 = E·H    Z3 = F·G
+    function _double(ExtPoint memory r, ExtPoint memory p, Field memory fq) private pure {
+        uint256 q = fq.q;
+        unchecked {
+            uint256 e = addmod(p.x, p.y, q); // X1 + Y1
+            uint256 a = mulmod(p.x, p.x, q);
+            uint256 b = mulmod(p.y, p.y, q);
+            uint256 ab = addmod(a, b, q);
+            uint256 g = addmod(b, q - a, q);
+            e = addmod(mulmod(e, e, q), q - ab, q);
+            uint256 h = q - ab; // in (0, q]; only ever fed to mulmod, which reduces it
+            uint256 c = mulmod(p.z, p.z, q);
+            c = addmod(c, c, q);
+            uint256 f = addmod(g, q - c, q);
+            r.x = mulmod(e, f, q);
+            r.t = mulmod(e, h, q);
+            r.y = mulmod(g, h, q);
+            r.z = mulmod(f, g, q);
+        }
+    }
+
+    /// @dev [k]·(x, y) for a raw scalar `k` (NOT reduced mod L, so that
+    ///      `isInPrimeSubgroup` can evaluate [L]·P), returned in extended
+    ///      coordinates. Width-2 fixed window, MSB-first: precomputes
+    ///      P, 2P, 3P and consumes two bits per iteration (two doublings
+    ///      + at most one addition). Leading zero windows are skipped; for
+    ///      k = 0 the identity is returned.
+    function _mulWindow2(uint256 k, uint256 x, uint256 y)
+        private
+        pure
+        returns (ExtPoint memory acc)
+    {
+        Field memory fq = _field();
+        // tbl[m] = m·P for m ∈ {1, 2, 3}; tbl[0] is unused.
+        ExtPoint[4] memory tbl;
+        _setAffine(tbl[1], x, y, fq);
+        _double(tbl[2], tbl[1], fq);
+        _add(tbl[3], tbl[2], tbl[1], fq);
+
+        acc = ExtPoint(0, 1, 1, 0);
+        bool started;
+        for (uint256 shift = 256; shift > 0;) {
+            uint256 bits;
+            unchecked {
+                shift -= 2;
+                bits = (k >> shift) & 3;
+            }
+            if (started) {
+                _double(acc, acc, fq);
+                _double(acc, acc, fq);
+                if (bits != 0) _add(acc, acc, tbl[bits], fq);
+            } else if (bits != 0) {
+                _copy(acc, tbl[bits]);
+                started = true;
+            }
+        }
     }
 
     // ─── Private helpers ───────────────────────────────────────────────────────
-
-    /// @dev Modular subtraction: (a - b) mod Q, handling underflow.
-    function _submod(uint256 _a, uint256 _b) private pure returns (uint256) {
-        return addmod(_a, Q - (_b % Q), Q);
-    }
 
     /// @dev Q - 2, used as the Fermat exponent for modular inverse (a^(Q-2) mod Q).
     ///      Stored as a constant so the assembly block can reference it via mload.

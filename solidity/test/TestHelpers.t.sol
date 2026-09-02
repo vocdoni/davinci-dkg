@@ -10,16 +10,6 @@ import {TestInputs} from "./TestInputs.t.sol";
 abstract contract TestHelpers is TestInputs {
     /// @dev All-zero decryption policy: owner-only disabled, no time locks,
     /// no submission cap. Used by tests that don't care about submission gating.
-    function _emptyDecryptionPolicy() internal pure returns (DKGTypes.DecryptionPolicy memory) {
-        return DKGTypes.DecryptionPolicy({
-            ownerOnly: false,
-            maxDecryptions: 0,
-            notBeforeBlock: 0,
-            notBeforeTimestamp: 0,
-            notAfterBlock: 0,
-            notAfterTimestamp: 0
-        });
-    }
 
     /// @dev Canonical on-curve ciphertext used by the ZK-mock tests. Both c1
     /// and c2 must be in the prime-order subgroup of BabyJubJub (gnark RTE
@@ -51,7 +41,7 @@ abstract contract TestHelpers is TestInputs {
         uint256 challenge = BRLC.deriveChallenge(
             epochId,
             CONTRIBUTION_TRANSCRIPT_DOMAIN,
-            keccak256(abi.encodePacked(commitmentsHash, encryptedSharesHash))
+            keccak256(abi.encodePacked(commitmentsHash, encryptedSharesHash, keccak256(contributionTranscript(committeeSize))))
         );
         return abi.encode(
             [
@@ -208,7 +198,12 @@ abstract contract TestHelpers is TestInputs {
         bytes32 shareCommitmentHash
     ) internal pure returns (bytes memory) {
         uint256 challenge = BRLC.deriveChallenge(
-            epochId, FINALIZE_TRANSCRIPT_DOMAIN, keccak256(abi.encodePacked(aggregateCommitmentsHash, collectivePublicKeyHash, shareCommitmentHash))
+            epochId,
+            FINALIZE_TRANSCRIPT_DOMAIN,
+            keccak256(abi.encodePacked(
+                aggregateCommitmentsHash, collectivePublicKeyHash, shareCommitmentHash,
+                FINALIZED_ROWS_HASH, keccak256(finalizeTranscript(acceptedCount))
+            ))
         );
         return abi.encode(
             [
@@ -219,6 +214,7 @@ abstract contract TestHelpers is TestInputs {
                 uint256(aggregateCommitmentsHash),
                 uint256(collectivePublicKeyHash),
                 uint256(shareCommitmentHash),
+                uint256(FINALIZED_ROWS_HASH),
                 challenge,
                 finalizeTranscriptCommitment(challenge, acceptedCount)
             ]
@@ -302,7 +298,12 @@ abstract contract TestHelpers is TestInputs {
         bytes32 shareCommitmentHash
     ) internal pure returns (bytes memory) {
         uint256 challenge = BRLC.deriveChallenge(
-            epochId, FINALIZE_TRANSCRIPT_DOMAIN, keccak256(abi.encodePacked(aggregateCommitmentsHash, collectivePublicKeyHash, shareCommitmentHash))
+            epochId,
+            FINALIZE_TRANSCRIPT_DOMAIN,
+            keccak256(abi.encodePacked(
+                aggregateCommitmentsHash, collectivePublicKeyHash, shareCommitmentHash,
+                FINALIZED_ROWS_HASH, keccak256(finalizeTranscriptWithDuplicateRows())
+            ))
         );
         return abi.encode(
             [
@@ -313,6 +314,7 @@ abstract contract TestHelpers is TestInputs {
                 uint256(aggregateCommitmentsHash),
                 uint256(collectivePublicKeyHash),
                 uint256(shareCommitmentHash),
+                uint256(FINALIZED_ROWS_HASH),
                 challenge,
                 _finalizeTranscriptCommitmentWithDuplicateRows(challenge)
             ]
@@ -381,7 +383,7 @@ abstract contract TestHelpers is TestInputs {
         uint256 challenge = BRLC.deriveChallenge(
             epochId,
             DECRYPT_COMBINE_TRANSCRIPT_DOMAIN,
-            keccak256(abi.encodePacked(combineHash, bytes32(plaintext)))
+            keccak256(abi.encodePacked(combineHash, bytes32(plaintext), keccak256(decryptCombineTranscript(shareCount))))
         );
         uint256[13] memory v;
         v[0] = uint256(uint96(epochId));

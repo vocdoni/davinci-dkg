@@ -55,6 +55,11 @@ library DKGProtocol {
         keccak256("davinci-dkg:operator-register:v1");
     bytes32 internal constant DOMAIN_ORGANIZER_REGISTER_V1 =
         keccak256("davinci-dkg:organizer-register:v1");
+    /// @dev Schnorr proof of knowledge of a ciphertext's randomness r (C1 = r·G),
+    ///      checked off-chain by every committee node before it releases a
+    ///      partial decryption; stops a ciphertext's C1 from being re-submitted
+    ///      under another application as a decryption oracle.
+    bytes32 internal constant DOMAIN_CIPHERTEXT_POK_V1 = keccak256("davinci-dkg:ciphertext-pok:v1");
     bytes32 internal constant DOMAIN_DLEQ_V1 =
         keccak256("davinci-dkg:dleq:v1");
 }

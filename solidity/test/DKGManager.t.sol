@@ -6,6 +6,8 @@ import {DKGRegistry} from "../src/DKGRegistry.sol";
 import {DKGManager} from "../src/DKGManager.sol";
 import {IDKGManager} from "../src/interfaces/IDKGManager.sol";
 import {DKGTypes} from "../src/libraries/DKGTypes.sol";
+import {BRLC} from "../src/libraries/BRLC.sol";
+import {MAX_N} from "../src/libraries/Sizes.sol";
 import {
     MockContributionVerifier,
     MockPartialDecryptVerifier,
@@ -67,11 +69,14 @@ contract DKGManagerTest is Test, TestHelpers {
             0,  // epochDurationBlocks → DEFAULT (100)
             0,  // committeeSelectionBlocks → DEFAULT (25)
             0,  // keyAssemblyBlocks → DEFAULT (25)
-            0   // finalizeGapBlocks → DEFAULT (5)
+            0,  // finalizeGapBlocks → DEFAULT (5)
+            0, 0, 0 // policy floors → permissive defaults
         );
         // Wire the liveness callback so submitContribution can refresh
         // the contributor's lastActiveBlock on the registry.
         registry.setManager(address(manager));
+        // Operators only enter lotteries of epochs created after they registered.
+        vm.roll(block.number + 1);
     }
 
     function createSelectedRound() internal returns (bytes12 epochId) {
@@ -94,8 +99,7 @@ contract DKGManagerTest is Test, TestHelpers {
             2,                         // threshold
             2,                         // committeeSize
             2,                         // minValidContributions
-            10000,                     // lotteryAlphaBps (α = 1.0)
-            _emptyDecryptionPolicy()
+            10000                     // lotteryAlphaBps (α = 1.0)
         );
         // Advance past seedBlock so blockhash is available.
         vm.roll(block.number + 2);
@@ -169,12 +173,12 @@ contract DKGManagerTest is Test, TestHelpers {
         // against ciphertextIndex=1, so submit it as part of the
         // canonical "finalized" fixture. Tests that need an unsubmitted
         // ciphertext use a different index.
-        manager.submitCiphertext(epochId, bytes32(0), 1, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
+        manager.submitCiphertext(epochId, bytes32(0), TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y, 0, 0, 0);
     }
 
     function test_CreateEpoch_PersistsPolicy() public {
         // committeeSize=2, registered=2, α=1.0 → all eligible
-        bytes12 epochId = manager.createEpoch(2, 2, 2, 10000, _emptyDecryptionPolicy());
+        bytes12 epochId = manager.createEpoch(2, 2, 2, 10000);
 
         IDKGManager.Epoch memory epoch = manager.getEpoch(epochId);
 
@@ -186,7 +190,7 @@ contract DKGManagerTest is Test, TestHelpers {
 
     function test_ClaimSlot_RejectsBeforeSeedReady() public {
         bytes12 epochId =
-            manager.createEpoch(2, 2, 2, 10000, _emptyDecryptionPolicy());
+            manager.createEpoch(2, 2, 2, 10000);
         // Don't roll forward — seed block has not been mined yet.
         vm.expectRevert(IDKGManager.SeedNotReady.selector);
         manager.claimSlot(epochId);
@@ -471,20 +475,20 @@ contract DKGManagerTest is Test, TestHelpers {
     function test_CreateEpoch_RejectsBeforeNextEpochStartBlock() public {
         // First epoch goes through (cadence guard satisfied — no prior
         // epoch). Second call before nextEpochStartBlock() reverts.
-        manager.createEpoch(2, 2, 2, 10000, _emptyDecryptionPolicy());
+        manager.createEpoch(2, 2, 2, 10000);
         // We are far before lastEpochStartBlock + EPOCH_DURATION_BLOCKS now.
         vm.expectRevert(IDKGManager.InvalidPhase.selector);
-        manager.createEpoch(2, 2, 2, 10000, _emptyDecryptionPolicy());
+        manager.createEpoch(2, 2, 2, 10000);
         // Roll past the cadence threshold and try again — must succeed.
         vm.roll(uint256(manager.nextEpochStartBlock()));
-        manager.createEpoch(2, 2, 2, 10000, _emptyDecryptionPolicy());
+        manager.createEpoch(2, 2, 2, 10000);
     }
 
     function test_NextEpochStartBlock_AdvancesByDuration() public {
         uint64 dur = uint64(manager.EPOCH_DURATION_BLOCKS());
         // Before any epoch: nextEpochStartBlock() == current block.
         assertEq(uint256(manager.nextEpochStartBlock()), block.number);
-        manager.createEpoch(2, 2, 2, 10000, _emptyDecryptionPolicy());
+        manager.createEpoch(2, 2, 2, 10000);
         assertEq(
             uint256(manager.nextEpochStartBlock()),
             uint256(manager.lastEpochStartBlock()) + uint256(dur)
@@ -578,7 +582,7 @@ contract DKGManagerTest is Test, TestHelpers {
     function test_SubmitPartialDecryption_AllowsDistinctCiphertexts() public {
         bytes12 epochId = createFinalizedRound();
         // ciphertext 2 must also exist on-chain.
-        manager.submitCiphertext(epochId, bytes32(0), 2, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
+        manager.submitCiphertext(epochId, bytes32(0), TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y, 0, 0, 0);
 
         manager.submitPartialDecryption(
             epochId,
@@ -698,8 +702,7 @@ contract DKGManagerTest is Test, TestHelpers {
             1,
             1,
             1,
-            10000,
-            _emptyDecryptionPolicy()
+            10000
         );
         vm.roll(block.number + 2);
 
@@ -737,8 +740,13 @@ contract DKGManagerTest is Test, TestHelpers {
     }
 
     function test_AbortEpoch_PersistsAbortedStatus() public {
-        bytes12 epochId = manager.createEpoch(2, 2, 2, 10000, _emptyDecryptionPolicy());
+        bytes12 epochId = manager.createEpoch(2, 2, 2, 10000);
+        // Nobody may abort while the committee can still fill.
+        vm.expectRevert(IDKGManager.InvalidPhase.selector);
+        manager.abortEpoch(epochId);
 
+        vm.roll(uint256(manager.getEpoch(epochId).policy.committeeSelectionDeadlineBlock) + 1);
+        vm.prank(address(0xCAFE)); // permissionless once dead
         manager.abortEpoch(epochId);
 
         IDKGManager.Epoch memory epoch = manager.getEpoch(epochId);
@@ -768,7 +776,7 @@ contract DKGManagerTest is Test, TestHelpers {
             address(partialVerifier),
             address(finalizeVerifier),
             address(decryptCombineVerifier),
-            0, 0, 0, 0
+            0, 0, 0, 0, 0, 0, 0
         );
     }
 
@@ -781,7 +789,7 @@ contract DKGManagerTest is Test, TestHelpers {
             address(partialVerifier),
             address(finalizeVerifier),
             address(decryptCombineVerifier),
-            0, 0, 0, 0
+            0, 0, 0, 0, 0, 0, 0
         );
     }
 
@@ -828,107 +836,17 @@ contract DKGManagerTest is Test, TestHelpers {
         // another at index 2 to exercise the storage / counter path.
         bytes32 expected = keccak256(abi.encode(TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y));
 
-        manager.submitCiphertext(epochId, bytes32(0), 2, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
+        manager.submitCiphertext(epochId, bytes32(0), TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y, 0, 0, 0);
 
         assertEq(uint256(manager.getCiphertextHash(epochId, bytes32(0), 2)), uint256(expected));
         assertEq(uint256(manager.getEpoch(epochId).ciphertextCount), 2);
-    }
-
-    function test_SubmitCiphertext_RejectsDuplicateIndex() public {
-        bytes12 epochId = createFinalizedRound();
-        // ciphertext 1 already submitted by createFinalizedRound. The
-        // duplicate submission at the same index must be rejected by
-        // the write-once guard.
-        vm.expectRevert(IDKGManager.CiphertextAlreadySubmitted.selector);
-        manager.submitCiphertext(epochId, bytes32(0), 1, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
     }
 
     function test_SubmitCiphertext_RejectsBeforeFinalized() public {
         bytes12 epochId = _createLotteryRound();
 
         vm.expectRevert(IDKGManager.InvalidPhase.selector);
-        manager.submitCiphertext(epochId, bytes32(0), 1, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
-    }
-
-    function test_SubmitCiphertext_OwnerOnly_BlocksOthers() public {
-        bytes12 epochId = _createRoundWithDecryptionPolicy(
-            DKGTypes.DecryptionPolicy({
-                ownerOnly: true,
-                maxDecryptions: 0,
-                notBeforeBlock: 0, notBeforeTimestamp: 0,
-                notAfterBlock: 0, notAfterTimestamp: 0
-            })
-        );
-
-        vm.prank(address(0xCAFE));
-        vm.expectRevert(IDKGManager.NotOwner.selector);
-        manager.submitCiphertext(epochId, bytes32(0), 1, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
-
-        // Owner can submit.
-        manager.submitCiphertext(epochId, bytes32(0), 1, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
-    }
-
-    function test_SubmitCiphertext_NotBeforeBlock_Blocks() public {
-        uint64 unlockBlock = uint64(block.number + 1000);
-        bytes12 epochId = _createRoundWithDecryptionPolicy(
-            DKGTypes.DecryptionPolicy({
-                ownerOnly: false,
-                maxDecryptions: 0,
-                notBeforeBlock: unlockBlock,
-                notBeforeTimestamp: 0,
-                notAfterBlock: 0,
-                notAfterTimestamp: 0
-            })
-        );
-
-        vm.expectRevert(IDKGManager.DecryptionNotYetAllowed.selector);
-        manager.submitCiphertext(epochId, bytes32(0), 1, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
-
-        vm.roll(uint256(unlockBlock));
-        manager.submitCiphertext(epochId, bytes32(0), 1, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
-    }
-
-    // Note: timestamp-based gates (notBeforeTimestamp / notAfterTimestamp) share the
-    // same revert paths as the block-based gates tested here; the minimal forge-std
-    // shim in this repo does not expose vm.warp, so timestamp cases are exercised via
-    // the Go integration suite (cmd/davinci-dkg-node tests) rather than here.
-
-    function test_SubmitCiphertext_NotAfterBlock_Blocks() public {
-        uint64 cutoff = uint64(block.number + 50);
-        bytes12 epochId = _createRoundWithDecryptionPolicy(
-            DKGTypes.DecryptionPolicy({
-                ownerOnly: false,
-                maxDecryptions: 0,
-                notBeforeBlock: 0,
-                notBeforeTimestamp: 0,
-                notAfterBlock: cutoff,
-                notAfterTimestamp: 0
-            })
-        );
-
-        vm.roll(uint256(cutoff) + 1);
-        vm.expectRevert(IDKGManager.DecryptionExpired.selector);
-        manager.submitCiphertext(epochId, bytes32(0), 1, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
-    }
-
-    function test_SubmitCiphertext_MaxDecryptions_Caps() public {
-        bytes12 epochId = _createRoundWithDecryptionPolicy(
-            DKGTypes.DecryptionPolicy({
-                ownerOnly: false,
-                maxDecryptions: 2,
-                notBeforeBlock: 0, notBeforeTimestamp: 0,
-                notAfterBlock: 0, notAfterTimestamp: 0
-            })
-        );
-
-        // The cap check doesn't care about distinct coordinates, only the
-        // submission count, but the well-formedness check rejects identity
-        // — use the prime-subgroup test vectors.
-        manager.submitCiphertext(epochId, bytes32(0), 1, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
-        manager.submitCiphertext(epochId, bytes32(0), 2, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
-
-        vm.expectRevert(IDKGManager.DecryptionLimitReached.selector);
-        manager.submitCiphertext(epochId, bytes32(0), 3, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
+        manager.submitCiphertext(epochId, bytes32(0), TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y, 0, 0, 0);
     }
 
     function test_SubmitCiphertext_RejectsOffCurvePoint() public {
@@ -936,35 +854,20 @@ contract DKGManagerTest is Test, TestHelpers {
 
         // (7001, 8001) does NOT satisfy a·x² + y² = 1 + d·x²·y² (mod Q).
         vm.expectRevert(IDKGManager.InvalidCiphertext.selector);
-        manager.submitCiphertext(epochId, bytes32(0), 1, 7001, 8001, 0, 1);
+        manager.submitCiphertext(epochId, bytes32(0), 7001, 8001, 0, 1, 0, 0, 0);
 
         // Canonical-range but off-curve: e.g. (1, 1) — 168700 + 1 = 168701; 1 + 168696 = 168697.
         vm.expectRevert(IDKGManager.InvalidCiphertext.selector);
-        manager.submitCiphertext(epochId, bytes32(0), 1, 1, 1, 0, 1);
+        manager.submitCiphertext(epochId, bytes32(0), 1, 1, 0, 1, 0, 0, 0);
 
         // Bad c2 with valid c1 also reverts.
         vm.expectRevert(IDKGManager.InvalidCiphertext.selector);
-        manager.submitCiphertext(epochId, bytes32(0), 1, 0, 1, 1, 1);
+        manager.submitCiphertext(epochId, bytes32(0), 0, 1, 1, 1, 0, 0, 0);
 
         // Coordinates ≥ Q (non-canonical) rejected even if they'd be on-curve post-reduction.
         uint256 Q = 21888242871839275222246405745257275088548364400416034343698204186575808495617;
         vm.expectRevert(IDKGManager.InvalidCiphertext.selector);
-        manager.submitCiphertext(epochId, bytes32(0), 1, Q, 1, 0, 1);
-    }
-
-    function test_CreateEpoch_RejectsInvalidDecryptionPolicyWindow() public {
-        // notAfterBlock <= notBeforeBlock is a degenerate window.
-        DKGTypes.DecryptionPolicy memory bad = DKGTypes.DecryptionPolicy({
-            ownerOnly: false,
-            maxDecryptions: 0,
-            notBeforeBlock: 100,
-            notBeforeTimestamp: 0,
-            notAfterBlock: 100, // equal → empty window
-            notAfterTimestamp: 0
-        });
-
-        vm.expectRevert(IDKGManager.InvalidDecryptionPolicy.selector);
-        manager.createEpoch(2, 2, 2, 10000, bad);
+        manager.submitCiphertext(epochId, bytes32(0), Q, 1, 0, 1, 0, 0, 0);
     }
 
     function test_SubmitPartialDecryption_RejectsWhenCiphertextNotSubmitted() public {
@@ -985,57 +888,12 @@ contract DKGManagerTest is Test, TestHelpers {
     }
 
     /// @dev Build a finalized epoch with a custom DecryptionPolicy.
-    function _createRoundWithDecryptionPolicy(DKGTypes.DecryptionPolicy memory dp)
-        internal
-        returns (bytes12 epochId)
-    {
-        uint64 next = manager.nextEpochStartBlock();
-        if (block.number < uint256(next)) vm.roll(uint256(next));
-        epochId = manager.createEpoch(2, 2, 2, 10000, dp);
-        vm.roll(block.number + 2);
-        _claimAllSlots(epochId);
-
-        manager.submitContribution(
-            epochId, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH,
-            contributionTranscript(2), contributionProof(),
-            contributionInput(epochId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH)
-        );
-        vm.prank(address(0xBEEF));
-        manager.submitContribution(
-            epochId, 2,
-            bytes32(uint256(CONTRIBUTION_COMMITMENTS_HASH) + 1),
-            bytes32(uint256(CONTRIBUTION_ENCRYPTED_SHARES_HASH) + 1),
-            contributionTranscript(2), contributionProof(),
-            contributionInput(
-                epochId,
-                2,
-                2,
-                2,
-                bytes32(uint256(CONTRIBUTION_COMMITMENTS_HASH) + 1),
-                bytes32(uint256(CONTRIBUTION_ENCRYPTED_SHARES_HASH) + 1)
-            )
-        );
-        _advanceToFinalize(epochId);
-        manager.finalizeEpoch(
-            epochId,
-            FINALIZED_AGGREGATE_COMMITMENTS_HASH,
-            FINALIZED_COLLECTIVE_PUBLIC_KEY_HASH,
-            FINALIZED_SHARE_COMMITMENT_HASH,
-            finalizeTranscript(2), finalizeProof(),
-            finalizeInput(
-                epochId, 2, 2, 2,
-                FINALIZED_AGGREGATE_COMMITMENTS_HASH,
-                FINALIZED_COLLECTIVE_PUBLIC_KEY_HASH,
-                FINALIZED_SHARE_COMMITMENT_HASH
-            )
-        );
-    }
     // ── Lottery threshold must scale with the active set ──────────────────
 
     function test_CreateEpoch_LotteryThresholdScalesWithActiveSet() public {
         // registered = 2 (this + BEEF), committeeSize = 1, α = 1.0
         // → α·n = 1 < registered → threshold = 2^256 · 1 / 2.
-        bytes12 epochId = manager.createEpoch(1, 1, 1, 10000, _emptyDecryptionPolicy());
+        bytes12 epochId = manager.createEpoch(1, 1, 1, 10000);
         IDKGManager.Epoch memory epoch = manager.getEpoch(epochId);
         uint256 expected = (type(uint256).max / 20000) * 10000;
         assertEq(epoch.lotteryThreshold, expected);
@@ -1044,7 +902,7 @@ contract DKGManagerTest is Test, TestHelpers {
 
     function test_CreateEpoch_LotteryThresholdIsMaxWhenOversubscribed() public {
         // α·n = 1.5 · 2 = 3 ≥ registered = 2 → everyone passes.
-        bytes12 epochId = manager.createEpoch(2, 2, 2, 15000, _emptyDecryptionPolicy());
+        bytes12 epochId = manager.createEpoch(2, 2, 2, 15000);
         assertEq(manager.getEpoch(epochId).lotteryThreshold, type(uint256).max);
     }
 
@@ -1057,7 +915,7 @@ contract DKGManagerTest is Test, TestHelpers {
         for (uint256 round = 0; round < 6; round++) {
             uint64 next = manager.nextEpochStartBlock();
             if (block.number < uint256(next)) vm.roll(uint256(next));
-            bytes12 epochId = manager.createEpoch(1, 1, 1, 10000, _emptyDecryptionPolicy());
+            bytes12 epochId = manager.createEpoch(1, 1, 1, 10000);
             IDKGManager.Epoch memory epoch = manager.getEpoch(epochId);
             // Roll relative to the contract-reported seed block: via-IR folds
             // `block.number` to a constant inside this loop.
@@ -1083,10 +941,10 @@ contract DKGManagerTest is Test, TestHelpers {
     // ── Old epochs are never evicted ───────────────────────────────────────
 
     function test_CreateEpoch_DoesNotEvictOldEpochs() public {
-        bytes12 first = manager.createEpoch(2, 2, 2, 10000, _emptyDecryptionPolicy());
+        bytes12 first = manager.createEpoch(2, 2, 2, 10000);
         for (uint256 i = 0; i < 70; i++) {
             vm.roll(uint256(manager.nextEpochStartBlock()));
-            manager.createEpoch(2, 2, 2, 10000, _emptyDecryptionPolicy());
+            manager.createEpoch(2, 2, 2, 10000);
         }
         assertEq(manager.getEpoch(first).organizer, address(this));
     }
@@ -1094,16 +952,182 @@ contract DKGManagerTest is Test, TestHelpers {
     // ── abortEpoch is permissionless once the key-assembly deadline passed ──
 
     function test_AbortEpoch_AnyoneAfterKeyAssemblyDeadline() public {
-        bytes12 epochId = manager.createEpoch(2, 2, 2, 10000, _emptyDecryptionPolicy());
+        bytes12 epochId = manager.createEpoch(2, 2, 2, 10000);
         IDKGManager.Epoch memory epoch = manager.getEpoch(epochId);
 
         vm.prank(address(0xCAFE));
-        vm.expectRevert(IDKGManager.Unauthorized.selector);
+        vm.expectRevert(IDKGManager.InvalidPhase.selector);
         manager.abortEpoch(epochId);
 
         vm.roll(uint256(epoch.policy.keyAssemblyDeadlineBlock) + 1);
         vm.prank(address(0xCAFE));
         manager.abortEpoch(epochId);
         assertEq(uint256(manager.getEpoch(epochId).status), uint256(DKGTypes.EpochPhase.Aborted));
+    }
+    // ── Calldata transcripts must be bound by a challenge the prover cannot
+    //    know before the calldata is fixed ─────────────────────────────────
+
+    uint256 internal constant FR_MOD = 21888242871839275222246405745257275088548364400416034343698204186575808495617;
+
+    function _modInv(uint256 a) internal pure returns (uint256 result) {
+        result = 1;
+        uint256 base = a % FR_MOD;
+        uint256 e = FR_MOD - 2;
+        while (e > 0) {
+            if (e & 1 == 1) result = mulmod(result, base, FR_MOD);
+            base = mulmod(base, base, FR_MOD);
+            e >>= 1;
+        }
+    }
+
+    /// @dev Adds `delta` to word `a` and compensates word `b` so that
+    ///      Σ ρ^(i+1)·v_i is unchanged: a prover who knows ρ can do this.
+    function _maulPreservingBrlc(bytes memory transcript, uint256 rho, uint256 a, uint256 b, uint256 delta)
+        internal pure returns (bytes memory)
+    {
+        uint256 factor = 1; // ρ^(a-b), or inv(ρ)^(b-a)
+        uint256 step = a > b ? rho : _modInv(rho);
+        uint256 dist = a > b ? a - b : b - a;
+        for (uint256 i = 0; i < dist; i++) factor = mulmod(factor, step, FR_MOD);
+        uint256 db = FR_MOD - mulmod(delta, factor, FR_MOD);
+        uint256 va;
+        uint256 vb;
+        assembly {
+            va := mload(add(transcript, add(32, mul(a, 32))))
+            vb := mload(add(transcript, add(32, mul(b, 32))))
+        }
+        va = addmod(va, delta, FR_MOD);
+        vb = addmod(vb, db, FR_MOD);
+        assembly {
+            mstore(add(transcript, add(32, mul(a, 32))), va)
+            mstore(add(transcript, add(32, mul(b, 32))), vb)
+        }
+        return transcript;
+    }
+
+    function test_SubmitContribution_RejectsMauledTranscript() public {
+        bytes12 epochId = createSelectedRound();
+        bytes memory honest = contributionTranscript(2);
+        uint256 rho = BRLC.deriveChallenge(
+            epochId, CONTRIBUTION_TRANSCRIPT_DOMAIN,
+            keccak256(abi.encodePacked(CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH))
+        );
+        // Swap two masked shares (words 7N, 7N+1): recipients 1 and 2 would decrypt garbage.
+        bytes memory mauled = _maulPreservingBrlc(honest, rho, 7 * MAX_N, 7 * MAX_N + 1, 12345);
+        vm.expectRevert(IDKGManager.InvalidProofInput.selector);
+        manager.submitContribution(
+            epochId, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH,
+            mauled, contributionProof(),
+            contributionInput(epochId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH)
+        );
+    }
+
+    function test_FinalizeEpoch_RejectsMauledTranscript() public {
+        bytes12 epochId = createSelectedRound();
+        manager.submitContribution(
+            epochId, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH,
+            contributionTranscript(2), contributionProof(),
+            contributionInput(epochId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH)
+        );
+        vm.prank(address(0xBEEF));
+        manager.submitContribution(
+            epochId, 2,
+            bytes32(uint256(CONTRIBUTION_COMMITMENTS_HASH) + 1), bytes32(uint256(CONTRIBUTION_ENCRYPTED_SHARES_HASH) + 1),
+            contributionTranscript(2), contributionProof(),
+            contributionInput(epochId, 2, 2, 2, bytes32(uint256(CONTRIBUTION_COMMITMENTS_HASH) + 1), bytes32(uint256(CONTRIBUTION_ENCRYPTED_SHARES_HASH) + 1))
+        );
+        _advanceToFinalize(epochId);
+
+        uint256 rho = BRLC.deriveChallenge(
+            epochId, FINALIZE_TRANSCRIPT_DOMAIN,
+            keccak256(abi.encodePacked(FINALIZED_AGGREGATE_COMMITMENTS_HASH, FINALIZED_COLLECTIVE_PUBLIC_KEY_HASH, FINALIZED_SHARE_COMMITMENT_HASH))
+        );
+        // Rewrite PK_ep.x (aggregate[0], word N+2N²) and hide the change in an
+        // unused participant-index padding word.
+        bytes memory mauled = _maulPreservingBrlc(finalizeTranscript(2), rho, MAX_N + 2 * MAX_N * MAX_N, MAX_N - 1, 777);
+        vm.expectRevert(IDKGManager.InvalidProofInput.selector);
+        manager.finalizeEpoch(
+            epochId,
+            FINALIZED_AGGREGATE_COMMITMENTS_HASH, FINALIZED_COLLECTIVE_PUBLIC_KEY_HASH, FINALIZED_SHARE_COMMITMENT_HASH,
+            mauled, finalizeProof(),
+            finalizeInput(epochId, 2, 2, 2, FINALIZED_AGGREGATE_COMMITMENTS_HASH, FINALIZED_COLLECTIVE_PUBLIC_KEY_HASH, FINALIZED_SHARE_COMMITMENT_HASH)
+        );
+    }
+    // ── Lottery snapshot: identities registered after createEpoch stay out ──
+
+    function test_ClaimSlot_RejectsOperatorRegisteredAfterEpochCreation() public {
+        bytes12 epochId = manager.createEpoch(1, 1, 1, 65535);
+        address late = address(0xdEaD);
+        vm.prank(late);
+        registry.registerKey(
+            3602709693320481933414169817753642284358154248428933830091019302946389143220,
+            19404998569400271134603777992322348196323180940366382216870830366803640744216,
+            17932491275164157352977794940779755814592019455495863353086623153818614395728,
+            11035761025934598318827129374247438153606368675015247802966920305427212653389,
+            1940997602491403806671742881110463830588755899359470939853733010309975750617
+        );
+        vm.roll(uint256(manager.getEpoch(epochId).seedBlock) + 1);
+        vm.prank(late);
+        vm.expectRevert(IDKGManager.NotInSnapshot.selector);
+        manager.claimSlot(epochId);
+    }
+
+    // ── A finalizable epoch can never be aborted, not even in the gap ─────
+
+    function test_AbortEpoch_RejectsHealthyEpochDuringFinalizeGap() public {
+        bytes12 epochId = createSelectedRound();
+        manager.submitContribution(
+            epochId, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH,
+            contributionTranscript(2), contributionProof(),
+            contributionInput(epochId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH)
+        );
+        vm.prank(address(0xBEEF));
+        manager.submitContribution(
+            epochId, 2,
+            bytes32(uint256(CONTRIBUTION_COMMITMENTS_HASH) + 1), bytes32(uint256(CONTRIBUTION_ENCRYPTED_SHARES_HASH) + 1),
+            contributionTranscript(2), contributionProof(),
+            contributionInput(epochId, 2, 2, 2, bytes32(uint256(CONTRIBUTION_COMMITMENTS_HASH) + 1), bytes32(uint256(CONTRIBUTION_ENCRYPTED_SHARES_HASH) + 1))
+        );
+        IDKGManager.Epoch memory epoch = manager.getEpoch(epochId);
+        // Inside the gap between the key-assembly deadline and liveNotBefore.
+        vm.roll(uint256(epoch.policy.keyAssemblyDeadlineBlock) + 1);
+        vm.expectRevert(IDKGManager.InvalidPhase.selector);
+        manager.abortEpoch(epochId); // creator
+        vm.prank(address(0xCAFE));
+        vm.expectRevert(IDKGManager.InvalidPhase.selector);
+        manager.abortEpoch(epochId); // anyone
+    }
+
+    // ── Deployment policy floors bound whoever wins the createEpoch race ──
+
+    function test_CreateEpoch_EnforcesDeploymentPolicyFloors() public {
+        DKGManager bounded = new DKGManager(
+            31337, address(registry), address(verifier), address(partialVerifier),
+            address(finalizeVerifier), address(decryptCombineVerifier),
+            0, 0, 0, 0,
+            2,      // minThreshold
+            3,      // minCommitteeSize
+            20000   // maxLotteryAlphaBps (α ≤ 2.0)
+        );
+        vm.expectRevert(IDKGManager.InvalidPolicy.selector);
+        bounded.createEpoch(1, 3, 3, 15000); // t below floor
+        vm.expectRevert(IDKGManager.InvalidPolicy.selector);
+        bounded.createEpoch(2, 2, 2, 15000); // n below floor
+        vm.expectRevert(IDKGManager.InvalidPolicy.selector);
+        bounded.createEpoch(2, 3, 3, 30000); // α above ceiling
+        bounded.createEpoch(2, 3, 3, 20000);
+    }
+
+    // ── Ciphertext indices are assigned on chain; the PoK is emitted ──────
+
+    function test_SubmitCiphertext_AssignsSequentialIndicesAndEmitsProof() public {
+        bytes12 epochId = createFinalizedRound(); // the fixture already submitted one ciphertext
+        uint16 before = manager.ciphertextCount(epochId, bytes32(0));
+        uint16 first = manager.submitCiphertext(epochId, bytes32(0), TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y, 11, 22, 33);
+        uint16 second = manager.submitCiphertext(epochId, bytes32(0), TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y, 0, 0, 0);
+        assertEq(uint256(first), uint256(before) + 1);
+        assertEq(uint256(second), uint256(before) + 2);
+        assertEq(uint256(manager.ciphertextCount(epochId, bytes32(0))), uint256(before) + 2);
+        assertEq(uint256(manager.getEpoch(epochId).ciphertextCount), uint256(before) + 2);
     }
 }
