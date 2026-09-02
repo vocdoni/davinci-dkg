@@ -266,6 +266,30 @@ func (n *Node) serviceCiphertext(ctx context.Context, tc *tickCache, key ctKey, 
 		return true, nil
 	}
 	if !n.partialDone[key] {
+		// Only t partials are ever needed. The first t members of a
+		// seed-derived rotation respond at once; each later wave of t steps
+		// in staggerBlocks later and only if partials are still missing, so
+		// an honest ciphertext costs t partials rather than n and a hostile
+		// submitter cannot make the whole committee spend.
+		threshold := uint64(epoch.Policy.Threshold)
+		wave := staggerSlot(epoch.Seed, uint64(key.idx), idx, uint16(len(selected))) / max(threshold, 1)
+		if wave > 0 {
+			if tc.headErr != nil {
+				return false, fmt.Errorf("read head: %w", tc.headErr)
+			}
+			if tc.head < ct.block+wave*staggerBlocks {
+				return false, nil
+			}
+			idxs, _, _, err := n.acceptedPartials(ctx, key, epoch.SeedBlock, tc.head, epoch.Policy.Threshold)
+			if err != nil {
+				return false, err
+			}
+			if uint64(len(idxs)) >= threshold {
+				n.partialDone[key] = true
+			}
+		}
+	}
+	if !n.partialDone[key] {
 		toxic, err := n.submitPartial(ctx, key, ct, idx, epoch, selected)
 		if err != nil {
 			return false, err

@@ -100,8 +100,10 @@ Anything that touches encodings, hashes or constants has to be changed in all of
 - `node/` is the daemon (`cmd/davinci-dkg-node` is a thin main). `node.go` polls the two newest epochs
   and does claimSlot → submitContribution (Groth16) → auto-finalize (via `finalizer/`); `decrypt.go`
   scans `CiphertextSubmitted` events for every aid and checks the prime-subgroup membership of C1/C2
-  before computing a partial — the contract deliberately skips that check (~2 M gas), so this one is
-  load-bearing, not belt-and-braces. A slot becomes combinable only when `t` partials **and** a
+  before computing a partial — the contract deliberately skips that check (~0.17 M gas), so this one is
+  load-bearing, not belt-and-braces. Partials are posted in seed-derived waves of `t` members
+  (`staggerSlot / t`); a later wave only posts if, `staggerBlocks` later, fewer than `t` partials are on
+  chain, so an honest ciphertext costs `t` partials, not `n`. A slot becomes combinable only when `t` partials **and** a
   verifying organizer share are on chain: `latestOrganizerShare` reads the newest
   `OrganizerShareSubmitted` event, verifies it with `dleq.VerifyOrganizerShare` against the
   application's registered `PK_org` (read through `DKGAppManager.getApplication`), and skips the slot
