@@ -88,7 +88,7 @@ export async function buildElGamal(): Promise<ElGamal> {
    * lazily on first call (~16 MB heap, ~1–2 s in the browser) and cached.
    *
    * For the on-chain protocol the matching limit is `MAX_DLOG_PLAINTEXT` in
-   * `cmd/davinci-dkg-node/dlog.go` (2^50). The two values are deliberately
+   * `node/dlog.go` (2^50). The two values are deliberately
    * different — the threshold combine runs on a server with more headroom.
    */
   function decrypt(ciphertext: ElGamalCiphertext, privKey: bigint): bigint {

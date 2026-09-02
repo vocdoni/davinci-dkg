@@ -113,7 +113,7 @@ export async function encryptWithProof(
  * Recovery uses baby-step / giant-step DLOG, capped at **2^32** plaintexts.
  * That cap is the SDK-side limit, intended for tests and direct (non-threshold)
  * use; the real DKG protocol does threshold decryption inside the Go committee
- * and supports plaintexts up to 2^50. See `cmd/davinci-dkg-node/dlog.go`.
+ * and supports plaintexts up to 2^50. See `node/dlog.go`.
  */
 export async function decrypt(
   ciphertext: ElGamalCiphertext,

@@ -93,8 +93,9 @@ Reading the table:
 * Decrypting one ciphertext costs 0.47M (submission) + `t` × ~0.4M (partials)
   + 0.43M (combine): 1.7M at `t = 2` in mode 0, 2.1M in mode 1 with the
   organizer share. The on-chain prime-subgroup check (~168k) and Schnorr proof
-  of knowledge (~62k) account for ~230k of the submission; they reject
-  malformed ciphertexts before any member spends a partial on them.
+  of knowledge (~202k, measured in isolation with full-size scalars) account
+  for ~370k of the submission; they reject malformed ciphertexts before any
+  member spends a partial on them.
 * `registerKey` is dominated by the Schnorr verification in extended
   twisted-Edwards coordinates; the affine implementation cost 1.27M.
 
