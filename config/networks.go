@@ -29,8 +29,8 @@ type NetworkDeployment struct {
 var KnownNetworks = map[string]NetworkDeployment{
 	"sepolia": {
 		ChainID:    11155111,
-		Manager:    common.HexToAddress("0xfb2CfAE24506D2978Cf4d0f8898F0E33aA744969"),
-		StartBlock: 10_790_325, // DKGManager deployment block on Sepolia (absolute-phase-budget v0.4)
+		Manager:    common.HexToAddress("0x92d324254ef12e4392d54c771b121cc976682340"),
+		StartBlock: 11_615_847, // DKGManager deployment block on Sepolia (harden release, 2026-09-01)
 	},
 }
 

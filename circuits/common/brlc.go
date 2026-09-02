@@ -67,6 +67,19 @@ func HashPackedBigIntsNative(values ...*big.Int) (*big.Int, error) {
 	return new(big.Int).SetBytes(ethcrypto.Keccak256(packed)), nil
 }
 
+// ChallengeAnchor mirrors the contract's anchor for the BRLC challenge:
+// keccak(digest_1 ‖ … ‖ digest_k ‖ keccak(transcript words)). Every value
+// the prover chooses — the calldata transcript and the Poseidon digests
+// that fix the witness — is hashed in before ρ exists, which is what makes
+// the random-linear-combination commitment binding.
+func ChallengeAnchor(transcript []*big.Int, digests ...*big.Int) (*big.Int, error) {
+	transcriptHash, err := HashPackedBigIntsNative(transcript...)
+	if err != nil {
+		return nil, fmt.Errorf("hash transcript: %w", err)
+	}
+	return HashPackedBigIntsNative(append(append([]*big.Int{}, digests...), transcriptHash)...)
+}
+
 // DeriveChallengeNative mirrors the Solidity BRLC challenge derivation.
 func DeriveChallengeNative(roundHash *big.Int, domain [32]byte, anchor *big.Int) (*big.Int, error) {
 	if roundHash == nil {

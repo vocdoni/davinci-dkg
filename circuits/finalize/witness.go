@@ -15,19 +15,20 @@ var finalizeTranscriptDomain = ethcrypto.Keccak256Hash([]byte("davinci-dkg:final
 
 // PublicInputs is the native representation of the finalize public inputs.
 type PublicInputs struct {
-	RoundHash               *big.Int
-	Threshold               *big.Int
-	CommitteeSize           *big.Int
-	AcceptedCount           *big.Int
-	AggregateHash           *big.Int
-	CollectivePublicKey     *big.Int
-	ShareCommitmentHash     *big.Int
-	Challenge               *big.Int
-	TranscriptCommitment    *big.Int
-	ParticipantIndexes      []*big.Int
-	ContributionCommitments [MaxParticipants][MaxCoefficients]types.CurvePoint
-	AggregateCommitments    []types.CurvePoint
-	ShareCommitments        []types.CurvePoint
+	RoundHash                   *big.Int
+	Threshold                   *big.Int
+	CommitteeSize               *big.Int
+	AcceptedCount               *big.Int
+	AggregateHash               *big.Int
+	ContributionCommitmentsHash *big.Int
+	CollectivePublicKey         *big.Int
+	ShareCommitmentHash         *big.Int
+	Challenge                   *big.Int
+	TranscriptCommitment        *big.Int
+	ParticipantIndexes          []*big.Int
+	ContributionCommitments     [MaxParticipants][MaxCoefficients]types.CurvePoint
+	AggregateCommitments        []types.CurvePoint
+	ShareCommitments            []types.CurvePoint
 }
 
 // BuildWitness materializes the finalize native assignment.
@@ -126,15 +127,7 @@ func BuildWitness(a Assignment) (*FinalizeCircuit, *PublicInputs, error) {
 		return nil, nil, fmt.Errorf("hash collective public key: %w", err)
 	}
 
-	anchor, err := ccommon.HashPackedBigIntsNative(aggregateHash, publicKeyHash, shareHash)
-	if err != nil {
-		return nil, nil, fmt.Errorf("hash finalize challenge anchor: %w", err)
-	}
-	challenge, err := ccommon.DeriveChallengeNative(a.RoundHash, finalizeTranscriptDomain, anchor)
-	if err != nil {
-		return nil, nil, fmt.Errorf("derive finalize challenge: %w", err)
-	}
-	transcriptValues := make([]*big.Int, 0, 168)
+	transcriptValues := make([]*big.Int, 0, 2*MaxParticipants*MaxCoefficients+5*MaxParticipants)
 	for i := range MaxParticipants {
 		transcriptValues = append(transcriptValues, participantIndexes[i])
 	}
@@ -155,21 +148,34 @@ func BuildWitness(a Assignment) (*FinalizeCircuit, *PublicInputs, error) {
 		}
 		transcriptValues = append(transcriptValues, big.NewInt(0), big.NewInt(1))
 	}
+	rowsHash, err := rowsDigest(a.RoundHash, contributionCommitments)
+	if err != nil {
+		return nil, nil, err
+	}
+	anchor, err := ccommon.ChallengeAnchor(transcriptValues, aggregateHash, publicKeyHash, shareHash, rowsHash)
+	if err != nil {
+		return nil, nil, fmt.Errorf("hash finalize challenge anchor: %w", err)
+	}
+	challenge, err := ccommon.DeriveChallengeNative(a.RoundHash, finalizeTranscriptDomain, anchor)
+	if err != nil {
+		return nil, nil, fmt.Errorf("derive finalize challenge: %w", err)
+	}
 	transcriptCommitment, err := ccommon.BRLCNative(challenge, transcriptValues...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("brlc finalize transcript: %w", err)
 	}
 
 	witness := &FinalizeCircuit{
-		RoundHash:            new(big.Int).Set(a.RoundHash),
-		Threshold:            threshold,
-		CommitteeSize:        committeeSize,
-		AcceptedCount:        acceptedCount,
-		AggregateHash:        aggregateHash,
-		CollectivePublicKey:  publicKeyHash,
-		ShareCommitmentHash:  shareHash,
-		Challenge:            challenge,
-		TranscriptCommitment: transcriptCommitment,
+		RoundHash:                   new(big.Int).Set(a.RoundHash),
+		Threshold:                   threshold,
+		CommitteeSize:               committeeSize,
+		AcceptedCount:               acceptedCount,
+		AggregateHash:               aggregateHash,
+		CollectivePublicKey:         publicKeyHash,
+		ShareCommitmentHash:         shareHash,
+		ContributionCommitmentsHash: rowsHash,
+		Challenge:                   challenge,
+		TranscriptCommitment:        transcriptCommitment,
 	}
 	for i := range MaxParticipants {
 		witness.ParticipantIndexes[i] = participantIndexes[i]
@@ -189,19 +195,20 @@ func BuildWitness(a Assignment) (*FinalizeCircuit, *PublicInputs, error) {
 	}
 
 	publicInputs := &PublicInputs{
-		RoundHash:               new(big.Int).Set(a.RoundHash),
-		Threshold:               new(big.Int).Set(threshold),
-		CommitteeSize:           new(big.Int).Set(committeeSize),
-		AcceptedCount:           new(big.Int).Set(acceptedCount),
-		AggregateHash:           new(big.Int).Set(aggregateHash),
-		CollectivePublicKey:     new(big.Int).Set(publicKeyHash),
-		ShareCommitmentHash:     new(big.Int).Set(shareHash),
-		Challenge:               new(big.Int).Set(challenge),
-		TranscriptCommitment:    new(big.Int).Set(transcriptCommitment),
-		ParticipantIndexes:      participantIndexes,
-		ContributionCommitments: contributionCommitments,
-		AggregateCommitments:    aggregateCommitments,
-		ShareCommitments:        shareCommitments,
+		RoundHash:                   new(big.Int).Set(a.RoundHash),
+		Threshold:                   new(big.Int).Set(threshold),
+		CommitteeSize:               new(big.Int).Set(committeeSize),
+		AcceptedCount:               new(big.Int).Set(acceptedCount),
+		AggregateHash:               new(big.Int).Set(aggregateHash),
+		CollectivePublicKey:         new(big.Int).Set(publicKeyHash),
+		ShareCommitmentHash:         new(big.Int).Set(shareHash),
+		ContributionCommitmentsHash: new(big.Int).Set(rowsHash),
+		Challenge:                   new(big.Int).Set(challenge),
+		TranscriptCommitment:        new(big.Int).Set(transcriptCommitment),
+		ParticipantIndexes:          participantIndexes,
+		ContributionCommitments:     contributionCommitments,
+		AggregateCommitments:        aggregateCommitments,
+		ShareCommitments:            shareCommitments,
 	}
 	return witness, publicInputs, nil
 }
@@ -356,16 +363,7 @@ func BuildWitnessFromCommitmentPoints(a CommitmentPointsAssignment) (*FinalizeCi
 	if err != nil {
 		return nil, nil, fmt.Errorf("pk hash: %w", err)
 	}
-	anchor, err := ccommon.HashPackedBigIntsNative(aggregateHash, publicKeyHash, shareHash)
-	if err != nil {
-		return nil, nil, err
-	}
-	challenge, err := ccommon.DeriveChallengeNative(a.RoundHash, finalizeTranscriptDomain, anchor)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	transcriptValues := make([]*big.Int, 0, 168)
+	transcriptValues := make([]*big.Int, 0, 2*MaxParticipants*MaxCoefficients+5*MaxParticipants)
 	for i := range MaxParticipants {
 		transcriptValues = append(transcriptValues, participantIndexes[i])
 	}
@@ -386,21 +384,34 @@ func BuildWitnessFromCommitmentPoints(a CommitmentPointsAssignment) (*FinalizeCi
 			transcriptValues = append(transcriptValues, big.NewInt(0), big.NewInt(1))
 		}
 	}
+	rowsHash, err := rowsDigest(a.RoundHash, contributionCommitments)
+	if err != nil {
+		return nil, nil, err
+	}
+	anchor, err := ccommon.ChallengeAnchor(transcriptValues, aggregateHash, publicKeyHash, shareHash, rowsHash)
+	if err != nil {
+		return nil, nil, err
+	}
+	challenge, err := ccommon.DeriveChallengeNative(a.RoundHash, finalizeTranscriptDomain, anchor)
+	if err != nil {
+		return nil, nil, err
+	}
 	transcriptCommitment, err := ccommon.BRLCNative(challenge, transcriptValues...)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	witness := &FinalizeCircuit{
-		RoundHash:            new(big.Int).Set(a.RoundHash),
-		Threshold:            threshold,
-		CommitteeSize:        committeeSize,
-		AcceptedCount:        acceptedCount,
-		AggregateHash:        aggregateHash,
-		CollectivePublicKey:  publicKeyHash,
-		ShareCommitmentHash:  shareHash,
-		Challenge:            challenge,
-		TranscriptCommitment: transcriptCommitment,
+		RoundHash:                   new(big.Int).Set(a.RoundHash),
+		Threshold:                   threshold,
+		CommitteeSize:               committeeSize,
+		AcceptedCount:               acceptedCount,
+		AggregateHash:               aggregateHash,
+		CollectivePublicKey:         publicKeyHash,
+		ShareCommitmentHash:         shareHash,
+		ContributionCommitmentsHash: rowsHash,
+		Challenge:                   challenge,
+		TranscriptCommitment:        transcriptCommitment,
 	}
 	for i := range MaxParticipants {
 		witness.ParticipantIndexes[i] = participantIndexes[i]
@@ -420,19 +431,20 @@ func BuildWitnessFromCommitmentPoints(a CommitmentPointsAssignment) (*FinalizeCi
 	}
 
 	pi := &PublicInputs{
-		RoundHash:               new(big.Int).Set(a.RoundHash),
-		Threshold:               new(big.Int).Set(threshold),
-		CommitteeSize:           new(big.Int).Set(committeeSize),
-		AcceptedCount:           new(big.Int).Set(acceptedCount),
-		AggregateHash:           new(big.Int).Set(aggregateHash),
-		CollectivePublicKey:     new(big.Int).Set(publicKeyHash),
-		ShareCommitmentHash:     new(big.Int).Set(shareHash),
-		Challenge:               new(big.Int).Set(challenge),
-		TranscriptCommitment:    new(big.Int).Set(transcriptCommitment),
-		ParticipantIndexes:      participantIndexes,
-		ContributionCommitments: contributionCommitments,
-		AggregateCommitments:    aggregateCommitments,
-		ShareCommitments:        shareCommitments,
+		RoundHash:                   new(big.Int).Set(a.RoundHash),
+		Threshold:                   new(big.Int).Set(threshold),
+		CommitteeSize:               new(big.Int).Set(committeeSize),
+		AcceptedCount:               new(big.Int).Set(acceptedCount),
+		AggregateHash:               new(big.Int).Set(aggregateHash),
+		CollectivePublicKey:         new(big.Int).Set(publicKeyHash),
+		ShareCommitmentHash:         new(big.Int).Set(shareHash),
+		ContributionCommitmentsHash: new(big.Int).Set(rowsHash),
+		Challenge:                   new(big.Int).Set(challenge),
+		TranscriptCommitment:        new(big.Int).Set(transcriptCommitment),
+		ParticipantIndexes:          participantIndexes,
+		ContributionCommitments:     contributionCommitments,
+		AggregateCommitments:        aggregateCommitments,
+		ShareCommitments:            shareCommitments,
 	}
 	return witness, pi, nil
 }
@@ -440,15 +452,16 @@ func BuildWitnessFromCommitmentPoints(a CommitmentPointsAssignment) (*FinalizeCi
 // PublicWitness converts native public inputs into the circuit public witness.
 func (p PublicInputs) PublicWitness() *FinalizeCircuit {
 	return &FinalizeCircuit{
-		RoundHash:            p.RoundHash,
-		Threshold:            p.Threshold,
-		CommitteeSize:        p.CommitteeSize,
-		AcceptedCount:        p.AcceptedCount,
-		AggregateHash:        p.AggregateHash,
-		CollectivePublicKey:  p.CollectivePublicKey,
-		ShareCommitmentHash:  p.ShareCommitmentHash,
-		Challenge:            p.Challenge,
-		TranscriptCommitment: p.TranscriptCommitment,
+		RoundHash:                   p.RoundHash,
+		Threshold:                   p.Threshold,
+		CommitteeSize:               p.CommitteeSize,
+		AcceptedCount:               p.AcceptedCount,
+		AggregateHash:               p.AggregateHash,
+		CollectivePublicKey:         p.CollectivePublicKey,
+		ShareCommitmentHash:         p.ShareCommitmentHash,
+		ContributionCommitmentsHash: p.ContributionCommitmentsHash,
+		Challenge:                   p.Challenge,
+		TranscriptCommitment:        p.TranscriptCommitment,
 	}
 }
 
@@ -462,6 +475,7 @@ func (p PublicInputs) Scalars() []*big.Int {
 		p.AggregateHash,
 		p.CollectivePublicKey,
 		p.ShareCommitmentHash,
+		p.ContributionCommitmentsHash,
 		p.Challenge,
 		p.TranscriptCommitment,
 	}
@@ -502,4 +516,23 @@ func (p PublicInputs) TranscriptScalars() []*big.Int {
 // public-input vector.
 func (p PublicInputs) BRLCCommitment(challenge *big.Int) (*big.Int, error) {
 	return ccommon.BRLCNative(challenge, p.TranscriptScalars()...)
+}
+
+// rowsDigest mirrors the circuit's ContributionCommitmentsHash: Poseidon over
+// the epoch id and every (row-masked) contribution commitment coordinate.
+func rowsDigest(roundHash *big.Int, rows [MaxParticipants][MaxCoefficients]types.CurvePoint) (*big.Int, error) {
+	rowDigests := make([]*big.Int, 0, 1+MaxParticipants)
+	rowDigests = append(rowDigests, roundHash)
+	for i := range MaxParticipants {
+		inputs := make([]*big.Int, 0, 2*MaxCoefficients)
+		for k := range MaxCoefficients {
+			inputs = append(inputs, rows[i][k].X, rows[i][k].Y)
+		}
+		digest, err := ccommon.MultiHashNative(inputs...)
+		if err != nil {
+			return nil, fmt.Errorf("row digest %d: %w", i, err)
+		}
+		rowDigests = append(rowDigests, digest)
+	}
+	return ccommon.MultiHashNative(rowDigests...)
 }

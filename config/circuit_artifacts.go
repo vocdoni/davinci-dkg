@@ -10,26 +10,26 @@ const (
 )
 
 var (
-	ContributionCircuitHash         = "4dde6c9596cc0f48d88a049e06890d5a4fc5e5478515913932d69fbf562eba4a"
-	ContributionProvingKeyHash      = "3b7f6cd34cff4e0a52cb97665f76a4c735cae0719e10bf2e5795a563ed47235e"
-	ContributionVerificationKeyHash = "7330e4214e95ce91fcd9c7f11af1f34027b36705102c2e9c9fd85522f0410c50"
+	ContributionCircuitHash         = "5cb3951874d4fa5d4f41dfc6f2a7cfe83cd7e762e284541ff61c028aff99e434"
+	ContributionProvingKeyHash      = "406e7e943fbf4713e45e71d369bc810d4f3bfcc2e8b84ed97997cc1c4ac8d455"
+	ContributionVerificationKeyHash = "d20d19d3d292708a9c77eb58772b918eb918a77fa73452d8c200ed4a869c297f"
 
-	FinalizeCircuitHash         = "b0a1953ede1f51ed6b6388f534035cbeab4ae1203835de9d06ce52bf46ad2b18"
-	FinalizeProvingKeyHash      = "1c6f6eefac1e284eefbf48a54a6836ac287f4bce7b50bb165b49491b39965916"
-	FinalizeVerificationKeyHash = "a96bac2cdf79cd32c521b6e6209f7fe0596b0be6175b5b58497315eb59ba9c7a"
+	FinalizeCircuitHash         = "1b1c150d21c8e02790cce49956c4d26d5382f21033e211904c9392f90bae7257"
+	FinalizeProvingKeyHash      = "252e7ff136ac4d02e9caac4aff0d8cc88d9b0d51aa53ee80cf7d857f52dfa8da"
+	FinalizeVerificationKeyHash = "9a818d8bb2d01e484ebde3ca847ca6f69852a3e7b6d9fe129aec724db7439e17"
 
 	// Hashes regenerated in P6 after the P5 circuit changes (added Aid,
 	// CtIdx, Role public inputs to partialdecrypt; added Aid, CtIdx, Mode,
 	// S, DeltaOrg + mode-aware T branch to decryptcombine). These pk/vk
 	// hashes correspond to a DEV trusted setup; the production ceremony
 	// in S2 will regenerate fresh keys and bump these again.
-	PartialDecryptCircuitHash         = "65ff22ca57e9288903060eacf961aeec186d097ec16d5f76f12afcece2323309"
-	PartialDecryptProvingKeyHash      = "132b2e301c3d3b4c8914546c41dd20329d6fe6bab58a96faeffa5d6e48fec5d0"
-	PartialDecryptVerificationKeyHash = "a966fa12ae6dab3b141520731dc91e13c5bfd5653e4b097f4e278548314db0e3"
+	PartialDecryptCircuitHash         = "1cf4d0748da1d61ec4c19bd4b10529b19aa385f1510deb53aa3b5a6d1041f7ad"
+	PartialDecryptProvingKeyHash      = "8d5cb7d575354215d07b8b2721e1a5465424a85f78ca2d0beb56041efd2b0820"
+	PartialDecryptVerificationKeyHash = "32bf56fd36212c9e52b0662c803e65a84236483b8497fad41eb6e1b60bc3ddf3"
 
-	DecryptCombineCircuitHash         = "288f5004a4b74c80771f0658485c2f96f5c447395b08772df138dc9bde4bf30a"
-	DecryptCombineProvingKeyHash      = "192977b7b1dd4f4acfe86cb9c81cefa38856e9500b2f2168742e609ab3f9bff7"
-	DecryptCombineVerificationKeyHash = "9479a671b28382a97d95e04f739e9bd078eba8cb65fb091322b6ebe61ca6ac0f"
+	DecryptCombineCircuitHash         = "1849fae426b116e9fe9686b61c45f9294da7b667f4e9f091f4706d878a350e23"
+	DecryptCombineProvingKeyHash      = "45db382e20ec94816f3fd8bb0fd1c54a5a550eb6a842c26790fac5d5583a442f"
+	DecryptCombineVerificationKeyHash = "542df738d839dd71cb36c00389b8bf8db2916912f830a48615fa38b62221f686"
 
 	ContributionCircuitURL         = artifactURL(ContributionCircuitHash, "ccs")
 	ContributionProvingKeyURL      = artifactURL(ContributionProvingKeyHash, "pk")

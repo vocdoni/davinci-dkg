@@ -12,14 +12,6 @@ import (
 const (
 	MaxCoefficients = ccommon.MaxN
 	MaxRecipients   = ccommon.MaxN
-	// xMaxBits is ⌈log₂(MaxRecipients)⌉ — the per-step bit growth of
-	// `power_k = x^k` when x is range-checked to ≤ MaxRecipients (one-
-	// based committee indexes go from 1 to MaxRecipients inclusive).
-	// CommitmentPolynomialValue passes nbBits =
-	// xMaxBits·k + 1 per iteration; the +1 covers the boundary case
-	// `x = MaxRecipients = 2^xMaxBits` where x^k = 2^(xMaxBits·k) needs
-	// one extra bit beyond the xMaxBits·k bits used for x ∈ [0, MaxN-1].
-	xMaxBits = 5 // covers MaxRecipients up to 32 (one-based indexes 1..32)
 )
 
 // ContributionCircuit proves the full DKG phase-4 statement from the paper:
@@ -73,7 +65,6 @@ func (c *ContributionCircuit) Define(api frontend.API) error {
 	// can iterate without repeating per-coefficient Select work. Inactive slots
 	// are folded to 0 (scalars) and the curve identity (0, 1) (points), which
 	// makes a subsequent unconditional Add a no-op.
-	maskedCoeffs := make([]frontend.Variable, MaxCoefficients)
 	maskedCommitments := make([]twistededwards.Point, MaxCoefficients)
 	commitmentInputs := []frontend.Variable{c.RoundHash, c.ContributorIndex, c.Threshold}
 	subgroupOrderMinusOne := ccommon.SubgroupOrderMinusOne()
@@ -95,12 +86,8 @@ func (c *ContributionCircuit) Define(api frontend.API) error {
 		api.AssertIsEqual(api.Mul(coeffMask[i], dCommitX), 0)
 		api.AssertIsEqual(api.Mul(coeffMask[i], dCommitY), 0)
 
-		// Pre-masked artefacts reused across the recipient loop.
-		maskedCoeffs[i] = api.Mul(coeffMask[i], c.Coefficients[i])
-		maskedCommitments[i] = twistededwards.Point{
-			X: api.Mul(coeffMask[i], c.Commitments[i].X),
-			Y: api.Select(coeffMask[i], c.Commitments[i].Y, 1),
-		}
+		// Pre-masked commitments reused across the recipient loop.
+		maskedCommitments[i] = ccommon.MaskPoint(api, coeffMask[i], c.Commitments[i])
 
 		commitmentInputs = append(
 			commitmentInputs,
@@ -115,6 +102,10 @@ func (c *ContributionCircuit) Define(api frontend.API) error {
 	api.AssertIsEqual(c.CommitmentHash, commitmentHash)
 
 	shareInputs := []frontend.Variable{c.RoundHash, c.ContributorIndex, c.CommitteeSize}
+	maskedIndexes := make([]frontend.Variable, MaxRecipients)
+	maskedKeys := make([]twistededwards.Point, MaxRecipients)
+	maskedEphemerals := make([]twistededwards.Point, MaxRecipients)
+	maskedShares := make([]frontend.Variable, MaxRecipients)
 	for i := range MaxRecipients {
 		// Shares[i] must lie in [0, r). Without this check
 		// the prover can pick s' = honest_share + 7·r (still <p when
@@ -134,18 +125,12 @@ func (c *ContributionCircuit) Define(api frontend.API) error {
 		// masked out of the share-hash and transcript and the sharedSecret
 		// scalar mul on RecipientPubKeys[i] is the only consumer left.
 
-		// Range-check the recipient index to ≤ MaxRecipients (one-based).
-		// The contract enforces non-zero, so the
-		// honest range is [1, MaxRecipients]. This bound is what lets
-		// CommitmentPolynomialValue use the small-scalar variant for the
-		// scaled commitments below: for k ≥ 1, power_k = x^k fits in
-		// xMaxBits·k + 1 bits, and the per-iteration scalar mul shrinks
-		// from ~2.4k constraints to ~14·(bit count) constraints.
+		// Range-check the recipient index to ≤ MaxRecipients (one-based;
+		// the contract enforces non-zero). CommitmentPolynomialValue also
+		// bounds it to IndexBits bits for its short scalar multiplications.
 		api.AssertIsLessOrEqual(c.RecipientIndexes[i], MaxRecipients)
 
-		feldmanPoint, err := ccommon.CommitmentPolynomialValue(
-			api, maskedCommitments, nil, c.RecipientIndexes[i], xMaxBits,
-		)
+		feldmanPoint, err := ccommon.CommitmentPolynomialValue(api, maskedCommitments, c.RecipientIndexes[i])
 		if err != nil {
 			return err
 		}
@@ -192,12 +177,20 @@ func (c *ContributionCircuit) Define(api frontend.API) error {
 			api.Select(recipientMask[i], expectedMaskedShare, 0),
 		)
 
+		// Every transcript word must be fixed by a digest before the BRLC
+		// challenge exists (the contract derives ρ from the digests and the
+		// calldata), so the share digest also absorbs the recipient keys and
+		// all four vectors are masked to constants in inactive slots.
+		maskedIndexes[i] = api.Select(recipientMask[i], c.RecipientIndexes[i], 0)
+		maskedKeys[i] = ccommon.MaskPoint(api, recipientMask[i], c.RecipientPubKeys[i])
+		maskedEphemerals[i] = ccommon.MaskPoint(api, recipientMask[i], c.Ephemerals[i])
+		maskedShares[i] = activeMaskedShare
 		shareInputs = append(
 			shareInputs,
-			api.Select(recipientMask[i], c.RecipientIndexes[i], 0),
-			api.Select(recipientMask[i], c.Ephemerals[i].X, 0),
-			api.Select(recipientMask[i], c.Ephemerals[i].Y, 1),
-			api.Select(recipientMask[i], c.MaskedShares[i], 0),
+			maskedIndexes[i],
+			maskedKeys[i].X, maskedKeys[i].Y,
+			maskedEphemerals[i].X, maskedEphemerals[i].Y,
+			maskedShares[i],
 		)
 	}
 	shareHash, err := ccommon.MultiHash(api, shareInputs...)
@@ -205,22 +198,18 @@ func (c *ContributionCircuit) Define(api frontend.API) error {
 		return err
 	}
 	api.AssertIsEqual(c.ShareHash, shareHash)
-	transcript := make([]frontend.Variable, 0, 64)
+	transcript := make([]frontend.Variable, 0, 8*ccommon.MaxN)
 	for i := range MaxCoefficients {
-		transcript = append(transcript, c.Commitments[i].X, c.Commitments[i].Y)
+		transcript = append(transcript, maskedCommitments[i].X, maskedCommitments[i].Y)
+	}
+	transcript = append(transcript, maskedIndexes...)
+	for i := range MaxRecipients {
+		transcript = append(transcript, maskedKeys[i].X, maskedKeys[i].Y)
 	}
 	for i := range MaxRecipients {
-		transcript = append(transcript, c.RecipientIndexes[i])
+		transcript = append(transcript, maskedEphemerals[i].X, maskedEphemerals[i].Y)
 	}
-	for i := range MaxRecipients {
-		transcript = append(transcript, c.RecipientPubKeys[i].X, c.RecipientPubKeys[i].Y)
-	}
-	for i := range MaxRecipients {
-		transcript = append(transcript, c.Ephemerals[i].X, c.Ephemerals[i].Y)
-	}
-	for i := range MaxRecipients {
-		transcript = append(transcript, c.MaskedShares[i])
-	}
+	transcript = append(transcript, maskedShares...)
 	api.AssertIsEqual(c.TranscriptCommitment, ccommon.BRLC(api, c.Challenge, transcript))
 	return nil
 }

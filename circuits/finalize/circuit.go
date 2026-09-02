@@ -11,15 +11,19 @@ import (
 // public key, and D_i = sum_k i^k * Cbar(k). The wide transcript is compressed
 // with a BRLC commitment to keep verifier public inputs constant-sized.
 type FinalizeCircuit struct {
-	RoundHash            frontend.Variable `gnark:",public"`
-	Threshold            frontend.Variable `gnark:",public"`
-	CommitteeSize        frontend.Variable `gnark:",public"`
-	AcceptedCount        frontend.Variable `gnark:",public"`
-	AggregateHash        frontend.Variable `gnark:",public"`
-	CollectivePublicKey  frontend.Variable `gnark:",public"`
-	ShareCommitmentHash  frontend.Variable `gnark:",public"`
-	Challenge            frontend.Variable `gnark:",public"`
-	TranscriptCommitment frontend.Variable `gnark:",public"`
+	RoundHash           frontend.Variable `gnark:",public"`
+	Threshold           frontend.Variable `gnark:",public"`
+	CommitteeSize       frontend.Variable `gnark:",public"`
+	AcceptedCount       frontend.Variable `gnark:",public"`
+	AggregateHash       frontend.Variable `gnark:",public"`
+	CollectivePublicKey frontend.Variable `gnark:",public"`
+	ShareCommitmentHash frontend.Variable `gnark:",public"`
+	// ContributionCommitmentsHash digests the (row-masked) per-contributor
+	// commitment rows so that every transcript word is fixed by a public
+	// digest before the BRLC challenge is derived.
+	ContributionCommitmentsHash frontend.Variable `gnark:",public"`
+	Challenge                   frontend.Variable `gnark:",public"`
+	TranscriptCommitment        frontend.Variable `gnark:",public"`
 
 	ParticipantIndexes      [MaxParticipants]frontend.Variable
 	ContributionCommitments [MaxParticipants][MaxCoefficients]twistededwards.Point
@@ -28,6 +32,10 @@ type FinalizeCircuit struct {
 }
 
 func (c *FinalizeCircuit) Define(api frontend.API) error {
+	curve, err := twistededwards.NewEdCurve(api, ccommon.BabyJubJubCurveID())
+	if err != nil {
+		return err
+	}
 	// Bound the public count inputs to their fixed array sizes and to
 	// each other so PrefixMask cannot be coerced
 	// into masking the wrong slot count.
@@ -39,20 +47,41 @@ func (c *FinalizeCircuit) Define(api frontend.API) error {
 	coeffMask := ccommon.PrefixMask(api, c.Threshold, MaxCoefficients)
 	participantMask := ccommon.PrefixMask(api, c.AcceptedCount, MaxParticipants)
 
-	for k := range MaxCoefficients {
-		for i := range MaxParticipants {
+	// Row-masked contribution commitments: inactive participants contribute
+	// the identity everywhere (sum, digest and transcript alike).
+	// Digested hierarchically (one Poseidon per row, then one over the row
+	// digests) because the multi-hash absorbs at most 256 inputs.
+	var maskedRows [MaxParticipants][MaxCoefficients]twistededwards.Point
+	rowDigests := make([]frontend.Variable, 0, 1+MaxParticipants)
+	rowDigests = append(rowDigests, c.RoundHash)
+	for i := range MaxParticipants {
+		rowInputs := make([]frontend.Variable, 0, 2*MaxCoefficients)
+		for k := range MaxCoefficients {
 			if err := ccommon.AssertPointOnCurve(api, c.ContributionCommitments[i][k]); err != nil {
 				return err
 			}
+			maskedRows[i][k] = ccommon.MaskPoint(api, participantMask[i], c.ContributionCommitments[i][k])
+			rowInputs = append(rowInputs, maskedRows[i][k].X, maskedRows[i][k].Y)
 		}
+		rowDigest, err := ccommon.MultiHash(api, rowInputs...)
+		if err != nil {
+			return err
+		}
+		rowDigests = append(rowDigests, rowDigest)
+	}
+	rowsHash, err := ccommon.MultiHash(api, rowDigests...)
+	if err != nil {
+		return err
+	}
+	api.AssertIsEqual(c.ContributionCommitmentsHash, rowsHash)
+
+	for k := range MaxCoefficients {
 		if err := ccommon.AssertPointOnCurve(api, c.AggregateCommitments[k]); err != nil {
 			return err
 		}
 		sum := ccommon.IdentityPoint()
 		for i := range MaxParticipants {
-			next := ccommon.AddPointIfEnabled(api, sum, c.ContributionCommitments[i][k], participantMask[i])
-			sum.X = next.X
-			sum.Y = next.Y
+			sum = curve.Add(sum, maskedRows[i][k])
 		}
 		// Conditional equality: when coeffMask[k] == 1 the aggregate commitment
 		// must equal the running sum; when coeffMask[k] == 0 the constraint is
@@ -91,10 +120,7 @@ func (c *FinalizeCircuit) Define(api frontend.API) error {
 	// no-op for those slots.
 	maskedAggregate := make([]twistededwards.Point, MaxCoefficients)
 	for k := range MaxCoefficients {
-		maskedAggregate[k] = twistededwards.Point{
-			X: api.Mul(coeffMask[k], c.AggregateCommitments[k].X),
-			Y: api.Select(coeffMask[k], c.AggregateCommitments[k].Y, 1),
-		}
+		maskedAggregate[k] = ccommon.MaskPoint(api, coeffMask[k], c.AggregateCommitments[k])
 	}
 
 	shareInputs := []frontend.Variable{c.RoundHash, c.Threshold, c.CommitteeSize, c.AcceptedCount}
@@ -102,18 +128,9 @@ func (c *FinalizeCircuit) Define(api frontend.API) error {
 		if err := ccommon.AssertPointOnCurve(api, c.ShareCommitments[i]); err != nil {
 			return err
 		}
-		// Range-check the participant index to ≤ MaxParticipants
-		// (one-based). The small-scalar path in
-		// CommitmentPolynomialValue uses width = xMaxBits·k + 1 for
-		// power_k = x^k (see contribution circuit for why the +1).
+		// Range-check the participant index to ≤ MaxParticipants (one-based).
 		api.AssertIsLessOrEqual(c.ParticipantIndexes[i], MaxParticipants)
-		shareCommitment, err := ccommon.CommitmentPolynomialValue(
-			api,
-			maskedAggregate,
-			nil, // mask already baked in
-			c.ParticipantIndexes[i],
-			xMaxBits,
-		)
+		shareCommitment, err := ccommon.CommitmentPolynomialValue(api, maskedAggregate, c.ParticipantIndexes[i])
 		if err != nil {
 			return err
 		}
@@ -143,11 +160,7 @@ func (c *FinalizeCircuit) Define(api frontend.API) error {
 	}
 	for i := range MaxParticipants {
 		for k := range MaxCoefficients {
-			transcript = append(
-				transcript,
-				api.Select(participantMask[i], c.ContributionCommitments[i][k].X, 0),
-				api.Select(participantMask[i], c.ContributionCommitments[i][k].Y, 1),
-			)
+			transcript = append(transcript, maskedRows[i][k].X, maskedRows[i][k].Y)
 		}
 	}
 	for k := range MaxCoefficients {

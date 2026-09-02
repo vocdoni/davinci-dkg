@@ -47,6 +47,10 @@ func (c *PartialDecryptCircuit) Define(api frontend.API) error {
 		}
 	}
 
+	// A canonical d_i: with a cofactor component in C1 the eight witnesses
+	// d_i + m·r would all satisfy D_i = d_i·G yet give different δ_i.
+	api.AssertIsLessOrEqual(c.Secret, ccommon.SubgroupOrderMinusOne())
+	api.AssertIsLessOrEqual(c.Response, ccommon.SubgroupOrderMinusOne())
 	ccommon.AssertPointEqual(api, ccommon.FixedBaseMul(api, c.Secret), publicKey)
 	ccommon.AssertPointEqual(api, curve.ScalarMul(base, c.Secret), delta)
 	ccommon.AssertPointEqual(api, ccommon.FixedBaseMul(api, c.Nonce), a1)

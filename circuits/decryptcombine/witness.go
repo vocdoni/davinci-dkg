@@ -111,15 +111,7 @@ func BuildWitness(a Assignment) (*DecryptCombineCircuit, *PublicInputs, error) {
 		return nil, nil, fmt.Errorf("hash partial decryptions: %w", err)
 	}
 	plaintextHash := new(big.Int).Set(a.Plaintext)
-	anchor, err := ccommon.HashPackedBigIntsNative(combineHash, plaintextHash)
-	if err != nil {
-		return nil, nil, fmt.Errorf("hash decrypt combine challenge anchor: %w", err)
-	}
-	challenge, err := ccommon.DeriveChallengeNative(a.RoundHash, decryptCombineTranscriptDomain, anchor)
-	if err != nil {
-		return nil, nil, fmt.Errorf("derive decrypt combine challenge: %w", err)
-	}
-	transcriptValues := make([]*big.Int, 0, 28)
+	transcriptValues := make([]*big.Int, 0, 4+3*MaxShares)
 	transcriptValues = append(
 		transcriptValues,
 		a.CiphertextC1.X,
@@ -134,6 +126,14 @@ func BuildWitness(a Assignment) (*DecryptCombineCircuit, *PublicInputs, error) {
 			paddedPartialDecryptions[i].X,
 			paddedPartialDecryptions[i].Y,
 		)
+	}
+	anchor, err := ccommon.ChallengeAnchor(transcriptValues, combineHash, plaintextHash)
+	if err != nil {
+		return nil, nil, fmt.Errorf("hash decrypt combine challenge anchor: %w", err)
+	}
+	challenge, err := ccommon.DeriveChallengeNative(a.RoundHash, decryptCombineTranscriptDomain, anchor)
+	if err != nil {
+		return nil, nil, fmt.Errorf("derive decrypt combine challenge: %w", err)
 	}
 	transcriptCommitment, err := ccommon.BRLCNative(challenge, transcriptValues...)
 	if err != nil {

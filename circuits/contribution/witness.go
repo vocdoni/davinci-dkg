@@ -194,6 +194,8 @@ func BuildWitness(a Assignment) (*ContributionCircuit, *PublicInputs, error) {
 		shareInputs = append(
 			shareInputs,
 			recipientIndexes[i],
+			ephemeralCoordinate(paddedRecipientKeys, i, true),
+			ephemeralCoordinate(paddedRecipientKeys, i, false),
 			ephemeralCoordinate(paddedEphemerals, i, true),
 			ephemeralCoordinate(paddedEphemerals, i, false),
 			maskedShares[i],
@@ -203,15 +205,7 @@ func BuildWitness(a Assignment) (*ContributionCircuit, *PublicInputs, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("hash share inputs: %w", err)
 	}
-	anchor, err := ccommon.HashPackedBigIntsNative(commitmentHash, shareHash)
-	if err != nil {
-		return nil, nil, fmt.Errorf("hash contribution challenge anchor: %w", err)
-	}
-	challenge, err := ccommon.DeriveChallengeNative(a.RoundHash, contributionTranscriptDomain, anchor)
-	if err != nil {
-		return nil, nil, fmt.Errorf("derive contribution challenge: %w", err)
-	}
-	transcriptValues := make([]*big.Int, 0, 64)
+	transcriptValues := make([]*big.Int, 0, 8*ccommon.MaxN)
 	for i := range MaxCoefficients {
 		transcriptValues = append(
 			transcriptValues,
@@ -235,6 +229,14 @@ func BuildWitness(a Assignment) (*ContributionCircuit, *PublicInputs, error) {
 		)
 	}
 	transcriptValues = append(transcriptValues, maskedShares...)
+	anchor, err := ccommon.ChallengeAnchor(transcriptValues, commitmentHash, shareHash)
+	if err != nil {
+		return nil, nil, fmt.Errorf("hash contribution challenge anchor: %w", err)
+	}
+	challenge, err := ccommon.DeriveChallengeNative(a.RoundHash, contributionTranscriptDomain, anchor)
+	if err != nil {
+		return nil, nil, fmt.Errorf("derive contribution challenge: %w", err)
+	}
 	transcriptCommitment, err := ccommon.BRLCNative(challenge, transcriptValues...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("brlc contribution transcript: %w", err)

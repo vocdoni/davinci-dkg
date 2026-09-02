@@ -83,6 +83,12 @@ func (c *DecryptCombineCircuit) Define(api frontend.API) error {
 	// Mode flag must be 0 or 1: enforce mode·(mode-1) == 0.
 	api.AssertIsEqual(api.Mul(c.Mode, api.Sub(c.Mode, 1)), 0)
 
+	maskedIndexes := make([]frontend.Variable, MaxShares)
+	maskedPartials := make([]twistededwards.Point, MaxShares)
+	for i := range MaxShares {
+		maskedIndexes[i] = api.Select(mask[i], c.ParticipantIndexes[i], 0)
+		maskedPartials[i] = ccommon.MaskPoint(api, mask[i], c.PartialDecryptions[i])
+	}
 	hashInputs := []frontend.Variable{
 		c.RoundHash, // eid
 		c.Aid,
@@ -99,12 +105,7 @@ func (c *DecryptCombineCircuit) Define(api frontend.API) error {
 		c.CiphertextC2.Y,
 	}
 	for i := range MaxShares {
-		hashInputs = append(
-			hashInputs,
-			api.Select(mask[i], c.ParticipantIndexes[i], 0),
-			api.Select(mask[i], c.PartialDecryptions[i].X, 0),
-			api.Select(mask[i], c.PartialDecryptions[i].Y, 1),
-		)
+		hashInputs = append(hashInputs, maskedIndexes[i], maskedPartials[i].X, maskedPartials[i].Y)
 	}
 	combineHash, err := ccommon.MultiHash(api, hashInputs...)
 	if err != nil {
@@ -171,13 +172,13 @@ func (c *DecryptCombineCircuit) Define(api frontend.API) error {
 	correction := twistededwards.Point{X: correctionX, Y: correctionY}
 	expectedC2 := curve.Add(curve.Add(messagePoint, combined), correction)
 	ccommon.AssertPointEqual(api, expectedC2, c.CiphertextC2)
-	transcript := make([]frontend.Variable, 0, 28)
+	// The transcript uses the same masked values as CombineHash so that no
+	// witness word outside the digest can be tuned after ρ is known.
+	transcript := make([]frontend.Variable, 0, 4+3*MaxShares)
 	transcript = append(transcript, c.CiphertextC1.X, c.CiphertextC1.Y, c.CiphertextC2.X, c.CiphertextC2.Y)
+	transcript = append(transcript, maskedIndexes...)
 	for i := range MaxShares {
-		transcript = append(transcript, c.ParticipantIndexes[i])
-	}
-	for i := range MaxShares {
-		transcript = append(transcript, c.PartialDecryptions[i].X, c.PartialDecryptions[i].Y)
+		transcript = append(transcript, maskedPartials[i].X, maskedPartials[i].Y)
 	}
 	api.AssertIsEqual(c.TranscriptCommitment, ccommon.BRLC(api, c.Challenge, transcript))
 	return nil

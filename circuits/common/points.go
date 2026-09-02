@@ -176,65 +176,39 @@ func ScalarMulSmallScalar(
 	return res
 }
 
-// CommitmentPolynomialValue evaluates a commitment polynomial Σ_k cₖ·x^k.
-//
-// If `mask` is non-nil, slot k is included only when mask[k] == 1; this matches
-// the legacy callsite. If `mask` is nil, callers are expected to have already
-// folded the mask into the commitments (e.g. by replacing inactive slots with
-// the curve identity point), which lets the inner loop skip the per-iteration
-// Select on the running sum and saves ~2 constraints per coefficient per call.
-//
-// `xMaxBits` is the caller's `⌈log₂(MaxN)⌉` bound on the recipient /
-// participant index — i.e. the per-step bit growth of `power_k = x^k`
-// when x is range-checked to ≤ MaxN. For one-based indexes the boundary
-// case is `x = MaxN = 2^xMaxBits` where `x^k = 2^(xMaxBits·k)` needs
-// `xMaxBits·k + 1` bits to encode (the leading bit is set).  We pass
-// that bound to ScalarMulSmallScalar; it via api.ToBinary uses gnark's
-// internal bit-decomposition hint and emits the matching range-check.
-// Saves ~1.3M constraints in the contribution circuit at MaxN = 32 vs
-// the full-width scalar mul. `xMaxBits = 0` falls back to the original
-// full-width path.
+// IndexBits bounds a one-based committee index (≤ MaxN = 32) for the short
+// scalar multiplications below; ScalarMulSmallScalar range-checks x to it.
+const IndexBits = 6
+
+// CommitmentPolynomialValue evaluates a commitment polynomial Σ_k cₖ·x^k by
+// Horner's rule, acc ← x·acc + cₖ from the top coefficient down. Every step
+// is one IndexBits-bit scalar multiplication plus one addition, independent
+// of k (≈ 75 constraints), versus a growing-width multiplication per term.
+// Inactive coefficient slots must already hold the identity point; callers
+// pre-mask them once and reuse the vector across evaluations.
 func CommitmentPolynomialValue(
 	api frontend.API,
 	commitments []twistededwards.Point,
-	mask []frontend.Variable,
 	x frontend.Variable,
-	xMaxBits int,
 ) (twistededwards.Point, error) {
 	curve, err := twistededwards.NewEdCurve(api, ecc_tweds.BN254)
 	if err != nil {
 		return twistededwards.Point{}, err
 	}
-	sum := IdentityPoint()
-	power := frontend.Variable(1)
-	for i, commitment := range commitments {
-		var scaled twistededwards.Point
-		switch {
-		case i == 0:
-			// power = 1, scaled = commitment[0]. No mul, no doublings.
-			scaled = commitment
-		case xMaxBits > 0:
-			// power < x^i ≤ MaxN^i = 2^(xMaxBits·i). Worst case x = MaxN
-			// gives power = 2^(xMaxBits·i), needing xMaxBits·i + 1 bits.
-			scaled = ScalarMulSmallScalar(api, commitment, power, xMaxBits*i+1)
-		default:
-			scaled = curve.ScalarMul(commitment, power)
+	acc := IdentityPoint()
+	for k := len(commitments) - 1; k >= 0; k-- {
+		if k != len(commitments)-1 {
+			acc = ScalarMulSmallScalar(api, acc, x, IndexBits)
 		}
-		next := curve.Add(sum, scaled)
-		if mask == nil {
-			sum.X = next.X
-			sum.Y = next.Y
-		} else {
-			active := frontend.Variable(1)
-			if len(mask) > i {
-				active = mask[i]
-			}
-			sum.X = api.Select(active, next.X, sum.X)
-			sum.Y = api.Select(active, next.Y, sum.Y)
-		}
-		power = api.Mul(power, x)
+		acc = curve.Add(acc, commitments[k])
 	}
-	return sum, nil
+	return acc, nil
+}
+
+// MaskPoint folds a boolean mask into a point: the point itself when the
+// slot is active, the identity (0, 1) otherwise.
+func MaskPoint(api frontend.API, mask frontend.Variable, p twistededwards.Point) twistededwards.Point {
+	return twistededwards.Point{X: api.Mul(mask, p.X), Y: api.Select(mask, p.Y, 1)}
 }
 
 // HashPoint hashes (state, point.X, point.Y) with Poseidon1, matching the
