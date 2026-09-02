@@ -343,7 +343,7 @@ honest path:
 
 | Network | DKGManager                                 | Notes |
 |---------|--------------------------------------------|-------|
-| Sepolia | `0xb64f2d0870d2285f662e295f8a48adce79ccc56c` | Built into the node + SDK; just pass `--network sepolia`. Registry `0xf84ede21034d6510a12a7c14f3d4c4c9f70af236`, app manager `0xe47ca36c9ee3c4b9bb92504c205cba747e63bb5e`, deployed at block 11,616,449 with floors `MIN_THRESHOLD=2`, `MIN_COMMITTEE_SIZE=3`, `MAX_LOTTERY_ALPHA_BPS=20000` and windows 100/25/25/5 blocks. |
+| Sepolia | `0x3f9b338706a31f26d49159478015c8aaeab908ad` | Built into the node + SDK; just pass `--network sepolia`. Registry `0xb544fe16a039ec566ba391732492a540a781abec`, app manager `0xb8ba6ad1e8ce8848950e0c28a44bfe8ea536eac5`, deployed at block 11,619,019 with floors `MIN_THRESHOLD=2`, `MIN_COMMITTEE_SIZE=3`, `MAX_LOTTERY_ALPHA_BPS=20000` and windows 100/25/25/5 blocks. |
 
 `DKGRegistry` and `DKGAppManager` are auto-resolved from `DKGManager` on-chain — only the manager
 address needs to be configured.
