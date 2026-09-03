@@ -10,6 +10,10 @@ regular integration suite are unaffected.
 
 ## Running
 
+CI runs the swarm and the share adversary against a 4-node testnet on every
+push and nightly (`.github/workflows/battery.yml`); locally, `make battery`
+runs `$(BATTERY_RUN)` against whatever `DAVINCI_DKG_TEST_RPC_URL` points at.
+
 ```bash
 make testnet-up DKG_NODE_COUNT=32 ...            # or whatever brings the fleet up
 export DAVINCI_DKG_BATTERY=1
