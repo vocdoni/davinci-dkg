@@ -257,8 +257,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "20"
-          cache: "pnpm"
-          cache-dependency-path: sdk/pnpm-lock.yaml
+          # No pnpm cache probe here: it runs `pnpm store path` from the repo
+          # root, where nothing pins pnpm, so corepack fetches pnpm 11 (needs
+          # Node 22) and crashes; the self-hosted box keeps its own store.
 
       - name: Install SDK dependencies
         if: github.event.pull_request.draft != true
