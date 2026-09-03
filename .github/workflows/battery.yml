@@ -21,9 +21,18 @@ jobs:
       cancel-in-progress: false
     timeout-minutes: 60
     env:
+      # The self-hosted runner does not export HOME; go, foundryup and docker
+      # all need one. Keep it per run so nothing leaks between jobs.
+      HOME: ${{ runner.temp }}/home
+      DOCKER_CONFIG: ${{ runner.temp }}/home/.docker
+      # Isolate this stack from any testnet already running on the host:
+      # its own compose project name and its own host ports.
+      COMPOSE_PROJECT_NAME: dkg-battery-ci
+      ANVIL_PORT: "18545"
+      DEPLOYER_PORT: "18888"
       DAVINCI_DKG_BATTERY: "1"
-      DAVINCI_DKG_TEST_RPC_URL: http://127.0.0.1:8545
-      DAVINCI_DKG_TEST_ADDRESSES: /tmp/battery-addresses.env
+      DAVINCI_DKG_TEST_RPC_URL: http://127.0.0.1:18545
+      DAVINCI_DKG_TEST_ADDRESSES: ${{ runner.temp }}/battery-addresses.env
       DAVINCI_ARTIFACTS_DIR: ${{ github.workspace }}/.artifacts
       DAVINCI_DKG_BATTERY_REPORT: ${{ github.workspace }}/battery-report.json
       # Testnet sizing: 4 nodes, committee 3 of 4, t = 2, short windows.
@@ -42,6 +51,8 @@ jobs:
       BATTERY_NO_COMBINE_WAIT_BLOCKS: "20"
       BATTERY_COMBINE_WAIT_BLOCKS: "90"
     steps:
+      - name: Create the run's home
+        run: mkdir -p "$HOME" "$DOCKER_CONFIG"
       - uses: actions/checkout@v4
         with:
           submodules: recursive
@@ -53,14 +64,14 @@ jobs:
       - name: Regenerate circuit artifacts and Solidity verifiers
         # Same reason as the integration job: the committed hashes and
         # verifiers come from one setup run and must match the proving keys.
-        run: make circuits-compile circuits-update-hashes solidity-build
+        run: make circuits-compile circuits-update-hashes solidity-build ARTIFACTS_DIR="$DAVINCI_ARTIFACTS_DIR"
       - name: Start the testnet
         working-directory: testnet
         run: |
           DAVINCI_ARTIFACTS_HOST_DIR="$DAVINCI_ARTIFACTS_DIR" \
             docker compose up -d --build --scale dkg-node=4
           for i in $(seq 1 100); do
-            curl -fsS http://127.0.0.1:8888/addresses.env > "$DAVINCI_DKG_TEST_ADDRESSES" && break
+            curl -fsS "http://127.0.0.1:$DEPLOYER_PORT/addresses.env" > "$DAVINCI_DKG_TEST_ADDRESSES" && break
             sleep 3
           done
           cat "$DAVINCI_DKG_TEST_ADDRESSES"
