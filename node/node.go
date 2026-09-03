@@ -81,6 +81,7 @@ type Node struct {
 	partialDone map[ctKey]bool
 	served      map[ctKey]uint64   // finished slots → discovery block, until out of the re-scan window
 	badShares   map[ctKey][32]byte // last organizer share that failed to verify, to warn once
+	taintedApps map[appKey]bool    // applications that produced an undecryptable ciphertext
 	backoff     map[ctKey]*serviceBackoff
 	inflight    map[ctKey]inflightTx     // sent but unmined partial/combine per slot
 	combineJobs map[ctKey]*combineResult // running (nil) or finished combine jobs, guarded by jobsMu
@@ -156,6 +157,7 @@ func New(cfg *Config) (*Node, error) {
 		partialDone:   make(map[ctKey]bool),
 		served:        make(map[ctKey]uint64),
 		badShares:     make(map[ctKey][32]byte),
+		taintedApps:   make(map[appKey]bool),
 		backoff:       make(map[ctKey]*serviceBackoff),
 		inflight:      make(map[ctKey]inflightTx),
 		combineJobs:   make(map[ctKey]*combineResult),

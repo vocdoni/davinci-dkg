@@ -328,6 +328,9 @@ func (n *Node) serviceCiphertext(ctx context.Context, tc *tickCache, key ctKey, 
 	if err != nil {
 		return false, err
 	}
+	if n.taintedApps[appKey{epoch: key.epoch, aid: key.aid}] {
+		return true, nil
+	}
 	idx := myIndex(selected, n.address)
 	if idx == 0 {
 		// Only committee members hold a share of sk_ep, and only they take
@@ -686,6 +689,14 @@ func (n *Node) tryCombine(
 	n.jobsMu.Lock()
 	delete(n.combineJobs, key)
 	n.jobsMu.Unlock()
+	if res.taint {
+		// Only the application's authorised submitter can produce its
+		// ciphertexts, so an undecryptable one is the organizer's doing:
+		// serve nothing else of this application in this epoch, which caps
+		// what one registration can make the committee compute.
+		n.taintedApps[appKey{epoch: key.epoch, aid: key.aid}] = true
+		log.Warnw("application tainted: ignoring its remaining ciphertexts for this epoch", "ct", key.String())
+	}
 	switch {
 	case res.err != nil:
 		return res.permanent, res.err
@@ -703,6 +714,7 @@ type combineResult struct {
 	done      bool // the slot was combined by someone else meanwhile
 	err       error
 	permanent bool // the slot can never be combined by us; stop trying
+	taint     bool // the plaintext was out of range: stop serving this application
 }
 
 // runCombineJob recovers the plaintext, proves the combine and sends the
@@ -765,7 +777,7 @@ func (n *Node) combine(
 	if err != nil {
 		// Plaintext ≥ MaxDLogPlaintext: retrying can never succeed.
 		log.Errorw(err, fmt.Sprintf("combine: dlog failed for %s (plaintext must be < 2^50)", key.String()))
-		return &combineResult{done: true}
+		return &combineResult{done: true, taint: true}
 	}
 
 	witness, pi, err := decryptcombine.BuildWitness(decryptcombine.Assignment{
