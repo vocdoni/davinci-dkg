@@ -143,12 +143,11 @@ jobs:
     env:
       LOG_LEVEL: debug
       RUN_INTEGRATION_TESTS: "false"
+    steps:
       # Some self-hosted runners export no HOME (z5 runs as root under
       # systemd); go, foundryup and docker all need one.
-      HOME: ${{ runner.temp }}/home
-    steps:
-      - name: Create the run's home
-        run: mkdir -p "$HOME"
+      - name: Give the run a home
+        run: mkdir -p "$RUNNER_TEMP/home" && echo "HOME=$RUNNER_TEMP/home" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
 
       - uses: actions/setup-go@v5
@@ -191,10 +190,9 @@ jobs:
     env:
       LOG_LEVEL: debug
       RUN_INTEGRATION_TESTS: "true"
-      HOME: ${{ runner.temp }}/home
     steps:
-      - name: Create the run's home
-        run: mkdir -p "$HOME"
+      - name: Give the run a home
+        run: mkdir -p "$RUNNER_TEMP/home" && echo "HOME=$RUNNER_TEMP/home" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
         with:
           submodules: recursive
