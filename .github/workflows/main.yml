@@ -43,6 +43,9 @@ jobs:
             sdk/pnpm-lock.yaml
             ui/pnpm-lock.yaml
 
+      - name: Check the chain-config renderer
+        run: bash scripts/render-ui-config.test.sh
+
       - name: Install and build SDK
         working-directory: sdk
         run: pnpm install --frozen-lockfile && pnpm build
