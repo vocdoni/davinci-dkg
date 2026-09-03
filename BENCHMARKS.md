@@ -118,6 +118,7 @@ never for a quarter of them.
 | throughput | 0.30 ct/s | 0.77 ct/s |
 | gas: contribution / finalize (n = 24) | 513 k / 2.14 M | same |
 | gas: partial / combine / register / share | 399 k / 430 k / 390 k / 88 k | same |
+| same swarm with 4 local nodes restarted, Anvil paused 20 s and 6 remote nodes down 90 s mid-run | — | 40 / 40 decrypted, 23 blocks avg, 0.42 ct/s |
 
 The fix (`node/decrypt.go`): partial and combine transactions are sent
 without waiting for their receipt, later waves only fire when the earlier
