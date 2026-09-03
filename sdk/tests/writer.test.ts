@@ -79,7 +79,7 @@ describe('DKGWriter', () => {
       threshold:                 1,
       committeeSize:             1,
       minValidContributions:     1,
-      lotteryAlphaBps:           15000,
+      lotteryAlphaBps:           65535, // max: every operator admissible on the shared chain
     });
     const receipt = await writer.waitForTransaction(hash);
     expect(receipt.status).toBe('success');
@@ -133,7 +133,7 @@ describe('DKGWriter', () => {
       threshold:                 1,
       committeeSize:             1,
       minValidContributions:     1,
-      lotteryAlphaBps:           15000,
+      lotteryAlphaBps:           65535, // max: every operator admissible on the shared chain
     });
     await writer.waitForTransaction(createHash);
 

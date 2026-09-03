@@ -197,6 +197,18 @@ export function applicationKey(pkEp: BabyJubPoint, pkOrg: BabyJubPoint): BabyJub
  * per ciphertext. If it is lost, every ciphertext under the application is
  * permanently undecryptable — the committee threshold alone cannot open them.
  */
+/**
+ * A fresh application id: 32 random bytes with the top three bits cleared,
+ * so the value is below the BabyJubJub scalar field the contract requires
+ * (`registerApplication` reverts with InvalidApplication otherwise).
+ */
+export function randomAid(): `0x${string}` {
+  const bytes = new Uint8Array(32);
+  globalThis.crypto.getRandomValues(bytes);
+  bytes[0] &= 0x1f;
+  return ('0x' + Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')) as `0x${string}`;
+}
+
 export function randomOrganizerSecret(): bigint {
   let s = 0n;
   while (s === 0n) {

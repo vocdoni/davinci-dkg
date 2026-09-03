@@ -39,6 +39,7 @@ import {
   verifyOrganizerShare,
   type AppPolicy,
   type BabyJubPoint,
+  randomAid,
 } from '../src/index.js';
 import { fromTEtoRTE } from '../src/crypto/babyjub-form.js';
 import { makePublicClient, makeWalletClient } from './helpers/accounts.js';
@@ -81,15 +82,6 @@ async function runGoFixture(args: string[]): Promise<{ status: number | null; st
     console.warn('[ciphertext-e2e] Go fixture error:', err);
     return null;
   });
-}
-
-function randomAid(): `0x${string}` {
-  const buf = new Uint8Array(32);
-  globalThis.crypto.getRandomValues(buf);
-  // `aid` is a BN254 scalar-field public input of every decryption proof, so
-  // it must stay below the field modulus: clear the top three bits.
-  buf[0] &= 0x1f;
-  return ('0x' + Array.from(buf).map((b) => b.toString(16).padStart(2, '0')).join('')) as `0x${string}`;
 }
 
 function lastJsonLine<T>(stdout: string): T | null {
@@ -219,6 +211,7 @@ describe('SDK ciphertext end-to-end (encrypt → submit → combine → getPlain
       '--aid', aid,
       '--ciphertext-index', String(ciphertextIndex),
       '--share', fixture.share,
+      '--org-secret', '0x' + skOrg.toString(16),
     ]);
     if (!decryptOut || decryptOut.status !== 0) {
       throw new Error(`fixture decrypt failed: ${decryptOut?.stderr.slice(0, 1000) ?? 'no output'}`);

@@ -76,7 +76,7 @@ describe('Monitor utilities', () => {
       threshold:                 1,
       committeeSize:             1,
       minValidContributions:     1,
-      lotteryAlphaBps:           15000,
+      lotteryAlphaBps:           65535, // max: every operator admissible on the shared chain
     });
     await writer.waitForTransaction(hash);
 
@@ -107,7 +107,7 @@ describe('Monitor utilities', () => {
       threshold:                 1,
       committeeSize:             1,
       minValidContributions:     1,
-      lotteryAlphaBps:           15000,
+      lotteryAlphaBps:           65535, // max: every operator admissible on the shared chain
     });
     await writer.waitForTransaction(createHash);
 

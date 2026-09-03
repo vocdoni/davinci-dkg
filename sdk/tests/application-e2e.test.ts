@@ -21,6 +21,7 @@ import {
   proveOrganizer,
   randomOrganizerSecret,
   type AppPolicy,
+  randomAid,
 } from '../src/index.js';
 import { makePublicClient, makeWalletClient } from './helpers/accounts.js';
 
@@ -61,11 +62,6 @@ function lastJsonLine<T>(stdout: string): T | null {
   try { return JSON.parse(line) as T; } catch { return null; }
 }
 
-function randomAid(): `0x${string}` {
-  const buf = new Uint8Array(32);
-  globalThis.crypto.getRandomValues(buf);
-  return ('0x' + Array.from(buf).map((b) => b.toString(16).padStart(2, '0')).join('')) as `0x${string}`;
-}
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000' as const;
 

@@ -155,6 +155,7 @@ describe('SDK combineDecryption end-to-end (writer drives the on-chain combine)'
       '--aid', aid,
       '--ciphertext-index', String(ciphertextIndex),
       '--share', fixture.share,
+      '--org-secret', '0x' + skOrg.toString(16),
     ]);
     if (prepOut.status !== 0) {
       throw new Error(`prepare-combine failed: ${prepOut.stderr.slice(0, 1000)}`);

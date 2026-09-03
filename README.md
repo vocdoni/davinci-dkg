@@ -290,13 +290,15 @@ pnpm add @vocdoni/davinci-dkg-sdk
 ```
 
 ```ts
-import { DKGClient, DKGWriter, buildElGamal, applicationKey, randomOrganizerSecret } from '@vocdoni/davinci-dkg-sdk';
+import { DKGClient, DKGWriter, buildElGamal, applicationKey, randomAid, randomOrganizerSecret } from '@vocdoni/davinci-dkg-sdk';
 
 const client = new DKGClient({ publicClient, managerAddress });
 const epoch  = await client.getEpoch(epochId);
 const pkEp   = await client.getCollectivePublicKey(epochId);
 
 // Register the application; keep skOrg — it is the other half of the key.
+// aid must be non-zero and below the BabyJubJub scalar field: randomAid() does that.
+const aid    = randomAid();
 const skOrg  = randomOrganizerSecret();
 const writer = new DKGWriter({ publicClient, walletClient, managerAddress });
 await writer.registerApplication(epochId, aid, policy, skOrg);
