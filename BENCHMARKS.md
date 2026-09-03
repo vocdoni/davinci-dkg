@@ -135,6 +135,46 @@ rest of that application's ciphertexts for the epoch (one search per
 registration, not per ciphertext); and a withheld share parks its slot in
 every node (no per-tick cost) until an organizer share event wakes it.
 
+## Groth16 versus PLONK (universal setup)
+
+Measured on 2026-09-03 with gnark v0.16.3 / gnark-crypto v0.21.0 at
+`MaxN = 32` (`go test ./circuits/... -bench BenchmarkBackends -benchtime=1x`,
+Ryzen 9 9950X3D, 32 threads, average of 3 proofs; PLONK with an unsafe test
+SRS, which does not change prover cost). On-chain gas is the deployed Groth16
+combine verifier on a real proof versus gnark's exported PLONK verifier for
+the same statement (11 public inputs), both under `via_ir`, `optimizer_runs = 1`.
+
+| circuit | Groth16 R1CS | PLONK gates | Groth16 prove | PLONK prove | proof bytes G16 / PLONK |
+|---|---:|---:|---:|---:|---:|
+| Contribution | 566,419 | 1,242,994 | 0.37 s | 12.53 s | 256 / 864 |
+| Finalize | 211,600 | 929,175 | 0.18 s | 4.12 s | 256 / 864 |
+| PartialDecrypt | 26,186 | 58,040 | 0.03 s | 0.46 s | 256 / 864 |
+| DecryptCombine | 274,615 | 606,441 | 0.21 s | 4.96 s | 256 / 864 |
+
+| | Groth16 | PLONK |
+|---|---:|---:|
+| combine verifier gas (11 inputs) | 259,694 | 283,509 |
+| proof calldata | 256 B | 864 B (+9.7 k gas) |
+| proving key, contribution | 86 MB | 134 MB + 134 MB SRS |
+| verifying key | ~0.8 kB | 34 kB |
+| setup | per circuit (four ceremonies, or one party) | one universal KZG SRS of 2^21 points (Aztec / Hermez transcripts qualify) |
+
+PLONK removes the per-circuit trusted setup at the price of 2.2–4.4× more
+constraints and 15–34× slower proving in gnark (contribution 0.4 s → 12.5 s
+on 32 threads; a node's partial 30 ms → 0.5 s), about 13 % more gas per
+verification once calldata is counted, and 3.4× larger proofs. Functionally
+everything fits the protocol windows even on modest hardware, and the
+migration is mechanical (`scs` builder, `plonk` backend, gnark's PLONK
+Solidity export, 864-byte proofs and a `Verify(bytes, uint256[])` ABI), so
+the choice is purely setup trust versus prover cost. Groth16 stays the
+default; a Groth16 MPC ceremony for the four circuits is the cheaper way to
+remove the single-party setup.
+
+The same run showed that upgrading gnark from the pinned v0.14 snapshot to
+v0.16.3 changes the compiled R1CS (partial +19 %, combine +11 %,
+contribution +5 %, finalize unchanged) and therefore the pinned artifact
+hashes: the upgrade has to ship with a circuit re-release.
+
 ## How to reproduce
 
 * Constraints: `go run ./cmd/constraints` after setting `MaxN` in
