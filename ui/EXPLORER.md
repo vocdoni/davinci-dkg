@@ -1,194 +1,159 @@
-# davinci-dkg explorer — architecture and content plan
+# Explorer architecture
 
-This is the specification for the explorer rebuild. Every stream implements
-against it; when something is unclear, the protocol description in
-`../README.md` and the contract interfaces in `../solidity/src/interfaces`
-are the source of truth.
+How the explorer is put together: what each route shows, where its data comes
+from, and the constraints every page has to hold. For the stack, the local
+dev loop and the design rules, see [`README.md`](README.md). When this note
+and the code disagree, the code wins; the protocol itself is described in
+[`../README.md`](../README.md) and the contract interfaces in
+[`../solidity/src/interfaces`](../solidity/src/interfaces).
 
-## 1. Goals
+## What it is for
 
-1. **A real explorer.** Every on-chain fact about an epoch, an operator, an
-   application or a ciphertext is reachable, with the block and transaction
-   behind it. Nothing is summarised away.
-2. **Scale.** Committees of 64 members and registries of several hundred
-   operators must stay readable and fast: virtualised tables, pagination,
-   dense matrices, no per-page log scans.
-3. **Visibility of the protocol.** Lottery, committee assembly, key assembly,
-   decryption pipeline and operator behaviour over time are drawn, not only
-   listed.
-4. **The organizer's playground.** A resumable walkthrough of the organizer
-   role against a live epoch, and the tools an organizer needs later
-   (release a share, inspect its application).
-5. **The design system in `ui/design/`** (Voltagent-inspired): obsidian canvas,
-   one emerald accent, charcoal hairlines, Inter + JetBrains Mono, 4 px
-   spacing, 4–8 px radii, borders over shadows, four surface levels.
+The explorer surfaces every on-chain fact about an epoch, an operator, an
+application or a ciphertext, with the block and transaction behind it. Nothing
+is summarised away, and nothing is served by a backend: the browser talks to a
+JSON-RPC endpoint and to nothing else.
 
-## 2. Stack
+Three things follow from that:
 
-- Vite + React 18 + TypeScript (strict), react-router v6, TanStack Query,
-  wagmi/viem + RainbowKit for the wallet, `@vocdoni/davinci-dkg-sdk`
-  (`link:../sdk`) for every contract read/write and all cryptography.
-- **Tailwind CSS v4** with `ui/design/theme.css` as the `@theme`; global
-  CSS variables from `ui/design/variables.css`. No Chakra. Headless
-  primitives from `@radix-ui/react-*` only where behaviour is non-trivial
-  (dialog, tooltip, popover, tabs). Fonts self-hosted:
-  `@fontsource-variable/inter`, `@fontsource/jetbrains-mono`.
-- Tables: `@tanstack/react-table` + `@tanstack/react-virtual` for any list that
-  can exceed ~50 rows.
-- Charts: hand-rolled SVG in `src/kit/charts` (no chart library).
-- Persistence: `idb-keyval` (IndexedDB) for the indexer cache.
-- Tests: vitest + testing-library (unit, with the synthetic fixture);
-  Playwright (run by the integrator) against Sepolia and against demo mode.
+- **The protocol has to be visible, not just listed.** The lottery, committee
+  assembly, key assembly, the decryption pipeline and operator behaviour over
+  time are drawn.
+- **Scale is a correctness requirement.** Committees of 64 members and
+  registries of several hundred operators stay readable and fast.
+- **The organizer needs a place to work.** The playground walks the organizer
+  role against a live epoch and keeps the tools an organizer needs afterwards.
 
-## 3. Data layer (`src/indexer`)
+## Data layer
 
-One in-browser indexer feeds every page. It scans, once, all events of the
-three contracts from `deployBlock` (from `public/config.json`) in chunks
-through the SDK's chunked `getLogs`, normalises them into a store, persists
-the store in IndexedDB keyed by `chainId:managerAddress`, and keeps it
-current by polling from the last indexed block (every ~12 s, or on demand).
-Contract state that events do not carry is fetched through viem `multicall`
-in batches and cached per block height: epoch structs, node records,
-application records, ciphertext/combine records, plaintexts.
+One in-browser indexer feeds every page. It scans all events of the three
+contracts once, from `deployBlock` in `public/config.json`, in chunks through
+the SDK's chunked `getLogs`; normalises them into an entity store; persists
+that store in IndexedDB keyed by `chainId:managerAddress`; and keeps it
+current by polling from the last indexed block. Contract state that events do
+not carry is fetched with viem `multicall` in batches and cached per block
+height: epoch structs, node records, application records, ciphertext and
+combine records, plaintexts.
 
-Entities (all keyed, all with `block` and `tx` where they come from an event):
+Pages never call `getLogs` themselves. They read a snapshot of the store
+through a pure selector. [`src/data/README.md`](src/data/README.md) is the
+reference for that path; the store shape lives in
+`src/indexer/types.ts`.
 
-- `operators`: address → { pubKey, status, registeredAt, lastActive, events[] }
-- `epochs`: id → { nonce, creator, startBlock, seedBlock, seed, threshold τ,
-  policy {t, n, mMin, alphaBps, windows}, status, committee[] (slot order),
-  contributions[] (index, contributor, block, tx, gasUsed), finalization
-  {by, block, tx, gasUsed}, PK_ep, shareCommitmentHashes[], applications[] }
-- `slots`: (epoch, slot) → { operator, block, tx }
-- `applications`: (epoch, aid) → { creator, organizerPK, policy, createdAt,
-  ciphertexts[] }
-- `ciphertexts`: (epoch, aid, idx) → { submitter, c1, c2, block, tx,
-  partials[] (participant, submitter, block, tx), organizerShare {block, tx,
-  hash, overwrites}, combined {by, block, tx, plaintext} }
-- `txMeta`: tx → { from, gasUsed, blockNumber } (lazy, fetched for
-  finalizations, combines and any row the user opens)
+The entities, all keyed, all carrying `block` and `tx` where they come from an
+event:
 
-Selectors are pure functions over the store, unit-tested with the fixture:
-network stats, per-epoch progress, per-operator history and participation,
-per-application pipeline state, activity per epoch, wave analysis of
-partials (which members answered a ciphertext and in which block).
+| Entity | Key | Holds |
+|---|---|---|
+| `operators` | address | public key, status, registered block, last active, event history |
+| `epochs` | epoch id | nonce, creator, start and seed blocks, seed, policy, status, committee in slot order, contributions, finalization, `PK_ep`, share commitment hashes, applications |
+| `slots` | epoch, slot | operator, block, tx |
+| `applications` | epoch, aid | creator, `PK_org`, policy, created block, ciphertexts |
+| `ciphertexts` | epoch, aid, index | submitter, `C1`, `C2`, partials, organizer share, combined record and plaintext |
+| `txMeta` | tx | sender, gas used, block number, fetched lazily |
 
-**Fixture and demo mode.** `src/fixtures/synthetic.ts` generates a
-deterministic network: 300 registered operators (some inactive, some
-reaped), 8 epochs with 64-member committees (t = 33), one aborted epoch,
-applications with 8 ciphertexts each, partials arriving in waves of t, some
-shares withheld, some plaintexts combined. `?demo=1` (or `/demo/...`) makes
-the whole app run from the fixture with no RPC, so large tables and charts
-can be reviewed and screenshotted without a chain.
+Selectors are pure functions over the store and are unit-tested against the
+fixture: network statistics, per-epoch progress, per-operator history and
+participation, per-application pipeline state, activity per epoch, and wave
+analysis of partials (which members answered a ciphertext, and in which
+block).
 
-## 4. Routes and content
+## Fixture and demo mode
 
-`/` **Overview**
-- Header strip: chain, manager, current block, next epoch countdown.
-- Status cards: newest epoch (phase + block countdown), live epochs,
-  operators active / registered, committee size and threshold in force,
-  ciphertexts decrypted (all time).
-- Activity chart: last 30 epochs, stacked bars (claims, contributions,
-  ciphertexts, partials).
-- Epoch cadence strip: epochs on the block axis with phase colouring.
-- Latest events feed (20 rows, every event type, tx links), auto-refresh.
-- Global search box (epoch id, application id, address, tx hash) → routes.
+`src/fixtures/synthetic.ts` generates a deterministic network by pushing a
+generated event stream through the real reducers, so the fixture store has the
+same shape as a live one: 300 operators including reaped and reactivated rows,
+8 epochs with 64-member committees at `t = 33`, one aborted epoch and one
+still in key assembly, 2 applications per live epoch with 8 ciphertexts each,
+partials arriving in waves of `t`, some organizer shares withheld, most
+plaintexts combined.
 
-`/epochs` **Epochs**: virtualised table (id, nonce, phase, t of n, claims
-progress bar, contributions progress bar, ciphertexts, live since, creator,
-finalizer), phase filter, search; row → epoch.
+Append `?demo=1` to any URL, or build with `VITE_DEMO=1`, and the whole app
+runs from the fixture with no RPC. Read it from `useRuntimeConfig().demo`
+rather than parsing the URL. Demo mode is how large tables and charts get
+reviewed and screenshotted without a chain.
 
-`/epochs/:id` **Epoch**
-- Header: id, nonce, phase badge, creator, block-axis lifecycle timeline
-  with the current block marker and the four windows.
-- Lottery panel: seed block and hash, τ as a fraction of the hash space,
-  α, N snapshotted, admissible probability, claims in order (slot, operator,
-  block, tx), abort reason when aborted.
-- Committee panel: grid of n members (index, operator, claim block,
-  contribution block/tx/gas, D_i hash) that stays readable at 64; summary
-  bar of contributions t/n/m_min.
-- Key panel: PK_ep coordinates (copyable), finalizer, finalization tx and
-  gas, transcript size.
-- Applications table (aid, organizer, submitter, policy window, cap,
-  ciphertexts, decrypted) → application page.
-- Decryption matrix: members × ciphertexts heatmap of partials (colour by
-  wave/block), share status row, combined row.
-- Event log: every event of the epoch with block and tx.
-- Raw: policy fields, ABI-level struct.
+## Routes
 
-`/operators` **Operators**: virtualised, searchable, sortable table for
-hundreds of rows: address, status, registered block, last active, epochs
-served, claims, contributions, partials, finalizations, combines,
-participation (contributions/claims, "—" when no claims), key (expand).
-Header cards: active/registered, inactivity window, committee of the
-newest epoch. Chart: work per operator (top 32, rest grouped), and a
-status donut.
+`src/routes/paths.ts` is the single URL table. Build links from it, never from
+string literals.
 
-`/operators/:address` **Operator**: identity (address, key, status,
-registered, last active), history timeline across epochs (claimed /
-contributed / finalized / partials / combines per epoch), participation
-sparkline, table of every event with tx.
+**`/` Overview.** Header strip with chain, manager, current block and the next
+epoch countdown. Status cards for the newest epoch, live epochs, operators
+active and registered, committee size and threshold in force, and ciphertexts
+decrypted all time. An activity chart over the last 30 epochs, stacked by
+claims, contributions, ciphertexts and partials. An epoch cadence strip on the
+block axis with phase colouring. A live feed of the latest events with
+transaction links, and the global search box that routes an epoch id,
+application id, address or transaction hash to its page.
 
-`/applications` **Applications**: table across epochs (epoch, aid, organizer,
-submitter, window, cap, ciphertexts, decrypted, share status) with search.
+**`/epochs` Epochs.** Virtualised table: id, nonce, phase, `t` of `n`, claim
+and contribution progress bars, ciphertexts, live since, creator, finalizer.
+Filter by phase, search, click through to the epoch.
 
-`/applications/:epoch/:aid` **Application**: record (organizer, PK_org,
-PK_aid derived and shown, policy), ciphertext table (idx, submitted block,
-partials t/n, share, combined, plaintext, tx links), partial matrix for this
-application, organizer tools: release a share (index + secret, computed in
-the browser), copy PK_aid, resume the playground here.
+**`/epochs/:id` Epoch.** The header carries the id, nonce, phase badge,
+creator and a block-axis lifecycle timeline with the current block marker and
+the four windows. The lottery panel shows the seed block and hash, the
+threshold as a fraction of the hash space, `α`, the snapshotted `R`, the
+admission probability and the claims in slot order; when the epoch aborted it
+shows why. The committee panel is a grid of `n` members that stays readable at
+64, with claim block, contribution block, transaction, gas and `D_i` hash, over
+a contributions summary bar. The key panel has the copyable `PK_ep`
+coordinates, the finalizer, the finalization transaction and gas, and the
+transcript size. Below that: the applications table, a members by ciphertexts
+heatmap of partials coloured by wave, the epoch's full event log, and the raw
+policy struct.
 
-`/playground` **Playground (organizer)**: steps connect → choose a live
-epoch (newest by default, any Live selectable) → register (secret
-generate/paste, aid, cap, submitter) → encrypt → submit → release or
-withhold → watch (partials with wave/block, share, combine, plaintext) →
-verify locally. State in URL (`?epoch=&aid=`) and session storage so it is
-resumable; every step shows the transaction hash and gas; an "advanced"
-toggle prints transcripts (PoP, DLEQ words, e, z). Demo mode drives the
-same steps from the fixture with a fake wallet.
+**`/operators` Operators.** Virtualised, searchable, sortable over hundreds of
+rows: address, status, registered block, last active, epochs served, claims,
+contributions, partials, finalizations, combines, participation, and the
+expandable key. Participation reads `contributions/claims` and shows a dash
+when there are no claims. Header cards cover active against registered, the
+inactivity window and the newest epoch's committee. Charts show work per
+operator (top 32, the rest grouped) and a status donut.
 
-`/docs/protocol`, `/docs/run-a-node`, `/docs/sdk`: the existing texts,
-restructured under one section with the design system's typography.
+**`/operators/:address` Operator.** Identity, a history timeline across epochs
+(claimed, contributed, finalized, partials, combines per epoch), a
+participation sparkline, and every event with its transaction.
 
-`/kit`: showcase of every primitive and chart with fixture data (for visual
-review; linked from the footer only).
+**`/applications` Applications.** Across epochs: epoch, aid, organizer,
+submitter, window, cap, ciphertexts, decrypted, share status, with search.
 
-## 5. Design rules (from `ui/design/preview.html`)
+**`/applications/:epoch/:aid` Application.** The record with the organizer,
+`PK_org`, the derived `PK_aid` and the policy; the ciphertext table with
+index, submission block, partials `t/n`, share, combined, plaintext and
+transaction links; the partial matrix for this application; and the organizer
+tools, which release a share from an index and a secret computed in the
+browser, copy `PK_aid`, and resume the playground here.
 
-Canvas `#050507`/`#101010` (obsidian, carbon), cards on carbon with
-charcoal `#3d3a39` 1 px borders and 8 px radius, hover → onyx `#1a1a1a`
-surface with warm-gray border; emerald `#00d992` only for the primary
-action, active states, brand accents and the "live/ok" semantic; text
-ghost `#ffffff` / silver `#bdbdbd` / pewter `#8b949e`; labels in 13 px
-uppercase with 0.1 em tracking; JetBrains Mono for addresses, hashes,
-numbers in tables and code; buttons primary (emerald fill), ghost
-(emerald text/border), secondary (charcoal border); inputs transparent
-with emerald focus glow; pill badges. Semantic colours beyond emerald are
-limited to one warning amber and one danger red, used sparingly (phase
-badges, errors). Charts use the four surface levels plus emerald and two
-desaturated companions for series; every chart has a legend, a skeleton
-and a tooltip.
+**`/playground` Playground.** The organizer walkthrough: connect, choose a
+live epoch, register with a generated or pasted secret, encrypt, submit,
+release or withhold, watch the partials arrive with their waves and blocks
+until the share and the combine land, then verify locally. State lives in the
+URL (`?epoch=&aid=`) and in session storage, so the walkthrough is resumable.
+Every step shows its transaction hash and gas, and an advanced toggle prints
+the transcripts: proof of possession, discrete-logarithm equality (DLEQ)
+words, `e` and `z`. Demo mode drives the same steps from the fixture with a
+fake wallet.
 
-## 6. Scale requirements (tested with the fixture)
+**`/docs/protocol`, `/docs/run-a-node`, `/docs/sdk`.** The operator and
+application documentation, under the design system's typography.
 
-- Operators table: 300+ rows virtualised; sort and search stay instant.
-- Committee grid and partial matrix: 64 members legible; matrix cells ≥ 10 px
-  with hover detail; horizontal scroll inside the panel, never the page.
-- Epoch list: 200+ epochs paginated/virtualised.
-- Indexer: initial scan bounded by chunked getLogs with adaptive chunk size;
-  UI usable while scanning (progress indicator); incremental sync ≤ 1 RPC
-  round per poll when idle.
+**`/kit`.** Every primitive and chart rendered with fixture data, for visual
+review. Linked from the footer only. Open it after any change to the design
+system.
 
-## 7. Streams
+## Scale requirements
 
-- **A Foundation**: new scaffold on Tailwind v4 with the tokens, app shell,
-  primitives in `src/kit`, charts in `src/kit/charts`, `/kit` showcase,
-  routing skeleton with placeholder pages, wallet provider, config loader
-  (`deployBlock`, `rpcUrl`, `managerAddress`, `chainId`, `explorerUrl`),
-  demo-mode switch plumbing.
-- **B Indexer**: `src/indexer`, `src/fixtures`, hooks in `src/data`, tests.
-- **C Pages I**: overview, epochs, epoch detail.
-- **D Pages II**: operators, operator detail, applications, application
-  detail, global search.
-- **E Playground + docs**.
-- **F Review**: Playwright over every route on Sepolia and in demo mode;
-  screenshots inspected by the integrator.
+These are checked against the fixture, which is sized to exceed them.
+
+| Surface | Requirement |
+|---|---|
+| Operators table | 300+ rows virtualised; sort and search stay instant |
+| Committee grid, partial matrix | 64 members legible; cells at least 10 px with hover detail |
+| Epoch list | 200+ epochs paginated or virtualised |
+| Indexer, first scan | chunked `getLogs` with adaptive chunk size; the UI stays usable while it runs, with a progress indicator |
+| Indexer, steady state | at most one RPC round per poll when idle |
+
+Any list that can exceed roughly 50 rows is virtualised. Wide panels scroll
+inside themselves; the page never scrolls sideways.

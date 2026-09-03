@@ -24,6 +24,7 @@ finalization, and partial decryption is verified at transaction time. There is n
 - [On-chain surface](#on-chain-surface)
 - [Integrating](#integrating)
   - [Run a node](#run-a-node)
+  - [Application CLI](#application-cli)
   - [TypeScript SDK](#typescript-sdk)
   - [Encrypting and decrypting](#encrypting-and-decrypting)
 - [Deployments](#deployments)
@@ -158,16 +159,18 @@ A malformed organizer share cannot brick a ciphertext: re-submission overwrites 
 until the plaintext lands, and committee nodes simply skip a share whose DLEQ does not verify and
 re-check on the next tick.
 
-The combine proof discovers `m` via baby-step / giant-step (BSGS) discrete-log inversion. The
-committee node uses a 2⁵⁰ cap (~1 GB table); the SDK uses 2³² (~16 MB) so it can run in a browser.
-Submitting a plaintext above the relevant cap is unrecoverable.
+The combine proof discovers `m` by baby-step giant-step (BSGS) discrete-log inversion. The
+committee node caps at 2⁵⁰ and builds a 256 MB table once per process. The SDK caps at 2³², so
+its table stays around 16 MB and runs in a browser. Submitting a plaintext above the relevant
+cap is unrecoverable.
 
 ### Per-application keys
 
 A `Live` epoch can host many independent encryption contexts — one per **application**, keyed
-by a 32-byte `aid` chosen by the integrator. `aid` is bound into every decryption proof as a
-BN254 scalar-field public input, so it must be non-zero and below the field modulus
-(clear the top three bits of a random or hashed id); the contract rejects other values.
+by a 32-byte `aid` chosen by whoever registers the application. `aid` is bound into every
+decryption proof as a BN254 scalar-field public input, so it must be non-zero and below the
+field modulus (clear the top three bits of a random or hashed id); the contract rejects other
+values.
 
 There is exactly one registration path. `registerApplication` publishes `PK_org = sk_org · G`
 together with a Schnorr proof of possession of `sk_org` (domain
@@ -175,8 +178,8 @@ together with a Schnorr proof of possession of `sk_org` (domain
 `PK_aid = PK_ep + PK_org`, so **decryption needs both the committee and the organizer**: the
 committee alone only ever recovers `sk_ep · C₁`.
 
-`policy.authorizedSubmitter == address(0)` resolves to the registering address — there is no open
-submission, and no `aid = 0` epoch-key path.
+`policy.authorizedSubmitter == address(0)` resolves to the registering address. Submission is
+never open, and every ciphertext belongs to a registered application.
 
 Two consequences worth internalising:
 
@@ -227,34 +230,60 @@ A few load-bearing knobs:
 
 ### Run a node
 
-Run a node and you become eligible to be selected on every epoch.
+Run a node and you become eligible to be drawn on every epoch created after you register. The
+Sepolia deployment below is open, so anyone can join the committee.
 
-**Quickstart (Docker Compose):**
+You need an Ethereum key with a little Sepolia ETH (about 0.05 ETH covers weeks of
+participation, and any Sepolia faucet works), a machine with 4 cores and 4 GB of RAM, and
+Docker.
 
 ```bash
 git clone https://github.com/vocdoni/davinci-dkg.git
 cd davinci-dkg
-cp .env.example .env && $EDITOR .env       # set DAVINCI_DKG_WEB3_RPC + PRIVKEY + NETWORK
+cp .env.example .env && $EDITOR .env
 docker compose --profile node up -d
 docker compose --profile node logs -f node
 ```
 
-For Sepolia you only need `DAVINCI_DKG_NETWORK=sepolia`; contract addresses are baked in. For any
-other network, supply `DAVINCI_DKG_MANAGER=0x...`. The node binary itself does not serve any HTTP
-— pair it with the standalone `ghcr.io/vocdoni/davinci-dkg-ui` image if you want an explorer.
+Three entries in `.env` are enough: `DAVINCI_DKG_NETWORK=sepolia`, your operator key in
+`DAVINCI_DKG_PRIVKEY`, and a Sepolia endpoint in `DAVINCI_DKG_WEB3_RPC`. For a named network
+the contract addresses are built into the binary. On any other network, set
+`DAVINCI_DKG_MANAGER=0x...` instead; the node resolves the registry and the app manager from
+the manager on chain.
 
 What happens on first start:
 
-1. Derive the BabyJubJub key from your operator EVM key, register or update it in `DKGRegistry`.
-2. Print a startup banner with chain head, registry stats, and your `self:` row.
-3. Poll `DKGManager`, react to every phase you are eligible for. Heartbeat / reactivate
-   automatically before `INACTIVITY_WINDOW` expires.
+1. The node derives its BabyJubJub key from your operator EVM key and registers it in
+   `DKGRegistry`. That is one transaction, skipped if you are already registered and active.
+2. Before its first proof it downloads the pinned circuit artifacts (about 190 MB) from the
+   [`circuits-v2` release](https://github.com/vocdoni/davinci-dkg/releases/tag/circuits-v2)
+   and checks every file against the hashes built into the binary.
+3. It prints a startup banner with the chain head, registry statistics and its own `self:` row,
+   then polls `DKGManager` and reacts to every phase it is eligible for.
 
-You only pay gas on the phases you actually participate in. Per-call cost breakdown is in
+Epochs on Sepolia last about 24 hours. Once per epoch the node claims a slot if the lottery
+admits it and submits its contribution during key assembly, which is one Groth16 proof and a
+few seconds of CPU. For the rest of the epoch it answers decryption requests for the epochs it
+belongs to.
+
+Committee size follows the registry: three quarters of the active operators, capped at 32, with
+a majority threshold. Joining therefore takes effect on the next epoch, and nobody has to change
+a setting for it.
+
+The node keeps itself active in the registry. Leaving it off for more than seven days
+(50,400 blocks) lets anyone mark it inactive; starting it again reactivates it.
+
+You pay gas only for the phases you take part in. The per-call breakdown is in
 [`BENCHMARKS.md`](BENCHMARKS.md).
 
-Release binaries and source builds work the same way; see `davinci-dkg-node --help` for flags
-(every flag has a `DAVINCI_DKG_…` env-var equivalent).
+The node binary serves no HTTP. Pair it with the standalone `ghcr.io/vocdoni/davinci-dkg-ui`
+image to host an explorer of your own. The public explorer at
+[dkg.davinci.vote](https://dkg.davinci.vote) shows every epoch, committee, operator and
+decryption, and its playground lets you register an application and decrypt a value against the
+live key from the browser.
+
+Release binaries and source builds are configured the same way. Run `davinci-dkg-node --help`
+for the full flag list; every flag has a `DAVINCI_DKG_…` environment equivalent.
 
 ### Application CLI
 

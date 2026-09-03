@@ -32,13 +32,13 @@ export function DocsSdkPage() {
     >
       <Section id='install' title='Install'>
         <P>
-          ESM-only TypeScript package. <C>viem</C> is a peer dependency; <C>@zk-kit/baby-jubjub</C> provides the curve
-          arithmetic and is pure TypeScript, so nothing needs a native build or a Node polyfill in the browser.
+          ECMAScript-modules-only (ESM) TypeScript package. <C>viem</C> is a peer dependency; <C>@zk-kit/baby-jubjub</C>{' '}
+          provides the curve arithmetic and is pure TypeScript, so nothing needs a native build or a Node polyfill in
+          the browser.
         </P>
         <Code>{`pnpm add @vocdoni/davinci-dkg-sdk viem`}</Code>
         <P>
-          Until it is published, the monorepo can be consumed through a file dependency — which is exactly what this
-          explorer does:
+          Inside this repository the package is consumed through a file dependency, which is what this explorer does:
         </P>
         <Code caption='package.json'>{`"@vocdoni/davinci-dkg-sdk": "link:../sdk"`}</Code>
       </Section>
@@ -54,9 +54,9 @@ export function DocsSdkPage() {
         </P>
         <P>
           Only registration carries a proof of possession of <C>sk_org</C> — a Schnorr proof, verified on chain.
-          Submitting a ciphertext proves nothing, and the organizer share is a keccak-challenge
-          Chaum&ndash;Pedersen DLEQ computed client-side. An organizer therefore needs no circuit artifacts and no
-          prover at all: everything expensive lives on the committee&rsquo;s side.
+          Submitting a ciphertext proves nothing, and the organizer share is a keccak-challenge Chaum&ndash;Pedersen
+          discrete-logarithm equality (DLEQ) proof computed client-side. An organizer therefore needs no circuit
+          artifacts and no prover at all: everything expensive lives on the committee&rsquo;s side.
         </P>
       </Section>
 
@@ -81,8 +81,8 @@ export const dkg = new DKGClient({
       <Section id='epochs' title='Reading an epoch'>
         <P>
           Epoch identifiers are 12-byte values: a 4-byte chain prefix and an 8-byte nonce. Build one with{' '}
-          <C>buildEpochId</C>, or pass a known one as a hex string. Integrators normally do not choose at all — they
-          take the newest epoch whose status is <C>Live</C>, which the operator set has already produced and finalized.
+          <C>buildEpochId</C>, or pass a known one as a hex string. Most applications do not choose at all. They take
+          the newest epoch whose status is <C>Live</C>, which the operator set has already produced and finalized.
         </P>
         <Code caption='epoch.ts'>{`import { buildEpochId, EpochPhase, roundStatusLabel } from '@vocdoni/davinci-dkg-sdk'
 
@@ -95,7 +95,8 @@ console.log(roundStatusLabel(epoch.status), epoch.policy.threshold, epoch.policy
 
 // Once Live, the collective key is a plain view call.
 if (epoch.status === EpochPhase.Live) {
-  const pkEp = await dkg.getCollectivePublicKey(epochId)   // { x, y } in TE form
+  // Twisted-Edwards (TE) coordinates, the form every contract call uses.
+  const pkEp = await dkg.getCollectivePublicKey(epochId)   // { x, y }
 }`}</Code>
       </Section>
 
@@ -125,9 +126,9 @@ stop()`}</Code>
 
       <Section id='register' title='Registering an application'>
         <P>
-          Ciphertexts always belong to a registered application; there is no bare epoch-key path. Registration binds an
-          organizer key so the encryption key becomes <C>PK_aid = PK_ep + PK_org</C>. Only <C>PK_org</C> and the Schnorr
-          proof of possession go on chain — <C>sk_org</C> never leaves the process that drew it.
+          Every ciphertext belongs to a registered application, and an unregistered <C>aid</C> reverts. Registration
+          binds an organizer key so the encryption key becomes <C>PK_aid = PK_ep + PK_org</C>. Only <C>PK_org</C> and
+          the Schnorr proof of possession go on chain — <C>sk_org</C> never leaves the process that drew it.
         </P>
         <Code caption='register.ts'>{`import { createWalletClient, http } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
@@ -196,10 +197,10 @@ console.log('submitted in', hash, 'as ciphertext #', ciphertextIndex)`}</Code>
 
       <Section id='share' title='Releasing the organizer share'>
         <P>
-          The committee&rsquo;s partials are not enough on their own. The organizer publishes{' '}
-          <C>Δ = sk_org·C1</C> with a Chaum&ndash;Pedersen DLEQ proving the same secret relates <C>(G, PK_org)</C> and{' '}
-          <C>(C1, Δ)</C>. Until that lands, <C>combineDecryption</C> reverts <C>OrganizerShareMissing()</C> — so
-          withholding the share until a poll closes costs nothing but a decision.
+          The committee&rsquo;s partials are not enough on their own. The organizer publishes <C>Δ = sk_org·C1</C> with
+          a Chaum&ndash;Pedersen DLEQ proving the same secret relates <C>(G, PK_org)</C> and <C>(C1, Δ)</C>. Until that
+          lands, <C>combineDecryption</C> reverts <C>OrganizerShareMissing()</C> — so withholding the share until a poll
+          closes costs nothing but a decision.
         </P>
         <Code caption='share.ts'>{`await writer.submitOrganizerShare(epochId, aid, ciphertextIndex, ciphertext, skOrg)
 
@@ -237,8 +238,8 @@ if (record.completed) console.log('plaintext:', record.plaintext.toString())
 // Or read it directly once it has landed.
 const m = await dkg.getPlaintext(epochId, aid, ciphertextIndex)`}</Code>
         <Note>
-          The <Internal to={paths.playground()}>playground</Internal> runs exactly this sequence in the browser, with the transcripts
-          of each proof printed next to the transaction that carried them.
+          The <Internal to={paths.playground()}>playground</Internal> runs exactly this sequence in the browser, with
+          the transcripts of each proof printed next to the transaction that carried them.
         </Note>
       </Section>
 

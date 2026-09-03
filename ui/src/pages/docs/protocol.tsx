@@ -29,11 +29,11 @@ export function DocsProtocolPage() {
     >
       <Section id='overview' title='Overview'>
         <P>
-          A committee of independent operators jointly generates an <Em>ElGamal</Em> public key on{' '}
-          <Em>BabyJubJub</Em>, a SNARK-friendly elliptic curve over the BN254 scalar field. The matching private key is
-          never assembled anywhere: ciphertexts are opened by combining partial decryptions, and ElGamal&rsquo;s additive
-          homomorphism lets ciphertexts be aggregated <Em>before</Em> anything is decrypted — so the result of a vote
-          can be revealed while the individual ballots stay sealed.
+          A committee of independent operators jointly generates an <Em>ElGamal</Em> public key on <Em>BabyJubJub</Em>,
+          a SNARK-friendly elliptic curve over the BN254 scalar field. The matching private key is never assembled
+          anywhere: ciphertexts are opened by combining partial decryptions, and ElGamal&rsquo;s additive homomorphism
+          lets ciphertexts be aggregated <Em>before</Em> anything is decrypted — so the result of a vote can be revealed
+          while the individual ballots stay sealed.
         </P>
         <P>
           Every step is a single self-contained transaction carrying a Groth16 proof. There is no complaint phase and no
@@ -82,8 +82,8 @@ export function DocsProtocolPage() {
         <P>
           <C>createEpoch</C> is permissionless but cadence-gated: it reverts unless{' '}
           <C>block.number &ge; nextEpochStartBlock()</C>. In production every node races to fire it the moment the
-          window opens, with jitter, so most losing calls are never even sent. <Em>No application schedules an epoch</Em>
-          , and no operator has to either — the set produces them by itself.
+          window opens, with jitter, so most losing calls are never even sent.{' '}
+          <Em>No application schedules an epoch</Em>, and no operator has to either — the set produces them by itself.
         </P>
         <Sub>Deploy-time parameters</Sub>
         <P>
@@ -135,9 +135,9 @@ export function DocsProtocolPage() {
         <Steps
           items={[
             <>
-              Each committee member publishes a Feldman VSS contribution: polynomial commitments plus shares encrypted
-              to the other members&rsquo; registry keys, with a Groth16 proof that the two are consistent. One
-              transaction, verified on chain at submission.
+              Each committee member publishes a Feldman verifiable secret sharing (VSS) contribution: polynomial
+              commitments plus shares encrypted to the other members&rsquo; registry keys, with a Groth16 proof that the
+              two are consistent. One transaction, verified on chain at submission.
             </>,
             <>
               The contract accumulates accepted contributions into the collective key{' '}
@@ -160,8 +160,8 @@ export function DocsProtocolPage() {
       <Section id='applications' title='Applications and organizer keys'>
         <P>
           A Live epoch hosts many independent encryption contexts — one per <Em>application</Em>, named by a 32-byte{' '}
-          <C>aid</C> the integrator chooses. Because <C>aid</C> is a public input of every decryption proof it must be
-          non-zero and below the BN254 scalar modulus: clear the top three bits of a random or hashed id.
+          <C>aid</C> chosen by whoever registers it. Because <C>aid</C> is a public input of every decryption proof it
+          must be non-zero and below the BN254 scalar modulus: clear the top three bits of a random or hashed id.
         </P>
         <P>
           There is exactly one registration path, and it is not optional. <C>registerApplication</C> publishes{' '}
@@ -171,20 +171,21 @@ export function DocsProtocolPage() {
         <Code caption='application key'>{`PK_aid = PK_ep + PK_org`}</Code>
         <P>
           so opening a ciphertext needs <Em>both</Em> the committee threshold and the organizer. The committee alone
-          only ever recovers <C>sk_ep·C1</C>. <C>policy.authorizedSubmitter == address(0)</C> resolves to the
-          registering address — there is no open submission and no bare epoch-key path.
+          only ever recovers <C>sk_ep·C1</C>. A zero <C>policy.authorizedSubmitter</C> resolves to the registering
+          address. Submission is never open, and every ciphertext belongs to a registered application.
         </P>
         <Note tone='warn'>
           Losing <C>sk_org</C> makes the application <Em>permanently undecryptable</Em>. It is never transmitted and
           nothing on chain can reconstruct it. Conversely, the organizer can decrypt any ciphertext of its own
           application by combining its <C>Δ</C> with the committee&rsquo;s published partials: within an application the
-          organizer is trusted and accountable; across applications, secrecy rests on DDH over the organizer keys.
+          organizer is trusted and accountable; across applications, secrecy rests on the decisional
+          Diffie&ndash;Hellman (DDH) assumption over the organizer keys.
         </Note>
         <P>
           This is what replaces a proof of knowledge of the encryption randomness. A ciphertext copied out of one
-          application and decrypted under another yields <C>sk_ep·C1</C>, useless without the target
-          application&rsquo;s <C>sk_org·C1</C> — so <C>submitCiphertext</C> needs no proof, which is in turn what makes
-          homomorphic aggregation possible: whoever submits an aggregated tally cannot know its randomness.
+          application and decrypted under another yields <C>sk_ep·C1</C>, useless without the target application&rsquo;s{' '}
+          <C>sk_org·C1</C> — so <C>submitCiphertext</C> needs no proof, which is in turn what makes homomorphic
+          aggregation possible: whoever submits an aggregated tally cannot know its randomness.
         </P>
       </Section>
 
@@ -199,10 +200,11 @@ export function DocsProtocolPage() {
               a cofactor <C>C1</C> would leak <C>d_i mod h</C> from a node that skipped it.
             </>,
             <>
-              Each selected node publishes its partial <C>δ_i = d_i·C1</C> with a Groth16 proof of a Chaum&ndash;Pedersen
-              DLEQ binding <C>δ_i</C> to its share commitment <C>D_i</C> and to <C>C1</C>; the DLEQ transcript is hashed
-              in-circuit with Poseidon. Nodes stagger by slot, so partials arrive in <Em>waves</Em> and only the first{' '}
-              <C>t</C> members of a seed-derived rotation actually spend gas.
+              Each selected node publishes its partial <C>δ_i = d_i·C1</C> with a Groth16 proof of a
+              Chaum&ndash;Pedersen discrete-logarithm equality (DLEQ) binding <C>δ_i</C> to its share commitment{' '}
+              <C>D_i</C> and to <C>C1</C>; the DLEQ transcript is hashed in-circuit with Poseidon. Nodes stagger by
+              slot, so partials arrive in <Em>waves</Em> and only the first <C>t</C> members of a seed-derived rotation
+              actually spend gas.
             </>,
             <>
               The organizer publishes <C>Δ = sk_org·C1</C> with a Chaum&ndash;Pedersen DLEQ whose challenge is a{' '}
@@ -211,12 +213,11 @@ export function DocsProtocolPage() {
               <Em>never verifies the DLEQ itself</Em>.
             </>,
             <>
-              Once <C>t</C> partials <Em>and</Em> an organizer share are on chain, anyone calls{' '}
-              <C>combineDecryption</C>. Its Groth16 proof attests three things at once: that{' '}
-              <C>Σ λ_k · δ_k</C> Lagrange-interpolates correctly, that the organizer&rsquo;s DLEQ verifies against the
-              registered <C>PK_org</C> and the challenge <C>e</C> the contract pinned, and that{' '}
-              <C>m·G + Σ λ_k · δ_k + Δ = C2</C>. The recovered scalar <C>m</C> lands on chain, readable via{' '}
-              <C>getPlaintext</C>.
+              Once <C>t</C> partials <Em>and</Em> an organizer share are on chain, anyone calls <C>combineDecryption</C>
+              . Its Groth16 proof attests three things at once: that <C>Σ λ_k · δ_k</C> Lagrange-interpolates correctly,
+              that the organizer&rsquo;s DLEQ verifies against the registered <C>PK_org</C> and the challenge <C>e</C>{' '}
+              the contract pinned, and that <C>m·G + Σ λ_k · δ_k + Δ = C2</C>. The recovered scalar <C>m</C> lands on
+              chain, readable via <C>getPlaintext</C>.
             </>,
           ]}
         />
@@ -227,9 +228,10 @@ export function DocsProtocolPage() {
         </P>
         <Sub>Plaintext range</Sub>
         <P>
-          <C>m</C> is recovered by baby-step / giant-step discrete-log inversion. The committee node caps at{' '}
-          <C>2⁵⁰</C> (≈1.13&times;10¹⁵, ~1 GB table); the browser SDK caps at <C>2³²</C> so its table stays around
-          16 MB. Submitting a plaintext above the relevant cap leaves the ciphertext unrecoverable.
+          <C>m</C> is recovered by baby-step giant-step (BSGS) discrete-log inversion. The committee node caps at{' '}
+          <C>2⁵⁰</C> (≈1.13&times;10¹⁵) and builds a 256 MB table once per process. The browser SDK caps at <C>2³²</C>,
+          so its table stays around 16 MB. Submitting a plaintext above the relevant cap leaves the ciphertext
+          unrecoverable.
         </P>
       </Section>
 

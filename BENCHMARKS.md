@@ -14,8 +14,9 @@ PartialDecrypt and DecryptCombine.
 
 ## Circuit constraint counts
 
-Measured with `go run ./cmd/constraints` (`<circuit>.Compile()` +
-`ccs.GetNbConstraints()`), September 2026.
+Rank-1 constraint system (R1CS) sizes, measured with
+`go run ./cmd/constraints` (`<circuit>.Compile()` + `ccs.GetNbConstraints()`),
+September 2026.
 
 | Circuit         | MaxN = 16 | MaxN = 32 | MaxN = 48 |
 |-----------------|----------:|----------:|----------:|
@@ -57,17 +58,10 @@ ciphertext it helps decrypt.
 
 ## On-chain gas (Sepolia, real verifiers)
 
-Measured on the Sepolia deployment described in the README (manager
-`0x3f9b338706a31f26d49159478015c8aaeab908ad`, deployed at block 11,619,019,
-`MIN_THRESHOLD=2`, `MIN_COMMITTEE_SIZE=3`, `MAX_LOTTERY_ALPHA_BPS=20000`,
-windows 100/25/25/5 blocks) with **MaxN = 32**, a committee of `n = 3`,
-`t = 2` drawn from four operators at α = 1.5, epoch
-`0x2f1105e90000000000000001`. Gas is `gasUsed` from the receipt, so it
-includes the pairing check, calldata and the intrinsic cost. The
-N-dependent calldata (contribution `8·MaxN` words, finalization
-`2·MaxN² + 5·MaxN` words, combine `12 + 3·MaxN` words) does not depend on
-`n`, so these are the costs any `n ≤ 32` pays per call. Every transaction is
-an event on the deployment above; the hashes given are examples.
+Measured on Sepolia with the contract build of the public testnet (the
+same bytecode is deployed at `0xd38af14cd3b550e268693b459c08ef7331cb23b0`;
+per-call gas does not depend on the epoch windows) with **MaxN = 32**, a
+committee of `n = 3`, `t = 2`, reading `gasUsed` from the receipts.
 
 | Call                        |                 Gas | Paid by                                        | Evidence (tx) |
 |-----------------------------|--------------------:|------------------------------------------------|---------------|
@@ -103,46 +97,51 @@ Reading the table:
 
 ## A 32-node fleet under load (Anvil, two hosts)
 
-Measured on 2026-09-03 with `tests/battery`: 32 operators split over two
-32-core hosts, committee n = 24, t = 16, m_min = 20, 2-second blocks, 300-block
-epochs. Eight organizers register concurrently and submit six ciphertexts
-each (48 in one block), releasing shares immediately, after six blocks, or
-never for a quarter of them.
+Measured with `tests/battery` on 2026-09-03: 32 operators split over two
+32-core hosts, committee n = 24, t = 16, m_min = 20, 2-second blocks,
+300-block epochs. Eight organizers register concurrently and submit six
+ciphertexts each (48 in one block), releasing shares immediately, after six
+blocks, or never for a quarter of them.
 
-| | before the fix | after |
-|---|---|---|
+| | quiet fleet | 4 local nodes restarted, Anvil paused 20 s, 6 remote nodes down 90 s |
+|---|---:|---:|
 | ciphertexts decrypted / released | 40 / 40 | 40 / 40 |
 | withheld shares never combined | 8 / 8 | 8 / 8 |
-| partials on chain per ciphertext | 18–24 (t = 16) | 16 for 41 of 48, ≤ 23 |
-| submit → combine latency (avg) | 50 blocks / 100 s | 17 blocks / 35 s |
-| throughput | 0.30 ct/s | 0.77 ct/s |
-| gas: contribution / finalize (n = 24) | 513 k / 2.14 M | same |
-| gas: partial / combine / register / share | 399 k / 430 k / 390 k / 88 k | same |
-| same swarm with 4 local nodes restarted, Anvil paused 20 s and 6 remote nodes down 90 s mid-run | — | 40 / 40 decrypted, 23 blocks avg, 0.42 ct/s |
+| partials on chain per ciphertext | 16 for 41 of 48, never above 23 | 16 to 23 |
+| submit to combine, average | 17 blocks (35 s) | 23 blocks (65 s) |
+| throughput | 0.77 ciphertexts/s | 0.42 ciphertexts/s |
 
-The fix (`node/decrypt.go`): partial and combine transactions are sent
-without waiting for their receipt, later waves only fire when the earlier
-ones have stopped landing partials, and the combine (dlog + proof) runs off
-the service loop, one at a time per node. Every adversarial scenario
-(tampered, replayed and relayed shares; ciphertexts outside the window, over
-the cap, off-curve, in a small-order subgroup, undecryptable or copied from
-another application; late registration, duplicate claims, contributions and
-partials; early finalize; abort of a healthy epoch) is rejected as designed.
-Two costs are accepted and documented: an undecryptable ciphertext makes each
-member of the combine rotation run one bounded 2^50 BSGS search (~20 s of
-CPU, 256 MB table built once per process), after which the node ignores the
-rest of that application's ciphertexts for the epoch (one search per
-registration, not per ciphertext); and a withheld share parks its slot in
-every node (no per-tick cost) until an organizer share event wakes it.
+Gas on this fleet: contribution 513 k and finalize 2.14 M at n = 24; partial
+399 k, combine 430 k, registerApplication 390 k, organizer share 88 k.
+
+A node sends its partial and combine transactions without waiting for the
+receipt, so one poll serves every pending ciphertext; later partial waves
+only step in when the earlier ones have stopped landing partials; and the
+combine (discrete-log search plus proof) runs off the service loop, one at
+a time per node, yielding to a contribution or finalization in progress.
+Every adversarial scenario of the battery is rejected as designed: tampered,
+replayed and relayed shares; ciphertexts outside the window, over the cap,
+off-curve, in a small-order subgroup, undecryptable or copied from another
+application; late registration, duplicate claims, contributions and
+partials; finalizing early; aborting a healthy epoch.
+
+Two costs are deliberate. An undecryptable ciphertext makes each member of
+the combine rotation run one bounded 2^50 baby-step giant-step search (about
+20 s of CPU and a 256 MB table built once per process), after which the node
+ignores the rest of that application's ciphertexts for the epoch, so an
+attacker pays one search per registration rather than per ciphertext. A
+withheld organizer share parks its slot in every node at no recurring cost
+until a share event wakes it.
 
 ## Groth16 versus PLONK (universal setup)
 
 Measured on 2026-09-03 with gnark v0.16.3 / gnark-crypto v0.21.0 at
 `MaxN = 32` (`go test ./circuits/... -bench BenchmarkBackends -benchtime=1x`,
 Ryzen 9 9950X3D, 32 threads, average of 3 proofs; PLONK with an unsafe test
-SRS, which does not change prover cost). On-chain gas is the deployed Groth16
-combine verifier on a real proof versus gnark's exported PLONK verifier for
-the same statement (11 public inputs), both under `via_ir`, `optimizer_runs = 1`.
+structured reference string (SRS), which does not change prover cost).
+On-chain gas is the deployed Groth16 combine verifier on a real proof versus
+gnark's exported PLONK verifier for the same statement (11 public inputs),
+both under `via_ir`, `optimizer_runs = 1`.
 
 | circuit | Groth16 R1CS | PLONK gates | Groth16 prove | PLONK prove | proof bytes G16 / PLONK |
 |---|---:|---:|---:|---:|---:|
@@ -167,8 +166,8 @@ everything fits the protocol windows even on modest hardware, and the
 migration is mechanical (`scs` builder, `plonk` backend, gnark's PLONK
 Solidity export, 864-byte proofs and a `Verify(bytes, uint256[])` ABI), so
 the choice is purely setup trust versus prover cost. Groth16 stays the
-default; a Groth16 MPC ceremony for the four circuits is the cheaper way to
-remove the single-party setup.
+default; a Groth16 multi-party computation (MPC) ceremony for the four
+circuits is the cheaper way to remove the single-party setup.
 
 The same run showed that upgrading gnark from the pinned v0.14 snapshot to
 v0.16.3 changes the compiled R1CS (partial +19 %, combine +11 %,

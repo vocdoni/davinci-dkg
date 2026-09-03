@@ -1,9 +1,10 @@
 # davinci-dkg UI
 
-Standalone Vite + React + TypeScript SPA for the davinci-dkg explorer,
-playground, and operator/SDK documentation. `EXPLORER.md` is the
-specification it is built against; `design/` is the design package (tokens,
-theme, preview) that defines every colour, radius and type step.
+Standalone Vite + React + TypeScript single-page application (SPA) for the
+davinci-dkg explorer, playground, and operator and SDK documentation.
+[`EXPLORER.md`](EXPLORER.md) describes the routes, the data layer and the
+scale requirements; `design/` is the design package (tokens, theme, preview)
+that defines every colour, radius and type step.
 
 Stack: Vite 5 + React 18 + TypeScript (strict), Tailwind CSS v4 (with
 `design/theme.css` as the `@theme`), react-router v6, TanStack Query /
@@ -59,11 +60,11 @@ only sees recent history.
 
 ## Demo mode
 
-Append `?demo=1` to any URL (or build with `VITE_DEMO=1`) and the whole app
+Append `?demo=1` to any URL, or build with `VITE_DEMO=1`, and the whole app
 runs from the synthetic fixture with no RPC at all: 300 operators, 64-member
 committees, applications with partials arriving in waves. `useRuntimeConfig()`
-exposes it as `config.demo`; pages must read it from there rather than parsing
-the URL themselves. Demo mode also survives a missing `/config.json`.
+exposes it as `config.demo`. Read it from there rather than parsing the URL in
+a page. Demo mode also survives a missing `/config.json`.
 
 ## Build
 

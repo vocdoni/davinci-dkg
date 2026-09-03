@@ -33,9 +33,9 @@ export function DocsRunANodePage() {
               <C>docker</C> ≥ 24 and <C>docker compose</C> v2.
             </>,
             <>
-              An EVM private key with a little native currency for fees on {config.chainName}. The node pays for
-              registry registration, slot claims, contributions and partial decryptions — only for the phases it
-              actually takes part in. For Sepolia, the{' '}
+              An Ethereum Virtual Machine (EVM) private key, holding a little {config.chainName} native currency for
+              fees. The node pays for registry registration, slot claims, contributions and partial decryptions, only
+              for the phases it actually takes part in. For Sepolia, the{' '}
               <Ext href='https://sepolia-faucet.pk910.de/'>pk910 proof-of-work faucet</Ext> and the{' '}
               <Ext href='https://cloud.google.com/application/web3/faucet/ethereum/sepolia'>Google Cloud faucet</Ext>{' '}
               both work.
@@ -94,7 +94,8 @@ docker compose --profile node logs -f node`}</Code>
             </>,
             <>
               It prints a startup banner with the chain head, registry statistics and its own <C>self:</C> row, then
-              polls <C>DKGManager</C> at the configured interval (default 20 s).
+              polls <C>DKGManager</C> on the configured interval: <C>DAVINCI_DKG_POLL_INTERVAL</C>, which the example{' '}
+              <C>.env</C> sets to 20 s and the binary defaults to 5 s.
             </>,
             <>
               It races the other nodes to call <C>createEpoch</C> once the cadence window opens, with random jitter so
@@ -180,9 +181,9 @@ docker compose --profile node --profile ui up -d
             </>,
             <>
               <Em>Organizer shares.</Em> A ciphertext is only combinable once its organizer has published{' '}
-              <C>Δ = sk_org·C1</C>. The node verifies that Chaum&ndash;Pedersen DLEQ off chain (the contract stores only
-              a hash), skips an invalid one, and re-checks on the next tick; a corrected share can be re-submitted until
-              the ciphertext is combined.
+              <C>Δ = sk_org·C1</C>. The node verifies that Chaum&ndash;Pedersen discrete-logarithm equality (DLEQ) proof
+              off chain, since the contract stores only a hash. It skips an invalid one and re-checks on the next tick;
+              a corrected share can be re-submitted until the ciphertext is combined.
             </>,
             <>
               <Em>Dead epochs.</Em> An epoch whose committee never filled, or whose key assembly closed below{' '}
@@ -191,12 +192,8 @@ docker compose --profile node --profile ui up -d
             </>,
             <>
               <Em>Plaintext range.</Em> Combined ciphertexts must encode a non-negative integer below <C>2⁵⁰</C>.
-              Recovery uses a precomputed BSGS table: roughly 30&ndash;60 s and 1&ndash;2 GB of heap on the first
-              decrypt, reused afterwards. A node that never decrypts pays nothing.
-            </>,
-            <>
-              <Em>Recent epochs buffer.</Em> The contract enumerates only the most recent 64 epochs. Older ones remain
-              valid on chain but are not listed.
+              Recovery uses a precomputed baby-step giant-step (BSGS) table of 256 MB, built once on the first decrypt
+              and reused afterwards. A node that never decrypts never builds it.
             </>,
           ]}
         />
@@ -219,8 +216,8 @@ docker compose --profile node --profile ui up -d
         />
         <Sub>Other networks</Sub>
         <P>
-          New deployments are added to <C>config/networks.go</C>, after which{' '}
-          <C>DAVINCI_DKG_NETWORK=&lt;name&gt;</C> works without any other change.
+          New deployments are added to <C>config/networks.go</C>, after which <C>DAVINCI_DKG_NETWORK=&lt;name&gt;</C>{' '}
+          works without any other change.
         </P>
       </Section>
 

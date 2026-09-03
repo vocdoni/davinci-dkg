@@ -10,9 +10,10 @@ regular integration suite are unaffected.
 
 ## Running
 
-CI runs the swarm and the share adversary against a 4-node testnet on every
-push and nightly (`.github/workflows/battery.yml`); locally, `make battery`
-runs `$(BATTERY_RUN)` against whatever `DAVINCI_DKG_TEST_RPC_URL` points at.
+CI runs the swarm and the share adversary against a 4-node testnet on pushes
+to `main`, on pull requests and nightly (`.github/workflows/battery.yml`).
+Locally, `make battery` runs `$(BATTERY_RUN)` against whatever
+`DAVINCI_DKG_TEST_RPC_URL` points at.
 
 ```bash
 make testnet-up DKG_NODE_COUNT=32 ...            # or whatever brings the fleet up
@@ -70,7 +71,7 @@ says so.
 | `BATTERY_SHARE_DELAY_BLOCKS` | 6 | delay of the "delayed" release mode |
 | `BATTERY_WITHHELD_WAIT_BLOCKS` | 40 | blocks a withheld slot is watched before asserting "not combined" |
 | `BATTERY_NO_COMBINE_WAIT_BLOCKS` | 40 | same, for bad shares |
-| `BATTERY_COMBINE_WAIT_BLOCKS` | 240 | maximum wait for an expected combine (generous on purpose, see `chaos.md`) |
+| `BATTERY_COMBINE_WAIT_BLOCKS` | 240 | maximum wait for an expected combine (generous on purpose, see [`chaos.md`](chaos.md)) |
 | `BATTERY_POISON_OBSERVE_BLOCKS` | 45 | blocks between the "early" and "late" status of a poisoned slot |
 | `BATTERY_MIN_SERVICE_BLOCKS` | 90 | minimum blocks before the cadence boundary for a Live epoch to be picked |
 | `BATTERY_TX_TIMEOUT` | 3m | receipt wait per transaction |
@@ -97,3 +98,5 @@ says so.
 - Withheld ciphertexts stay pending in every node's scanner forever (the
   set is capped at 1024 per node). That is by design; a long-running fleet
   used for many battery runs accumulates them.
+
+To disrupt the fleet by hand while the swarm runs, see [`chaos.md`](chaos.md).
