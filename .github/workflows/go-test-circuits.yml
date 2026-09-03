@@ -5,10 +5,12 @@ on:
     paths:
       - 'circuits/**'
       - 'crypto/**'
+      - 'config/circuit_artifacts.go'
   push:
     paths:
       - 'circuits/**'
       - 'crypto/**'
+      - 'config/circuit_artifacts.go'
     branches:
       - dev
       - stage

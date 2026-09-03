@@ -149,14 +149,18 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+          cache: false # self-hosted: the box keeps its own build cache; uploading it took 8 min
 
       - name: Build all binaries
         run: go build ./cmd/...
 
       - name: Run unit tests
+        # Circuit packages run Groth16 setups (contribution alone ≈ 7 min);
+        # they are covered by the Test Circuits workflow on every change to
+        # circuits/, crypto/ or the pinned hashes, and nightly.
         run: |
           go test -v \
-            $(go list ./... | grep -v github.com/vocdoni/davinci-dkg/tests) \
+            $(go list ./... | grep -vE 'github.com/vocdoni/davinci-dkg/(tests|circuits)') \
             -timeout=30m \
             -failfast
 
@@ -190,6 +194,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+          cache: false
 
       - name: Install Foundry (for deployer container build)
         uses: foundry-rs/foundry-toolchain@v1
