@@ -335,7 +335,9 @@ honest path:
    partial, and once `t` partials **and** the organizer share are on chain, the node whose turn
    comes first in the seed-derived rotation calls `combineDecryption`. The recovered plaintext is
    readable on `getPlaintext`. A restarted node re-scans the last `--decrypt-lookback-blocks`
-   (default ~7 days) for ciphertexts still awaiting decryption.
+   (default ~7 days) for ciphertexts still awaiting decryption; slots whose organizer share has not
+   been posted are parked at no cost until the share event arrives, and an application that produced
+   an undecryptable ciphertext stays ignored for the epoch (`<datadir>/tainted-apps.json`).
 
 ---
 

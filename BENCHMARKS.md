@@ -132,8 +132,8 @@ Two costs are accepted and documented: an undecryptable ciphertext makes each
 member of the combine rotation run one bounded 2^50 BSGS search (~20 s of
 CPU, 256 MB table built once per process), after which the node ignores the
 rest of that application's ciphertexts for the epoch (one search per
-registration, not per ciphertext); and a withheld share keeps its slot
-pending in every node until the epoch ends.
+registration, not per ciphertext); and a withheld share parks its slot in
+every node (no per-tick cost) until an organizer share event wakes it.
 
 ## How to reproduce
 

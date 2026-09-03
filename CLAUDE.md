@@ -103,13 +103,19 @@ Anything that touches encodings, hashes or constants has to be changed in all of
   before computing a partial — the contract deliberately skips that check (~0.17 M gas), so this one is
   load-bearing, not belt-and-braces. Partials are posted in seed-derived waves of `t` members
   (`staggerSlot / t`); a later wave only posts if, `staggerBlocks` later, fewer than `t` partials are on
-  chain, so an honest ciphertext costs `t` partials, not `n`. A slot becomes combinable only when `t` partials **and** a
-  verifying organizer share are on chain: `latestOrganizerShare` reads the newest
-  `OrganizerShareSubmitted` event, verifies it with `dleq.VerifyOrganizerShare` against the
-  application's registered `PK_org` (read through `DKGAppManager.getApplication`), and skips the slot
-  until the next tick if it does not verify — the organizer may overwrite a malformed share, so this
-  must never be terminal. The combine then runs on a seed-derived stagger anchored on whichever of the
-  two prerequisites landed last. All secret scalars come from `scalars.go` (`crypto/rand`, never
+  chain **and** the earlier waves have stopped landing partials (`laterWaveDue`), so an honest ciphertext
+  costs `t` partials, not `n`, even under load. Partial and combine transactions are sent without waiting
+  for the receipt (`inflight`, settled next tick) so one tick serves every pending ciphertext. A slot
+  becomes combinable only when `t` partials **and** a verifying organizer share are on chain:
+  `latestOrganizerShare` reads the newest `OrganizerShareSubmitted` event, verifies it with
+  `dleq.VerifyOrganizerShare` against the application's registered `PK_org` (read through
+  `DKGAppManager.getApplication`); a slot with no verifying share is *parked* (`park`/`wakeParked`) and
+  costs nothing per tick until a share event wakes it, because epochs stay Live on chain forever. The
+  combine (dlog search, proof, send) runs in a per-slot goroutine, one at a time per node (`combineSem`),
+  yielding to an in-progress contribution or finalization (`critical`). A ciphertext whose plaintext is
+  out of range taints its application for the epoch (`taintedApps`, persisted in
+  `<datadir>/tainted-apps.json`) so an attacker pays one search per registration. All secret scalars
+  come from `scalars.go` (`crypto/rand`, never
   deterministic); `dlog.go` is a compact parallel BSGS (2^50 cap, ~256 MB). Every flag has a
   `DAVINCI_DKG_*` env equivalent (`config.go`). `--network sepolia` resolves the manager from
   `config/networks.go`; registry, verifiers and app manager are read from the manager on-chain.

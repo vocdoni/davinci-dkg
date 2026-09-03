@@ -114,6 +114,9 @@ func (n *Node) scanCiphertexts(ctx context.Context) error {
 			if _, seen := n.pending[key]; seen {
 				continue
 			}
+			if _, parked := n.parked[key]; parked {
+				continue
+			}
 			if _, done := n.served[key]; done {
 				continue
 			}
@@ -128,6 +131,9 @@ func (n *Node) scanCiphertexts(ctx context.Context) error {
 		_ = it.Close()
 		if err != nil {
 			return fmt.Errorf("iterate CiphertextSubmitted: %w", err)
+		}
+		if err := n.wakeParked(ctx, start, end); err != nil {
+			return err
 		}
 		n.lastCtScan = end
 	}
@@ -165,11 +171,63 @@ func (n *Node) trackCiphertext(key ctKey, ct *ciphertext) {
 }
 
 // forget drops every piece of per-slot state.
+// park moves a slot that only waits for an organizer share out of the
+// per-tick service loop. Epochs stay Live on chain indefinitely, so without
+// this every withheld share would cost every node a few RPC scans per tick
+// forever; a parked slot costs nothing until OrganizerShareSubmitted wakes it.
+func (n *Node) park(key ctKey) {
+	ct, ok := n.pending[key]
+	if !ok {
+		return
+	}
+	delete(n.pending, key)
+	delete(n.backoff, key)
+	if len(n.parked) >= maxParkedCiphertexts {
+		var oldest ctKey
+		oldestSeq := ^uint64(0)
+		for k, c := range n.parked {
+			if c.seq < oldestSeq {
+				oldest, oldestSeq = k, c.seq
+			}
+		}
+		delete(n.parked, oldest)
+	}
+	n.parked[key] = ct
+	log.Infow("parked until the organizer posts a share", "ct", key.String(), "parked", len(n.parked))
+}
+
+// wakeParked returns to the pending set every parked slot that received an
+// organizer share in [start, end].
+func (n *Node) wakeParked(ctx context.Context, start, end uint64) error {
+	if len(n.parked) == 0 {
+		return nil
+	}
+	it, err := n.appManager.FilterOrganizerShareSubmitted(&bind.FilterOpts{Context: ctx, Start: start, End: &end}, nil, nil, nil)
+	if err != nil {
+		return fmt.Errorf("filter OrganizerShareSubmitted [%d,%d]: %w", start, end, err)
+	}
+	defer func() { _ = it.Close() }()
+	for it.Next() {
+		ev := it.Event
+		key := ctKey{ev.EpochId, ev.Aid, ev.CiphertextIndex}
+		if ct, ok := n.parked[key]; ok {
+			delete(n.parked, key)
+			n.pending[key] = ct
+			log.Infow("organizer share seen — resuming the slot", "ct", key.String(), "block", ev.Raw.BlockNumber)
+		}
+	}
+	if err := it.Error(); err != nil {
+		return fmt.Errorf("iterate OrganizerShareSubmitted: %w", err)
+	}
+	return nil
+}
+
 func (n *Node) forget(key ctKey) {
 	delete(n.pending, key)
 	delete(n.partialDone, key)
 	delete(n.backoff, key)
 	delete(n.inflight, key)
+	delete(n.parked, key)
 	n.jobsMu.Lock()
 	delete(n.combineJobs, key)
 	n.jobsMu.Unlock()
@@ -185,6 +243,15 @@ type inflightTx struct {
 	plaintext *big.Int // combine only, for the log line
 	sent      time.Time
 }
+
+// maxParkedCiphertexts bounds the slots kept aside for a share that may never
+// come; beyond it the oldest is dropped (rediscovery re-parks it if it is
+// still inside the scan window).
+const maxParkedCiphertexts = 4096
+
+// criticalYield bounds how long a combine job defers to an in-progress
+// contribution or finalization before running anyway.
+const criticalYield = 3 * time.Minute
 
 // inflightTimeout is how long a sent tx may stay unmined before the slot is
 // retried from scratch (the tx manager keeps rebroadcasting meanwhile).
@@ -658,8 +725,12 @@ func (n *Node) tryCombine(
 		return false, nil
 	}
 	share, ready, err := n.latestOrganizerShare(ctx, tc, key, ct.c1, epoch.SeedBlock, head)
-	if err != nil || !ready {
+	if err != nil {
 		return false, err
+	}
+	if !ready {
+		n.park(key)
+		return false, nil
 	}
 	// The rotation is anchored on whichever of the two prerequisites landed
 	// last, so an organizer share posted long after the partials does not
@@ -695,6 +766,7 @@ func (n *Node) tryCombine(
 		// serve nothing else of this application in this epoch, which caps
 		// what one registration can make the committee compute.
 		n.taintedApps[appKey{epoch: key.epoch, aid: key.aid}] = true
+		n.saveTaints()
 		log.Warnw("application tainted: ignoring its remaining ciphertexts for this epoch", "ct", key.String())
 	}
 	switch {
@@ -731,6 +803,11 @@ func (n *Node) runCombineJob(
 	// One combine at a time per node: the dlog search saturates every core,
 	// and several at once (e.g. re-discovered poisoned slots after a restart)
 	// would starve the partials and the RPC client.
+	// Contributions and finalizations have a deadline; a search has none.
+	// Let the epoch-critical work of the tick loop finish first.
+	for wait := time.Duration(0); n.critical.Load() > 0 && wait < criticalYield; wait += 500 * time.Millisecond {
+		time.Sleep(500 * time.Millisecond)
+	}
 	n.combineSem <- struct{}{}
 	res := n.combine(key, ct, idxs, deltas, share, threshold)
 	<-n.combineSem
@@ -776,7 +853,8 @@ func (n *Node) combine(
 	plaintext, err := dlogBSGS(mG)
 	if err != nil {
 		// Plaintext ≥ MaxDLogPlaintext: retrying can never succeed.
-		log.Errorw(err, fmt.Sprintf("combine: dlog failed for %s (plaintext must be < 2^50)", key.String()))
+		// An attacker-made ciphertext, not a node fault: warn, don't error.
+		log.Warnw("combine: dlog failed, the plaintext is out of range (must be < 2^50)", "ct", key.String(), "err", err)
 		return &combineResult{done: true, taint: true}
 	}
 

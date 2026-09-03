@@ -225,3 +225,47 @@ func TestLaterWaveDueNeedsBothDelayAndStalledProgress(t *testing.T) {
 		t.Fatal("wave 2 fired before ctBlock+2*staggerBlocks")
 	}
 }
+
+func TestParkMovesASlotOutOfPendingAndForgetClearsIt(t *testing.T) {
+	n := &Node{
+		pending: map[ctKey]*ciphertext{}, parked: map[ctKey]*ciphertext{},
+		partialDone: map[ctKey]bool{}, backoff: map[ctKey]*serviceBackoff{}, inflight: map[ctKey]inflightTx{},
+		combineJobs: map[ctKey]*combineResult{},
+	}
+	key := ctKey{idx: 1}
+	n.trackCiphertext(key, &ciphertext{block: 10})
+	n.backoff[key] = &serviceBackoff{}
+	n.park(key)
+	if _, ok := n.pending[key]; ok {
+		t.Fatal("parked slot still pending")
+	}
+	if _, ok := n.parked[key]; !ok {
+		t.Fatal("slot not parked")
+	}
+	if _, ok := n.backoff[key]; ok {
+		t.Fatal("park kept the backoff record")
+	}
+	n.park(key) // idempotent: not pending any more
+	n.forget(key)
+	if _, ok := n.parked[key]; ok {
+		t.Fatal("forget left the slot parked")
+	}
+}
+
+func TestTaintsSurviveARestart(t *testing.T) {
+	dir := t.TempDir()
+	n := &Node{taintedApps: map[appKey]bool{}, taintFile: taintPath(dir)}
+	key := appKey{epoch: [12]byte{1, 2, 3}, aid: [32]byte{9}}
+	n.taintedApps[key] = true
+	n.saveTaints()
+	again := &Node{taintedApps: map[appKey]bool{}, taintFile: taintPath(dir)}
+	again.loadTaints()
+	if !again.taintedApps[key] {
+		t.Fatal("taint not reloaded from disk")
+	}
+	empty := &Node{taintedApps: map[appKey]bool{}, taintFile: taintPath(t.TempDir())}
+	empty.loadTaints() // no file: nothing to load, no error
+	if len(empty.taintedApps) != 0 {
+		t.Fatal("unexpected taints")
+	}
+}

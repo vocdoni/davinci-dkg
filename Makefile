@@ -1,13 +1,14 @@
 .PHONY: help \
         circuits-compile circuits-update-hashes circuits circuits-release \
         solidity-build solidity-bind solidity-deploy \
-        testnet-up testnet-run testnet-down testnet-logs \
+        testnet-up testnet-run testnet-down testnet-logs battery \
         ui-install ui-build ui-dev ui-clean ui-test ui-config \
         build test test-integration
 
 # Default node count and threshold for testnet
 DKG_NODE_COUNT        ?= 3
 DKG_THRESHOLD         ?= 2
+BATTERY_RUN           ?= TestOrganizerSwarm|TestShareAdversary
 DKG_DISCLOSURE_ALLOWED ?= false
 
 # Circuit artifact cache directory (mirrors DAVINCI_DKG_ARTIFACTS_DIR default)
@@ -182,6 +183,12 @@ testnet-run: ## (Deprecated alias) Wait for the running dkg-node fleet to auto-c
 	@echo "auto-creates epochs by default (--auto-create-epochs=true)."
 	@echo "Bring the fleet up with 'make testnet-up' and tail logs with"
 	@echo "'make testnet-logs' to watch the schedule."
+
+battery: ## Run the load / adversarial battery against a running testnet (see tests/battery/README.md)
+	DAVINCI_DKG_BATTERY=1 \
+	DAVINCI_DKG_TEST_RPC_URL=$${DAVINCI_DKG_TEST_RPC_URL:-http://127.0.0.1:8545} \
+	DAVINCI_DKG_TEST_ADDRESSES=$${DAVINCI_DKG_TEST_ADDRESSES:-/tmp/battery-addresses.env} \
+	go test ./tests/battery -run '$(BATTERY_RUN)' -v -count=1 -timeout 60m
 
 testnet-logs: ## Tail logs for the DKG nodes
 	@cd testnet && docker compose logs -f dkg-node

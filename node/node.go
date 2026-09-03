@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
@@ -78,6 +79,7 @@ type Node struct {
 	lastCtScan  uint64
 	ctSeq       uint64
 	pending     map[ctKey]*ciphertext
+	parked      map[ctKey]*ciphertext // waiting for an organizer share; woken by the event scan
 	partialDone map[ctKey]bool
 	served      map[ctKey]uint64   // finished slots → discovery block, until out of the re-scan window
 	badShares   map[ctKey][32]byte // last organizer share that failed to verify, to warn once
@@ -87,6 +89,8 @@ type Node struct {
 	combineJobs map[ctKey]*combineResult // running (nil) or finished combine jobs, guarded by jobsMu
 	jobsMu      sync.Mutex
 	combineSem  chan struct{} // capacity 1: serialises the CPU-bound combine jobs
+	critical    atomic.Int32  // > 0 while a contribution or finalization is in progress
+	taintFile   string        // where taintedApps is persisted ("" disables)
 
 	// auto-create-epoch state. autoCreateNextStart is the
 	// nextEpochStartBlock() value the most recent attempt was scheduled
@@ -137,7 +141,7 @@ func New(cfg *Config) (*Node, error) {
 		circuits.BaseDir = d
 	}
 
-	return &Node{
+	n := &Node{
 		address:       txm.Address(),
 		bjjSecret:     bjjSecret,
 		contracts:     c,
@@ -154,15 +158,19 @@ func New(cfg *Config) (*Node, error) {
 		selectedCache: make(map[[12]byte][]common.Address),
 		lookback:      cfg.DecryptLookbackBlocks,
 		pending:       make(map[ctKey]*ciphertext),
+		parked:        make(map[ctKey]*ciphertext),
 		partialDone:   make(map[ctKey]bool),
 		served:        make(map[ctKey]uint64),
 		badShares:     make(map[ctKey][32]byte),
 		taintedApps:   make(map[appKey]bool),
+		taintFile:     taintPath(cfg.Datadir),
 		backoff:       make(map[ctKey]*serviceBackoff),
 		inflight:      make(map[ctKey]inflightTx),
 		combineJobs:   make(map[ctKey]*combineResult),
 		combineSem:    make(chan struct{}, 1),
-	}, nil
+	}
+	n.loadTaints()
+	return n, nil
 }
 
 // deriveBJJSecret derives a BabyJubJub private scalar from an Ethereum private
@@ -665,7 +673,7 @@ func (n *Node) tick(ctx context.Context) error {
 			continue // key generation finished (or failed); nothing left to do
 		}
 		if err := n.participate(ctx, epochID); err != nil {
-			log.Warnw("participate failed", "epoch", roundHex(epochID), "err", err)
+			log.Warnw("participate failed", "epoch", roundHex(epochID), "err", decodeContractError(err))
 		}
 	}
 	if err := n.scanCiphertexts(ctx); err != nil {
@@ -769,7 +777,7 @@ func (n *Node) doClaimSlot(ctx context.Context, epochID [12]byte, epoch web3.Epo
 	// Pre-flight: check registration deadline before sending any tx.
 	if headErr == nil {
 		if head >= epoch.Policy.CommitteeSelectionDeadlineBlock {
-			log.Warnw("registration deadline already passed — skipping slot claim",
+			log.Infow("registration deadline already passed — skipping slot claim",
 				"epoch", roundHex(epochID),
 				"head", head,
 				"deadline", epoch.Policy.CommitteeSelectionDeadlineBlock)
@@ -834,6 +842,8 @@ func (n *Node) doContribution(
 	if n.contributed[epochID] {
 		return nil
 	}
+	n.critical.Add(1)
+	defer n.critical.Add(-1)
 	// Check on-chain (handles restarts).
 	rec, err := n.manager.GetContribution(&bind.CallOpts{Context: ctx}, epochID, n.address)
 	if err == nil && rec.Accepted {
@@ -1077,6 +1087,8 @@ func (n *Node) tryAutoFinalize(
 		return nil
 	}
 
+	n.critical.Add(1)
+	defer n.critical.Add(-1)
 	log.Infow(
 		"auto-finalize: my turn",
 		"epoch", roundHex(epochID),
@@ -1179,7 +1191,7 @@ func (n *Node) buildPrivateShare(
 func (n *Node) ownShare(epochID [12]byte, myIdx uint16) (*big.Int, bool) {
 	sc := n.ownContribs[epochID]
 	if sc == nil {
-		log.Warnw("own contribution cache missing (node restarted?), recovering from calldata",
+		log.Infow("own contribution cache missing (node restarted?), recovering from calldata",
 			"epoch", roundHex(epochID))
 		return nil, false
 	}
