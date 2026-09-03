@@ -276,13 +276,15 @@ func claimPhase(ctx context.Context, t *testing.T, f *Fleet, ep joinedEpoch, mem
 	}()
 	out, err := claimAtSeed(ctx, t, f, member, ep)
 	wg.Wait()
-	if name, ok := revertName(err); ok && name == "NotEligible" {
-		record(t, Result{
-			Step: "claim/member", Kind: "claimSlot", Pass: true,
-			Notes: "lost the lottery (admission is min(1, α·n/N) per epoch); trying the next epoch",
-		})
-		t.Logf("claim/member: not eligible in epoch %x, trying the next one", ep.ID)
-		return lostLottery
+	if err != nil {
+		if name, ok := revertName(err); ok && name == "NotEligible" {
+			record(t, Result{
+				Step: "claim/member", Kind: "claimSlot", Pass: true,
+				Notes: "lost the lottery (admission is min(1, α·n/N) per epoch); trying the next epoch",
+			})
+			t.Logf("claim/member: not eligible in epoch %x, trying the next one", ep.ID)
+			return lostLottery
+		}
 	}
 	if !expectOK(t, "claim/member", "claimSlot", out, err, "fresh operator in the real lottery") {
 		return 0
