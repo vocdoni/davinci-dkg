@@ -101,6 +101,37 @@ Reading the table:
   verification in extended twisted-Edwards coordinates (~200k); the affine
   implementation cost 1.27M for `registerKey`.
 
+## A 32-node fleet under load (Anvil, two hosts)
+
+Measured on 2026-09-03 with `tests/battery`: 32 operators split over two
+32-core hosts, committee n = 24, t = 16, m_min = 20, 2-second blocks, 300-block
+epochs. Eight organizers register concurrently and submit six ciphertexts
+each (48 in one block), releasing shares immediately, after six blocks, or
+never for a quarter of them.
+
+| | before the fix | after |
+|---|---|---|
+| ciphertexts decrypted / released | 40 / 40 | 40 / 40 |
+| withheld shares never combined | 8 / 8 | 8 / 8 |
+| partials on chain per ciphertext | 18–24 (t = 16) | 16 for 41 of 48, ≤ 23 |
+| submit → combine latency (avg) | 50 blocks / 100 s | 17 blocks / 35 s |
+| throughput | 0.30 ct/s | 0.77 ct/s |
+| gas: contribution / finalize (n = 24) | 513 k / 2.14 M | same |
+| gas: partial / combine / register / share | 399 k / 430 k / 390 k / 88 k | same |
+
+The fix (`node/decrypt.go`): partial and combine transactions are sent
+without waiting for their receipt, later waves only fire when the earlier
+ones have stopped landing partials, and the combine (dlog + proof) runs off
+the service loop, one at a time per node. Every adversarial scenario
+(tampered, replayed and relayed shares; ciphertexts outside the window, over
+the cap, off-curve, in a small-order subgroup, undecryptable or copied from
+another application; late registration, duplicate claims, contributions and
+partials; early finalize; abort of a healthy epoch) is rejected as designed.
+Two costs are accepted and documented: an undecryptable ciphertext makes each
+member of the combine rotation run one bounded 2^50 BSGS search (~20 s of
+CPU, 256 MB, once), and a withheld share keeps its slot pending in every
+node until the epoch ends.
+
 ## How to reproduce
 
 * Constraints: `go run ./cmd/constraints` after setting `MaxN` in

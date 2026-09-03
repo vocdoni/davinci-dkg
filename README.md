@@ -375,14 +375,30 @@ Switching `MaxN` is a two-line edit (`circuits/common/sizes.go` and `solidity/sr
 followed by `make circuits`. See [`BENCHMARKS.md`](BENCHMARKS.md) for the per-`MaxN` cost
 breakdown.
 
-A self-contained multi-node testnet (Anvil + N nodes + UI) lives in `testnet/`:
+A self-contained multi-node testnet (Anvil + deployer + N nodes) lives in `testnet/`:
 
 ```bash
 make testnet-up                                  # 3 nodes, defaults
 make testnet-up DKG_NODE_COUNT=8 DKG_THRESHOLD=5 # custom sizing
+# spread the fleet: 16 more nodes on another host, keys 17-32, against this host's Anvil
+DKG_THRESHOLD=16 DKG_COMMITTEE_SIZE=24 DKG_MIN_VALID_CONTRIBUTIONS=20 \
+  testnet/remote-nodes.sh up user@other-host 16 16
 ```
 
-The web explorer is then available at `http://localhost:8081/`.
+Phase windows (`EPOCH_DURATION_BLOCKS`, …) and the epoch policy the nodes propose
+(`DKG_THRESHOLD`, `DKG_COMMITTEE_SIZE`, `DKG_MIN_VALID_CONTRIBUTIONS`, `DKG_ALPHA_BPS`) are
+compose variables. Point the explorer at it with `make ui-dev RPC_URL=http://127.0.0.1:8545
+MANAGER_ADDRESS=<from http://127.0.0.1:8888/addresses.env> CHAIN_ID=1337`.
+
+`tests/battery/` drives a running fleet through load, concurrency and adversarial scenarios
+(organizer swarm, tampered and replayed shares, poisoned ciphertexts, snapshot-rule and
+duplicate-claim attacks, a lazy committee member) and writes a per-transaction report:
+
+```bash
+DAVINCI_DKG_BATTERY=1 DAVINCI_DKG_TEST_RPC_URL=http://127.0.0.1:8545 \
+DAVINCI_DKG_TEST_ADDRESSES=/tmp/addresses.env DAVINCI_ARTIFACTS_DIR=~/.davinci/artifacts \
+  go test ./tests/battery -run TestOrganizerSwarm -v -count=1 -timeout 40m
+```
 
 ---
 
