@@ -622,17 +622,65 @@ func (n *Node) maybeScheduleAutoCreate(ctx context.Context, cfg *Config) {
 // (no owner-only restriction, no time locks) — operators wanting tighter
 // gating should configure it via per-application AppPolicy at
 // registerApplication time.
+// adaptivePolicy sizes the committee from the registry so a fleet that grows
+// or shrinks keeps filling committees without operators coordinating: n is
+// three quarters of the active operators (rounded up, capped at MaxN and
+// floored by the contract), t a majority of n, and m_min two thirds of n.
+// With α ≥ 1.34 every active operator is admissible, so the first n to claim
+// form the committee and a quarter of the fleet may be offline.
+func (n *Node) adaptivePolicy(ctx context.Context, alphaBps uint16) (EpochPolicyConfig, error) {
+	callOpts := &bind.CallOpts{Context: ctx}
+	active, err := n.registry.ActiveCount(callOpts)
+	if err != nil {
+		return EpochPolicyConfig{}, fmt.Errorf("active count: %w", err)
+	}
+	minN, err := n.manager.MINCOMMITTEESIZE(callOpts)
+	if err != nil {
+		return EpochPolicyConfig{}, fmt.Errorf("min committee size: %w", err)
+	}
+	minT, err := n.manager.MINTHRESHOLD(callOpts)
+	if err != nil {
+		return EpochPolicyConfig{}, fmt.Errorf("min threshold: %w", err)
+	}
+	maxAlpha, err := n.manager.MAXLOTTERYALPHABPS(callOpts)
+	if err != nil {
+		return EpochPolicyConfig{}, fmt.Errorf("max lottery alpha: %w", err)
+	}
+	size := (active*3 + 3) / 4 // ceil(0.75·active)
+	size = min(size, uint64(ccommon.MaxN))
+	size = max(size, uint64(minN), 1)
+	t := max(size/2+1, uint64(minT))
+	mMin := max(t, (size*2+2)/3) // ceil(2n/3)
+	alpha := min(alphaBps, maxAlpha)
+	return EpochPolicyConfig{
+		Threshold:             uint16(t),
+		CommitteeSize:         uint16(size),
+		MinValidContributions: uint16(mMin),
+		LotteryAlphaBps:       alpha,
+	}, nil
+}
+
 func (n *Node) fireCreateEpoch(ctx context.Context, cfg *Config) error {
 	auth, err := n.txm.NewTransactOpts(ctx)
 	if err != nil {
 		return fmt.Errorf("tx opts: %w", err)
 	}
+	policy := cfg.EpochPolicy
+	if policy.Adaptive() {
+		derived, err := n.adaptivePolicy(ctx, policy.LotteryAlphaBps)
+		if err != nil {
+			return fmt.Errorf("derive epoch policy: %w", err)
+		}
+		policy = derived
+		log.Infow("auto-create: derived epoch policy from the registry",
+			"n", policy.CommitteeSize, "t", policy.Threshold, "mMin", policy.MinValidContributions)
+	}
 	tx, err := n.manager.CreateEpoch(
 		auth,
-		cfg.EpochPolicy.Threshold,
-		cfg.EpochPolicy.CommitteeSize,
-		cfg.EpochPolicy.MinValidContributions,
-		cfg.EpochPolicy.LotteryAlphaBps,
+		policy.Threshold,
+		policy.CommitteeSize,
+		policy.MinValidContributions,
+		policy.LotteryAlphaBps,
 	)
 	if err != nil {
 		return fmt.Errorf("create epoch: %w", err)
@@ -943,7 +991,7 @@ func (n *Node) doContribution(
 	if err != nil {
 		return fmt.Errorf("build contribution witness: %w", err)
 	}
-	runtime, err := contribution.Artifacts.LoadOrSetupForCircuit(ctx, &contribution.ContributionCircuit{})
+	runtime, err := contribution.Artifacts.LoadPinned(ctx, &contribution.ContributionCircuit{})
 	if err != nil {
 		return fmt.Errorf("load contribution circuit: %w", err)
 	}

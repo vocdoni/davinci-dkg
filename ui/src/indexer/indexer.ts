@@ -95,6 +95,8 @@ export class Indexer {
     Pick<IndexerConfig, 'pollIntervalMs' | 'persistIntervalMs' | 'txPerTick' | 'stateStaleBlocks'>
   > &
     IndexerConfig
+  /** Deploy block found by bisection when the config has none. */
+  private discoveredDeployBlock: number | null = null
 
   private store: IndexerStore
   private status: IndexerStatus
@@ -285,7 +287,14 @@ export class Indexer {
       }
       applyChainState(this.store, { headBlock: head })
 
-      const from = Math.max(this.config.deployBlock, this.store.lastIndexedBlock + 1)
+      if (this.config.deployBlock <= 0 && this.discoveredDeployBlock == null && this.store.lastIndexedBlock < 0) {
+        // No deploy block configured: find the manager's creation block once
+        // (about 25 eth_getCode calls) instead of scanning from genesis.
+        this.discoveredDeployBlock = await discoverDeployBlock(this.config.client, this.config.managerAddress, head)
+        this.status = { ...this.status, fromBlock: this.discoveredDeployBlock, requests: this.status.requests + 25 }
+      }
+      const deployBlock = this.discoveredDeployBlock ?? this.config.deployBlock
+      const from = Math.max(deployBlock, this.store.lastIndexedBlock + 1)
       if (head >= from) {
         await this.scan(from, head)
       }
@@ -515,4 +524,24 @@ export class Indexer {
 
 export function createIndexer(config: IndexerConfig): Indexer {
   return new Indexer(config)
+}
+
+/**
+ * Binary-search the first block at which `address` has code. Contracts are
+ * never destroyed here, so "has code" is monotone in the block number.
+ */
+export async function discoverDeployBlock(
+  client: Pick<PublicClient, 'getCode'>,
+  address: Address,
+  head: number,
+): Promise<number> {
+  let lo = 0
+  let hi = head
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2)
+    const code = await client.getCode({ address, blockNumber: BigInt(mid) })
+    if (code && code !== '0x') hi = mid
+    else lo = mid + 1
+  }
+  return lo
 }

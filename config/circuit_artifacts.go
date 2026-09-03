@@ -3,10 +3,12 @@ package config
 import "fmt"
 
 const (
-	// DefaultArtifactsBaseURL is the remote artifact bucket base.
-	DefaultArtifactsBaseURL = "https://circuits.ams3.cdn.digitaloceanspaces.com"
+	// DefaultArtifactsBaseURL is where nodes fetch the pinned circuit artifacts:
+	// the assets of a GitHub release of this repository, named `<sha256>.<ccs|pk|vk>`
+	// (see `make circuits-release`). DefaultArtifactsRelease is that release's tag.
+	DefaultArtifactsBaseURL = "https://github.com/vocdoni/davinci-dkg/releases/download"
 	// DefaultArtifactsRelease is the default remote artifact release channel.
-	DefaultArtifactsRelease = "dev"
+	DefaultArtifactsRelease = "circuits-v2"
 )
 
 var (

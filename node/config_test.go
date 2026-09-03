@@ -55,15 +55,17 @@ func TestValidateConfigRejectsBadPollIntervalAndEpochPolicy(t *testing.T) {
 	}{
 		{"zero poll interval", func(c *Config) { c.PollInterval = 0 }, ".*poll interval.*"},
 		{"negative poll interval", func(c *Config) { c.PollInterval = -time.Second }, ".*poll interval.*"},
-		{"zero threshold", func(c *Config) { c.EpochPolicy.Threshold = 0 }, ".*threshold.*"},
-		{"committee below threshold", func(c *Config) { c.EpochPolicy.CommitteeSize = 2 }, ".*committee size.*"},
+		{"zero threshold", func(c *Config) { fixedPolicy(c); c.EpochPolicy.Threshold = 0 }, ".*threshold.*"},
+		{"committee below threshold", func(c *Config) { fixedPolicy(c); c.EpochPolicy.CommitteeSize = 2 }, ".*committee size.*"},
 		{"committee above MaxN", func(c *Config) {
+			fixedPolicy(c)
 			c.EpochPolicy.CommitteeSize = ccommon.MaxN + 1
 			c.EpochPolicy.MinValidContributions = ccommon.MaxN + 1
 		}, ".*committee size.*"},
-		{"min valid below threshold", func(c *Config) { c.EpochPolicy.MinValidContributions = 2 }, ".*min valid contributions.*"},
-		{"min valid above committee", func(c *Config) { c.EpochPolicy.MinValidContributions = 5 }, ".*min valid contributions.*"},
+		{"min valid below threshold", func(c *Config) { fixedPolicy(c); c.EpochPolicy.MinValidContributions = 2 }, ".*min valid contributions.*"},
+		{"min valid above committee", func(c *Config) { fixedPolicy(c); c.EpochPolicy.MinValidContributions = 5 }, ".*min valid contributions.*"},
 		{"alpha below 1.0", func(c *Config) { c.EpochPolicy.LotteryAlphaBps = 9_999 }, ".*alpha.*"},
+		{"adaptive with a threshold", func(c *Config) { c.EpochPolicy.Threshold = 2 }, ".*explicit committee size.*"},
 	}
 	for _, tc := range cases {
 		c.Run(tc.name, func(c *qt.C) {
@@ -81,4 +83,10 @@ func TestLoadConfigReportsInvalidFlags(t *testing.T) {
 	c.Assert(err, qt.ErrorMatches, ".*poll interval.*")
 	_, err = loadConfigFromArgs([]string{"--epoch-policy.lottery-alpha-bps=100"})
 	c.Assert(err, qt.ErrorMatches, ".*alpha.*")
+}
+
+// fixedPolicy replaces the adaptive default with explicit numbers so the
+// per-field checks can be exercised.
+func fixedPolicy(c *Config) {
+	c.EpochPolicy = EpochPolicyConfig{Threshold: 3, CommitteeSize: 4, MinValidContributions: 3, LotteryAlphaBps: 15_000}
 }

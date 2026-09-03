@@ -106,7 +106,7 @@ func BuildAndSubmit(
 	if err != nil {
 		return nil, fmt.Errorf("build finalize witness: %w", err)
 	}
-	runtime, err := finalize.Artifacts.LoadOrSetupForCircuit(ctx, &finalize.FinalizeCircuit{})
+	runtime, err := finalize.Artifacts.LoadPinned(ctx, &finalize.FinalizeCircuit{})
 	if err != nil {
 		return nil, fmt.Errorf("load finalize circuit: %w", err)
 	}

@@ -52,7 +52,20 @@ type EpochPolicyConfig struct {
 
 // validate mirrors the contract's InvalidPolicy checks and the circuit's
 // committee cap so a bad policy fails at startup, not at createEpoch.
+// Adaptive reports whether the node sizes the committee from the registry at
+// creation time instead of using fixed numbers.
+func (p EpochPolicyConfig) Adaptive() bool { return p.CommitteeSize == 0 }
+
 func (p EpochPolicyConfig) validate() error {
+	if p.Adaptive() {
+		if p.Threshold != 0 || p.MinValidContributions != 0 {
+			return fmt.Errorf("threshold and min valid contributions need an explicit committee size")
+		}
+		if p.LotteryAlphaBps < 10_000 {
+			return fmt.Errorf("lottery alpha %d bps must be at least 10000 (1.0)", p.LotteryAlphaBps)
+		}
+		return nil
+	}
 	if p.Threshold < 1 {
 		return fmt.Errorf("threshold must be at least 1")
 	}
@@ -106,10 +119,11 @@ func defaultConfig() *Config {
 		AutoCreateJitter: 12 * time.Second,
 		// ~7 days at 12 s blocks; matches the registry's default INACTIVITY_WINDOW.
 		DecryptLookbackBlocks: 50_400,
+		// Committee size 0 means "derive from the registry" (see adaptivePolicy).
 		EpochPolicy: EpochPolicyConfig{
-			Threshold:             3,
-			CommitteeSize:         4,
-			MinValidContributions: 3,
+			Threshold:             0,
+			CommitteeSize:         0,
+			MinValidContributions: 0,
 			LotteryAlphaBps:       15000,
 		},
 	}
@@ -138,7 +152,7 @@ func loadConfigFromArgs(args []string) (*Config, error) {
 	fs.Duration("auto-create-jitter", cfg.AutoCreateJitter, "max random delay before firing the auto-create transaction (spreads contention)")
 	fs.Uint64("decrypt-lookback-blocks", cfg.DecryptLookbackBlocks, "on startup, scan this many blocks behind head for ciphertexts still awaiting decryption")
 	fs.Uint16("epoch-policy.threshold", cfg.EpochPolicy.Threshold, "Shamir threshold t when this node proposes an epoch")
-	fs.Uint16("epoch-policy.committee-size", cfg.EpochPolicy.CommitteeSize, "committee size n when this node proposes an epoch")
+	fs.Uint16("epoch-policy.committee-size", cfg.EpochPolicy.CommitteeSize, "committee size n when this node proposes an epoch (0 = derive from the registry)")
 	fs.Uint16("epoch-policy.min-valid-contributions", cfg.EpochPolicy.MinValidContributions, "minValidContributions when this node proposes an epoch")
 	fs.Uint16("epoch-policy.lottery-alpha-bps", cfg.EpochPolicy.LotteryAlphaBps, "lottery oversubscription α in basis points (10000 = 1.0)")
 	if err := fs.Parse(args); err != nil {

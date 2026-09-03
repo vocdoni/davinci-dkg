@@ -44,13 +44,13 @@ COPY ui/ ./
 # Chain config — every value has a sensible Sepolia default so a bare
 # `docker build` produces a usable Sepolia bundle. Override on the build
 # command line (or via DO BUILD_TIME envs) to target any deployment.
-ARG RPC_URL=https://eth-sepolia.public.blastapi.io
-ARG MANAGER_ADDRESS=0xfb2CfAE24506D2978Cf4d0f8898F0E33aA744969
+ARG RPC_URL=https://w3.ch4in.net/sepolia
+ARG MANAGER_ADDRESS=0xd38af14cd3b550e268693b459c08ef7331cb23b0
 ARG CHAIN_ID=11155111
 ARG CHAIN_NAME=sepolia
 ARG REGISTRY_ADDRESS=
 ARG START_BLOCK=
-ARG DEPLOY_BLOCK=0
+ARG DEPLOY_BLOCK=11628341
 ARG EXPLORER_URL=https://sepolia.etherscan.io
 ARG VITE_BUILD_VERSION=dev
 ARG VITE_WALLETCONNECT_PROJECT_ID=

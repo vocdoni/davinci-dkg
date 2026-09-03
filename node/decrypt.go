@@ -507,7 +507,7 @@ func (n *Node) submitPartial(
 	if err != nil {
 		return false, fmt.Errorf("build partial decrypt witness: %w", err)
 	}
-	runtime, err := partialdecrypt.Artifacts.LoadOrSetupForCircuit(ctx, &partialdecrypt.PartialDecryptCircuit{})
+	runtime, err := partialdecrypt.Artifacts.LoadPinned(ctx, &partialdecrypt.PartialDecryptCircuit{})
 	if err != nil {
 		return false, fmt.Errorf("load partial decrypt circuit: %w", err)
 	}
@@ -875,7 +875,7 @@ func (n *Node) combine(
 	if err != nil {
 		return &combineResult{err: fmt.Errorf("build combine witness: %w", err)}
 	}
-	runtime, err := decryptcombine.Artifacts.LoadOrSetupForCircuit(ctx, &decryptcombine.DecryptCombineCircuit{})
+	runtime, err := decryptcombine.Artifacts.LoadPinned(ctx, &decryptcombine.DecryptCombineCircuit{})
 	if err != nil {
 		return &combineResult{err: fmt.Errorf("load combine circuit: %w", err)}
 	}
