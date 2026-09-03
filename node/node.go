@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
@@ -81,6 +82,10 @@ type Node struct {
 	served      map[ctKey]uint64   // finished slots → discovery block, until out of the re-scan window
 	badShares   map[ctKey][32]byte // last organizer share that failed to verify, to warn once
 	backoff     map[ctKey]*serviceBackoff
+	inflight    map[ctKey]inflightTx     // sent but unmined partial/combine per slot
+	combineJobs map[ctKey]*combineResult // running (nil) or finished combine jobs, guarded by jobsMu
+	jobsMu      sync.Mutex
+	combineSem  chan struct{} // capacity 1: serialises the CPU-bound combine jobs
 
 	// auto-create-epoch state. autoCreateNextStart is the
 	// nextEpochStartBlock() value the most recent attempt was scheduled
@@ -152,6 +157,9 @@ func New(cfg *Config) (*Node, error) {
 		served:        make(map[ctKey]uint64),
 		badShares:     make(map[ctKey][32]byte),
 		backoff:       make(map[ctKey]*serviceBackoff),
+		inflight:      make(map[ctKey]inflightTx),
+		combineJobs:   make(map[ctKey]*combineResult),
+		combineSem:    make(chan struct{}, 1),
 	}, nil
 }
 

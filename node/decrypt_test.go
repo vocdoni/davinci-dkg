@@ -205,3 +205,23 @@ func TestAcceptedPartialsScansLogsInBoundedChunks(t *testing.T) {
 	c.Assert(idxs, qt.DeepEquals, []uint16{2, 5, 7})
 	c.Assert(chain.ranges[len(chain.ranges)-1][1], qt.Equals, head)
 }
+
+func TestLaterWaveDueNeedsBothDelayAndStalledProgress(t *testing.T) {
+	const ct = 100
+	// Wave 1 may not fire before its own delay has passed…
+	if laterWaveDue(ct+staggerBlocks-1, ct, 0, 1) {
+		t.Fatal("wave 1 fired before ctBlock+staggerBlocks")
+	}
+	// …nor while wave 0 keeps landing partials.
+	if laterWaveDue(ct+10, ct, ct+9, 1) {
+		t.Fatal("wave 1 fired while earlier waves were still landing partials")
+	}
+	// It fires once both the delay and staggerBlocks of silence have passed.
+	if !laterWaveDue(ct+10, ct, ct+10-staggerBlocks, 1) {
+		t.Fatal("wave 1 did not fire after the delay and a stalled wave 0")
+	}
+	// Wave 2 waits twice as long from the ciphertext.
+	if laterWaveDue(ct+2*staggerBlocks-1, ct, 0, 2) {
+		t.Fatal("wave 2 fired before ctBlock+2*staggerBlocks")
+	}
+}

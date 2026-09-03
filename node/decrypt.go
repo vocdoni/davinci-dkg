@@ -8,8 +8,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
+	gethtypes "github.com/ethereum/go-ethereum/core/types"
 	ethcrypto "github.com/ethereum/go-ethereum/crypto"
 	ccommon "github.com/vocdoni/davinci-dkg/circuits/common"
 	"github.com/vocdoni/davinci-dkg/circuits/decryptcombine"
@@ -167,6 +169,68 @@ func (n *Node) forget(key ctKey) {
 	delete(n.pending, key)
 	delete(n.partialDone, key)
 	delete(n.backoff, key)
+	delete(n.inflight, key)
+	n.jobsMu.Lock()
+	delete(n.combineJobs, key)
+	n.jobsMu.Unlock()
+}
+
+// inflightTx is a partial or combine transaction this node has sent for a
+// slot and not yet seen mined. Sending without blocking on the receipt is
+// what lets one tick serve every pending ciphertext instead of one per
+// block; the next tick settles it from the receipt.
+type inflightTx struct {
+	hash      common.Hash
+	combine   bool
+	plaintext *big.Int // combine only, for the log line
+	sent      time.Time
+}
+
+// inflightTimeout is how long a sent tx may stay unmined before the slot is
+// retried from scratch (the tx manager keeps rebroadcasting meanwhile).
+const inflightTimeout = 2 * time.Minute
+
+// laterWaveDue says whether a member of wave > 0 may post its partial: only
+// once its wave's delay since the ciphertext has passed *and* the earlier
+// waves have stopped landing partials for staggerBlocks. Under load the
+// first wave keeps landing one partial per block for many blocks, and
+// counting from the ciphertext alone would make every later wave pile on.
+func laterWaveDue(head, ctBlock, lastPartialBlock, wave uint64) bool {
+	return head >= ctBlock+wave*staggerBlocks && head >= lastPartialBlock+staggerBlocks
+}
+
+// settleInflight looks at the receipt of the slot's in-flight tx. It returns
+// pending=true while the tx is unmined (nothing else to do this tick) and
+// done=true once a combine of ours is mined. A mined-but-reverted tx or a
+// timeout clears the record so the normal path retries.
+func (n *Node) settleInflight(ctx context.Context, key ctKey, fl inflightTx) (pending, done bool, err error) {
+	receipt, err := n.contracts.Client().TransactionReceipt(ctx, fl.hash)
+	switch {
+	case errors.Is(err, ethereum.NotFound):
+		if time.Since(fl.sent) < inflightTimeout {
+			return true, false, nil
+		}
+		delete(n.inflight, key)
+		return false, false, fmt.Errorf("tx %s unmined after %s, retrying", fl.hash.Hex(), inflightTimeout)
+	case err != nil:
+		return true, false, fmt.Errorf("receipt %s: %w", fl.hash.Hex(), err)
+	}
+	delete(n.inflight, key)
+	if receipt.Status != gethtypes.ReceiptStatusSuccessful {
+		if fl.combine {
+			// Almost always a lost race; the on-chain record settles it.
+			if rec, err := n.contracts.GetCombinedDecryption(ctx, key.epoch, key.aid, key.idx); err == nil && rec.Completed {
+				return false, true, nil
+			}
+		}
+		return false, false, fmt.Errorf("tx %s reverted, retrying", fl.hash.Hex())
+	}
+	if fl.combine {
+		log.Infow("decryption combined", "ct", key.String(), "plaintext", fl.plaintext.String(), "tx", fl.hash.Hex())
+		return false, true, nil
+	}
+	n.partialDone[key] = true
+	return false, false, nil
 }
 
 // tickCache memoises the chain reads shared by every pending ciphertext
@@ -245,6 +309,12 @@ func (n *Node) serviceCiphertext(ctx context.Context, tc *tickCache, key ctKey, 
 	if rec, err := n.contracts.GetCombinedDecryption(ctx, key.epoch, key.aid, key.idx); err == nil && rec.Completed {
 		return true, nil
 	}
+	if fl, ok := n.inflight[key]; ok {
+		pending, done, err := n.settleInflight(ctx, key, fl)
+		if pending || done || err != nil {
+			return done, err
+		}
+	}
 	epoch, err := n.cachedEpoch(ctx, tc, key.epoch)
 	if err != nil {
 		return false, err
@@ -280,12 +350,16 @@ func (n *Node) serviceCiphertext(ctx context.Context, tc *tickCache, key ctKey, 
 			if tc.head < ct.block+wave*staggerBlocks {
 				return false, nil
 			}
-			idxs, _, _, err := n.acceptedPartials(ctx, key, epoch.SeedBlock, tc.head, epoch.Policy.Threshold)
+			// With fewer than t partials the scan sees all of them, so
+			// lastBlock is the newest partial for this slot.
+			idxs, _, lastBlock, err := n.acceptedPartials(ctx, key, epoch.SeedBlock, tc.head, epoch.Policy.Threshold)
 			if err != nil {
 				return false, err
 			}
 			if uint64(len(idxs)) >= threshold {
 				n.partialDone[key] = true
+			} else if !laterWaveDue(tc.head, ct.block, lastBlock, wave) {
+				return false, nil
 			}
 		}
 	}
@@ -390,10 +464,6 @@ func (n *Node) submitPartial(
 	}
 	tx, err := n.manager.SubmitPartialDecryption(auth, key.epoch, key.aid, idx, key.idx,
 		ct.c1.X, ct.c1.Y, ct.c2.X, ct.c2.Y, dHash, proofBytes, inputBytes)
-	if err == nil {
-		n.txm.RecordPending(tx)
-		err = n.txm.WaitTxByHash(tx.Hash(), 120*time.Second)
-	}
 	if err != nil {
 		reason := decodeContractError(err)
 		if strings.Contains(reason, "AlreadyPartiallyDecrypted") {
@@ -406,7 +476,8 @@ func (n *Node) submitPartial(
 		}
 		return false, fmt.Errorf("submit partial decryption: %s", reason)
 	}
-	n.partialDone[key] = true
+	n.txm.RecordPending(tx)
+	n.inflight[key] = inflightTx{hash: tx.Hash(), sent: time.Now()}
 	log.Infow("partial decryption submitted", "ct", key.String(), "index", idx, "tx", tx.Hash().Hex())
 	return false, nil
 }
@@ -596,22 +667,91 @@ func (n *Node) tryCombine(
 		return false, nil
 	}
 
+	// The dlog search and the Groth16 proof take seconds (and a poisoned
+	// slot burns the full 2^50 search); they run off the tick loop so one
+	// slot never stalls the partials of every other pending ciphertext.
+	n.jobsMu.Lock()
+	res, running := n.combineJobs[key]
+	n.jobsMu.Unlock()
+	if !running {
+		n.jobsMu.Lock()
+		n.combineJobs[key] = nil
+		n.jobsMu.Unlock()
+		go n.runCombineJob(key, ct, idxs, deltas, share, threshold)
+		return false, nil
+	}
+	if res == nil {
+		return false, nil // still computing
+	}
+	n.jobsMu.Lock()
+	delete(n.combineJobs, key)
+	n.jobsMu.Unlock()
+	switch {
+	case res.err != nil:
+		return res.permanent, res.err
+	case res.done:
+		return true, nil
+	}
+	n.inflight[key] = inflightTx{hash: res.tx, combine: true, plaintext: res.plaintext, sent: time.Now()}
+	return false, nil
+}
+
+// combineResult is what a combine job leaves behind for the tick loop.
+type combineResult struct {
+	tx        common.Hash
+	plaintext *big.Int
+	done      bool // the slot was combined by someone else meanwhile
+	err       error
+	permanent bool // the slot can never be combined by us; stop trying
+}
+
+// runCombineJob recovers the plaintext, proves the combine and sends the
+// transaction. It only reads its arguments and the chain, and reports back
+// through combineJobs; the tick loop owns every other piece of node state.
+func (n *Node) runCombineJob(
+	key ctKey,
+	ct *ciphertext,
+	idxs []uint16,
+	deltas []nodetypes.CurvePoint,
+	share organizerShare,
+	threshold uint16,
+) {
+	// One combine at a time per node: the dlog search saturates every core,
+	// and several at once (e.g. re-discovered poisoned slots after a restart)
+	// would starve the partials and the RPC client.
+	n.combineSem <- struct{}{}
+	res := n.combine(key, ct, idxs, deltas, share, threshold)
+	<-n.combineSem
+	n.jobsMu.Lock()
+	n.combineJobs[key] = res
+	n.jobsMu.Unlock()
+}
+
+func (n *Node) combine(
+	key ctKey,
+	ct *ciphertext,
+	idxs []uint16,
+	deltas []nodetypes.CurvePoint,
+	share organizerShare,
+	threshold uint16,
+) *combineResult {
+	ctx := context.Background()
 	// M·G = C2 − Σ λ_k·δ_k − Δ_org
 	combinedEnc, err := ccommon.InterpolatePointsAtZeroNative(ccommon.Uint16sToBigInts(idxs), deltas)
 	if err != nil {
-		return false, fmt.Errorf("interpolate partials: %w", err)
+		return &combineResult{err: fmt.Errorf("interpolate partials: %w", err)}
 	}
 	combined, err := group.Decode(combinedEnc)
 	if err != nil {
-		return false, err
+		return &combineResult{err: err}
 	}
 	c2, err := group.Decode(ct.c2)
 	if err != nil {
-		return false, err
+		return &combineResult{err: err}
 	}
 	correction, err := group.Decode(share.delta)
 	if err != nil {
-		return false, fmt.Errorf("decode organizer share: %w", err)
+		return &combineResult{err: fmt.Errorf("decode organizer share: %w", err)}
 	}
 	negCombined := group.NewPoint()
 	negCombined.Neg(combined)
@@ -625,7 +765,7 @@ func (n *Node) tryCombine(
 	if err != nil {
 		// Plaintext ≥ MaxDLogPlaintext: retrying can never succeed.
 		log.Errorw(err, fmt.Sprintf("combine: dlog failed for %s (plaintext must be < 2^50)", key.String()))
-		return true, nil
+		return &combineResult{done: true}
 	}
 
 	witness, pi, err := decryptcombine.BuildWitness(decryptcombine.Assignment{
@@ -643,60 +783,57 @@ func (n *Node) tryCombine(
 		Plaintext:          plaintext,
 	})
 	if err != nil {
-		return false, fmt.Errorf("build combine witness: %w", err)
+		return &combineResult{err: fmt.Errorf("build combine witness: %w", err)}
 	}
 	runtime, err := decryptcombine.Artifacts.LoadOrSetupForCircuit(ctx, &decryptcombine.DecryptCombineCircuit{})
 	if err != nil {
-		return false, fmt.Errorf("load combine circuit: %w", err)
+		return &combineResult{err: fmt.Errorf("load combine circuit: %w", err)}
 	}
 	proof, err := runtime.ProveAndVerify(witness)
 	if err != nil {
-		return false, fmt.Errorf("prove combine: %w", err)
+		return &combineResult{err: fmt.Errorf("prove combine: %w", err)}
 	}
 	proofBytes, err := marshalSolidityProof(proof)
 	if err != nil {
-		return false, err
+		return &combineResult{err: err}
 	}
 	inputBytes, err := encodePublicWitness(pi.PublicWitness())
 	if err != nil {
-		return false, err
+		return &combineResult{err: err}
 	}
 	transcriptBytes, err := encodeWords(pi.TranscriptScalars()...)
 	if err != nil {
-		return false, err
+		return &combineResult{err: err}
 	}
 
 	// A later slot may still race an earlier one that was merely slow;
 	// re-check right before paying for the tx so a winner that landed while
 	// we were proving saves us gas.
 	if rec, err := n.contracts.GetCombinedDecryption(ctx, key.epoch, key.aid, key.idx); err == nil && rec.Completed {
-		return true, nil
+		return &combineResult{done: true}
 	}
 	auth, err := n.txm.NewTransactOpts(ctx)
 	if err != nil {
-		return false, err
+		return &combineResult{err: err}
 	}
 	tx, err := n.manager.CombineDecryption(auth, key.epoch, key.aid, key.idx,
 		common.BigToHash(pi.CombineHash), pi.PlaintextHash, transcriptBytes, proofBytes, inputBytes)
-	if err == nil {
-		n.txm.RecordPending(tx)
-		err = n.txm.WaitTxByHash(tx.Hash(), 120*time.Second)
-	}
 	if err != nil {
 		reason := decodeContractError(err)
 		if strings.Contains(reason, "AlreadyCombined") {
-			return true, nil
+			return &combineResult{done: true}
 		}
 		// A mined-but-reverted tx is almost always a lost race; the
 		// on-chain re-check at the top of the next attempt settles it.
 		if rec, err := n.contracts.GetCombinedDecryption(ctx, key.epoch, key.aid, key.idx); err == nil && rec.Completed {
-			return true, nil
+			return &combineResult{done: true}
 		}
 		if isPermanentRevert(err) {
-			return true, errors.New("combine rejected on-chain, giving up: " + reason)
+			return &combineResult{err: errors.New("combine rejected on-chain, giving up: " + reason), permanent: true}
 		}
-		return false, fmt.Errorf("submit combine: %w", err)
+		return &combineResult{err: fmt.Errorf("submit combine: %w", err)}
 	}
-	log.Infow("decryption combined", "ct", key.String(), "plaintext", plaintext.String(), "tx", tx.Hash().Hex())
-	return true, nil
+	n.txm.RecordPending(tx)
+	log.Infow("combine submitted", "ct", key.String(), "plaintext", plaintext.String(), "tx", tx.Hash().Hex())
+	return &combineResult{tx: tx.Hash(), plaintext: plaintext}
 }
