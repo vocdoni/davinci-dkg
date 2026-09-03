@@ -176,6 +176,12 @@ func TestCommitteeAdversary(t *testing.T) {
 	var ep joinedEpoch
 	var myIdx uint16
 	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			// The late operator of the previous attempt is registered by now.
+			if late, err = f.newActor(ctx, "late-operator"); err != nil {
+				t.Fatal(err)
+			}
+		}
 		ep = waitNewEpoch(ctx, t, f, nonce)
 		myIdx = claimPhase(ctx, t, f, ep, member, late, stranger)
 		if myIdx != lostLottery {

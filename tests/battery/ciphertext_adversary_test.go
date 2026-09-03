@@ -184,6 +184,13 @@ func dosProbe(
 ) {
 	t.Helper()
 	before := honestRoundTrip(ctx, t, f, epoch, app, wait, name+"/before")
+	// Neighbour probes live in a fresh application: an undecryptable
+	// ciphertext taints its own application for the epoch (the nodes stop
+	// serving it by design), so the same aid cannot measure fleet latency.
+	neighbour, out, err := f.registerApplication(ctx, app.Organizer, app.Epoch, golangtypes.DKGTypesAppPolicy{})
+	if !expectOK(t, name+"/neighbour/register", "registerApplication", out, err, "") {
+		return
+	}
 
 	idx, out, err := f.submitCiphertext(ctx, app.Organizer, app.Epoch, app.Aid, c1, c2)
 	if !expectOK(t, name+"/poison/submit", "submitCiphertext", out, err, "accepted by the contract by design") {
@@ -199,16 +206,42 @@ func dosProbe(
 		record(t, sh.result(name+"/poison/share", "submitOrganizerShare", "valid DLEQ posted for the poison"))
 	}
 
-	after := honestRoundTrip(ctx, t, f, epoch, app, wait, name+"/after")
+	after := honestRoundTrip(ctx, t, f, epoch, neighbour, wait, name+"/after")
 	latencyDelta(t, name+"/latency-after", before, after)
 	poisonStatus(ctx, t, f, epoch, app, poison, name+"/poison/status-early", partialsExpected)
 
 	if _, err := f.waitBlock(ctx, poison.SubmitBlock+observe); err != nil {
 		t.Fatal(err)
 	}
-	late := honestRoundTrip(ctx, t, f, epoch, app, wait, name+"/late")
+	late := honestRoundTrip(ctx, t, f, epoch, neighbour, wait, name+"/late")
 	latencyDelta(t, name+"/latency-late", before, late)
 	poisonStatus(ctx, t, f, epoch, app, poison, name+"/poison/status-late", partialsExpected)
+
+	if partialsExpected {
+		// Same application after the poison: the designed outcome is no
+		// combine (tainted); a combine means the nodes had not failed the
+		// search yet. Reported, not judged.
+		s := submitSlots(ctx, t, f, app, 1, name+"/tainted")[0]
+		_, _, out, err := f.releaseShare(ctx, app, s.Idx, s.C1, s.C2)
+		expectOK(t, name+"/tainted/share", "submitOrganizerShare", out, err, "")
+		taintWait := envUint64("BATTERY_NO_COMBINE_WAIT_BLOCKS", 40)
+		if _, err := f.waitBlock(ctx, s.SubmitBlock+taintWait); err != nil {
+			t.Fatal(err)
+		}
+		rec, err := f.Services.Contracts.GetCombinedDecryption(ctx, app.Epoch, app.Aid, s.Idx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		partials, err := f.partials(ctx, app.Epoch, app.Aid, s.Idx, scanFrom(epoch))
+		if err != nil {
+			t.Fatal(err)
+		}
+		record(t, Result{
+			Step: name + "/tainted/status", Kind: "measure", Pass: true, Block: s.SubmitBlock,
+			Notes: fmt.Sprintf("same application after an undecryptable ciphertext: combined=%v partials=%d after %d blocks "+
+				"(nodes taint the application for the epoch by design)", rec.Completed, len(partials), taintWait),
+		})
+	}
 }
 
 // latencyDelta records the submit→combine latency of an honest ciphertext
