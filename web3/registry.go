@@ -19,6 +19,7 @@ func (c *Contracts) GetNode(ctx context.Context, operator common.Address) (Regis
 		To:   &c.Addresses.Registry,
 		Data: input,
 	}, nil)
+	c.pool.NoteError(err)
 	if err != nil {
 		return RegistryNode{}, fmt.Errorf("call getNode: %w", err)
 	}

@@ -2,6 +2,7 @@ package web3
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -21,6 +22,11 @@ const (
 	rpcCooldownDuration = 2 * time.Minute
 	rpcMaxFailures      = 3
 )
+
+// rpcRateLimitCode is the JSON-RPC error code most public providers answer
+// with once a client exceeds its request quota (the -32000..-32099 server
+// error band); -32005 is the conventional "rate limit" spelling.
+const rpcRateLimitCode = -32005
 
 // RPCPool holds multiple ethclient instances and provides round-robin failover.
 type RPCPool struct {
@@ -118,6 +124,37 @@ func (p *RPCPool) MarkFailed() {
 	}
 }
 
+// MarkRateLimited disables the current endpoint for the cooldown at once and
+// rotates: a 429 means the provider is already refusing our requests, so the
+// rpcMaxFailures threshold would only buy two more rate-limited round trips.
+func (p *RPCPool) MarkRateLimited() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	e := p.entries[p.current]
+	e.failures++
+	e.disabledAt = time.Now()
+	log.Warnw("rpc pool: rate-limited, disabling endpoint", "url", e.url, "failures", e.failures)
+	p.current = (p.current + 1) % len(p.entries)
+}
+
+// NoteError classifies an error returned by a call made to the current
+// endpoint and rotates the pool when the endpoint is at fault: a rate-limit
+// response disables it at once (MarkRateLimited), a connectivity failure
+// counts toward the usual threshold (MarkFailed). Contract reverts and every
+// other error are none of the endpoint's business. nil is a no-op, so callers
+// can feed it every result unconditionally.
+func (p *RPCPool) NoteError(err error) {
+	if err == nil || !IsRPCTransportError(err) {
+		return
+	}
+	if IsRateLimitError(err) {
+		p.MarkRateLimited()
+		return
+	}
+	p.MarkFailed()
+}
+
 // Close closes all underlying clients.
 func (p *RPCPool) Close() {
 	p.mu.Lock()
@@ -128,10 +165,14 @@ func (p *RPCPool) Close() {
 }
 
 // IsRPCTransportError returns true if the error is a connectivity/transport
-// problem (not a contract revert). Such errors should trigger pool rotation.
+// problem or a provider rate-limit response (not a contract revert). Such
+// errors should trigger pool rotation.
 func IsRPCTransportError(err error) bool {
 	if err == nil {
 		return false
+	}
+	if IsRateLimitError(err) {
+		return true
 	}
 	s := err.Error()
 	for _, substr := range []string{
@@ -151,4 +192,23 @@ func IsRPCTransportError(err error) bool {
 		}
 	}
 	return false
+}
+
+// IsRateLimitError reports whether err is an RPC provider throttling us: a
+// JSON-RPC error code -32005 on any rpc.Error in the chain, or an HTTP 429 /
+// "too many requests" / "rate limit" message (case-insensitive). A rate-limited
+// endpoint is not broken, but retrying it immediately only buys more of the
+// same response, so callers rotate to another endpoint right away.
+func IsRateLimitError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var rpcErr rpc.Error
+	if errors.As(err, &rpcErr) && rpcErr.ErrorCode() == rpcRateLimitCode {
+		return true
+	}
+	s := strings.ToLower(err.Error())
+	return strings.Contains(s, "429") ||
+		strings.Contains(s, "too many requests") ||
+		strings.Contains(s, "rate limit")
 }

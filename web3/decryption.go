@@ -25,6 +25,7 @@ func (c *Contracts) GetCombinedDecryption(
 		To:   &c.Addresses.Manager,
 		Data: input,
 	}, nil)
+	c.pool.NoteError(err)
 	if err != nil {
 		return CombinedDecryptionView{}, fmt.Errorf("call getCombinedDecryption: %w", err)
 	}

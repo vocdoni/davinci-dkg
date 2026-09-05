@@ -43,6 +43,7 @@ func (c *Contracts) GetEpoch(ctx context.Context, epochID [12]byte) (EpochView, 
 		To:   &c.Addresses.Manager,
 		Data: input,
 	}, nil)
+	c.pool.NoteError(err)
 	if err != nil {
 		return EpochView{}, fmt.Errorf("call getEpoch: %w", err)
 	}
@@ -107,6 +108,7 @@ func (c *Contracts) SelectedParticipants(ctx context.Context, epochID [12]byte) 
 		To:   &c.Addresses.Manager,
 		Data: input,
 	}, nil)
+	c.pool.NoteError(err)
 	if err != nil {
 		return nil, fmt.Errorf("call selectedParticipants: %w", err)
 	}

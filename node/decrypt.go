@@ -872,7 +872,7 @@ func (n *Node) shareLeavesFromContributions(
 	root [32]byte,
 ) ([ccommon.MaxN][32]byte, error) {
 	pi, err := finalizer.PoolKeyStatement(ctx, n.contracts, n.manager, epochID,
-		epoch.Policy.Threshold, epoch.Policy.CommitteeSize, selected, keyIndex)
+		epoch.Policy.Threshold, epoch.Policy.CommitteeSize, selected, keyIndex, n.contribCache)
 	if err != nil {
 		return [ccommon.MaxN][32]byte{}, fmt.Errorf("reconstruct pool key %d: %w", keyIndex, err)
 	}

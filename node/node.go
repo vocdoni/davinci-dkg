@@ -115,6 +115,11 @@ type Node struct {
 	critical    atomic.Int32  // > 0 while a contribution or finalization is in progress
 	taintFile   string        // where taintedApps is persisted ("" disables)
 
+	// contribCache memoises validated submitContribution calldata under the
+	// datadir (nil-safe: a nil cache is always disabled) so a rate-limited RPC
+	// is not rescanned for the same dealer's transaction on every attempt.
+	contribCache *contributionCache
+
 	// auto-create-epoch state. autoCreateNextStart is the
 	// nextEpochStartBlock() value the most recent attempt was scheduled
 	// against; we skip re-scheduling for the same threshold so a single
@@ -202,6 +207,7 @@ func New(cfg *Config) (*Node, error) {
 		shareProofs:    make(map[poolSlot][][32]byte),
 		taints:         make(map[taintKey]bool),
 		taintFile:      taintPath(cfg.Datadir),
+		contribCache:   &contributionCache{dir: contributionCacheDir(cfg.Datadir)},
 		backoff:        make(map[ctKey]*serviceBackoff),
 		inflight:       make(map[ctKey]inflightTx),
 		combineJobs:    make(map[ctKey]*combineResult),
@@ -1371,7 +1377,7 @@ func (n *Node) tryActivatePoolKeys(
 
 	res, err := finalizer.ProveAndSubmitActivation(
 		ctx, n.contracts, n.manager, n.txm, n.runtimes.poolKey, epochID,
-		epoch.Policy.Threshold, epoch.Policy.CommitteeSize, selected, keyIndex,
+		epoch.Policy.Threshold, epoch.Policy.CommitteeSize, selected, keyIndex, n.contribCache,
 	)
 	if err != nil {
 		reason := decodeContractError(err)
@@ -1495,8 +1501,9 @@ func sumRecoveredShares(shares []*big.Int, expected int) (*big.Int, error) {
 }
 
 // recoverShareFrom fetches the submitContribution tx calldata for `contributor`
-// (located through the ContributionSubmitted event log) and decrypts the
-// share slot destined for myIdx under pool key `keyIndex`.
+// (from the on-disk cache when possible, else through the
+// ContributionSubmitted event log) and decrypts the share slot destined for
+// myIdx under pool key `keyIndex`.
 func (n *Node) recoverShareFrom(
 	ctx context.Context,
 	epochID [12]byte,
@@ -1507,13 +1514,23 @@ func (n *Node) recoverShareFrom(
 	myIdx uint16,
 	fromBlock uint64,
 ) (*big.Int, error) {
-	data, err := finalizer.ContributionCalldata(ctx, n.contracts.Client(), n.manager, epochID, contributor, fromBlock)
-	if err != nil {
-		return nil, err
+	data, cached := n.contribCache.Get(epochID, contributor)
+	if data == nil {
+		var err error
+		data, err = finalizer.ContributionCalldata(ctx, n.contracts.Client(), n.manager, epochID, contributor, fromBlock)
+		if err != nil {
+			return nil, err
+		}
 	}
 	eph, masked, recipIdxs, err := decodeContributionTranscript(data)
 	if err != nil {
 		return nil, fmt.Errorf("decode contribution transcript: %w", err)
+	}
+	if !cached {
+		// The calldata validated (selector, ABI shape, transcript size):
+		// remember it so later attempts and pool-key activation skip the
+		// event-log rescan.
+		n.contribCache.Put(epochID, contributor, data)
 	}
 	if int(keyIndex) >= len(masked) {
 		return nil, fmt.Errorf("pool key %d is outside the transcript", keyIndex)

@@ -78,10 +78,23 @@ func FinalizeEpoch(
 	return gasUsed, nil
 }
 
+// CalldataCache memoises raw submitContribution calldata on disk so a
+// rate-limited RPC is not rescanned for the same dealer's transaction on
+// every attempt. Get returns ok=false on any read problem (the caller then
+// falls back to the event log); a failed Put only costs a later refetch.
+// Entries are written after the calldata has been validated and a contribution
+// is immutable once accepted, so they never go stale.
+type CalldataCache interface {
+	Get(epochID [12]byte, dealer common.Address) ([]byte, bool)
+	Put(epochID [12]byte, dealer common.Address, data []byte)
+}
+
 // ActivationAssignment reconstructs the activation statement of pool key
 // `keyIndex` from the accepted contributions' on-chain calldata: the input
 // poolkey.BuildWitness turns into the aggregate commitments, P_j and every
-// committee member's share commitment D_p. No proof is involved.
+// committee member's share commitment D_p. No proof is involved. A non-nil
+// `cache` is consulted before each dealer's event-log scan and filled with
+// the calldata once it decodes.
 //
 // Activation is permissionless but needs every contributor's *whole*
 // commitment set: reproducing the stored Poseidon commitmentsHash absorbs the
@@ -94,6 +107,7 @@ func ActivationAssignment(
 	t, n uint16,
 	committee []common.Address,
 	keyIndex uint8,
+	cache CalldataCache,
 ) (poolkey.Assignment, error) {
 	callOpts := &bind.CallOpts{Context: ctx}
 
@@ -126,13 +140,22 @@ func ActivationAssignment(
 		if !rec.Accepted {
 			continue
 		}
-		data, err := ContributionCalldata(ctx, c.Client(), m, epochID, addr, startBlock)
-		if err != nil {
-			return poolkey.Assignment{}, fmt.Errorf("contribution calldata for %s: %w", addr, err)
+		data, cached := []byte(nil), false
+		if cache != nil {
+			data, cached = cache.Get(epochID, addr)
+		}
+		if data == nil {
+			data, err = ContributionCalldata(ctx, c.Client(), m, epochID, addr, startBlock)
+			if err != nil {
+				return poolkey.Assignment{}, fmt.Errorf("contribution calldata for %s: %w", addr, err)
+			}
 		}
 		sets, err := parseCommitmentPoints(data, t)
 		if err != nil {
 			return poolkey.Assignment{}, fmt.Errorf("parse commitment points for %s: %w", addr, err)
+		}
+		if cache != nil && !cached {
+			cache.Put(epochID, addr, data)
 		}
 		acceptedIdxs = append(acceptedIdxs, uint16(i+1))
 		allCommitments = append(allCommitments, sets)
@@ -163,7 +186,9 @@ func ActivationAssignment(
 // (ShareCommitments[p-1] = D_p for p ≤ n, the identity beyond). Committee
 // members use it to rebuild their Merkle leaves from the contributions'
 // calldata instead of trusting the activation transaction's outer calldata,
-// which an activation relayed through a contract does not even carry.
+// which an activation relayed through a contract does not even carry. A
+// non-nil `cache` (see ActivationAssignment) spares the per-dealer event-log
+// rescans.
 func PoolKeyStatement(
 	ctx context.Context,
 	c *web3.Contracts,
@@ -172,8 +197,9 @@ func PoolKeyStatement(
 	t, n uint16,
 	committee []common.Address,
 	keyIndex uint8,
+	cache CalldataCache,
 ) (*poolkey.PublicInputs, error) {
-	asgn, err := ActivationAssignment(ctx, c, m, epochID, t, n, committee, keyIndex)
+	asgn, err := ActivationAssignment(ctx, c, m, epochID, t, n, committee, keyIndex, cache)
 	if err != nil {
 		return nil, err
 	}
@@ -204,11 +230,12 @@ func BuildAndSubmitActivation(
 	if err != nil {
 		return nil, fmt.Errorf("load pool key circuit: %w", err)
 	}
-	return ProveAndSubmitActivation(ctx, c, m, txm, runtime, epochID, t, n, committee, keyIndex)
+	return ProveAndSubmitActivation(ctx, c, m, txm, runtime, epochID, t, n, committee, keyIndex, nil)
 }
 
 // ProveAndSubmitActivation is BuildAndSubmitActivation with a caller-supplied
-// pool-key runtime (the node loads all four circuits once at startup).
+// pool-key runtime (the node loads all four circuits once at startup) and an
+// optional contribution-calldata cache (see ActivationAssignment).
 func ProveAndSubmitActivation(
 	ctx context.Context,
 	c *web3.Contracts,
@@ -219,11 +246,12 @@ func ProveAndSubmitActivation(
 	t, n uint16,
 	committee []common.Address,
 	keyIndex uint8,
+	cache CalldataCache,
 ) (*Result, error) {
 	if runtime == nil {
 		return nil, fmt.Errorf("pool key circuit runtime is required")
 	}
-	asgn, err := ActivationAssignment(ctx, c, m, epochID, t, n, committee, keyIndex)
+	asgn, err := ActivationAssignment(ctx, c, m, epochID, t, n, committee, keyIndex, cache)
 	if err != nil {
 		return nil, err
 	}

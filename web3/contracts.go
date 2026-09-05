@@ -214,9 +214,14 @@ func (c *Contracts) Close() error {
 	return nil
 }
 
-// Client returns the current active RPC client from the pool.
-func (c *Contracts) Client() *ethclient.Client {
-	return c.pool.Current()
+// Client returns a chain client backed by the pool's current active endpoint.
+// It is the pooled backend rather than a raw ethclient, so every call it
+// serves — including the ethclient-style reads BlockNumber, TransactionByHash
+// and TransactionReceipt that calldata recovery and head tracking use —
+// classifies endpoint errors and rotates a rate-limited or unreachable
+// endpoint (see RPCPool.NoteError). It still implements bind.ContractBackend.
+func (c *Contracts) Client() *PooledBackend {
+	return c.PooledBackend()
 }
 
 // Pool returns the underlying RPCPool.
@@ -239,6 +244,7 @@ func (c *Contracts) callHash(ctx context.Context, contract common.Address, contr
 		To:   &contract,
 		Data: input,
 	}, nil)
+	c.pool.NoteError(err)
 	if err != nil {
 		return common.Hash{}, fmt.Errorf("call %s: %w", method, err)
 	}
