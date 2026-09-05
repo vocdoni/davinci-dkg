@@ -1,0 +1,54 @@
+\section{Security analysis}
+\label{sec:security}
+
+\paragraph{Model.}
+We consider one epoch of \S\ref{sec:protocol}, conditional on its selected committee. A static adversary controls $f$ members, arbitrary other organizers and submitters, and transaction scheduling within the chain assumptions; it sees the public transcript and may rush honest dealings. Secrecy concerns an honestly encrypted challenge with fresh randomness, not plaintext provenance, ballot validity, or secrecy after authorized release.
+
+We use the following assumptions.
+(a)~DDH is hard in the prime-order group $\GC=\langle G\rangle$.
+(b)~$\HK$ is a $256$-bit random oracle; possession-proof challenges reduce its output modulo $q$, BRLC challenges modulo $p$.
+(c)~$\HP$ is collision resistant for transcript binding; its share-mask invocations are additionally idealized as a random oracle over $\FB_p$~\cite{bellare1993random}, although the same function is arithmetised inside $\Rel{deal}$---the usual heuristic for a hash function inside a SNARK relation, a random oracle having no circuit; collision resistance alone does not imply mask secrecy.
+(d)~Independently generated circuit reference strings provide auxiliary-input knowledge soundness and multi-theorem zero knowledge; Groth16's knowledge soundness is proven in the algebraic group model~\cite{fuchsbauer2018agm}, which every dependent statement inherits; compromised setup is excluded.
+(e)~Honest parties use independent randomness and authenticated keys; pool-key secrecy requires $f<t$, $n-f\ge t$, and an honest dealer in $\QUAL$---properties of the selected epoch, not guarantees of parameter floors.
+(f)~Contribution proofs satisfy auxiliary-input, multi-theorem \emph{weak simulation-extractability}: after polynomially many simulated proofs of adaptively chosen, possibly false statements, witnesses are extractable from accepting adversarial statements never submitted to the simulator. We use Groth16's weak simulation-extractability in the algebraic group model under the hypotheses of \cite{baghery2021anotherlook}; other circuit setups and protocol oracles are simulated within the adversary wrapper, extraction may be white-box and algebraic, and online black-box extraction is not assumed.
+
+Let $\epsilon_{\rm ks}$ denote aggregate knowledge-soundness/extraction failure, and $\epsilon_{\rm bind}$ the failure bound of Lemma~\ref{lem:brlc}, with all its encoding, digest-coverage, gating and context hypotheses and the actual modulo-$p$ challenge distribution, plus remaining digest/Merkle collisions. Write $\epsilon_0=\epsilon_{\rm ks}+\epsilon_{\rm bind}+\epsilon_{\rm rng}$ with $\epsilon_{\rm rng}\le N_{\rm sc}/q$, the cost of idealizing $N_{\rm sc}$ prescribed nonzero scalar samples as uniform over $\FB_q$.
+
+\begin{lemma}[Dealing correctness]
+\label{lem:dealing}
+Except with probability $\epsilon_{\rm ks}+\epsilon_{\rm bind}$, every accepted contribution encrypts evaluations of degree-below-$t$ polynomials over $\FB_q$, consistent with its coefficient commitments; its stored digest computationally binds all $\Kmax$ commitment vectors.
+\end{lemma}
+\begin{proof}
+Soundness and Lemma~\ref{lem:brlc} bind a relation witness to canonical calldata; coefficient commitments and share equations identify the polynomial evaluations, and Appendix~\ref{app:mask} establishes canonical masking arithmetic. Both parties compute the same ECDH point, so recipient subtraction recovers those evaluations.
+\end{proof}
+
+Consequently, finalization binds $P_j=A_j(0)G$ and every committee member's $D_{j,i}=A_j(i)G$ under $\mroot{j}$, where $A_j=\sum_{d\in\QUAL}f_d^{(j)}$, and root-checked partials satisfy $\delta_i=A_j(i)C_1$; the combine relation's Vandermonde check (\S\ref{sec:succinct}) interpolates correctly for every accepted $\lambda$ vector, and with the organizer-secret relation this proves the recovered message point correct.
+
+\paragraph{Secrecy experiment.}
+The adversary may register applications, submit arbitrary ciphertexts, and obtain every policy-admitted reveal and honest partial on other applications, including for copied challenge components. For pool-key secrecy, the target has never released an honest partial and the experiment ends before its gate first opens. The challenge encrypts one of two chosen messages; advantage is $|\Pr[\hat b=b]-1/2|$, and inadmissible or aborted executions return a random guess, so bounds are not renormalized by successful epoch completion. There is no target-key decryption oracle and no same-application CCA claim.
+
+\begin{theorem}[Automatic-application secrecy and isolation, conditional]
+\label{thm:automatic}
+Under assumptions (a)--(f), the experiment for an automatic application under its uniquely claimed pool key satisfies
+% lower break penalties so the inline bound may wrap after a "+" instead of leaving loose lines
+{\relpenalty=100 \binoppenalty=100 $\operatorname{Adv}_{\rm auto}(\AC)\le L\operatorname{Adv}^{\rm ddh}_{\GC}(\BC)+R\epsilon_{\rm HE}+\epsilon_{\rm zk}+\epsilon_{\rm se}+\epsilon_0$}.
+Here $L\le\Kmax(n-f)$ accounts for guessing the target slot and an honest accepted dealer, $R\le(n-f)^2$ counts honest-dealer/honest-recipient rows, and $\epsilon_{\rm HE}$ is the per-row hashed-encryption hybrid loss; $\epsilon_{\rm zk}$ and $\epsilon_{\rm se}$ aggregate, respectively, simulation loss and weak-simulation-extractability failure over all relevant contributions and hybrids, and reduction running times include extraction overhead.
+\end{theorem}
+\begin{proof}
+Proof sketch.
+In $H_0\!\to H_1$, replace honest contribution proofs on true statements by simulated proofs. In $H_1\!\to H_2$, replace each honest-recipient row's $\Kmax$ masked shares by independent uniform placeholders, recomputing its digest and simulated proof; one ECDH secret serves the row, but the key index separates its hash inputs, and the transition includes encryption security and reduction bias, not merely zero knowledge. The modified honest dealing statements may be false, but every accepted corrupt contribution has a statement never simulated, so assumption (f), together with Lemma~\ref{lem:brlc}, preserves corrupt-dealing correctness; during the encryption-row reductions, extraction after finalization supplies the corrupt polynomials even when the embedded recipient's secret is unknown (Appendix~\ref{app:automatic}). In $H_2$, embed $X=uG$ in one honest dealer's target-key constant commitment. Interpolation in the exponent supplies coefficient commitments while fixing the $f<t$ corrupt recipients' evaluations to known scalars; honest-recipient target evaluations need not be known because their ciphertexts are placeholders, and finalization still has a genuine point-valued witness. In the final reduction all recipient encryption secrets are known: decrypt each adversarial dealing at $t$ honest positions (using $n-f\ge t$) and interpolate its polynomial. Including other honest dealers gives a known, possibly adaptively chosen offset $a$ with $P_j=X+aG$, and every other key's shares are known, so its oracles remain answerable. For a DDH tuple $(G,X,Y,Z)$, use $(C_1^\star,C_2^\star)=(Y,m_bG+aY+Z)$: the DH case is the challenge encryption, and independent uniform $Z$ hides $b$. Appendix~\ref{app:automatic} supplies the bookkeeping. This proves computational isolation, not uniformity of adversarially biased output keys~\cite{gennaro1999secure}.
+\end{proof}
+
+\begin{theorem}[Locked-application secrecy]
+\label{thm:locked}
+Under (a)--(d) and honest randomness, a locked target with an independent, unrevealed organizer secret remains secret even after disclosure of every pool share, including against $f\ge t$ members without that secret:
+$\operatorname{Adv}_{\rm locked}(\AC)\le Q_A\bigl(\operatorname{Adv}^{\rm ddh}_{\GC}(\BC)+Q_K/q\bigr)+\epsilon_0$,
+where $Q_A$ bounds honest organizer registrations and $Q_K$ counts $\HK$ queries. Conversely, under (a)--(f), giving the adversary the target's correctly generated organizer secret preserves Theorem~\ref{thm:automatic}'s bound while the target gate remains closed.
+\end{theorem}
+\begin{proof}
+Proof sketch.
+Recover the pool polynomials from $t$ honest recipients; if $n-f<t$, use (d)'s contribution extractor before any organizer-proof simulation. Embed $X=uG$ as the organizer key, simulate its possession proof using (b), and, knowing the pool scalar $x_j$, form $(Y,m_bG+x_jY+Z)$; independent uniform $Z$ hides the message even given all committee shares. No SNARK simulation or pool independence is needed for this direction. For the organizer-adversary direction, adding its known term $\mathsf{sk}_{\mathtt{org}}C_1$ transports the automatic experiment. Appendix~\ref{app:locked} details both interfaces.
+\end{proof}
+
+\paragraph{What the gate does and does not promise.}
+The reveal makes all admitted ciphertexts eligible under one application-wide gate, subject to the decryption window, and with fewer than $t$ corrupt members honest nodes release no partial before it opens. Nevertheless, $t$ colluding members defeat an automatic application's embargo, an organizer with $t$ members decrypts locked ciphertexts off chain without revealing, a closing deadline cannot revoke published partials, and an organizer-secret leak permits an unauthorized reveal but does not bypass a still-closed window. Eligibility is neither simultaneous delivery nor fairness.

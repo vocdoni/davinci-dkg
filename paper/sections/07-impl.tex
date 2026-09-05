@@ -1,0 +1,55 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Implementation and Evaluation}
+\label{sec:impl}
+
+The implementation consists of the node and the four circuits in Go on gnark v0.16.3 \cite{gnark}, the three contracts in Solidity 0.8.28 (via-IR, optimizer runs $1$, Cancun rules) and a TypeScript client. Every figure below is for the fixed capacities $\Nmax = 32$, $\Kmax = 16$; $\Kmax$ is a release constant of circuit, verifier and contract, not a caller's choice. The Groth16 artifacts come from a single-party setup pinned by hash in the node; a production deployment must replace them by a multi-party ceremony, which changes neither constraint counts nor gas.
+
+\paragraph{Methodology.} Constraint counts are those of the compiled R1CS; proving times are wall-clock per proof, mean of five, over the $32$ logical threads of an idle AMD Ryzen~9 9950X3D ($64$~GiB), witness solving included, key loading excluded; peak prover memory (maximum resident set, key and circuit loaded) is $9.3$~GB for the contribution and $5.5$~GB for the finalization. Gas is \texttt{gasUsed} from the receipts of a local Anvil chain (Cancun rules) running the real verifiers, pairing check, calldata and intrinsic cost included, at $(n, t) = (4, 3)$, $(32, 22)$ and over the sweep of Table~\ref{tab:gas}. Latency and behaviour under delayed or offline members were not measured.
+
+\begin{table}[t]
+\centering
+\caption{Circuit size and proving time at $\Nmax = 32$, $\Kmax = 16$ (mean of five proofs, $32$ threads, witness solving included, key loading excluded). Inputs: public inputs of the verifier. Transcript: BRLC-committed calldata words, for the unpadded contribution at $(n, t) = (4, 3)$ and $(32, 22)$; a partial carries its $15$ inputs and a $5$-word Merkle path instead.}
+\label{tab:results}
+\small
+\renewcommand{\arraystretch}{1.1}
+\begin{tabular}{lrrrr}
+\hline
+Circuit & Constraints & Inputs & Transcript & Proving time \\
+\hline
+Contribution & 5\,904\,167 & 8 & 180 -- 1\,376 & 3\,540 ms \\
+Finalization & 2\,328\,130 & 7 & 1\,120 & 2\,259 ms \\
+Partial decryption & 29\,026 & 15 & --- & 32 ms \\
+Combine & 287\,338 & 9 & 102 & 213 ms \\
+\hline
+\end{tabular}
+\end{table}
+
+\begin{table}[t]
+\centering
+\caption{Transaction gas ($10^3$) against the real verifiers on a local development chain (receipts' \texttt{gasUsed}, $\Nmax = 32$, $\Kmax = 16$). Slope: gas per additional member over $n = 4, 8, \dots, 32$, $t = \lceil 2n/3\rceil$ (per additional partial for the combine); the other calls stay within $1\%$ except $\mathsf{claimSlot}$, whose average falls as the $205$k seed-resolving claim is spread over more members. Registration: locked (including a $168$k subgroup check of the organizer key) / automatic. The $\mathsf{createEpoch}$ resolving the first seed costs $150$k. $\mathsf{finalizeEpoch}$ is permissionless; in practice a member pays it.}
+\label{tab:gas}
+\footnotesize
+\renewcommand{\arraystretch}{1.1}
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{lrrrl}
+\hline
+Call & $n{=}4$, $t{=}3$ & $n{=}32$, $t{=}22$ & Slope & Paid by \\
+\hline
+$\mathsf{createEpoch}$ & 133 & 133 & --- & creator / epoch \\
+$\mathsf{claimSlot}$ & 137 & 121 & avg. & member \\
+$\mathsf{submitContribution}$ & 500 & 1\,314 & $+29.1$ & member \\
+$\mathsf{finalizeEpoch}$ & 2\,202 & 2\,811 & $+21.7$ & any account / epoch \\
+$\mathsf{registerApplication}$ & 619 / 232 & 621 / 232 & --- & organizer / application \\
+$\mathsf{revealOrganizerSecret}$ & 226 & 224 & --- & organizer / locked app. \\
+$\mathsf{submitCiphertext}$ & 103 & 103 & --- & submitter / ciphertext \\
+$\mathsf{submitPartialDecryption}$ & 402 & 402 & --- & $t$ members / ciphertext \\
+$\mathsf{combineDecryption}$ & 411 & 484 & $+3.9$ & member / ciphertext \\
+\hline
+\end{tabular}
+\end{table}
+
+\paragraph{Results.} In Table~\ref{tab:results} the contribution circuit scales with $\Kmax\Nmax t$ through its $\Kmax n$ Horner evaluations and $\Kmax\Nmax$ masked shares: doubling $\Kmax$ from $8$ to $16$ took it from $3.06$~M constraints, $1.57$~s and $5.0$~GB to $5.90$~M, $3.54$~s and $9.3$~GB. The finalization re-absorbs every accepted dealer's $2\Kmax\Nmax$ commitment words and evaluates $\Kmax\Nmax$ share commitments by Horner; the partial is independent of $\Nmax$ and the combine dominated by its Vandermonde check. A node thus spends about $3.5$~s of wall-clock time on $32$ threads per epoch on its contribution, $2.3$~s more if it is the one that finalizes, $32$~ms per partial and $0.21$~s per combine, which recovers $m$ from $m\,G$ by baby-step giant-step \cite{shanks1971class}, capped at $2^{50}$ in the node (a $256$~MiB table) and $2^{32}$ in the browser; a worst-case plaintext below $2^{50}$ takes $3.7$~s on $32$ threads. In Table~\ref{tab:gas} every proof-carrying call pays about $250$k gas for the Groth16 verification itself \cite{eip1108}; the rest is calldata and storage. The contribution's transcript grows with $t$ and $n$, from $180$ words to $1\,376$ ($43$~KiB), hence its slope. The finalization's $1\,120$ words ($35$~KiB) are fixed by $\Nmax$ and $\Kmax$, absent members' slots being identity points of mostly zero bytes at $4$ gas each; the call also checks one storage row per accepted dealer, hashes $\Kmax$ Merkle leaves per member and writes $48$ cold storage slots ($1.06$~M gas by the fee schedule).
+
+\paragraph{End-to-end cost.} Adding the rows of Table~\ref{tab:gas}, an epoch that yields all $\Kmax = 16$ keys---creation, $n$ claims, $n$ contributions, one finalization---costs $4.89$~M gas at $n = 4$ and $48.9$~M at $n = 32$, i.e.\ $0.31$~M and $3.06$~M per key, the contributions being $41\%$ and $86\%$ of it; every key is paid for at finalization, claimed or not. Decrypting one ciphertext (submission, $t$ partials, one combine) costs $1.72$~M at $t = 3$ and $9.44$~M at $t = 22$, summed from the receipts (the rounded table entries give $9.43$); these totals exclude application registration, the $0.22$~M reveal of a locked application, operator registration and deployment. Two baselines on the same circuits, toolchain and machine place these numbers. A single-key build ($\Kmax = 1$) has a $587\,022$-constraint contribution circuit proving in $0.45$~s and a contribution transaction of $468$k gas at $n = 4$ and $535$k at $n = 32$, so dealing $16$ keys costs $1.07$--$2.5\times$ dealing one, and its epoch, yielding one usable key, costs $3.1$~M gas at $n = 4$ and $21.9$~M at $n = 32$ ($32 \times 535$k contributions, an $809$k finalization, creation and $32 \times 121$k claims), ten and seven times the pooled per-key figure. An earlier design, $\Kmax = 8$ with a proof-less finalization and one $187\,495$-constraint activation proof and $508$--$809$k transaction per key, cost $0.95$~M per key at $n = 4$ and $5.09$~M at $n = 32$ with the pool fully used; one finalization proof and unpadded calldata save $68\%$ and $40\%$ per key, for a $2.25\times$ longer contribution proof and a $2.3$~s finalization proof on one node.
+
+\paragraph{Artifact.} The implementation, circuits, contracts, test vectors, benchmark procedure and the regression tests for the transcript binding of \S\ref{subsec:brlc} and the interpolation check are available as anonymized supplementary material, which distinguishes the experimental single-party setup from a production ceremony.

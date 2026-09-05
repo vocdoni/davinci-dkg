@@ -4,7 +4,7 @@ MAIN := main
 .PHONY: all clean distclean deps
 all: $(MAIN).pdf
 
-$(MAIN).pdf: $(MAIN).tex $(wildcard appendix*.tex) $(wildcard fig-*.tex) references.bib
+$(MAIN).pdf: $(MAIN).tex $(wildcard sections/*.tex) $(wildcard fig-*.tex) references.bib
 	latexmk -lualatex -interaction=nonstopmode -file-line-error $(MAIN).tex
 
 clean:

@@ -1,0 +1,113 @@
+% Fragment: abstract, Section 1 (Introduction), Section 2 (Related Work and
+% Comparison), Section 3 (Model, Goals and Notation). No preamble; assumes the
+% macros of main.tex (\GC, \FB, \HK, \HP, \Kmax, \Nmax, \QUAL, \QC, \mroot).
+
+\begin{abstract}
+We present a distributed key generation protocol on a public EVM chain in which every contribution is a publicly verifiable Feldman dealing carried by a Groth16 proof and verified with one fixed-size check over eight public inputs, whatever the committee size, so no complaint phase exists. One epoch deals a pool of $\Kmax$ independent committee keys inside the same proof, and a second proof, one per epoch, finalizes it: the contract stores all $\Kmax$ keys and their share-commitment roots in one transaction. Every application claims its own pool key, so a copied ciphertext decrypts under an unrelated key, or adds an organizer key revealed once, application-wide, before which the contract admits no partial decryption. A secrecy game with corrupt organizers, submitters and $f$ committee members admits DDH reductions for both modes under stated corruption, random-oracle and proof-system assumptions; the automatic mode additionally relies on Groth16's weak simulation-extractability in the algebraic group model. At a committee bound of $32$ and a pool of $16$, the contribution circuit has $5.90$\,M constraints and proves in $3.5$\,s; a contribution costs $0.50$--$1.31$\,M gas and the finalization of all $16$ keys $2.2$--$2.8$\,M.
+
+\keywords{Distributed key generation \and Threshold decryption \and Publicly verifiable secret sharing \and zk-SNARKs \and EVM.}
+\end{abstract}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Introduction}
+\label{sec:intro}
+
+A distributed key generation protocol lets $n$ parties produce a public key whose secret is Shamir-shared so that any $t$ of them can decrypt \cite{desmedt1989threshold}, while nobody ever holds it. Pedersen-style DKGs \cite{pedersen1991threshold} let recipients check their own shares and settle faulty dealings by interactive complaints; on a public chain that dispute logic runs in a contract, at block granularity, and is itself an attack surface \cite{schindler2019ethdkg,sober2023zksnark}. Publicly verifiable secret sharing \cite{stadler1996pvss,schoenmakers1999pvss,fouque2001oneround} removes complaints in principle, but its proofs cost $\Theta(n)$ group operations per dealing, in groups the EVM does not expose or prices at hundreds of thousands of gas.
+
+A general-purpose succinct proof changes the accounting: a Feldman dealing carried by a Groth16 proof is accepted or rejected by one fixed-size verification with eight public inputs, whatever $n$ and $t$; what grows with the committee is the calldata of commitments and encrypted shares, so a contribution transaction costs $0.50$\,M gas at $n = 4$ and $1.31$\,M at $n = 32$ in our build (\S\ref{sec:impl}). The rest of the paper makes that check bind the right data and lets one committee serve many applications under keys that do not leak into each other.
+
+\paragraph{Motivating application.} Consider an encrypted voting service: ballots are exponential-ElGamal ciphertexts, aggregated homomorphically off chain, and only authorized tally ciphertexts are submitted for threshold decryption. The aggregate submitter does not know the summed randomness, so the proof of knowledge with which threshold ElGamal classically closes its decryption oracle \cite{shoup2002threshold} is unavailable. Elections need isolated keys; some also need an organizer-controlled, application-wide release. Ballot validity, eligibility, aggregation correctness and tally authorization lie outside this layer; the protocol alone does not stop an authorized submitter from submitting an individual ballot.
+
+\paragraph{Contributions.}
+\begin{enumerate}[leftmargin=1.5em,nosep]
+  \item \emph{Succinctly verified dealings of a key pool.} Each contribution deals $\Kmax$ independent Feldman polynomials to the whole committee and is verified on chain by one fixed-size Groth16 verification with eight public inputs; an invalid dealing is refused at submission, so no dispute phase exists. One finalization proof per epoch aggregates the accepted dealings of all $\Kmax$ keys and evaluates every member's share commitments; the contract stores $\Kmax$ keys and Merkle roots in one transaction, so every key is usable the moment the epoch is live (\S\ref{sec:protocol}).
+  \item \emph{Per-application keys in two modes, with a security model.} Every application claims one pool key. An \emph{automatic} application is decrypted by any $t$ members inside its decryption window; an \emph{organizer-locked} one adds an organizer key, $\mathsf{PK}_{\mathtt{aid}} = P_j + \mathsf{PK}_{\mathtt{org}}$, whose secret is revealed once, application-wide, before which honest nodes (fewer than $t$ corrupt) release no partial. A secrecy game with corrupt organizers, submitters and $f$ members yields DDH reductions for a locked application before its reveal ($n - f \ge t$, Theorem~\ref{thm:locked}) and for an automatic one ($f < t$, Theorem~\ref{thm:automatic}), with their assumptions stated (\S\ref{sec:security}).
+  \item \emph{Verification devices and an implementation.} A binding random-linear-combination commitment, gated by public counts so calldata carries no padding, keeps every verifier at $7$--$15$ public inputs; we state its exact hypotheses and the forgery when one is dropped (Lemma~\ref{lem:brlc}). A canonical interpolation check gives the combine proof one accepted Lagrange vector modulo $q$ (\S\ref{sec:succinct}). Three contracts and four circuits are measured with their real verifiers on a local testbed (\S\ref{sec:impl}).
+\end{enumerate}
+
+\begin{table}[tb]
+\centering
+\caption{Dealing verification in DKGs with a public bulletin board. PV: publicly verifiable dealing. SRS: the scheme needs a per-circuit structured reference string; unmarked rows need no trusted setup. Size: what one dealing publishes.}
+\label{tab:related}
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\renewcommand{\arraystretch}{1.1}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{2.9cm}>{\raggedright\arraybackslash}p{1.4cm}>{\raggedright\arraybackslash}p{3.1cm}>{\raggedright\arraybackslash}p{1.6cm}>{\raggedright\arraybackslash}p{2.3cm}@{}}
+\hline
+Protocol & Check & Verifier per dealing & Size per dealing & Verified by \\
+\hline
+Pedersen; Gennaro et al.; Shutter \cite{pedersen1991threshold,gennaro1999secure,shutter2024} & complaints & $O(t)$ exp., recipient only & $O(t)$ + $n$ private & parties; synchronous rounds \\
+Fouque--Stern; SCRAPE; ALBATROSS; Kate et al.\ \cite{fouque2001oneround,cascudo2017scrape,cascudo2020albatross,kate2024classgroups} & PV & $O(n)$ Paillier, group or class-group ops & $O(n)$ & anyone \\
+Gurkan et al.; Groth NI-DKG \cite{gurkan2021aggregatable,groth2021nidkg} & PV & $O(n)$ exp.\ + pairings; aggregatable & $O(n)$ & anyone; BFT replicas \\
+Ferveo \cite{bebel2022ferveo} & PV & $O(n)$ exp.\ + pairings & $O(n)$ & BFT validators \\
+EthDKG \cite{schindler2019ethdkg} & complaints on chain & $O(t)$ exp.\ per recipient; contract adjudicates & $O(t+n)$ & EVM contract; block windows \\
+Sober et al.\ \cite{sober2023zksnark} & complaints on chain & SNARK-checked rebuttal (SRS) & $O(t+n)$ & EVM contract; block windows \\
+This work & PV & one Groth16 verification, $8$ public inputs (SRS) & $\Kmax(2t{+}n)$ ${+}\,5n$ words, $\Kmax$ dealings & EVM contract; block windows \\
+\hline
+\end{tabular}
+\end{table}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Related Work and Comparison}
+\label{sec:related}
+
+Pedersen's DKG \cite{pedersen1991threshold} runs $n$ Feldman instances \cite{feldman1987practical} in parallel; Gennaro et al.\ showed that a rushing adversary biases its key \cite{gennaro1999secure} and that the biased key stays safe for discrete-log applications such as ElGamal \cite{gennaro2003applications}, the position this paper takes. Kate and Goldberg moved DKG to the Internet setting \cite{kate2009dkg}; asynchronous DKGs \cite{kokoris2020asynchronous,das2022practical,abraham2023bingo,das2023practical,zhang2023practical,abraham2025quadratic,feng2025coin} reach near-quadratic communication and adaptive security but rest on asynchronous VSS and agreement primitives \cite{bacho2025sok}, unneeded on a chain that already orders messages; SPRINT \cite{benhamouda2024sprint} targets threshold signing.
+
+Complaint-free dealing is not new. Publicly verifiable secret sharing \cite{stadler1996pvss,schoenmakers1999pvss} and Fouque and Stern's one-round DKG \cite{fouque2001oneround} began the line; SCRAPE \cite{cascudo2017scrape} made verification linear, ALBATROSS \cite{cascudo2020albatross} batched it, Gurkan et al.\ \cite{gurkan2021aggregatable} made transcripts aggregatable, Groth's NI-DKG \cite{groth2021nidkg} uses forward-secure encryption and a bespoke proof system, Kate et al.\ \cite{kate2024classgroups} need no setup at all with class groups, and Ferveo \cite{bebel2022ferveo} deploys publicly verifiable dealings among the validators of a BFT chain, each verifier performing $\Theta(n)$ group operations per dealing.
+
+On the EVM, EthDKG \cite{schindler2019ethdkg} ports Joint-Feldman with on-chain dispute resolution, Sober et al.\ \cite{sober2023zksnark} check the rebuttal with a zk-SNARK but keep the complaint phase, and Shutter \cite{shutter2024} runs Feldman VSS with interactive complaints in production. Table~\ref{tab:related} positions the present design: a publicly verifiable dealing, checked by the contract at a fixed verifier cost, under a per-circuit trusted setup; it separates verifier work from transcript size.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Model, Goals and Notation}
+\label{sec:model}
+
+\subsection{Notation and Primitives}
+\label{subsec:prelim}
+
+$\GC$ is a cyclic group of prime order $q$, written additively with generator $G$; DDH is assumed hard. The implementation uses BabyJubJub's prime-order subgroup (cofactor $8$) over the BN254 scalar field $\FB_p$, $p > q$, the circuits' native field, so in-circuit reduction modulo $q$ needs a bounded quotient (\S\ref{sec:succinct}). $\HK$ is Keccak-256, reduced modulo $q$ for the contract's Schnorr challenges and modulo $p$ for the calldata-binding challenges of \S\ref{sec:succinct}; $\HP$ is Poseidon \cite{grassi2021poseidon}. The contract checks points canonical, on-curve and, where meaningful, non-identity; whoever multiplies a secret into a point checks its subgroup. An epoch has $n \le \Nmax$ members, threshold $t$, $f$ corrupt, and $\Kmax$ pool keys ($\Nmax = 32$, $\Kmax = 16$); $\QUAL \subseteq [n]$, $|\QUAL| \ge m_{\min} \ge t$, are the accepted dealers, frozen at finalization; $\QC$, $|\QC| = s \ge t$, those whose partials are combined.
+
+\paragraph{Feldman VSS \cite{shamir1979share,feldman1987practical}.} A dealer with secret $\sigma$ samples a uniform $f$ of degree below $t$ over $\FB_q$ with $f(0) = \sigma$, sends party $u$ the share $f(u)$ and publishes $C(k) := a_k G$ per coefficient; $u$ checks
+\begin{equation}
+    f(u)\,G \overset{?}{=} \sum_{k=0}^{t-1} u^k\, C(k).
+    \label{eq:feldman}
+\end{equation}
+
+\paragraph{Hashed ElGamal for shares.} A share $s \in \FB_q$ is encrypted under a recipient key $\mathsf{pub} = xG$ as
+\begin{equation}
+    (R, \sigma) := \bigl(rG,\; s + \HP(\mathsf{ctx} \,\|\, r\,\mathsf{pub}) \bmod q\bigr), \qquad r \leftarrow \FB_q,
+    \label{eq:hashed-elgamal}
+\end{equation}
+and recovered as $s = \sigma - \HP(\mathsf{ctx} \,\|\, xR)$; $\mathsf{ctx}$ binds epoch, dealer, recipient and key index, so one ECDH value per recipient yields $\Kmax$ distinct masks; IND-CPA holds under DDH with $\HP$ a random oracle \cite{abdalla_bellare_rogaway_dhies_2001,cash_kiltz_shoup_twin_dh_2008}, a heuristic since the same $\HP$ is arithmetised in the dealing circuit (\S\ref{sec:security}, (c)). Applications use exponential ElGamal (\S\ref{sec:protocol}).
+
+\subsection{Chain, Parties and Adversary}
+\label{subsec:model}
+
+\paragraph{Chain and parties.} We assume finality below the parties' confirmation depth, bounded inclusion of funded honest parties' transactions (phase windows are sized accordingly) and availability of accepted calldata. Registered operators form each epoch's committee by snapshot-based eligibility filtering from a block-hash seed (\S\ref{sec:protocol}), exposed to proposer bias and inclusion races: every result is conditioned on the selected committee meeting the corruption bound. Organizers register applications and submitters post ciphertexts; registry admission is a deployment assumption.
+
+\paragraph{Adversary.} Corruptions are static \cite{canetti1999adaptive}: $f$ members and any number of other operators, organizers and submitters; honest members keep shares for the epoch's decryption horizon. The corruption bounds and cryptographic assumptions are exactly (a)--(f) of \S\ref{sec:security}, which also states which result uses which. Adaptive or proactive corruption, UC composition and setup compromise are out of scope.
+
+\subsection{Goals}
+\label{subsec:goals}
+
+\emph{Correctness}: for a key $j$ of a live epoch, $A_j := \sum_{\ell \in \QUAL} f_\ell^{(j)}$, the stored key is $A_j(0)\,G$, the Merkle leaves $A_j(i)\,G$, honest member $i$'s share $A_j(i)$, and a combined plaintext of a well-formed ciphertext $\log_G(C_2 - \mathsf{sk}_{\mathtt{aid}} C_1)$ within the search bound. \emph{Availability}: an epoch with $m_{\min}$ accepted contributions goes live, by one finalization proof, with every key usable; a well-formed ciphertext whose gate is open is decrypted whenever $t$ honest holders are available and included. \emph{Secrecy}: the game of \S\ref{sec:security}; Table~\ref{tab:threat} states what holds under which corruption.
+
+\begin{table}[tb]
+\centering
+\caption{Guarantees by adversary. Outsiders: other organizers and submitters. Gated: honest members post no partial before the application's window opens and, if locked, before its reveal. Rows 1 and 2 also need one honest accepted dealer.}
+\label{tab:threat}
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\renewcommand{\arraystretch}{1.1}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{3.3cm}>{\raggedright\arraybackslash}p{1.2cm}>{\raggedright\arraybackslash}p{7.25cm}@{}}
+\hline
+Adversary controls & Bound & What holds \\
+\hline
+Outsiders; $f$ members & $f < t$, $n - f \ge t$ & Honest application confidential while gated (Theorem~\ref{thm:automatic}) \\
+Own organizer (correctly generated secret, unrevealed); $f$ members & $f < t$, $n - f \ge t$ & No leak via other applications; own one gated (Theorem~\ref{thm:locked}) \\
+Outsiders; $f$ members & any $f$ & Locked application confidential until reveal (Theorem~\ref{thm:locked}) \\
+$t$ members & --- & Automatic mode broken; locked keeps its organizer factor \\
+Organizer and $t$ members & --- & No embargo in either mode; coalition decrypts off chain \\
+Authorized submitter & any & Chooses what enters; nothing is claimed about its inputs \\
+\hline
+\end{tabular}
+\end{table}

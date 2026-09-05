@@ -1,0 +1,31 @@
+\section{Reduction details}
+\label{app:proofs}
+
+\subsection{Locked-application bookkeeping}
+\label{app:locked}
+
+First finish the epoch using real circuit proofs. When $n-f\ge t$, Lemma~\ref{lem:dealing} lets the reduction recover each adversarial polynomial from $t$ honest recipients; otherwise it invokes assumption (d)'s knowledge extractor on the accepted contributions, adding extractor running time and failure probability $\epsilon_{\rm ks}$---not a straight-line reconstruction claim. Extraction precedes organizer registration, so it needs no soundness after simulated SNARK proofs.
+
+To simulate a possession proof for $X$, sample $h\leftarrow\{0,1\}^{256}$ and $z\leftarrow\FB_q$, and set $c=h\bmod q$, $T=zG-cX$, $\HK(\mathsf{ctx}_{\rm org},X,T):=h$, where the context holds the registration domain, epoch, and application identifier. Programming the \emph{full} output preserves the actual reduced-challenge distribution; as $T$ is uniform, an existing-query conflict costs at most $Q_K/q$ per registration, so switching at most $Q_A$ honest registrations costs $Q_AQ_K/q$.
+
+Guess the challenge registration and embed the DDH element there; other organizer secrets remain known and their reveals are answered normally, while the target secret is neither revealed nor supplied through an organizer-DH oracle, although all committee partials could be disclosed. The challenge uses the known pool scalar as in Theorem~\ref{thm:locked}; unsuccessful guesses return random bits, yielding the factor $Q_A$.
+
+For the organizer-adversary direction, the experiment supplies the target's correctly generated organizer secret as auxiliary input; ciphertext translation adds its known multiple of $C_1$, and all target honest partials remain gated. This corollary does not analyze arbitrary malicious target-key generation merely from a successful possession verification.
+
+\subsection{Automatic-application hybrids and composition}
+\label{app:automatic}
+
+For dealer $d$, recipient $u$, and key $j$, the actual mask structure is $S_{d,u}=r_{d,u}\mathsf{pub}_u$, $M_{d,u,j}=\HP(\mathsf{dom}_{\rm mask},\mathtt{eid},2^{16}d+u,j)$, and $\sigma_{d,u,j}=f_d^{(j)}(u)+\HP(M_{d,u,j},S_{d,u}.x,S_{d,u}.y)\pmod q$. Index bounds make the packing injective, and, except for hash collisions already charged to $\epsilon_{\rm bind}$, different keys have different outer-mask inputs despite sharing $S_{d,u}$.
+
+After simulating honest contribution proofs, a per-row hashed-ElGamal argument~\cite{abdalla_bellare_rogaway_dhies_2001} first replaces the row's DH secret by an independent random group point; unless that point is queried, its $\Kmax$ hash outputs are independent field elements, so knowledge of other keys' shares and masks does not expose the target mask. Outside the aggregate extraction and collision bad events, a sufficient per-row bound is $\epsilon_{\rm HE}\le\operatorname{Adv}^{\rm ddh}_{\GC}(\BC_{\rm row})+(Q_P+Q_K)/q+\Kmax\beta$ with $\beta=\eta(q-\eta)/(pq)$ and $\eta=p-7q$, where $Q_P$ counts relevant outside queries to the mask oracle, $Q_K/q$ covers simulation of the embedded recipient's registration proof, and $\beta$ is exactly the statistical distance between $U(\FB_p)\bmod q$ and $U(\FB_q)$: $\eta$ residues have eight preimages and the others seven.
+
+The row reduction may not know its embedded recipient's secret. It nevertheless simulates the contribution phase without decrypting corrupt dealings, freezes $\QUAL$, and extracts witnesses for the fixed accepted corrupt statements before answering service-phase queries; their polynomials determine honest virtual shares and other-key partials, outside the binding bad event. Only honest contributor contexts receive simulated contribution proofs, and static corruption, authenticated contributor indices and the one-contribution rule make every accepted corrupt statement fresh for weak simulation-extractability, including throughout the row hybrids. White-box extraction suffices; internal rewinding must preserve the accepted statements and resume the saved main execution and oracle state, and all extraction failure and any truncation loss are included in $\epsilon_{\rm se}$. Honest encrypted rows have no decryption oracle, and virtual states retain the original mathematical shares rather than decrypting placeholders.
+
+For the final DDH embedding, choose $t-1$ nonzero interpolation nodes containing all corrupt positions, assign them independent known evaluations $v_z$, let $L_0,L_z$ be the basis polynomials for those nodes together with zero, and set $F(T)G=L_0(T)X+\sum_z L_z(T)v_zG$, a uniformly distributed degree-below-$t$ polynomial in the ideal sampling experiment with known corrupt evaluations; every other honest polynomial is sampled normally. All recipient encryption secrets are now known, so $t$ honest decryptions recover each adversarial polynomial without extraction. Finalization is genuinely provable from commitment points and their digests: its transcript digest covers the masked $2\Nmax+\Kmax(2+2\Nmax)$ words together with $\mathtt{eid},t,n,|\QUAL|$, occupies input index $4$ of $7$, and enters the BRLC anchor, and no hidden polynomial scalar is its witness.
+
+Guess the target slot and the lowest-index honest dealer in $\QUAL$, testing both guesses before using the adversary's output; this gives $L\le\Kmax(n-f)$ without assuming a dealer is guaranteed acceptance. The encryption hybrids run over all $R$ rows before this guessing reduction, so their losses are additive outside $L$. Adaptive offsets may bias the final keys, but the recovered scalar offset still permits the final DDH translation. All reductions include their proving and extraction overhead.
+
+\subsection{Canonical share-mask reduction}
+\label{app:mask}
+
+Write $p=7q+\eta$, where $0<\eta<q$. For a canonical raw hash value $h\in[0,p)$, the circuit enforces $h=\nu q+\mu\pmod p$ with $0\le\nu\le7$, $0\le\mu<q$, and $\nu=7\Longrightarrow\mu<\eta$. These bounds imply $\nu q+\mu<p$ over the integers, so the field equality is an integer equality, giving the unique canonical remainder $h\bmod q$; a remainder bound alone would not suffice. Masked-share addition also range-checks the share, mask, and result below $q$, and restricts its carry to $\{0,1\}$; both sides of that equality are below $2q<p$, excluding native-field wraparound there as well.
