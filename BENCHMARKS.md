@@ -68,6 +68,37 @@ still spends under two seconds of CPU per epoch on its contribution, under a
 fifth of a second per key it activates, and about a quarter of a second per
 ciphertext it combines.
 
+## Single-key baseline (MaxK = 1, same toolchain)
+
+Measured 2026-09-05 with the v3.1 code at commit d8c186a, `MaxK = 1` / `MAX_K = 1`, the same
+gnark v0.16.3 toolchain, MaxN = 32, on the same machine, so the pool can be compared with a
+single-key deployment without mixing toolchains.
+
+| Circuit | Constraints, MaxK = 1 | Constraints, MaxK = 8 | Proving, MaxK = 1 | Proving, MaxK = 8 |
+|---|---:|---:|---:|---:|
+| Contribution | 587,022 | 3,060,692 | 447 ms | 1,574 ms |
+| Pool-key activation | 181,881 | 187,495 | 277 ms | 181 ms |
+| PartialDecrypt | 29,026 | 29,026 | — | 32 ms |
+| DecryptCombine | 287,338 | 287,338 | — | 213 ms |
+
+Proving times are the mean of five (`-benchtime=5x`); the activation figure at MaxK = 1 was taken
+while other jobs ran and is noisy.
+
+| Call | MaxK = 1, n = 4 | MaxK = 1, n = 32 | MaxK = 8, n = 4 | MaxK = 8, n = 32 |
+|---|---:|---:|---:|---:|
+| `submitContribution` | 467,536 | 535,120 | 702,013 | 944,425 |
+| `activatePoolKey` | 508,266 | 809,066 | 508,137 | 808,913 |
+| `submitPartialDecryption` | 402,320 | 402,340 | 402,332 | 402,340 |
+| `combineDecryption` | 410,639 | 484,028 | 410,651 | 483,980 |
+
+Registration and reveal are not comparable across the two runs because the MaxK = 1 build includes
+the audit fixes (the organizer-key subgroup check adds about 168k gas to a locked registration).
+
+Reading it: a contribution dealing eight keys costs 1.5–1.8× a single-key one, so per key the pool
+is 4.5–5.3× cheaper on contributions; activation is per key in both. An epoch that yields one usable
+key costs about 3.1 M gas at n = 4 (creation, four claims, four contributions, finalization, one
+activation) against 0.95 M per key for a fully used eight-key epoch.
+
 ## On-chain gas (Anvil, real verifiers, v3.1)
 
 Measured on 2026-09-05 with the verifiers generated from the re-pinned gnark
