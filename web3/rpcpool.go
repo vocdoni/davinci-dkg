@@ -144,6 +144,14 @@ func (p *RPCPool) MarkRateLimited() {
 // counts toward the usual threshold (MarkFailed). Contract reverts and every
 // other error are none of the endpoint's business. nil is a no-op, so callers
 // can feed it every result unconditionally.
+// Rotate advances to the next endpoint without disabling the current one;
+// used by startup code that wants to try every endpoint once.
+func (p *RPCPool) Rotate() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.current = (p.current + 1) % len(p.entries)
+}
+
 func (p *RPCPool) NoteError(err error) {
 	if err == nil || !IsRPCTransportError(err) {
 		return

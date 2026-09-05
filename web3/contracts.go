@@ -113,27 +113,54 @@ func New(rpcURLs []string, addresses types.ContractAddresses) (*Contracts, error
 		return nil, fmt.Errorf("dial rpc: %w", err)
 	}
 
-	client := pool.Current()
-
-	chainID, err := client.ChainID(context.Background())
-	if err != nil {
-		pool.Close()
-		return nil, fmt.Errorf("get chain id: %w", err)
+	// Every startup read goes through the same rotation as the runtime paths:
+	// a rate-limited or unreachable first endpoint must not make the whole
+	// process exit before it ever tried the others.
+	var chainID *big.Int
+	for attempt := 0; ; attempt++ {
+		var derived types.ContractAddresses
+		var derr error
+		chainID, derived, derr = deriveStartup(pool.Current(), addresses)
+		if derr == nil {
+			addresses = derived
+			break
+		}
+		if attempt+1 >= len(rpcURLs) || !IsRPCTransportError(derr) {
+			pool.Close()
+			return nil, derr
+		}
+		pool.NoteError(derr)
+		pool.Rotate()
 	}
 
-	// Derive the registry address from the manager contract when not supplied.
+	if err := addresses.Validate(); err != nil {
+		pool.Close()
+		return nil, err
+	}
+
+	return &Contracts{
+		ChainID:     chainID.Uint64(),
+		Addresses:   addresses,
+		pool:        pool,
+		managerABI:  managerABI,
+		registryABI: registryABI,
+	}, nil
+}
+
+// deriveStartup reads the chain id and fills in every address the caller left
+// empty from the manager's public immutable fields, using one endpoint.
+func deriveStartup(client *ethclient.Client, addresses types.ContractAddresses) (*big.Int, types.ContractAddresses, error) {
+	chainID, err := client.ChainID(context.Background())
+	if err != nil {
+		return nil, addresses, fmt.Errorf("get chain id: %w", err)
+	}
 	if addresses.Registry == (common.Address{}) {
 		addr, err := fetchAddressFromManager(client, addresses.Manager, "REGISTRY")
 		if err != nil {
-			pool.Close()
-			return nil, fmt.Errorf("derive registry from manager: %w", err)
+			return nil, addresses, fmt.Errorf("derive registry from manager: %w", err)
 		}
 		addresses.Registry = addr
 	}
-
-	// Derive verifier addresses from the manager's public immutable fields when
-	// not supplied. This allows callers to provide only the Manager address (e.g.
-	// via a network preset) and have the full address book filled in on-chain.
 	verifierFields := []struct {
 		method string
 		dest   *common.Address
@@ -149,35 +176,20 @@ func New(rpcURLs []string, addresses types.ContractAddresses) (*Contracts, error
 		}
 		addr, err := fetchAddressFromManager(client, addresses.Manager, vf.method)
 		if err != nil {
-			pool.Close()
-			return nil, fmt.Errorf("derive %s from manager: %w", vf.method, err)
+			return nil, addresses, fmt.Errorf("derive %s from manager: %w", vf.method, err)
 		}
 		*vf.dest = addr
 	}
-
 	// The app manager is wired post-deploy via setAppManager; derive it too
 	// so nodes can serve per-application ciphertexts with only --manager.
 	if addresses.AppManager == (common.Address{}) {
 		addr, err := fetchAddressFromManager(client, addresses.Manager, "appManager")
 		if err != nil {
-			pool.Close()
-			return nil, fmt.Errorf("derive app manager from manager: %w", err)
+			return nil, addresses, fmt.Errorf("derive app manager from manager: %w", err)
 		}
 		addresses.AppManager = addr
 	}
-
-	if err := addresses.Validate(); err != nil {
-		pool.Close()
-		return nil, err
-	}
-
-	return &Contracts{
-		ChainID:     chainID.Uint64(),
-		Addresses:   addresses,
-		pool:        pool,
-		managerABI:  managerABI,
-		registryABI: registryABI,
-	}, nil
+	return chainID, addresses, nil
 }
 
 // fetchAddressFromManager calls a named view function on the DKGManager contract
