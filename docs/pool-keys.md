@@ -392,12 +392,12 @@ Per contribution, per finalization, per partial (with path), per combine, per
 registration, per reveal; circuit constraints and proving times for all four
 circuits at MaxN = 32, MaxK = 16.
 
-### v4 estimates (pending measurement)
+### v4 estimates (superseded by measurements)
 
-The numbers below are **estimates** extrapolated from the v3.1 benchmarks;
-they have not been measured. v4 compilation has not been run, so the
-constraint counts, proving times, gas and EIP-170 compliance of every call
-remain release gates:
+The numbers below were **estimates** made before v4 was compiled; the measured
+values are in BENCHMARKS.md ("v4: batched finalization and compact contributions":
+contribution 5,904,167 constraints / 3.54 s / 9.3 GB peak, finalize 2,328,130 / 2.26 s /
+5.5 GB, finalize 2.20–2.81 M gas, contribution 0.50–1.31 M gas at n = 4…32). Kept for the record:
 
 - Finalization circuit: expect approximately **2.6–2.9 M R1CS constraints**,
   budgeting 3.1 M pending compilation (estimate).
@@ -429,9 +429,8 @@ remain release gates:
 | PartialDecrypt  |      29,026 |
 | DecryptCombine  |     287,338 |
 
-The v4 contribution circuit is ~5.9 M constraints at `MaxK = 16` (vs. ~3.06 M
-in v3.1 at `MaxK = 8`), so expect roughly **twice the v3.1 proving time and
-memory** — the wall-clock and memory figures still await a v4 benchmark
-run. The `Finalize` circuit measured in at 2.33 M, slightly below the
-2.6–2.9 M estimate above.
+The v4 contribution circuit is 5,904,167 constraints at `MaxK = 16` (vs. 3,060,692
+in v3.1 at `MaxK = 8`): 3.54 s and 9.3 GB peak resident memory per proof on the
+benchmark machine, against 1.57 s and 5.0 GB. The `Finalize` circuit is
+2,328,130 constraints, 2.26 s and 5.5 GB, below the 2.6–2.9 M estimate above.
 
