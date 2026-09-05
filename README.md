@@ -354,10 +354,10 @@ What happens on first start:
 1. The node derives its BabyJubJub key from your operator EVM key and registers it in
    `DKGRegistry`. That is one transaction, skipped if you are already registered and active.
 2. Before its first proof it downloads the pinned circuit artifacts from the release built into
-   the binary — the [`circuits-v3`
-   release](https://github.com/vocdoni/davinci-dkg/releases/tag/circuits-v3), about 600 MB, of which
-   the contribution proving key is 410 MB — and checks every file against the hashes built into
-   the binary.
+   the binary — the [`circuits-v4`
+   release](https://github.com/vocdoni/davinci-dkg/releases/tag/circuits-v4), about 1.7 GB, of which
+   the contribution proving key is 760 MB and the finalization proving key 425 MB — and checks every
+   file against the hashes built into the binary.
 3. It prints a startup banner with the chain head, registry statistics and its own `self:` row,
    then polls `DKGManager` and reacts to every phase it is eligible for.
 
@@ -505,7 +505,7 @@ honest path:
 
 | Network | DKGManager                                 | Notes |
 |---------|--------------------------------------------|-------|
-| Sepolia | `0x6dd442e96cd0b5d8408c2e461a6504be8893229c` | Public pool-key testnet (contracts and [`circuits-v3`](https://github.com/vocdoni/davinci-dkg/releases/tag/circuits-v3) artifacts of this release), built into the node and SDK: pass `--network sepolia`. Registry `0x62d0b2eac42912d756c88d51df8ecab31f0b565a`, app manager `0x759572dc41b2d56a4a28df23bb3efd4e0684c108`, deployed at block 11,639,686 (2026-09-05). Epochs last 7,200 blocks (about 24 h); committee selection 100 blocks, key assembly 150 blocks, finalize gap 10 blocks; floors `MIN_THRESHOLD=2`, `MIN_COMMITTEE_SIZE=3`, `MAX_LOTTERY_ALPHA_BPS=20000`; inactivity window 50,400 blocks. The previous single-key deployment at `0xd38af14cd3b550e268693b459c08ef7331cb23b0` (block 11,628,341, `circuits-v2`) is retired. |
+| Sepolia | `0xf4fc804388211949b56b166281b2b86879b6278e` | Public v4 testnet (batched finalization, sixteen keys per epoch; contracts and [`circuits-v4`](https://github.com/vocdoni/davinci-dkg/releases/tag/circuits-v4) artifacts of this release), built into the node and SDK: pass `--network sepolia`. Registry `0x7f35800c5f81fd55799e5b6ebb78c0fc8f86bb5c`, app manager `0x735496bb75a4ec91faf9a1cf61a2c2325168e8cd`, deployed at block 11,642,464 (2026-09-05). Epochs last 7,200 blocks (about 24 h); committee selection 100 blocks, key assembly 150 blocks, finalize gap 10 blocks; floors `MIN_THRESHOLD=2`, `MIN_COMMITTEE_SIZE=3`, `MAX_LOTTERY_ALPHA_BPS=20000`; inactivity window 50,400 blocks. Earlier deployments (`0x6dd442e9…` v3.1 with `circuits-v3`, `0xd38af14c…` single-key with `circuits-v2`) are retired. |
 
 `DKGRegistry` and `DKGAppManager` are auto-resolved from `DKGManager` on-chain — only the manager
 address needs to be configured.

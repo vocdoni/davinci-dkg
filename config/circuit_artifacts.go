@@ -8,7 +8,7 @@ const (
 	// (see `make circuits-release`). DefaultArtifactsRelease is that release's tag.
 	DefaultArtifactsBaseURL = "https://github.com/vocdoni/davinci-dkg/releases/download"
 	// DefaultArtifactsRelease is the default remote artifact release channel.
-	DefaultArtifactsRelease = "circuits-v3"
+	DefaultArtifactsRelease = "circuits-v4"
 )
 
 var (

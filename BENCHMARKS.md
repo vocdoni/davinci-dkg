@@ -1,12 +1,11 @@
 # DAVINCI DKG — Benchmarks
 
-Reference figures for the **MaxN = 32, MaxK = 8** production build (a pool
-of eight committee-held application keys per epoch, see
-`docs/pool-keys.md`), with a MaxN = 16 column so operators can size proving
-infrastructure for a smaller committee bound. `MaxN` must be a power of two
-(the share-commitment Merkle tree has `2^MERKLE_DEPTH = MaxN` leaves), so the
-earlier MaxN = 48 column no longer applies. The four Groth16 circuits are
-Contribution, PoolKey (activation), PartialDecrypt and DecryptCombine.
+Reference figures for the **v4 production build** (MaxN = 32, MaxK = 16: a pool of sixteen
+committee-held application keys per epoch, finalized by one proof, see `docs/pool-keys.md`).
+The four Groth16 circuits are Contribution, Finalize, PartialDecrypt and DecryptCombine. The
+v3.1 tables further down (eight keys, per-key activation proofs) and the pre-upgrade tables are
+kept for comparison; `MaxN` must be a power of two (the share-commitment Merkle tree has
+`2^MERKLE_DEPTH = MaxN` leaves).
 
 > **Caveat — single-party trusted setup.** The reference artifacts come from a
 > single-party Groth16 setup. A multi-party ceremony produces fresh pk/vk
@@ -28,26 +27,9 @@ Contribution, PoolKey (activation), PartialDecrypt and DecryptCombine.
 
 ---
 
-## Circuit constraint counts after the gnark upgrade (v3.1, 2026-09-04)
+## Current release (v4): batched finalization and compact contributions (MaxN = 32, MaxK = 16, gnark v0.16.3)
 
-Recompiled with gnark v0.16.3 / gnark-crypto v0.21.0 after the pool-key v3.1
-changes (activation transcript digest, whole-committee share commitments,
-canonical Lagrange mask) and with every variable-base scalar multiplication
-done by the hint-free `ccommon.ScalarMulVar` gadget instead of gnark's hinted
-fake-GLV (the pinned snapshot's version was unsound; the fixed one commits and
-would have added a pairing to every proof). `go run ./cmd/constraints`, MaxN = 32,
-MaxK = 8:
-
-| Circuit         | constraints |
-|-----------------|------------:|
-| Contribution    |   3,060,692 |
-| PoolKey         |     187,495 |
-| PartialDecrypt  |      29,026 |
-| DecryptCombine  |     287,338 |
-
-## v4: batched finalization and compact contributions (MaxK = 16, gnark v0.16.3)
-
-Measured 2026-09-05 on the `v4-batched-finalize` branch: one proof-carrying `finalizeEpoch` activates
+Measured 2026-09-05 on the v4 build now on main and deployed on Sepolia: one proof-carrying `finalizeEpoch` activates
 all 16 keys, contributions carry the unpadded transcript of `MaxK·(2t+n) + 5n` words, MaxN = 32.
 Same machine and method as the v3.1 tables (Anvil with the real verifiers, receipts' `gasUsed`;
 proving mean of five, 32 threads).
@@ -82,7 +64,24 @@ prover peaks at 9.3 GB resident (5.0 GB at MaxK = 8) and the finalize prover at 
 around the benchmark, proving key and circuit loaded). With MaxK = 8 the same design would keep the v3.1 proving cost and land
 near 0.5 M per key at n = 4.
 
-## Proof generation time (v3.1, gnark v0.16.3)
+## Circuit constraint counts after the gnark upgrade (v3.1, superseded by v4, 2026-09-04)
+
+Recompiled with gnark v0.16.3 / gnark-crypto v0.21.0 after the pool-key v3.1
+changes (activation transcript digest, whole-committee share commitments,
+canonical Lagrange mask) and with every variable-base scalar multiplication
+done by the hint-free `ccommon.ScalarMulVar` gadget instead of gnark's hinted
+fake-GLV (the pinned snapshot's version was unsound; the fixed one commits and
+would have added a pairing to every proof). `go run ./cmd/constraints`, MaxN = 32,
+MaxK = 8:
+
+| Circuit         | constraints |
+|-----------------|------------:|
+| Contribution    |   3,060,692 |
+| PoolKey         |     187,495 |
+| PartialDecrypt  |      29,026 |
+| DecryptCombine  |     287,338 |
+
+## Proof generation time (v3.1, superseded by v4, gnark v0.16.3)
 
 Wall-clock per single proof, mean of five runs (`go test ./circuits/... -run XXX
 -bench '^BenchmarkProve$' -benchtime=5x`, which reports the mean), gnark
