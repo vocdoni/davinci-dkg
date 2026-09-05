@@ -4,29 +4,36 @@
 // demo mode renders a different component tree and never mounts it, so
 // `?demo=1` cannot end up asking a browser extension for anything.
 //
-// Reads do not go through the SDK's client: every piece of state the stepper
-// shows (the epoch key, the ciphertext the contract stored, the partials,
-// the share, the combine) is already in the explorer's indexer, and reading it
-// from there keeps the playground on the same snapshot as the rest of the app.
+// Reads of the pipeline do not go through the SDK's client: every piece of
+// state the stepper shows (the pool, the ciphertext the contract stored, the
+// partials, the reveal, the combine) is already in the explorer's indexer,
+// and reading it from there keeps the playground on the same snapshot as the
+// rest of the app. The application key is the one exception — it is read
+// straight off the contract with `getApplicationKey`, so the value encrypted
+// under is exactly what the chain says, not what the indexer has caught up to.
 // Only the three organizer writes go through the writer.
 
 import { useCallback, useMemo } from 'react'
 import { useAccount, useChainId, usePublicClient, useWalletClient } from 'wagmi'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
-import { DKGWriter, type ElGamalCiphertext, fromRTEtoTE } from '@vocdoni/davinci-dkg-sdk'
+import { AppMode, DKGClient, DKGWriter, type ElGamalCiphertext, fromRTEtoTE } from '@vocdoni/davinci-dkg-sdk'
 import type { Hex } from 'viem'
 import { useRuntimeConfig } from '~config/config-context'
 import { useApplication, useEpoch, useIndexer, useStore } from '~data/hooks'
+import { POOL_SIZE } from '~indexer/types'
 import type {
+  ApplicationKeys,
   DecryptionView,
   PlaygroundChain,
   PlaygroundTarget,
   RegisterArgs,
-  ShareArgs,
+  RegisterResult,
+  RevealArgs,
   SubmitArgs,
   TxRecord,
 } from './types'
 type WriterConfig = ConstructorParameters<typeof DKGWriter>[0]
+type ClientConfig = ConstructorParameters<typeof DKGClient>[0]
 
 export function useLiveChain(target: PlaygroundTarget): PlaygroundChain {
   const config = useRuntimeConfig()
@@ -40,6 +47,15 @@ export function useLiveChain(target: PlaygroundTarget): PlaygroundChain {
 
   const epoch = useEpoch(target.epochId ?? undefined)
   const application = useApplication(target.epochId ?? undefined, target.aid ?? undefined)
+
+  // Reads need no wallet; writes do.
+  const client = useMemo(() => {
+    if (!publicClient) return null
+    return new DKGClient({
+      publicClient: publicClient as unknown as ClientConfig['publicClient'],
+      managerAddress: config.managerAddress,
+    })
+  }, [publicClient, config.managerAddress])
 
   const writer = useMemo(() => {
     if (!publicClient || !walletClient?.account) return null
@@ -66,23 +82,56 @@ export function useLiveChain(target: PlaygroundTarget): PlaygroundChain {
   )
 
   const register = useCallback(
-    async ({ aid, skOrg, authorizedSubmitter, maxCiphertexts, nonce }: RegisterArgs): Promise<TxRecord> => {
-      if (!writer || !target.epochId) throw new Error('Connect a wallet first')
+    async ({
+      aid,
+      skOrg,
+      mode,
+      submitters,
+      maxCiphertexts,
+      decryptNotBefore,
+      decryptNotAfter,
+      nonce,
+    }: RegisterArgs): Promise<RegisterResult> => {
+      if (!writer || !client || !target.epochId) throw new Error('Connect a wallet first')
+      // Everything not named here takes the writer's default: no open
+      // submission, no block window.
       const hash = await writer.registerApplication(
         target.epochId,
         aid,
         {
-          authorizedSubmitter,
+          mode: mode === 'automatic' ? AppMode.Automatic : AppMode.OrganizerLocked,
+          submitters,
           maxCiphertexts,
-          notBeforeBlock: 0n,
-          notAfterBlock: 0n,
+          decryptNotBefore: BigInt(decryptNotBefore),
+          decryptNotAfter: BigInt(decryptNotAfter),
         },
-        skOrg,
+        skOrg ?? undefined,
         nonce
       )
-      return settle(hash)
+      const tx = await settle(hash)
+      const poolIndex = await client.getAppPoolIndex(target.epochId, aid)
+      return { tx, poolIndex }
     },
-    [writer, target.epochId, settle]
+    [writer, client, target.epochId, settle]
+  )
+
+  const applicationKeys = useCallback(
+    async (aid: Hex): Promise<ApplicationKeys> => {
+      if (!client || !target.epochId) throw new Error('No RPC client yet')
+      const app = await client.getApplication(target.epochId, aid)
+      if (!app.exists) throw new Error('The application is not registered yet')
+      const [poolKey, key] = await Promise.all([
+        client.getPoolKey(target.epochId, app.poolIndex),
+        client.getApplicationKey(target.epochId, aid),
+      ])
+      return {
+        poolIndex: app.poolIndex,
+        poolKey,
+        organizerPK: app.policy.mode === AppMode.Automatic ? null : app.organizerPK,
+        key,
+      }
+    },
+    [client, target.epochId]
   )
 
   const submitCiphertext = useCallback(
@@ -103,17 +152,10 @@ export function useLiveChain(target: PlaygroundTarget): PlaygroundChain {
     [writer, target.epochId, refresh]
   )
 
-  const releaseShare = useCallback(
-    async ({ aid, ciphertext, ciphertextIndex, skOrg, nonce }: ShareArgs): Promise<TxRecord> => {
+  const revealSecret = useCallback(
+    async ({ aid, skOrg }: RevealArgs): Promise<TxRecord> => {
       if (!writer || !target.epochId) throw new Error('Connect a wallet first')
-      const hash = await writer.submitOrganizerShare(
-        target.epochId,
-        aid,
-        ciphertextIndex,
-        ciphertext,
-        skOrg,
-        nonce
-      )
+      const hash = await writer.revealOrganizerSecret(target.epochId, aid, skOrg)
       return settle(hash)
     },
     [writer, target.epochId, settle]
@@ -124,6 +166,7 @@ export function useLiveChain(target: PlaygroundTarget): PlaygroundChain {
       if (ciphertextIndex == null || !application) return null
       const row = application.ciphertexts.find((ct) => ct.index === ciphertextIndex)
       if (!row) return null
+      const app = application.row
       return {
         threshold: row.threshold,
         committeeSize: row.committeeSize,
@@ -136,7 +179,12 @@ export function useLiveChain(target: PlaygroundTarget): PlaygroundChain {
           wave: partial.wave,
           tx: partial.tx,
         })),
-        share: { present: row.share.present, block: row.share.block, tx: row.share.tx },
+        reveal: {
+          required: app.mode === 'organizer-locked',
+          done: app.unlocked,
+          block: app.revealBlock,
+          tx: app.revealTx,
+        },
         combined: {
           done: row.combined.done,
           block: row.combined.block,
@@ -159,13 +207,17 @@ export function useLiveChain(target: PlaygroundTarget): PlaygroundChain {
         ? 'Wallet client is not ready yet'
         : null
 
-  const epochKey = epoch?.collectivePublicKey ?? null
+  const pool = epoch?.finalization
+    ? { activated: epoch.poolActivated, claimed: epoch.poolClaimed, size: POOL_SIZE }
+    : null
+  const poolActivated = pool?.activated ?? -1
+  const poolClaimed = pool?.claimed ?? -1
 
   return useMemo<PlaygroundChain>(
     () => ({
       kind: 'live',
       headBlock,
-      epochKey: epochKey ? [epochKey.x, epochKey.y] : null,
+      pool: poolActivated < 0 ? null : { activated: poolActivated, claimed: poolClaimed, size: POOL_SIZE },
       wallet: {
         connected: Boolean(isConnected && address),
         address: address ?? null,
@@ -175,21 +227,24 @@ export function useLiveChain(target: PlaygroundTarget): PlaygroundChain {
         problem,
       },
       register,
+      applicationKeys,
       submitCiphertext,
-      releaseShare,
+      revealSecret,
       decryption,
     }),
     [
       headBlock,
-      epochKey,
+      poolActivated,
+      poolClaimed,
       isConnected,
       address,
       openConnectModal,
       wrongChain,
       problem,
       register,
+      applicationKeys,
       submitCiphertext,
-      releaseShare,
+      revealSecret,
       decryption,
     ]
   )

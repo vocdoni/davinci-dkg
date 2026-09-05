@@ -120,7 +120,7 @@ func IsInPrimeSubgroup(x, y *big.Int) bool {
 //     of bits — small in absolute terms, but a permanent on-chain
 //     side-channel an adversary could exploit by submitting carefully
 //     crafted ciphertexts. The on-chain `submitCiphertext` deliberately
-//     does NOT enforce this check (it would cost ~2 M gas per
+//     does NOT enforce this check (it would cost ~0.17 M gas per
 //     submission), so the off-chain enforcement here is the canonical
 //     defence layer; node operators MUST run it.
 //

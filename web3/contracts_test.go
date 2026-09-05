@@ -52,7 +52,7 @@ func TestVerifierKeyHashes(t *testing.T) {
 		Registry:               common.HexToAddress("0x1000000000000000000000000000000000000001"),
 		Manager:                common.HexToAddress("0x2000000000000000000000000000000000000002"),
 		ContributionVerifier:   common.HexToAddress("0x3000000000000000000000000000000000000003"),
-		FinalizeVerifier:       common.HexToAddress("0x4000000000000000000000000000000000000004"),
+		PoolKeyVerifier:        common.HexToAddress("0x4000000000000000000000000000000000000004"),
 		PartialDecryptVerifier: common.HexToAddress("0x5000000000000000000000000000000000000005"),
 		DecryptCombineVerifier: common.HexToAddress("0x6000000000000000000000000000000000000006"),
 	})
@@ -68,9 +68,9 @@ func TestVerifierKeyHashes(t *testing.T) {
 	c.Assert(err, qt.IsNil)
 	c.Assert(partialHash, qt.Equals, common.HexToHash("0x5678"))
 
-	finalizeHash, err := contracts.GetFinalizeVerifierVKeyHash(context.Background())
+	poolKeyHash, err := contracts.GetPoolKeyVerifierVKeyHash(context.Background())
 	c.Assert(err, qt.IsNil)
-	c.Assert(finalizeHash, qt.Equals, common.HexToHash("0x9abc"))
+	c.Assert(poolKeyHash, qt.Equals, common.HexToHash("0x9abc"))
 
 	decryptCombineHash, err := contracts.GetDecryptCombineVerifierVKeyHash(context.Background())
 	c.Assert(err, qt.IsNil)
@@ -87,7 +87,7 @@ func TestGetNodeAndEpochViews(t *testing.T) {
 		Registry:               common.HexToAddress("0x1000000000000000000000000000000000000001"),
 		Manager:                common.HexToAddress("0x2000000000000000000000000000000000000002"),
 		ContributionVerifier:   common.HexToAddress("0x3000000000000000000000000000000000000003"),
-		FinalizeVerifier:       common.HexToAddress("0x4000000000000000000000000000000000000004"),
+		PoolKeyVerifier:        common.HexToAddress("0x4000000000000000000000000000000000000004"),
 		PartialDecryptVerifier: common.HexToAddress("0x5000000000000000000000000000000000000005"),
 		DecryptCombineVerifier: common.HexToAddress("0x6000000000000000000000000000000000000006"),
 	})
@@ -161,7 +161,7 @@ func testRPCServer() *httptest.Server {
 				callData = call.Input
 			}
 			contributionSelector := "0x" + hex.EncodeToString(managerABI.Methods["getContributionVerifierVKeyHash"].ID)
-			finalizeSelector := "0x" + hex.EncodeToString(managerABI.Methods["getFinalizeVerifierVKeyHash"].ID)
+			poolKeySelector := "0x" + hex.EncodeToString(managerABI.Methods["getPoolKeyVerifierVKeyHash"].ID)
 			partialSelector := "0x" + hex.EncodeToString(managerABI.Methods["getPartialDecryptVerifierVKeyHash"].ID)
 			decryptCombineSelector := "0x" + hex.EncodeToString(managerABI.Methods["getDecryptCombineVerifierVKeyHash"].ID)
 			getNodeSelector := "0x" + hex.EncodeToString(registryABI.Methods["getNode"].ID)
@@ -172,7 +172,7 @@ func testRPCServer() *httptest.Server {
 			switch {
 			case strings.HasPrefix(callData, contributionSelector):
 				resp.Result = "0x" + strings.Repeat("0", 60) + "1234"
-			case strings.HasPrefix(callData, finalizeSelector):
+			case strings.HasPrefix(callData, poolKeySelector):
 				resp.Result = "0x" + strings.Repeat("0", 60) + "9abc"
 			case strings.HasPrefix(callData, partialSelector):
 				resp.Result = "0x" + strings.Repeat("0", 60) + "5678"

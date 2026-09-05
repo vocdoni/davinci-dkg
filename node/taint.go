@@ -8,12 +8,25 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/vocdoni/davinci-dkg/log"
 )
 
 // Tainted applications are remembered on disk so a restarted node does not
 // repeat the 2^50 search that condemned them: a fleet restart would otherwise
 // run one full-core search per node per poisoned application at once.
+
+// taintKey names what an undecryptable ciphertext condemns for the rest of the
+// epoch. For an application with a closed submitter set the registrant is the
+// only one who can have produced it, so the whole application is tainted
+// (submitter is the zero address). With openSubmission anyone may submit, and
+// tainting the application would let one stranger silence it for everyone, so
+// the taint is per (application, submitter) instead.
+type taintKey struct {
+	epoch     [12]byte
+	aid       [32]byte
+	submitter common.Address
+}
 
 func taintPath(datadir string) string {
 	if datadir == "" {
@@ -22,7 +35,18 @@ func taintPath(datadir string) string {
 	return filepath.Join(datadir, "tainted-apps.json")
 }
 
-// loadTaints fills taintedApps from the datadir; a missing file is fine.
+// tainted reports whether the slot must be ignored: its application is
+// tainted as a whole, or its submitter is tainted for that application.
+func (n *Node) tainted(key ctKey, submitter common.Address) bool {
+	if n.taints[taintKey{epoch: key.epoch, aid: key.aid}] {
+		return true
+	}
+	return submitter != (common.Address{}) && n.taints[taintKey{epoch: key.epoch, aid: key.aid, submitter: submitter}]
+}
+
+// loadTaints fills taints from the datadir; a missing file is fine. Entries
+// written before per-submitter taints existed (epoch:aid) load as
+// whole-application taints.
 func (n *Node) loadTaints() {
 	if n.taintFile == "" {
 		return
@@ -41,23 +65,23 @@ func (n *Node) loadTaints() {
 		return
 	}
 	for _, k := range keys {
-		if ak, ok := parseAppKey(k); ok {
-			n.taintedApps[ak] = true
+		if tk, ok := parseTaintKey(k); ok {
+			n.taints[tk] = true
 		}
 	}
-	if len(n.taintedApps) > 0 {
-		log.Infow("tainted applications loaded", "count", len(n.taintedApps))
+	if len(n.taints) > 0 {
+		log.Infow("tainted applications loaded", "count", len(n.taints))
 	}
 }
 
-// saveTaints writes taintedApps atomically; failures only cost a repeated search.
+// saveTaints writes taints atomically; failures only cost a repeated search.
 func (n *Node) saveTaints() {
 	if n.taintFile == "" {
 		return
 	}
-	keys := make([]string, 0, len(n.taintedApps))
-	for ak := range n.taintedApps {
-		keys = append(keys, hex.EncodeToString(ak.epoch[:])+":"+hex.EncodeToString(ak.aid[:]))
+	keys := make([]string, 0, len(n.taints))
+	for tk := range n.taints {
+		keys = append(keys, tk.String())
 	}
 	raw, err := json.Marshal(keys)
 	if err != nil {
@@ -76,18 +100,35 @@ func (n *Node) saveTaints() {
 	}
 }
 
-func parseAppKey(s string) (appKey, bool) {
-	parts := strings.SplitN(s, ":", 2)
-	if len(parts) != 2 {
-		return appKey{}, false
+// String is the persisted form: epoch:aid for a whole application,
+// epoch:aid:submitter for one submitter of an open-submission application.
+func (tk taintKey) String() string {
+	s := hex.EncodeToString(tk.epoch[:]) + ":" + hex.EncodeToString(tk.aid[:])
+	if tk.submitter != (common.Address{}) {
+		s += ":" + hex.EncodeToString(tk.submitter[:])
+	}
+	return s
+}
+
+func parseTaintKey(s string) (taintKey, bool) {
+	parts := strings.Split(s, ":")
+	if len(parts) != 2 && len(parts) != 3 {
+		return taintKey{}, false
 	}
 	e, err1 := hex.DecodeString(parts[0])
 	a, err2 := hex.DecodeString(parts[1])
 	if err1 != nil || err2 != nil || len(e) != 12 || len(a) != 32 {
-		return appKey{}, false
+		return taintKey{}, false
 	}
-	var ak appKey
-	copy(ak.epoch[:], e)
-	copy(ak.aid[:], a)
-	return ak, true
+	var tk taintKey
+	copy(tk.epoch[:], e)
+	copy(tk.aid[:], a)
+	if len(parts) == 3 {
+		sub, err := hex.DecodeString(parts[2])
+		if err != nil || len(sub) != common.AddressLength {
+			return taintKey{}, false
+		}
+		tk.submitter = common.BytesToAddress(sub)
+	}
+	return tk, true
 }

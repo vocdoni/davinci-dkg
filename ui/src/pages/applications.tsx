@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useApplications, useEpochs, useIndexer } from '~data/hooks'
-import type { EpochId } from '~indexer/types'
+import type { AppModeName, EpochId } from '~indexer/types'
 import {
   Callout,
   Card,
@@ -34,6 +34,7 @@ export function ApplicationsPage() {
   const [params, setParams] = useSearchParams()
   const epoch = params.get('epoch') ?? 'all'
   const [query, setQuery] = useState('')
+  const [mode, setMode] = useState<AppModeName | 'all'>('all')
 
   const nonceOf = useMemo(() => {
     const map = new Map<string, number>()
@@ -41,7 +42,7 @@ export function ApplicationsPage() {
     return (id: EpochId) => map.get(id.toLowerCase()) ?? null
   }, [epochs])
 
-  const filtered = useMemo(() => filterApplications(rows, { query, epoch }), [rows, query, epoch])
+  const filtered = useMemo(() => filterApplications(rows, { query, epoch, mode }), [rows, query, epoch, mode])
   const totals = useMemo(() => summarizeApplications(filtered), [filtered])
   const columns = useMemo(() => applicationColumns(nonceOf), [nonceOf])
 
@@ -64,7 +65,7 @@ export function ApplicationsPage() {
         size='page'
         label='Applications'
         title='Applications'
-        description='Every application registered against any epoch, with the state of its decryption pipeline. An application is a per-organizer namespace: its key is PK_ep + PK_org, so nothing under it opens without both the committee and the organizer.'
+        description='Every application registered against any epoch, with the state of its decryption pipeline. Each application claims one of its epoch’s pool keys: an automatic one encrypts under that key alone, an organizer-locked one under P_j + PK_org and opens nothing until its organizer reveals sk_org.'
       />
 
       {failure ? (
@@ -89,11 +90,11 @@ export function ApplicationsPage() {
           loading={loading}
         />
         <StatCell
-          label='Pending shares'
-          value={formatCompact(totals.pendingShares)}
+          label='Secrets kept'
+          value={formatCompact(totals.locked)}
           mono
-          tone={totals.pendingShares > 0 ? 'warn' : 'default'}
-          hint='ciphertexts still waiting on an organizer share'
+          tone={totals.locked > 0 ? 'warn' : 'default'}
+          hint='locked applications, sk_org not revealed yet'
           loading={loading}
         />
       </StatRow>
@@ -121,6 +122,18 @@ export function ApplicationsPage() {
             />
             <Select
               size='sm'
+              aria-label='Filter by mode'
+              value={mode}
+              onChange={(e) => setMode(e.target.value as AppModeName | 'all')}
+              options={[
+                { value: 'all', label: 'All modes' },
+                { value: 'organizer-locked', label: 'organizer-locked' },
+                { value: 'automatic', label: 'automatic' },
+              ]}
+              wrapperClassName='w-44'
+            />
+            <Select
+              size='sm'
               aria-label='Filter by epoch'
               value={epoch}
               onChange={(e) => {
@@ -139,7 +152,7 @@ export function ApplicationsPage() {
         {query.trim() !== '' ? <StoreSearchHits query={query} skip={['application']} className='m-5 mb-0' /> : null}
 
         <div className='overflow-x-auto scroll-slim'>
-          <div className='min-w-[1160px]'>
+          <div className='min-w-[1300px]'>
             <DataTable
               data={filtered}
               columns={columns}

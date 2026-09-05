@@ -93,17 +93,9 @@ describe('applyEvents', () => {
         },
         { epoch: EPOCH, actor: BOB },
       ),
-      ev(
-        'EpochLive',
-        360,
-        {
-          epochId: EPOCH,
-          aggregateCommitmentsHash: ('0x' + '33'.repeat(32)) as Hex,
-          collectivePublicKeyHash: ('0x' + '44'.repeat(32)) as Hex,
-          shareCommitmentHash: ('0x' + '55'.repeat(32)) as Hex,
-        },
-        { epoch: EPOCH, tx: ('0x' + 'fe'.repeat(32)) as Hex },
-      ),
+      ev('EpochLive', 360, { epochId: EPOCH, contributionCount: 1 }, { epoch: EPOCH, tx: ('0x' + 'fe'.repeat(32)) as Hex }),
+      ev('PoolKeyActivated', 361, { epochId: EPOCH, keyIndex: 0, key: { x: 5n, y: 6n } }, { epoch: EPOCH }),
+      ev('PoolKeyActivated', 362, { epochId: EPOCH, keyIndex: 2, key: { x: 7n, y: 8n } }, { epoch: EPOCH }),
     ])
 
     const epoch = s.epochs[EPOCH]
@@ -118,16 +110,34 @@ describe('applyEvents', () => {
     expect(s.contributions[`${EPOCH}:1`].contributor).toBe(BOB)
     expect(epoch.status).toBe('live')
     expect(epoch.finalization?.block).toBe(360)
+    expect(epoch.finalization?.contributionCount).toBe(1)
     expect(epoch.finalization?.by).toBeNull()
+    // The pool always has eight slots; two are activated, none claimed.
+    expect(epoch.poolKeys).toHaveLength(8)
+    expect(epoch.poolKeys[0].key).toEqual({ x: 5n, y: 6n })
+    expect(epoch.poolKeys[0].activatedBlock).toBe(361)
+    expect(epoch.poolKeys[1].key).toBeNull()
+    expect(epoch.poolKeys[2].key).toEqual({ x: 7n, y: 8n })
+    expect(epoch.poolKeys.every((slot) => slot.claimedBy == null)).toBe(true)
+    expect(epoch.poolNext).toBe(0)
   })
 
-  it('threads a ciphertext through partials, share and combine', () => {
+  it('threads a ciphertext through partials, the reveal and the combine', () => {
     const s = store()
     applyEvents(s, [
+      ev('PoolKeyActivated', 399, { epochId: EPOCH, keyIndex: 0, key: { x: 9n, y: 9n } }, { epoch: EPOCH }),
+      ev('PoolKeyClaimed', 400, { epochId: EPOCH, aid: AID, keyIndex: 0 }, { epoch: EPOCH, aid: AID }),
       ev(
         'ApplicationRegistered',
         400,
-        { epochId: EPOCH, aid: AID, creator: ALICE, organizerPK: { x: 5n, y: 6n } },
+        {
+          epochId: EPOCH,
+          aid: AID,
+          creator: ALICE,
+          organizerPK: { x: 5n, y: 6n },
+          mode: 'organizer-locked',
+          poolIndex: 0,
+        },
         { epoch: EPOCH, aid: AID, actor: ALICE },
       ),
       ev(
@@ -169,34 +179,7 @@ describe('applyEvents', () => {
         },
         { epoch: EPOCH, aid: AID, actor: BOB },
       ),
-      ev(
-        'OrganizerShareSubmitted',
-        415,
-        {
-          epochId: EPOCH,
-          aid: AID,
-          ciphertextIndex: 1,
-          delta: { x: 1n, y: 1n },
-          a1: { x: 2n, y: 2n },
-          a2: { x: 3n, y: 3n },
-          z: 42n,
-        },
-        { epoch: EPOCH, aid: AID },
-      ),
-      ev(
-        'OrganizerShareSubmitted',
-        417,
-        {
-          epochId: EPOCH,
-          aid: AID,
-          ciphertextIndex: 1,
-          delta: { x: 10n, y: 10n },
-          a1: { x: 2n, y: 2n },
-          a2: { x: 3n, y: 3n },
-          z: 43n,
-        },
-        { epoch: EPOCH, aid: AID },
-      ),
+      ev('OrganizerSecretRevealed', 415, { epochId: EPOCH, aid: AID, organizerSecret: 42n }, { epoch: EPOCH, aid: AID }),
       ev(
         'DecryptionCombined',
         420,
@@ -214,12 +197,18 @@ describe('applyEvents', () => {
     const appKey = `${EPOCH}:${AID}`
     const app = s.applications[appKey]
     expect(app.creator).toBe(ALICE)
+    expect(app.poolIndex).toBe(0)
+    expect(app.organizerSecret).toBe(42n)
+    expect(app.organizerReveal?.block).toBe(415)
     expect(app.ciphertexts).toHaveLength(1)
+    // The claim is recorded once, whichever of the two logs lands first.
+    const slot = s.epochs[EPOCH].poolKeys[0]
+    expect(slot.claimedBy).toBe(AID)
+    expect(slot.claimedBlock).toBe(400)
+    expect(s.epochs[EPOCH].poolNext).toBe(1)
     const ct = s.ciphertexts[`${EPOCH}:${AID}:1`]
     expect(ct.submitter).toBe(CAROL)
     expect(ct.partials.map((p) => p.participantIndex)).toEqual([0, 1])
-    expect(ct.organizerShare?.overwrites).toBe(1)
-    expect(ct.organizerShare?.z).toBe(43n)
     expect(ct.combined?.plaintext).toBe(1234n)
     expect(s.epochs[EPOCH].counts).toMatchObject({ ciphertexts: 1, partials: 2, combines: 1, applications: 1 })
   })
@@ -241,17 +230,7 @@ describe('applyEvents', () => {
     const finalizeTx = ('0x' + 'fa'.repeat(32)) as Hex
     const combineTx = ('0x' + 'cb'.repeat(32)) as Hex
     applyEvents(s, [
-      ev(
-        'EpochLive',
-        360,
-        {
-          epochId: EPOCH,
-          aggregateCommitmentsHash: ('0x' + '33'.repeat(32)) as Hex,
-          collectivePublicKeyHash: ('0x' + '44'.repeat(32)) as Hex,
-          shareCommitmentHash: ('0x' + '55'.repeat(32)) as Hex,
-        },
-        { epoch: EPOCH, tx: finalizeTx },
-      ),
+      ev('EpochLive', 360, { epochId: EPOCH, contributionCount: 2 }, { epoch: EPOCH, tx: finalizeTx }),
       ev(
         'CiphertextSubmitted',
         410,
@@ -280,13 +259,13 @@ describe('applyEvents', () => {
     ])
 
     applyTxMeta(s, [
-      { hash: finalizeTx, from: BOB, gasUsed: 1_112_337, blockNumber: 360, status: 'success' },
+      { hash: finalizeTx, from: BOB, gasUsed: 91_204, blockNumber: 360, status: 'success' },
       { hash: combineTx, from: CAROL, gasUsed: 430_432, blockNumber: 420, status: 'success' },
     ])
 
     expect(s.epochs[EPOCH].finalization?.by).toBe(BOB)
     expect(s.ciphertexts[`${EPOCH}:${AID}:1`].combined?.by).toBe(CAROL)
-    expect(s.txMeta[finalizeTx].gasUsed).toBe(1_112_337)
+    expect(s.txMeta[finalizeTx].gasUsed).toBe(91_204)
   })
 })
 
@@ -313,6 +292,7 @@ describe('contract state', () => {
         liveNotBeforeBlock: 355,
       },
       committee: [ALICE, BOB],
+      poolNext: 3,
       claimedCount: 64,
       stateBlock: 500,
     })
@@ -323,6 +303,7 @@ describe('contract state', () => {
     expect(phaseFromStatus(3)).toBe('live')
     expect(epoch.policy?.committeeSize).toBe(64)
     expect(epoch.committee).toEqual([ALICE, BOB])
+    expect(epoch.poolNext).toBe(3)
     expect(epoch.counts.claims).toBe(64)
     expect(epoch.stateBlock).toBe(500)
     expect(s.operators[ALICE].status).toBe('inactive')

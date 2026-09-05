@@ -1,20 +1,30 @@
 // SDK end-to-end ciphertext test.
 //
-// Drives the full ElGamal epoch-trip against a live Anvil + finalized DKG
-// epoch, exercising the BabyJubJub form-conversion plumbing that the
+// Drives the full ElGamal epoch-trip against a live Anvil + Live DKG epoch,
+// exercising the pool-key and BabyJubJub form-conversion plumbing that the
 // monitor / writer / client expose for SDK consumers:
 //
-//   1. Go fixture (`sdk-test-fixture --action=create`) creates a finalized
-//      single-participant epoch (committee=1, threshold=1, share=11).
-//   2. SDK reads `getCollectivePublicKey(epochId)` → returned in TE form.
-//   3. SDK registers an application with a fresh organizer secret and
-//      encrypts a small plaintext under PK_aid = PK_ep + PK_org.
+//   1. Go fixture (`sdk-test-fixture --action=create --keys=2`) creates a Live
+//      single-participant epoch (committee=1, threshold=1) with pool keys 0
+//      and 1 activated and reports participant 1's share of each key. Every
+//      key is dealt from its own polynomial, so the shares differ per key.
+//   2. SDK reads `getPoolStatus` / `getPoolKey(epochId, j)` → TE form, and
+//      checks them against the fixture's P_0 and the PoolKeyActivated event.
+//   3. SDK registers an application; it claims the next activated key.
+//      Organizer-locked: `PK_aid = P_j + PK_org`; automatic: `PK_aid = P_j`.
+//      `client.getApplicationKey` computes it.
 //   4. SDK calls `writer.submitCiphertext(...)` — internally converts c1/c2
 //      from TE → RTE so the contract's `_isOnBabyJubJub` check accepts them,
 //      and returns the on-chain-assigned ciphertext index.
-//   5. SDK releases the organizer share with `writer.submitOrganizerShare`.
-//   6. Go fixture (`sdk-test-fixture --action=decrypt --share=11 ...`) drives
-//      partial decryption + combine on-chain.
+//   5. For the locked application the organizer publishes `sk_org` once with
+//      `writer.revealOrganizerSecret` (there is no per-ciphertext share).
+//      Until then the contract refuses every partial and combine of the
+//      application (`OrganizerSecretNotRevealed`), so the reveal has to land
+//      before the fixture is asked to decrypt.
+//   6. Go fixture (`sdk-test-fixture --action=decrypt --share=<shares[j]> ...`)
+//      drives partial decryption + combine on-chain with the share of the key
+//      `j` the application claimed: the contract checks the partial's share
+//      commitment against that key's share root.
 //   7. SDK reads `getPlaintext(epochId, aid, idx)` and asserts the recovered
 //      value equals the original plaintext.
 //
@@ -31,17 +41,17 @@ import { spawn } from 'node:child_process';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  AppMode,
   DKGClient,
   DKGWriter,
   applicationKey,
   encrypt,
   randomOrganizerSecret,
-  verifyOrganizerShare,
-  type AppPolicy,
+  type AppPolicyInput,
   type BabyJubPoint,
   randomAid,
 } from '../src/index.js';
-import { fromTEtoRTE } from '../src/crypto/babyjub-form.js';
+import { fromRTEtoTE } from '../src/crypto/babyjub-form.js';
 import { makePublicClient, makeWalletClient } from './helpers/accounts.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -58,8 +68,13 @@ function useHarness() {
 
 interface FixtureCreateResult {
   epochId: `0x${string}`;
-  collectivePublicKeyHash: `0x${string}`;
-  share: string; // decimal
+  /** Participant 1's share of pool key 0 (= shares[0]), decimal. */
+  share: string;
+  /** Participant 1's share of pool key j, decimal, one entry per activated key. */
+  shares: string[];
+  /** P_0 in the contract's RTE form, decimal coordinates. */
+  poolKey: { x: string; y: string };
+  activatedKeys: number;
 }
 
 interface FixtureDecryptResult {
@@ -94,6 +109,33 @@ function lastJsonLine<T>(stdout: string): T | null {
   try { return JSON.parse(line) as T; } catch { return null; }
 }
 
+/** Drive partial decryption + combine on-chain via the Go fixture. */
+async function fixtureDecrypt(
+  epochId: `0x${string}`,
+  aid: `0x${string}`,
+  ciphertextIndex: number,
+  share: string,
+  skOrg?: bigint,
+): Promise<void> {
+  const { rpcUrl, addressesFile } = useHarness();
+  console.log('[ciphertext-e2e] Running Go fixture (decrypt) to drive partial decrypt + combine…');
+  const args = [
+    '--rpc-url', rpcUrl,
+    '--addresses-file', addressesFile,
+    '--action=decrypt',
+    '--epoch-id', epochId,
+    '--aid', aid,
+    '--ciphertext-index', String(ciphertextIndex),
+    '--share', share,
+  ];
+  if (skOrg !== undefined) args.push('--org-secret', '0x' + skOrg.toString(16));
+  const out = await runGoFixture(args);
+  if (!out || out.status !== 0) {
+    throw new Error(`fixture decrypt failed: ${out?.stderr.slice(0, 1000) ?? 'no output'}`);
+  }
+  expect(lastJsonLine<FixtureDecryptResult>(out.stdout)?.ok).toBe(true);
+}
+
 describe('SDK ciphertext end-to-end (encrypt → submit → combine → getPlaintext)', () => {
   let client:  DKGClient;
   let writer:  DKGWriter;
@@ -111,8 +153,11 @@ describe('SDK ciphertext end-to-end (encrypt → submit → combine → getPlain
       managerAddress,
     });
 
-    console.log('[ciphertext-e2e] Running Go fixture (create) to set up a finalized epoch…');
-    const createOut = await runGoFixture(['--rpc-url', rpcUrl, '--addresses-file', addressesFile, '--action=create']);
+    console.log('[ciphertext-e2e] Running Go fixture (create) to set up a Live epoch…');
+    // Two activated keys: one per application registered below.
+    const createOut = await runGoFixture([
+      '--rpc-url', rpcUrl, '--addresses-file', addressesFile, '--action=create', '--keys=2',
+    ]);
     if (!createOut || createOut.status !== 0) {
       console.warn('[ciphertext-e2e] fixture create failed — skipping. stderr:', createOut?.stderr.slice(0, 500));
       return;
@@ -123,45 +168,73 @@ describe('SDK ciphertext end-to-end (encrypt → submit → combine → getPlain
       return;
     }
     fixture = parsed;
-    console.log(`[ciphertext-e2e] Fixture epoch: ${fixture.epochId}, share=${fixture.share}`);
+    console.log(
+      `[ciphertext-e2e] Fixture epoch: ${fixture.epochId}, shares=${fixture.shares.join(',')}, keys=${fixture.activatedKeys}`,
+    );
   });
 
-  it('SDK register → encrypt → submit → organizer share → combine → getPlaintext', async () => {
-    const { enabled, rpcUrl, addressesFile } = useHarness();
+  it('pool keys 0 and 1 are activated and getPoolKey returns P_0 in TE form', async () => {
+    const { enabled } = useHarness();
     if (!enabled || !fixture) return;
 
-    // 1. Read the on-chain collective public key (returned in TE form thanks
-    //    to the SDK's RTE→TE conversion in client.getCollectivePublicKey).
-    const pk = await client.getCollectivePublicKey(fixture.epochId);
-    expect(pk.x).not.toBe(0n);
-    // y == 1 with x == 0 would be the identity, i.e. no contributions accepted yet.
-    expect(!(pk.x === 0n && pk.y === 1n)).toBe(true);
+    expect(fixture.activatedKeys).toBe(2);
+    // One share per activated key; `share` is the key-0 one.
+    expect(fixture.shares).toHaveLength(2);
+    expect(fixture.shares[0]).toBe(fixture.share);
+    expect(fixture.shares[1]).not.toBe(fixture.shares[0]);
+    const status = await client.getPoolStatus(fixture.epochId);
+    expect(status.nextIndex).toBe(0);
+    expect(status.activated & 0b11).toBe(0b11);
 
-    // 2. Register an application. sk_org never leaves this process; only
-    //    PK_org and the proof of possession go on chain.
+    // The fixture reports P_0 in the contract's RTE form; the client converts
+    // to TE at the boundary.
+    const expected = fromRTEtoTE(BigInt(fixture.poolKey.x), BigInt(fixture.poolKey.y));
+    const p0 = await client.getPoolKey(fixture.epochId, 0);
+    expect(p0).toEqual(expected);
+    // y == 1 with x == 0 would be the identity, i.e. no contributions accepted.
+    expect(!(p0[0] === 0n && p0[1] === 1n)).toBe(true);
+
+    // The activation event carries the raw on-chain words.
+    const activated = await client.getPoolKeyActivatedEvents(fixture.epochId, { keyIndex: 0 });
+    expect(activated).toHaveLength(1);
+    expect(activated[0].x).toBe(BigInt(fixture.poolKey.x));
+    expect(activated[0].y).toBe(BigInt(fixture.poolKey.y));
+  });
+
+  it('organizer-locked: register → encrypt → submit → reveal sk_org → combine → getPlaintext', async () => {
+    const { enabled } = useHarness();
+    if (!enabled || !fixture) return;
+
+    // 1. Register an organizer-locked application. sk_org never leaves this
+    //    process; only PK_org and the proof of possession go on chain. It
+    //    claims the next activated key: 0 on a fresh epoch.
     const aid = randomAid();
     const skOrg = randomOrganizerSecret();
-    const policy: AppPolicy = {
-      authorizedSubmitter: '0x0000000000000000000000000000000000000000',
-      maxCiphertexts: 0,
-      notBeforeBlock: 0n,
-      notAfterBlock: 0n,
-    };
+    // Organizer-locked, registrant-only: the defaults of every field.
+    const policy: AppPolicyInput = { maxCiphertexts: 0 };
     const regTx = await writer.registerApplication(fixture.epochId, aid, policy, skOrg);
     await writer.publicClient.waitForTransactionReceipt({ hash: regTx });
 
     const app = await client.getApplication(fixture.epochId, aid);
     expect(app.exists).toBe(true);
+    expect(app.policy.mode).toBe(AppMode.OrganizerLocked);
+    expect(app.poolIndex).toBe(0);
+    expect(app.organizerSecret).toBe(0n);
+    expect(await client.getAppPoolIndex(fixture.epochId, aid)).toBe(0);
+    expect((await client.getPoolStatus(fixture.epochId)).nextIndex).toBe(1);
 
-    // 3. Encrypt under PK_aid = PK_ep + PK_org (both TE at this boundary).
+    // 2. PK_aid = P_0 + PK_org (both TE at this boundary), as computed by
+    //    the client and by hand.
+    const poolKey = await client.getPoolKey(fixture.epochId, app.poolIndex);
+    const pkAid = await client.getApplicationKey(fixture.epochId, aid);
+    expect(pkAid).toEqual(applicationKey(poolKey, app.organizerPK));
+    expect(pkAid).not.toEqual(poolKey);
+
+    // 3. Encrypt and submit. The writer converts TE→RTE internally before
+    //    sending, so the contract's `_isOnBabyJubJub` (RTE) check passes, and
+    //    hands back the index the contract assigned.
     const plaintext = 42n;
-    const pkEp: BabyJubPoint = [pk.x, pk.y];
-    const pkAid = applicationKey(pkEp, app.organizerPK);
-    const ciphertext = await encrypt(plaintext, pkAid);
-
-    // 4. Submit to chain. The writer converts TE→RTE internally before sending,
-    //    so the contract's `_isOnBabyJubJub` (RTE) check passes, and hands back
-    //    the index the contract assigned.
+    const ciphertext = await encrypt(plaintext, pkAid as BabyJubPoint);
     const countBefore = await client.ciphertextCount(fixture.epochId, aid);
     const { hash: submitTx, ciphertextIndex } = await writer.submitCiphertext(
       fixture.epochId, aid, ciphertext,
@@ -177,50 +250,58 @@ describe('SDK ciphertext end-to-end (encrypt → submit → combine → getPlain
     const events = await client.getCiphertextSubmittedEvents(fixture.epochId, { aid, ciphertextIndex });
     expect(events).toHaveLength(1);
 
-    // 5. Release the organizer share. Until it lands, combine reverts
-    //    OrganizerShareMissing().
-    expect(await client.hasOrganizerShare(fixture.epochId, aid, ciphertextIndex)).toBe(false);
-    const shareTx = await writer.submitOrganizerShare(
-      fixture.epochId, aid, ciphertextIndex, ciphertext, skOrg,
-    );
-    await writer.publicClient.waitForTransactionReceipt({ hash: shareTx });
-    expect(await client.hasOrganizerShare(fixture.epochId, aid, ciphertextIndex)).toBe(true);
+    // 4. Reveal the organizer secret once. The contract checks sk·G == PK_org
+    //    and from then on the committee combines by itself. Before it,
+    //    requireDecryptionOpen reverts OrganizerSecretNotRevealed, which the
+    //    client reports as "not open".
+    expect(await client.getOrganizerSecretRevealedEvents(fixture.epochId, aid)).toHaveLength(0);
+    expect(await client.isDecryptionOpen(fixture.epochId, aid)).toBe(false);
+    const revealTx = await writer.revealOrganizerSecret(fixture.epochId, aid, skOrg);
+    await writer.publicClient.waitForTransactionReceipt({ hash: revealTx });
+    expect((await client.getApplication(fixture.epochId, aid)).organizerSecret).toBe(skOrg);
+    const revealed = await client.getOrganizerSecretRevealedEvents(fixture.epochId, aid);
+    expect(revealed).toHaveLength(1);
+    expect(revealed[0].organizerSecret).toBe(skOrg);
+    expect(await client.isDecryptionOpen(fixture.epochId, aid)).toBe(true);
 
-    // The share the contract logged must verify against the registered PK_org.
-    const shares = await client.getOrganizerShareEvents(fixture.epochId, aid, { ciphertextIndex });
-    expect(shares.length).toBeGreaterThan(0);
-    const last = shares[shares.length - 1];
-    const pkOrgRte = fromTEtoRTE(app.organizerPK[0], app.organizerPK[1]) as BabyJubPoint;
-    const c1Rte = fromTEtoRTE(ciphertext.c1[0], ciphertext.c1[1]) as BabyJubPoint;
-    expect(
-      verifyOrganizerShare(
-        fixture.epochId, aid, ciphertextIndex, pkOrgRte, c1Rte,
-        [last.delta.x, last.delta.y],
-        { a1: [last.a1.x, last.a1.y], a2: [last.a2.x, last.a2.y], z: last.z },
-      ),
-    ).toBe(true);
+    // 5. Drive the on-chain decryption flow via the Go fixture (it builds the
+    //    Groth16 proofs we can't generate in TS) with the member's share of
+    //    the key this application claimed.
+    await fixtureDecrypt(fixture.epochId, aid, ciphertextIndex, fixture.shares[app.poolIndex], skOrg);
 
-    // 6. Drive the on-chain decryption flow via the Go fixture (it builds the
-    //    Groth16 proofs we can't generate in TS).
-    console.log('[ciphertext-e2e] Running Go fixture (decrypt) to drive partial decrypt + combine…');
-    const decryptOut = await runGoFixture([
-      '--rpc-url', rpcUrl,
-      '--addresses-file', addressesFile,
-      '--action=decrypt',
-      '--epoch-id', fixture.epochId,
-      '--aid', aid,
-      '--ciphertext-index', String(ciphertextIndex),
-      '--share', fixture.share,
-      '--org-secret', '0x' + skOrg.toString(16),
-    ]);
-    if (!decryptOut || decryptOut.status !== 0) {
-      throw new Error(`fixture decrypt failed: ${decryptOut?.stderr.slice(0, 1000) ?? 'no output'}`);
-    }
-    const decryptParsed = lastJsonLine<FixtureDecryptResult>(decryptOut.stdout);
-    expect(decryptParsed?.ok).toBe(true);
-
-    // 7. Read the recovered plaintext from chain — must match what we sent.
+    // 6. Read the recovered plaintext from chain — must match what we sent.
     const recovered = await client.getPlaintext(fixture.epochId, aid, ciphertextIndex);
     expect(recovered).toBe(plaintext);
+  }, 900_000);
+
+  it('automatic: register → encryptAndSubmit under P_1 → combine → getPlaintext', async () => {
+    const { enabled } = useHarness();
+    if (!enabled || !fixture) return;
+
+    // No organizer key at all: the committee threshold alone opens the
+    // ciphertext, and the application key is the bare pool key.
+    const aid = randomAid();
+    const regTx = await writer.registerApplication(fixture.epochId, aid, { mode: AppMode.Automatic });
+    await writer.publicClient.waitForTransactionReceipt({ hash: regTx });
+
+    const app = await client.getApplication(fixture.epochId, aid);
+    expect(app.policy.mode).toBe(AppMode.Automatic);
+    expect(app.poolIndex).toBe(1);
+    expect(app.organizerPK).toEqual([0n, 1n]);
+    const poolKey = await client.getPoolKey(fixture.epochId, 1);
+    expect(await client.getApplicationKey(fixture.epochId, aid)).toEqual(poolKey);
+
+    const plaintext = 7n;
+    const { ciphertextIndex, ciphertext } = await writer.encryptAndSubmit(fixture.epochId, aid, plaintext);
+    expect(ciphertextIndex).toBe(1);
+    expect(ciphertext.c1[0]).not.toBe(0n);
+
+    // Nothing to reveal for an automatic application.
+    await expect(writer.revealOrganizerSecret(fixture.epochId, aid, 1n)).rejects.toThrow();
+
+    // The application sits on key 1, whose share differs from key 0's: the
+    // partial's share commitment must match P_1's share root on chain.
+    await fixtureDecrypt(fixture.epochId, aid, ciphertextIndex, fixture.shares[app.poolIndex]);
+    expect(await client.getPlaintext(fixture.epochId, aid, ciphertextIndex)).toBe(plaintext);
   }, 900_000);
 });

@@ -8,23 +8,27 @@ import {DKGAppManager} from "../src/DKGAppManager.sol";
 import {IDKGManager} from "../src/interfaces/IDKGManager.sol";
 import {IDKGAppManager} from "../src/interfaces/IDKGAppManager.sol";
 import {DKGTypes} from "../src/libraries/DKGTypes.sol";
+import {MAX_K} from "../src/libraries/Sizes.sol";
+import {BabyJubJub} from "../src/libraries/BabyJubJub.sol";
 import {
     MockContributionVerifier,
     MockPartialDecryptVerifier,
-    MockFinalizeVerifier,
+    MockPoolKeyVerifier,
     MockDecryptCombineVerifier,
     TestHelpers
 } from "./TestHelpers.t.sol";
 
 /// @title DKGManagerAppTest
-/// @notice Tests for the per-application registration surface. Registration is
-///         organizer-only: the caller proves knowledge of `sk_org` with a
-///         Schnorr PoP and the application key becomes `PK_ep + PK_org`.
+/// @notice Tests for the per-application registration surface. Registration
+///         claims one of the epoch's `MAX_K` committee-held pool keys and,
+///         in `OrganizerLocked` mode, proves knowledge of `sk_org` with a
+///         Schnorr PoP so the application key becomes `P_j + PK_org`.
+///         `Automatic` applications have no organizer half at all.
 ///
 ///         Setup drives the epoch lifecycle against the mock verifiers up to
-///         Live; these tests then exercise the application entry points only.
-///         The end-to-end ciphertext / organizer-share / combine flow lives in
-///         the broader DKGManagerTest suite.
+///         Live with every pool key activated; these tests then exercise the
+///         application entry points only. The end-to-end ciphertext / partial
+///         / combine flow lives in the broader DKGManagerTest suite.
 contract DKGManagerAppTest is Test, TestHelpers {
     DKGRegistry public registry;
     DKGManager public manager;
@@ -64,7 +68,7 @@ contract DKGManagerAppTest is Test, TestHelpers {
             address(registry),
             address(new MockContributionVerifier()),
             address(new MockPartialDecryptVerifier()),
-            address(new MockFinalizeVerifier()),
+            address(new MockPoolKeyVerifier()),
             address(new MockDecryptCombineVerifier()),
             0, 0, 0, 0, 0, 0, 0
         );
@@ -75,12 +79,11 @@ contract DKGManagerAppTest is Test, TestHelpers {
         vm.roll(block.number + 1);
     }
 
-    // Helper: build a finalized-enough epoch by going through the full
-    // lifecycle (createEpoch → claimSlot → submitContribution × 2 →
-    // finalizeEpoch). For application-registration tests we only need the
-    // resulting `_collectiveKey[eid]` to be non-identity. The mocks accept
-    // anything proof-shaped, so this shortcuts neatly.
-    function _finalizedEpoch() internal returns (bytes12 epochId) {
+    /// @dev Drive an epoch through its whole lifecycle (createEpoch →
+    ///      claimSlot × 2 → submitContribution × 2 → finalizeEpoch →
+    ///      activatePoolKey × MAX_K) so registration can claim any key. The
+    ///      mocks accept anything proof-shaped, so this shortcuts neatly.
+    function _liveEpoch() internal returns (bytes12 epochId) {
         uint64 next = manager.nextEpochStartBlock();
         if (block.number < uint256(next)) vm.roll(uint256(next));
         epochId = manager.createEpoch(2, 2, 2, 10000);
@@ -90,47 +93,28 @@ contract DKGManagerAppTest is Test, TestHelpers {
         manager.claimSlot(epochId);
 
         manager.submitContribution(
-            epochId, 1,
-            CONTRIBUTION_COMMITMENTS_HASH,
-            CONTRIBUTION_ENCRYPTED_SHARES_HASH,
-            contributionTranscript(2),
-            contributionProof(),
-            contributionInput(epochId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH)
+            epochId, 1, contributorCommitmentsHash(1), contributorSharesHash(1),
+            contributionTranscript(2), contributionProof(),
+            contributionInput(epochId, 2, 2, 1, contributorCommitmentsHash(1), contributorSharesHash(1))
         );
         vm.prank(address(0xBEEF));
         manager.submitContribution(
-            epochId, 2,
-            bytes32(uint256(CONTRIBUTION_COMMITMENTS_HASH) + 1),
-            bytes32(uint256(CONTRIBUTION_ENCRYPTED_SHARES_HASH) + 1),
-            contributionTranscript(2),
-            contributionProof(),
-            contributionInput(
-                epochId,
-                2,
-                2,
-                2,
-                bytes32(uint256(CONTRIBUTION_COMMITMENTS_HASH) + 1),
-                bytes32(uint256(CONTRIBUTION_ENCRYPTED_SHARES_HASH) + 1)
-            )
+            epochId, 2, contributorCommitmentsHash(2), contributorSharesHash(2),
+            contributionTranscript(2), contributionProof(),
+            contributionInput(epochId, 2, 2, 2, contributorCommitmentsHash(2), contributorSharesHash(2))
         );
+
         IDKGManager.Epoch memory r = manager.getEpoch(epochId);
         if (block.number < uint256(r.policy.liveNotBeforeBlock)) {
             vm.roll(uint256(r.policy.liveNotBeforeBlock));
         }
-        manager.finalizeEpoch(
-            epochId,
-            FINALIZED_AGGREGATE_COMMITMENTS_HASH,
-            FINALIZED_COLLECTIVE_PUBLIC_KEY_HASH,
-            FINALIZED_SHARE_COMMITMENT_HASH,
-            finalizeTranscript(2),
-            finalizeProof(),
-            finalizeInput(
-                epochId, 2, 2, 2,
-                FINALIZED_AGGREGATE_COMMITMENTS_HASH,
-                FINALIZED_COLLECTIVE_PUBLIC_KEY_HASH,
-                FINALIZED_SHARE_COMMITMENT_HASH
-            )
-        );
+        manager.finalizeEpoch(epochId);
+        for (uint8 j = 0; j < uint8(MAX_K); j++) {
+            manager.activatePoolKey(
+                epochId, j, testTranscriptDigest(j), poolKeyTranscript(j, 2, 2), poolKeyProof(),
+                poolKeyInput(epochId, 2, 2, 2, j)
+            );
+        }
     }
 
     /// @dev Register `aid` with a freshly computed organizer PoP.
@@ -139,19 +123,52 @@ contract DKGManagerAppTest is Test, TestHelpers {
         appManager.registerApplication(epochId, aid, policy, pkx, pky, ax, ay, z);
     }
 
+    /// @dev Register `aid` in Automatic mode: no organizer key at all.
+    function _registerAutomatic(bytes12 epochId, bytes32 aid, DKGTypes.AppPolicy memory policy) internal {
+        policy.mode = DKGTypes.AppMode.Automatic;
+        appManager.registerApplication(epochId, aid, policy, 0, 0, 0, 0, 0);
+    }
+
     function _emptyAppPolicy() internal pure returns (DKGTypes.AppPolicy memory) {
         return DKGTypes.AppPolicy({
-            authorizedSubmitter: address(0),
+            mode: DKGTypes.AppMode.OrganizerLocked,
+            openSubmission: false,
+            submitters: new address[](0),
             maxCiphertexts: 0,
             notBeforeBlock: 0,
-            notAfterBlock: 0
+            notAfterBlock: 0,
+            decryptNotBefore: 0,
+            decryptNotAfter: 0
         });
     }
 
-    // ─── Registration (organizer-only) ─────────────────────────────────────
+    function _submitters(address a) internal pure returns (address[] memory list) {
+        list = new address[](1);
+        list[0] = a;
+    }
+
+    function _submitCiphertextAs(address who, bytes12 epochId, bytes32 aid) internal {
+        vm.prank(who);
+        manager.submitCiphertext(epochId, aid, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
+    }
+
+    function _submitPartialAs(address who, bytes12 epochId, bytes32 aid, uint16 pIdx) internal {
+        uint8 keyIndex = manager.getAppPoolIndex(epochId, aid);
+        vm.prank(who);
+        manager.submitPartialDecryption(
+            epochId, aid, pIdx, 1,
+            TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y,
+            partialDecryptionHash(pIdx),
+            partialDecryptionProof(),
+            partialDecryptionInput(epochId, aid, pIdx, 1, keyIndex),
+            shareProofFor(keyIndex, 2, pIdx)
+        );
+    }
+
+    // ─── Registration ─────────────────────────────────────────────────────────
 
     function test_RegisterApplication_PersistsRecord() public {
-        bytes12 epochId = _finalizedEpoch();
+        bytes12 epochId = _liveEpoch();
         bytes32 aid = bytes32(uint256(42));
         _register(epochId, aid, _emptyAppPolicy());
 
@@ -160,9 +177,14 @@ contract DKGManagerAppTest is Test, TestHelpers {
         assertEq(app.creator, address(this));
         assertEq(app.organizerPK.x, pkx);
         assertEq(app.organizerPK.y, pky);
-        // A zero authorizedSubmitter resolves to the registrant: there is no
-        // open submission.
-        assertEq(app.policy.authorizedSubmitter, address(this));
+        // An empty allow-list means the registrant only.
+        assertEq(app.policy.submitters.length, 0);
+        assertFalse(app.policy.openSubmission);
+        assertEq(uint8(app.policy.mode), uint8(DKGTypes.AppMode.OrganizerLocked));
+        assertEq(app.organizerSecret, 0);
+        // The first application of the epoch takes pool key 0.
+        assertEq(uint256(app.poolIndex), 0);
+        assertEq(uint256(manager.getAppPoolIndex(epochId, aid)), 0);
         assertEq(uint256(app.createdAtBlock), block.number);
         assertTrue(app.exists);
 
@@ -171,18 +193,246 @@ contract DKGManagerAppTest is Test, TestHelpers {
         assertEq(uint256(aids[0]), uint256(aid));
     }
 
-    /// @dev An explicit submitter is kept as given.
-    function test_RegisterApplication_KeepsExplicitSubmitter() public {
-        bytes12 epochId = _finalizedEpoch();
+    /// @dev An explicit allow-list is kept as given and is exclusive: the
+    ///      registrant is not implicitly on it.
+    function test_RegisterApplication_KeepsExplicitSubmitters() public {
+        bytes12 epochId = _liveEpoch();
         bytes32 aid = bytes32(uint256(43));
         DKGTypes.AppPolicy memory policy = _emptyAppPolicy();
-        policy.authorizedSubmitter = address(0xCAFE);
+        policy.submitters = _submitters(address(0xCAFE));
         _register(epochId, aid, policy);
-        assertEq(appManager.getApplication(epochId, aid).policy.authorizedSubmitter, address(0xCAFE));
+        address[] memory stored = appManager.getApplication(epochId, aid).policy.submitters;
+        assertEq(stored.length, 1);
+        assertEq(stored[0], address(0xCAFE));
+
+        vm.expectRevert(IDKGAppManager.NotOwner.selector);
+        _submitCiphertextAs(address(this), epochId, aid);
+        _submitCiphertextAs(address(0xCAFE), epochId, aid);
     }
 
+    function test_SubmitCiphertext_RegistrantOnlyByDefault() public {
+        bytes12 epochId = _liveEpoch();
+        bytes32 aid = bytes32(uint256(46));
+        _register(epochId, aid, _emptyAppPolicy());
+        vm.expectRevert(IDKGAppManager.NotOwner.selector);
+        _submitCiphertextAs(address(0xCAFE), epochId, aid);
+        _submitCiphertextAs(address(this), epochId, aid);
+    }
+
+    function test_SubmitCiphertext_OpenSubmission() public {
+        bytes12 epochId = _liveEpoch();
+        bytes32 aid = bytes32(uint256(47));
+        DKGTypes.AppPolicy memory policy = _emptyAppPolicy();
+        policy.openSubmission = true;
+        _register(epochId, aid, policy);
+        _submitCiphertextAs(address(0xCAFE), epochId, aid);
+        _submitCiphertextAs(address(0xD00D), epochId, aid);
+    }
+
+    // ─── Automatic mode ────────────────────────────────────────────────────
+
+    /// @dev Automatic registration ignores the key and Schnorr arguments and
+    ///      stores the identity: there is no organizer half to lose.
+    function test_RegisterApplication_Automatic_StoresIdentityKey() public {
+        bytes12 epochId = _liveEpoch();
+        bytes32 aid = bytes32(uint256(48));
+        (uint256 pkx, uint256 pky) = testOrganizerPK();
+        // Pass a perfectly good organizer key and PoP: both must be ignored.
+        (,, uint256 ax, uint256 ay, uint256 z) = organizerPoP(epochId, aid);
+        DKGTypes.AppPolicy memory policy = _emptyAppPolicy();
+        policy.mode = DKGTypes.AppMode.Automatic;
+        appManager.registerApplication(epochId, aid, policy, pkx, pky, ax, ay, z);
+
+        DKGTypes.Application memory app = appManager.getApplication(epochId, aid);
+        assertEq(uint8(app.policy.mode), uint8(DKGTypes.AppMode.Automatic));
+        assertEq(app.organizerSecret, 0);
+        assertEq(app.organizerPK.x, 0);
+        assertEq(app.organizerPK.y, 1);
+        (uint256 gx, uint256 gy) = appManager.getOrganizerPK(epochId, aid);
+        assertEq(gx, 0);
+        assertEq(gy, 1);
+    }
+
+    /// @dev Automatic registration also accepts an all-zero key argument.
+    function test_RegisterApplication_Automatic_AcceptsZeroArguments() public {
+        bytes12 epochId = _liveEpoch();
+        bytes32 aid = bytes32(uint256(49));
+        _registerAutomatic(epochId, aid, _emptyAppPolicy());
+        assertTrue(appManager.getApplication(epochId, aid).exists);
+    }
+
+    // ─── revealOrganizerSecret ────────────────────────────────────────────
+
+    function test_RevealOrganizerSecret_StoresSecretOnce() public {
+        bytes12 epochId = _liveEpoch();
+        bytes32 aid = bytes32(uint256(60));
+        _register(epochId, aid, _emptyAppPolicy());
+        assertEq(appManager.getApplication(epochId, aid).organizerSecret, 0);
+
+        // Permissionless: anyone holding the secret may publish it.
+        vm.prank(address(0xCAFE));
+        appManager.revealOrganizerSecret(epochId, aid, TEST_ORG_SK);
+        assertEq(appManager.getApplication(epochId, aid).organizerSecret, TEST_ORG_SK);
+
+        vm.expectRevert(IDKGAppManager.AlreadyRevealed.selector);
+        appManager.revealOrganizerSecret(epochId, aid, TEST_ORG_SK);
+    }
+
+    function test_RevealOrganizerSecret_RejectsWrongSecret() public {
+        bytes12 epochId = _liveEpoch();
+        bytes32 aid = bytes32(uint256(61));
+        _register(epochId, aid, _emptyAppPolicy());
+
+        vm.expectRevert(IDKGAppManager.InvalidOrganizerSecret.selector);
+        appManager.revealOrganizerSecret(epochId, aid, TEST_ORG_SK + 1);
+        vm.expectRevert(IDKGAppManager.InvalidOrganizerSecret.selector);
+        appManager.revealOrganizerSecret(epochId, aid, 0);
+        vm.expectRevert(IDKGAppManager.InvalidOrganizerSecret.selector);
+        appManager.revealOrganizerSecret(epochId, aid, BabyJubJub.SUBGROUP_ORDER);
+        // A congruent-but-out-of-range scalar is rejected too.
+        vm.expectRevert(IDKGAppManager.InvalidOrganizerSecret.selector);
+        appManager.revealOrganizerSecret(epochId, aid, TEST_ORG_SK + BabyJubJub.SUBGROUP_ORDER);
+        // …and the honest one still lands.
+        appManager.revealOrganizerSecret(epochId, aid, TEST_ORG_SK);
+    }
+
+    /// @dev An Automatic application has no secret to reveal.
+    function test_RevealOrganizerSecret_RejectsAutomatic() public {
+        bytes12 epochId = _liveEpoch();
+        bytes32 aid = bytes32(uint256(62));
+        _registerAutomatic(epochId, aid, _emptyAppPolicy());
+        vm.expectRevert(IDKGAppManager.AlreadyRevealed.selector);
+        appManager.revealOrganizerSecret(epochId, aid, TEST_ORG_SK);
+    }
+
+    function test_RevealOrganizerSecret_RejectsUnknownApplication() public {
+        bytes12 epochId = _liveEpoch();
+        vm.expectRevert(IDKGAppManager.InvalidApplication.selector);
+        appManager.revealOrganizerSecret(epochId, bytes32(uint256(0xDEAD)), TEST_ORG_SK);
+    }
+
+    // ─── Policy validation ─────────────────────────────────────────────────
+
+    function test_RegisterApplication_RejectsBadPolicy() public {
+        bytes12 epochId = _liveEpoch();
+        bytes32 aid = bytes32(uint256(51));
+        // The PoP is computed up front: its precompile call would otherwise
+        // be the call `expectRevert` watches.
+        (uint256 pkx, uint256 pky, uint256 ax, uint256 ay, uint256 z) = organizerPoP(epochId, aid);
+        DKGTypes.AppPolicy memory policy = _emptyAppPolicy();
+
+        policy.openSubmission = true;
+        policy.submitters = _submitters(address(0xCAFE));
+        vm.expectRevert(IDKGAppManager.InvalidPolicy.selector);
+        appManager.registerApplication(epochId, aid, policy, pkx, pky, ax, ay, z);
+
+        policy = _emptyAppPolicy();
+        policy.submitters = _submitters(address(0));
+        vm.expectRevert(IDKGAppManager.InvalidPolicy.selector);
+        appManager.registerApplication(epochId, aid, policy, pkx, pky, ax, ay, z);
+
+        policy = _emptyAppPolicy();
+        policy.submitters = new address[](33);
+        for (uint256 i; i < 33; i++) policy.submitters[i] = address(uint160(i + 1));
+        vm.expectRevert(IDKGAppManager.InvalidPolicy.selector);
+        appManager.registerApplication(epochId, aid, policy, pkx, pky, ax, ay, z);
+
+        // A decryption window that already closed.
+        policy = _emptyAppPolicy();
+        policy.decryptNotAfter = uint64(block.timestamp);
+        vm.expectRevert(IDKGAppManager.InvalidPolicy.selector);
+        appManager.registerApplication(epochId, aid, policy, pkx, pky, ax, ay, z);
+
+        // …or one that closes before it opens.
+        policy = _emptyAppPolicy();
+        policy.decryptNotBefore = uint64(block.timestamp + 100);
+        policy.decryptNotAfter = uint64(block.timestamp + 50);
+        vm.expectRevert(IDKGAppManager.InvalidPolicy.selector);
+        appManager.registerApplication(epochId, aid, policy, pkx, pky, ax, ay, z);
+
+        // The same policy with 32 submitters and a sane window is fine.
+        policy = _emptyAppPolicy();
+        policy.submitters = new address[](32);
+        for (uint256 i; i < 32; i++) policy.submitters[i] = address(uint160(i + 1));
+        policy.decryptNotBefore = uint64(block.timestamp + 1);
+        policy.decryptNotAfter = uint64(block.timestamp + 2);
+        appManager.registerApplication(epochId, aid, policy, pkx, pky, ax, ay, z);
+        assertTrue(appManager.getApplication(epochId, aid).exists);
+    }
+
+    // ─── Decryption window ─────────────────────────────────────────────────
+
+    /// @dev `decryptNotBefore` gates partials and combines but NOT ciphertext
+    ///      submission: an organizer collects ballots first and only opens the
+    ///      tally later.
+    function test_DecryptionWindow_OpensAtNotBefore() public {
+        bytes12 epochId = _liveEpoch();
+        bytes32 aid = bytes32(uint256(70));
+        DKGTypes.AppPolicy memory policy = _emptyAppPolicy();
+        policy.decryptNotBefore = uint64(block.timestamp + 100);
+        _registerAutomatic(epochId, aid, policy);
+        // Submission stays open before the decryption window.
+        _submitCiphertextAs(address(this), epochId, aid);
+
+        vm.expectRevert(IDKGAppManager.DecryptionNotOpen.selector);
+        appManager.requireDecryptionOpen(epochId, aid);
+
+        uint8 keyIndex = manager.getAppPoolIndex(epochId, aid);
+        bytes memory input = partialDecryptionInput(epochId, aid, 1, 1, keyIndex);
+        bytes32[] memory path = shareProofFor(keyIndex, 2, 1);
+        vm.expectRevert(IDKGAppManager.DecryptionNotOpen.selector);
+        manager.submitPartialDecryption(
+            epochId, aid, 1, 1,
+            TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y,
+            partialDecryptionHash(1), partialDecryptionProof(), input, path
+        );
+        vm.expectRevert(IDKGAppManager.DecryptionNotOpen.selector);
+        manager.combineDecryption(epochId, aid, 1, bytes32(uint256(1)), 0, "", "", "");
+
+        // Open exactly at the boundary.
+        vm.warp(block.timestamp + 100);
+        appManager.requireDecryptionOpen(epochId, aid);
+        _submitPartialAs(address(this), epochId, aid, 1);
+    }
+
+    function test_DecryptionWindow_ClosesSubmissionPartialsAndCombine() public {
+        bytes12 epochId = _liveEpoch();
+        bytes32 aid = bytes32(uint256(52));
+        DKGTypes.AppPolicy memory policy = _emptyAppPolicy();
+        policy.decryptNotAfter = uint64(block.timestamp + 100);
+        _registerAutomatic(epochId, aid, policy);
+        _submitCiphertextAs(address(this), epochId, aid);
+        appManager.requireDecryptionOpen(epochId, aid);
+
+        // Still open at the deadline itself.
+        vm.warp(block.timestamp + 100);
+        appManager.requireDecryptionOpen(epochId, aid);
+        _submitPartialAs(address(this), epochId, aid, 1);
+
+        vm.warp(block.timestamp + 1);
+        vm.expectRevert(IDKGAppManager.DecryptionClosed.selector);
+        appManager.requireDecryptionOpen(epochId, aid);
+        vm.expectRevert(IDKGAppManager.DecryptionClosed.selector);
+        _submitCiphertextAs(address(this), epochId, aid);
+
+        uint8 keyIndex = manager.getAppPoolIndex(epochId, aid);
+        bytes memory input = partialDecryptionInput(epochId, aid, 2, 1, keyIndex);
+        bytes32[] memory path = shareProofFor(keyIndex, 2, 2);
+        vm.prank(address(0xBEEF));
+        vm.expectRevert(IDKGAppManager.DecryptionClosed.selector);
+        manager.submitPartialDecryption(
+            epochId, aid, 2, 1,
+            TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y,
+            partialDecryptionHash(2), partialDecryptionProof(), input, path
+        );
+        vm.expectRevert(IDKGAppManager.DecryptionClosed.selector);
+        manager.combineDecryption(epochId, aid, 1, bytes32(uint256(1)), 0, "", "", "");
+    }
+
+    // ─── Registration guards ───────────────────────────────────────────────
+
     function test_RegisterApplication_RejectsBadSchnorrProof() public {
-        bytes12 epochId = _finalizedEpoch();
+        bytes12 epochId = _liveEpoch();
         bytes32 aid = bytes32(uint256(44));
         (uint256 pkx, uint256 pky, uint256 ax, uint256 ay, uint256 z) = organizerPoP(epochId, aid);
 
@@ -195,13 +445,17 @@ contract DKGManagerAppTest is Test, TestHelpers {
         vm.expectRevert(IDKGAppManager.InvalidSchnorrProof.selector);
         appManager.registerApplication(epochId, aid, _emptyAppPolicy(), pkx, pky, bx, by, bz);
 
-        // the honest proof still registers
+        // the honest proof still registers — and only now is a key claimed.
+        (uint8 nextBefore,) = manager.getPoolStatus(epochId);
+        assertEq(uint256(nextBefore), 0);
         appManager.registerApplication(epochId, aid, _emptyAppPolicy(), pkx, pky, ax, ay, z);
         assertTrue(appManager.getApplication(epochId, aid).exists);
+        (uint8 nextAfter,) = manager.getPoolStatus(epochId);
+        assertEq(uint256(nextAfter), 1);
     }
 
     function test_RegisterApplication_RejectsZeroAid() public {
-        bytes12 epochId = _finalizedEpoch();
+        bytes12 epochId = _liveEpoch();
         (uint256 pkx, uint256 pky, uint256 ax, uint256 ay, uint256 z) = organizerPoP(epochId, bytes32(0));
         vm.expectRevert(IDKGAppManager.InvalidApplication.selector);
         appManager.registerApplication(epochId, bytes32(0), _emptyAppPolicy(), pkx, pky, ax, ay, z);
@@ -211,7 +465,7 @@ contract DKGManagerAppTest is Test, TestHelpers {
     ///      a BN254 scalar-field public input, so ids at or above the field
     ///      modulus could never be decrypted. Reject them at registration.
     function test_RegisterApplication_RejectsAidOutsideScalarField() public {
-        bytes12 epochId = _finalizedEpoch();
+        bytes12 epochId = _liveEpoch();
         bytes32 aid = bytes32(uint256(21888242871839275222246405745257275088548364400416034343698204186575808495617));
         (uint256 pkx, uint256 pky, uint256 ax, uint256 ay, uint256 z) = organizerPoP(epochId, aid);
         vm.expectRevert(IDKGAppManager.InvalidApplication.selector);
@@ -225,19 +479,22 @@ contract DKGManagerAppTest is Test, TestHelpers {
     }
 
     function test_RegisterApplication_RejectsDuplicate() public {
-        bytes12 epochId = _finalizedEpoch();
+        bytes12 epochId = _liveEpoch();
         bytes32 aid = bytes32(uint256(42));
         _register(epochId, aid, _emptyAppPolicy());
         (uint256 pkx, uint256 pky, uint256 ax, uint256 ay, uint256 z) = organizerPoP(epochId, aid);
         vm.expectRevert(IDKGAppManager.ApplicationAlreadyExists.selector);
         appManager.registerApplication(epochId, aid, _emptyAppPolicy(), pkx, pky, ax, ay, z);
+        // The failed duplicate must not have burned a second pool key.
+        (uint8 nextIndex,) = manager.getPoolStatus(epochId);
+        assertEq(uint256(nextIndex), 1);
     }
 
     function test_RegisterApplication_RejectsUnknownEpoch() public {
         bytes12 epochId = bytes12(uint96(0xdead));
         bytes32 aid = bytes32(uint256(1));
         (uint256 pkx, uint256 pky, uint256 ax, uint256 ay, uint256 z) = organizerPoP(epochId, aid);
-        vm.expectRevert(IDKGManager.InvalidEpoch.selector);
+        vm.expectRevert(IDKGAppManager.InvalidEpoch.selector);
         appManager.registerApplication(epochId, aid, _emptyAppPolicy(), pkx, pky, ax, ay, z);
     }
 
@@ -247,30 +504,26 @@ contract DKGManagerAppTest is Test, TestHelpers {
         bytes12 epochId = manager.createEpoch(2, 2, 2, 10000);
         bytes32 aid = bytes32(uint256(1));
         (uint256 pkx, uint256 pky, uint256 ax, uint256 ay, uint256 z) = organizerPoP(epochId, aid);
-        vm.expectRevert(IDKGManager.InvalidPhase.selector);
+        vm.expectRevert(IDKGAppManager.InvalidPhase.selector);
         appManager.registerApplication(epochId, aid, _emptyAppPolicy(), pkx, pky, ax, ay, z);
     }
 
-    // ─── Organizer share phase gating ──────────────────────────────────────
+    /// @dev Every application of an epoch gets its own committee key.
+    function test_RegisterApplication_ClaimsDistinctPoolKeys() public {
+        bytes12 epochId = _liveEpoch();
+        _registerAutomatic(epochId, bytes32(uint256(80)), _emptyAppPolicy());
+        _registerAutomatic(epochId, bytes32(uint256(81)), _emptyAppPolicy());
+        assertEq(uint256(appManager.getApplication(epochId, bytes32(uint256(80))).poolIndex), 0);
+        assertEq(uint256(appManager.getApplication(epochId, bytes32(uint256(81))).poolIndex), 1);
 
-    function test_SubmitOrganizerShare_RejectsUnknownEpoch() public {
-        OrgShare memory sh = testOrganizerShare(bytes12(uint96(0xfeed)), TEST_AID, 1);
-        vm.expectRevert(IDKGManager.InvalidEpoch.selector);
-        appManager.submitOrganizerShare(
-            bytes12(uint96(0xfeed)), TEST_AID, 1,
-            TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y,
-            sh.deltaX, sh.deltaY, sh.a1x, sh.a1y, sh.a2x, sh.a2y, sh.z
-        );
+        (uint256 x0, uint256 y0) = manager.getPoolKey(epochId, 0);
+        (uint256 x1, uint256 y1) = manager.getPoolKey(epochId, 1);
+        assertTrue(x0 != x1 || y0 != y1);
     }
 
-    function test_SubmitOrganizerShare_RejectsCiphertextIndexZero() public {
-        bytes12 epochId = _finalizedEpoch();
-        OrgShare memory sh = testOrganizerShare(epochId, TEST_AID, 1);
-        vm.expectRevert(IDKGAppManager.InvalidCiphertext.selector);
-        appManager.submitOrganizerShare(
-            epochId, TEST_AID, 0,
-            TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y,
-            sh.deltaX, sh.deltaY, sh.a1x, sh.a1y, sh.a2x, sh.a2y, sh.z
-        );
+    function test_RequireDecryptionOpen_RejectsUnknownApplication() public {
+        bytes12 epochId = _liveEpoch();
+        vm.expectRevert(IDKGAppManager.InvalidApplication.selector);
+        appManager.requireDecryptionOpen(epochId, bytes32(uint256(0xDEAD)));
     }
 }

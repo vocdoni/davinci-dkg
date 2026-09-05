@@ -104,8 +104,9 @@ docker compose --profile node logs -f node`}</Code>
             </>,
             <>
               From then on it reacts to every phase it is eligible for: claim a slot when the lottery admits it, submit
-              a contribution, finalize, answer ciphertexts with partial decryptions, and combine when its turn comes in
-              the seed-derived rotation. It heartbeats and reactivates by itself before the inactivity window expires.
+              a contribution, finalize, activate pool keys ahead of demand, answer ciphertexts with partial decryptions,
+              and combine when its turn comes in the seed-derived rotation. It heartbeats and reactivates by itself
+              before the inactivity window expires.
             </>,
           ]}
         />
@@ -180,10 +181,10 @@ docker compose --profile node --profile ui up -d
               the contract does not — which is what stops a small-order point from leaking a share.
             </>,
             <>
-              <Em>Organizer shares.</Em> A ciphertext is only combinable once its organizer has published{' '}
-              <C>Δ = sk_org·C1</C>. The node verifies that Chaum&ndash;Pedersen discrete-logarithm equality (DLEQ) proof
-              off chain, since the contract stores only a hash. It skips an invalid one and re-checks on the next tick;
-              a corrected share can be re-submitted until the ciphertext is combined.
+              <Em>Organizer secrets.</Em> A ciphertext of an organizer-locked application is only combinable once its
+              organizer has called <C>revealOrganizerSecret</C>; until then the node parks the application after posting
+              its partials and wakes it on the reveal event, so a kept secret costs nothing per tick. An automatic
+              application needs no reveal. Both are gated by the application&rsquo;s decryption window.
             </>,
             <>
               <Em>Dead epochs.</Em> An epoch whose committee never filled, or whose key assembly closed below{' '}

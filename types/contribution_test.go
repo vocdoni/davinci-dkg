@@ -51,18 +51,3 @@ func TestContributionValidateRejectsMissingEncryptedShares(t *testing.T) {
 	c.Assert(err, qt.Not(qt.IsNil))
 	c.Assert(err.Error(), qt.Contains, "encrypted share")
 }
-
-func TestFinalizedOutputValidate(t *testing.T) {
-	c := qt.New(t)
-
-	output := FinalizedOutput{
-		EpochID:             testEpochID,
-		CollectivePublicKey: CurvePoint{X: big.NewInt(1), Y: big.NewInt(2)},
-		AggregateCommitments: []CurvePoint{
-			{X: big.NewInt(3), Y: big.NewInt(4)},
-		},
-		SelectedParticipantIX: []uint16{1, 2, 3},
-	}
-
-	c.Assert(output.Validate(), qt.IsNil)
-}

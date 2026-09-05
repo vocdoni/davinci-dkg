@@ -13,9 +13,11 @@ import {
   operatorKey,
   slotKey,
   txKey,
+  POOL_SIZE,
   STORE_VERSION,
   type Address,
   type Aid,
+  type AppModeName,
   type AppPolicyEntity,
   type ApplicationEntity,
   type ChainMeta,
@@ -30,6 +32,7 @@ import {
   type NodeStatusName,
   type OperatorEntity,
   type Point,
+  type PoolKeyEntity,
   type TxMeta,
 } from './types'
 
@@ -92,6 +95,18 @@ export function bumpStore(store: IndexerStore): IndexerStore {
 
 // ── entity upserts ───────────────────────────────────────────────────────────
 
+function emptyPool(): PoolKeyEntity[] {
+  return Array.from({ length: POOL_SIZE }, (_, index) => ({
+    index,
+    key: null,
+    activatedBlock: null,
+    activatedTx: null,
+    claimedBy: null,
+    claimedBlock: null,
+    claimedTx: null,
+  }))
+}
+
 function nonceOf(id: EpochId): number {
   try {
     return Number(parseEpochId(id).nonce)
@@ -147,8 +162,8 @@ export function ensureEpoch(store: IndexerStore, id: EpochId, block: number): Ep
       slots: [],
       contributions: [],
       finalization: null,
-      collectivePublicKey: null,
-      shareCommitmentHashes: [],
+      poolKeys: emptyPool(),
+      poolNext: 0,
       applications: [],
       counts: { claims: 0, contributions: 0, ciphertexts: 0, partials: 0, combines: 0, applications: 0 },
       events: [],
@@ -176,6 +191,10 @@ function ensureApplication(
       aid: aid.toLowerCase() as Aid,
       creator: '0x0000000000000000000000000000000000000000',
       organizerPK: { x: 0n, y: 0n },
+      mode: 'organizer-locked',
+      poolIndex: null,
+      organizerSecret: null,
+      organizerReveal: null,
       policy: null,
       createdBlock: block,
       createdTx: null,
@@ -215,7 +234,6 @@ function ensureCiphertext(
       block,
       tx: null,
       partials: [],
-      organizerShare: null,
       combined: null,
     }
     store.ciphertexts[key] = ct
@@ -226,6 +244,32 @@ function ensureCiphertext(
     }
   }
   return ct
+}
+
+/**
+ * Record that `aid` holds pool key `index`. `PoolKeyClaimed` (manager) and
+ * `ApplicationRegistered` (app manager) both say so in the same transaction,
+ * in either log order, so this has to be idempotent.
+ */
+function claimPoolKey(
+  store: IndexerStore,
+  epochId: EpochId,
+  aid: Aid,
+  index: number,
+  block: number,
+  tx: Hex | null,
+): void {
+  const epoch = ensureEpoch(store, epochId, block)
+  const app = ensureApplication(store, epochId, aid, block)
+  app.poolIndex = index
+  const slot = epoch.poolKeys[index]
+  if (!slot) return
+  if (slot.claimedBy == null) {
+    slot.claimedBy = app.aid
+    slot.claimedBlock = block
+    slot.claimedTx = tx
+  }
+  epoch.poolNext = Math.max(epoch.poolNext, index + 1)
 }
 
 // ── event fold ───────────────────────────────────────────────────────────────
@@ -352,13 +396,25 @@ function applyEvent(store: IndexerStore, ev: IndexedEvent): void {
         by: ev.tx ? (store.txMeta[txKey(ev.tx)]?.from ?? null) : null,
         block: ev.block,
         tx: ev.tx,
-        aggregateCommitmentsHash: ev.data.aggregateCommitmentsHash,
-        collectivePublicKeyHash: ev.data.collectivePublicKeyHash,
-        shareCommitmentHash: ev.data.shareCommitmentHash,
+        contributionCount: ev.data.contributionCount,
       }
+      epoch.counts.contributions = Math.max(epoch.counts.contributions, ev.data.contributionCount)
       if (epoch.status !== 'aborted') epoch.status = 'live'
       break
     }
+    case 'PoolKeyActivated': {
+      const epoch = ensureEpoch(store, ev.data.epochId, ev.block)
+      const slot = epoch.poolKeys[ev.data.keyIndex]
+      if (slot && slot.key == null) {
+        slot.key = ev.data.key
+        slot.activatedBlock = ev.block
+        slot.activatedTx = ev.tx
+      }
+      break
+    }
+    case 'PoolKeyClaimed':
+      claimPoolKey(store, ev.data.epochId, ev.data.aid, ev.data.keyIndex, ev.block, ev.tx)
+      break
     case 'EpochAborted': {
       const epoch = ensureEpoch(store, ev.data.epochId, ev.block)
       epoch.status = 'aborted'
@@ -393,20 +449,6 @@ function applyEvent(store: IndexerStore, ev: IndexedEvent): void {
       }
       break
     }
-    case 'OrganizerShareSubmitted': {
-      const ct = ensureCiphertext(store, ev.data.epochId, ev.data.aid, ev.data.ciphertextIndex, ev.block)
-      const overwrites = ct.organizerShare ? ct.organizerShare.overwrites + 1 : 0
-      ct.organizerShare = {
-        block: ev.block,
-        tx: ev.tx,
-        delta: ev.data.delta,
-        a1: ev.data.a1,
-        a2: ev.data.a2,
-        z: ev.data.z,
-        overwrites,
-      }
-      break
-    }
     case 'DecryptionCombined': {
       const ct = ensureCiphertext(store, ev.data.epochId, ev.data.aid, ev.data.ciphertextIndex, ev.block)
       ct.combined = {
@@ -424,8 +466,16 @@ function applyEvent(store: IndexerStore, ev: IndexedEvent): void {
       const app = ensureApplication(store, ev.data.epochId, ev.data.aid, ev.block)
       app.creator = ev.data.creator
       app.organizerPK = ev.data.organizerPK
+      app.mode = ev.data.mode
       app.createdBlock = ev.block
       app.createdTx = ev.tx
+      claimPoolKey(store, ev.data.epochId, ev.data.aid, ev.data.poolIndex, ev.block, ev.tx)
+      break
+    }
+    case 'OrganizerSecretRevealed': {
+      const app = ensureApplication(store, ev.data.epochId, ev.data.aid, ev.block)
+      app.organizerSecret = ev.data.organizerSecret
+      app.organizerReveal = { block: ev.block, tx: ev.tx }
       break
     }
   }
@@ -490,8 +540,8 @@ export interface EpochStateUpdate {
   status?: number
   policy?: EpochPolicy
   committee?: Address[]
-  collectivePublicKey?: Point | null
-  shareCommitmentHashes?: (Hex | null)[]
+  /** `getPoolStatus(eid).nextIndex`. */
+  poolNext?: number
   claimedCount?: number
   contributionCount?: number
   partialDecryptionCount?: number
@@ -499,7 +549,7 @@ export interface EpochStateUpdate {
   stateBlock: number
 }
 
-/** Fold a `getEpoch` / `selectedParticipants` read into the store. */
+/** Fold a `getEpoch` / `selectedParticipants` / `getPoolStatus` read into the store. */
 export function applyEpochState(store: IndexerStore, id: EpochId, update: EpochStateUpdate): void {
   const epoch = ensureEpoch(store, id, update.stateBlock)
   if (update.status != null) epoch.status = phaseFromStatus(update.status)
@@ -507,8 +557,7 @@ export function applyEpochState(store: IndexerStore, id: EpochId, update: EpochS
   if (update.committee && update.committee.length > 0) {
     epoch.committee = update.committee.map((a) => a.toLowerCase() as Address)
   }
-  if (update.collectivePublicKey !== undefined) epoch.collectivePublicKey = update.collectivePublicKey
-  if (update.shareCommitmentHashes) epoch.shareCommitmentHashes = update.shareCommitmentHashes
+  if (update.poolNext != null) epoch.poolNext = Math.max(epoch.poolNext, update.poolNext)
   if (update.claimedCount != null) epoch.counts.claims = Math.max(epoch.counts.claims, update.claimedCount)
   if (update.contributionCount != null) {
     epoch.counts.contributions = Math.max(epoch.counts.contributions, update.contributionCount)
@@ -548,6 +597,10 @@ export function applyOperatorState(
 
 export interface ApplicationStateUpdate {
   policy?: AppPolicyEntity
+  mode?: AppModeName
+  poolIndex?: number
+  /** `sk_org` once revealed; null while the record still holds 0. */
+  organizerSecret?: bigint | null
   organizerPK?: Point
   creator?: Address
   createdBlock?: number
@@ -563,6 +616,11 @@ export function applyApplicationState(
 ): void {
   const app = ensureApplication(store, epoch, aid, update.stateBlock)
   if (update.policy) app.policy = update.policy
+  if (update.mode) app.mode = update.mode
+  if (update.poolIndex != null) app.poolIndex = update.poolIndex
+  // A reveal seen through the event keeps its block; the record only says
+  // whether the secret is out, never when.
+  if (update.organizerSecret != null) app.organizerSecret = update.organizerSecret
   if (update.organizerPK) app.organizerPK = update.organizerPK
   if (update.creator) app.creator = update.creator.toLowerCase() as Address
   if (update.createdBlock != null && update.createdBlock > 0) app.createdBlock = update.createdBlock

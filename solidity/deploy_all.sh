@@ -149,11 +149,9 @@ extract() {
 }
 
 CONTRIBUTION_VERIFIER=$(extract ContributionVerifier)
-FINALIZE_VERIFIER=$(extract FinalizeVerifier)
+POOL_KEY_VERIFIER=$(extract PoolKeyVerifier)
 PARTIAL_DECRYPT_VERIFIER=$(extract PartialDecryptVerifier)
 DECRYPT_COMBINE_VERIFIER=$(extract DecryptCombineVerifier)
-REVEAL_SUBMIT_VERIFIER=$(extract RevealSubmitVerifier)
-REVEAL_SHARE_VERIFIER=$(extract RevealShareVerifier)
 REGISTRY=$(extract DKGRegistry)
 MANAGER=$(extract DKGManager)
 APP_MANAGER=$(extract DKGAppManager)
@@ -161,11 +159,9 @@ APP_MANAGER=$(extract DKGAppManager)
 missing=0
 for pair in \
     "ContributionVerifier=$CONTRIBUTION_VERIFIER" \
-    "FinalizeVerifier=$FINALIZE_VERIFIER" \
+    "PoolKeyVerifier=$POOL_KEY_VERIFIER" \
     "PartialDecryptVerifier=$PARTIAL_DECRYPT_VERIFIER" \
     "DecryptCombineVerifier=$DECRYPT_COMBINE_VERIFIER" \
-    "RevealSubmitVerifier=$REVEAL_SUBMIT_VERIFIER" \
-    "RevealShareVerifier=$REVEAL_SHARE_VERIFIER" \
     "DKGRegistry=$REGISTRY" \
     "DKGManager=$MANAGER" \
     "DKGAppManager=$APP_MANAGER"; do
@@ -190,11 +186,9 @@ REGISTRY=$REGISTRY
 MANAGER=$MANAGER
 APP_MANAGER=$APP_MANAGER
 CONTRIBUTION_VERIFIER=$CONTRIBUTION_VERIFIER
-FINALIZE_VERIFIER=$FINALIZE_VERIFIER
+POOL_KEY_VERIFIER=$POOL_KEY_VERIFIER
 PARTIAL_DECRYPT_VERIFIER=$PARTIAL_DECRYPT_VERIFIER
 DECRYPT_COMBINE_VERIFIER=$DECRYPT_COMBINE_VERIFIER
-REVEAL_SUBMIT_VERIFIER=$REVEAL_SUBMIT_VERIFIER
-REVEAL_SHARE_VERIFIER=$REVEAL_SHARE_VERIFIER
 EOF
 
 # ── summary ──────────────────────────────────────────────────────────────
@@ -206,11 +200,9 @@ printf '  DKGRegistry               : %s\n' "$REGISTRY"
 printf '  DKGManager                : %s\n' "$MANAGER"
 printf '  DKGAppManager             : %s\n' "$APP_MANAGER"
 printf '  ContributionVerifier      : %s\n' "$CONTRIBUTION_VERIFIER"
-printf '  FinalizeVerifier          : %s\n' "$FINALIZE_VERIFIER"
+printf '  PoolKeyVerifier           : %s\n' "$POOL_KEY_VERIFIER"
 printf '  PartialDecryptVerifier    : %s\n' "$PARTIAL_DECRYPT_VERIFIER"
 printf '  DecryptCombineVerifier    : %s\n' "$DECRYPT_COMBINE_VERIFIER"
-printf '  RevealSubmitVerifier      : %s\n' "$REVEAL_SUBMIT_VERIFIER"
-printf '  RevealShareVerifier       : %s\n' "$REVEAL_SHARE_VERIFIER"
 printf '\n'
 printf '  addresses saved to : %s\n' "$OUT_FILE"
 printf '  deploy log         : %s\n' "$DEPLOY_LOG"

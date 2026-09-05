@@ -9,12 +9,12 @@ import {IDKGManager} from "../src/interfaces/IDKGManager.sol";
 import {IDKGAppManager} from "../src/interfaces/IDKGAppManager.sol";
 import {DKGTypes} from "../src/libraries/DKGTypes.sol";
 import {BRLC} from "../src/libraries/BRLC.sol";
-import {MAX_N} from "../src/libraries/Sizes.sol";
+import {MAX_N, MAX_K, MERKLE_DEPTH} from "../src/libraries/Sizes.sol";
 import {BabyJubJub} from "../src/libraries/BabyJubJub.sol";
 import {
     MockContributionVerifier,
     MockPartialDecryptVerifier,
-    MockFinalizeVerifier,
+    MockPoolKeyVerifier,
     MockDecryptCombineVerifier,
     TestHelpers
 } from "./TestHelpers.t.sol";
@@ -23,7 +23,7 @@ contract DKGManagerTest is Test, TestHelpers {
     DKGRegistry public registry;
     MockContributionVerifier public verifier;
     MockPartialDecryptVerifier public partialVerifier;
-    MockFinalizeVerifier public finalizeVerifier;
+    MockPoolKeyVerifier public poolKeyVerifier;
     MockDecryptCombineVerifier public decryptCombineVerifier;
     DKGManager public manager;
     DKGAppManager public appManager;
@@ -65,14 +65,14 @@ contract DKGManagerTest is Test, TestHelpers {
         registry.registerKey(BEEF_PUBX, BEEF_PUBY, BEEF_AX, BEEF_AY, BEEF_Z);
         verifier = new MockContributionVerifier();
         partialVerifier = new MockPartialDecryptVerifier();
-        finalizeVerifier = new MockFinalizeVerifier();
+        poolKeyVerifier = new MockPoolKeyVerifier();
         decryptCombineVerifier = new MockDecryptCombineVerifier();
         manager = new DKGManager(
             31337,
             address(registry),
             address(verifier),
             address(partialVerifier),
-            address(finalizeVerifier),
+            address(poolKeyVerifier),
             address(decryptCombineVerifier),
             0,  // epochDurationBlocks → DEFAULT (100)
             0,  // committeeSelectionBlocks → DEFAULT (25)
@@ -89,6 +89,8 @@ contract DKGManagerTest is Test, TestHelpers {
         vm.roll(block.number + 1);
     }
 
+    // ─── Lifecycle helpers ────────────────────────────────────────────────────
+
     function createSelectedRound() internal returns (bytes12 epochId) {
         epochId = _createLotteryRound();
         _claimAllSlots(epochId);
@@ -97,20 +99,14 @@ contract DKGManagerTest is Test, TestHelpers {
     /// @dev Creates a epoch with a lottery threshold of "everyone passes" so the two
     /// registered test nodes (address(this) and 0xBEEF) are both eligible.
     /// All phase deadlines are derived from the contract's
-    /// `EPOCH_DURATION_BLOCKS` (100 in the default-deploy test fixture):
-    /// regDeadline=+5, contribDeadline=+20, finalizeNotBefore=+25.
+    /// `EPOCH_DURATION_BLOCKS` (100 in the default-deploy test fixture).
     function _createLotteryRound() internal returns (bytes12 epochId) {
         // Permissionless cadence: roll forward to nextEpochStartBlock if
         // a previous epoch was just created in this same test.
         uint64 next = manager.nextEpochStartBlock();
         if (block.number < uint256(next)) vm.roll(uint256(next));
         // α = 1.0 (10000 bps), committeeSize = 2, registered = 2 → all pass.
-        epochId = manager.createEpoch(
-            2,                         // threshold
-            2,                         // committeeSize
-            2,                         // minValidContributions
-            10000                     // lotteryAlphaBps (α = 1.0)
-        );
+        epochId = manager.createEpoch(2, 2, 2, 10000);
         // Advance past seedBlock so blockhash is available.
         vm.roll(block.number + 2);
     }
@@ -129,62 +125,63 @@ contract DKGManagerTest is Test, TestHelpers {
         }
     }
 
-    function createFinalizedRound() internal returns (bytes12 epochId) {
+    function _submitContribution(bytes12 epochId, uint16 idx) internal {
+        if (idx == 2) vm.prank(address(0xBEEF));
+        manager.submitContribution(
+            epochId,
+            idx,
+            contributorCommitmentsHash(idx),
+            contributorSharesHash(idx),
+            contributionTranscript(2),
+            contributionProof(),
+            contributionInput(epochId, 2, 2, idx, contributorCommitmentsHash(idx), contributorSharesHash(idx))
+        );
+    }
+
+    function _submitBothContributions(bytes12 epochId) internal {
+        _submitContribution(epochId, 1);
+        _submitContribution(epochId, 2);
+    }
+
+    /// @dev Prove pool key `keyIndex` of a Live epoch with two accepted
+    ///      contributors out of a committee of two.
+    function _activateKey(bytes12 epochId, uint8 keyIndex) internal {
+        manager.activatePoolKey(
+            epochId,
+            keyIndex,
+            testTranscriptDigest(keyIndex),
+            poolKeyTranscript(keyIndex, 2, 2),
+            poolKeyProof(),
+            poolKeyInput(epochId, 2, 2, 2, keyIndex)
+        );
+    }
+
+    /// @dev `activatePoolKey` over an explicit (possibly tampered) word vector
+    ///      with a consistent challenge and BRLC commitment.
+    function _activateKeyWithWords(bytes12 epochId, uint8 keyIndex, uint256[] memory words) internal {
+        bytes memory input = poolKeyInputForWords(epochId, 2, 2, 2, keyIndex, words);
+        manager.activatePoolKey(
+            epochId, keyIndex, testTranscriptDigest(keyIndex), abi.encodePacked(words), poolKeyProof(), input
+        );
+    }
+
+    /// @dev An epoch driven all the way to Live with pool key 0 activated.
+    function createLiveRound() internal returns (bytes12 epochId) {
         epochId = createSelectedRound();
-
-        manager.submitContribution(
-            epochId,
-            1,
-            CONTRIBUTION_COMMITMENTS_HASH,
-            CONTRIBUTION_ENCRYPTED_SHARES_HASH,            contributionTranscript(2),
-            contributionProof(),
-            contributionInput(epochId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH)
-        );
-
-        vm.prank(address(0xBEEF));
-        manager.submitContribution(
-            epochId,
-            2,
-            bytes32(uint256(CONTRIBUTION_COMMITMENTS_HASH) + 1),
-            bytes32(uint256(CONTRIBUTION_ENCRYPTED_SHARES_HASH) + 1),            contributionTranscript(2),
-            contributionProof(),
-            contributionInput(
-                epochId,
-                2,
-                2,
-                2,
-                bytes32(uint256(CONTRIBUTION_COMMITMENTS_HASH) + 1),
-                bytes32(uint256(CONTRIBUTION_ENCRYPTED_SHARES_HASH) + 1)
-            )
-        );
-
+        _submitBothContributions(epochId);
         _advanceToFinalize(epochId);
-        manager.finalizeEpoch(
-            epochId,
-            FINALIZED_AGGREGATE_COMMITMENTS_HASH,
-            FINALIZED_COLLECTIVE_PUBLIC_KEY_HASH,
-            FINALIZED_SHARE_COMMITMENT_HASH,
-            finalizeTranscript(2),
-            finalizeProof(),
-            finalizeInput(
-                epochId,
-                2,
-                2,
-                2,
-                FINALIZED_AGGREGATE_COMMITMENTS_HASH,
-                FINALIZED_COLLECTIVE_PUBLIC_KEY_HASH,
-                FINALIZED_SHARE_COMMITMENT_HASH
-            )
-        );
+        manager.finalizeEpoch(epochId);
+        _activateKey(epochId, 0);
+    }
 
-        // Ciphertexts only exist under a registered application, and
-        // submitPartialDecryption requires the ciphertext to exist on-chain so
-        // it can bind C1 into the proof's public inputs. Most test paths drive
-        // the partial-decrypt flow against ciphertextIndex=1, so register the
-        // application and submit its first ciphertext as part of the canonical
-        // "finalized" fixture. Tests that need an unsubmitted ciphertext use a
-        // different index.
+    /// @dev The canonical fixture: Live epoch, key 0 activated and claimed by
+    ///      `TEST_AID` (an `OrganizerLocked` application whose secret is
+    ///      already revealed, so partials and combines are open), one
+    ///      ciphertext submitted at index 1.
+    function createFinalizedRound() internal returns (bytes12 epochId) {
+        epochId = createLiveRound();
         _registerTestApp(epochId, TEST_AID);
+        appManager.revealOrganizerSecret(epochId, TEST_AID, TEST_ORG_SK);
         _submitTestCiphertext(epochId, TEST_AID);
     }
 
@@ -193,51 +190,47 @@ contract DKGManagerTest is Test, TestHelpers {
     ///      caller — address(this) unless pranked).
     function _registerTestApp(bytes12 epochId, bytes32 aid) internal {
         (uint256 pkx, uint256 pky, uint256 ax, uint256 ay, uint256 z) = organizerPoP(epochId, aid);
-        appManager.registerApplication(
-            epochId,
-            aid,
-            DKGTypes.AppPolicy({
-                authorizedSubmitter: address(0),
-                maxCiphertexts: 0,
-                notBeforeBlock: 0,
-                notAfterBlock: 0
-            }),
-            pkx, pky, ax, ay, z
-        );
+        appManager.registerApplication(epochId, aid, _emptyAppPolicy(), pkx, pky, ax, ay, z);
     }
 
-    /// @dev Publish the organizer share of the canonical test ciphertext.
-    function _submitTestOrganizerShare(bytes12 epochId, bytes32 aid, uint16 ctIdx)
-        internal
-        returns (OrgShare memory sh)
-    {
-        sh = testOrganizerShare(epochId, aid, ctIdx);
-        appManager.submitOrganizerShare(
-            epochId, aid, ctIdx,
+    function _emptyAppPolicy() internal pure returns (DKGTypes.AppPolicy memory) {
+        return DKGTypes.AppPolicy({
+            mode: DKGTypes.AppMode.OrganizerLocked,
+            openSubmission: false,
+            submitters: new address[](0),
+            maxCiphertexts: 0,
+            notBeforeBlock: 0,
+            notAfterBlock: 0,
+            decryptNotBefore: 0,
+            decryptNotAfter: 0
+        });
+    }
+
+    function _submitTestCiphertext(bytes12 epochId, bytes32 aid) internal returns (uint16) {
+        return manager.submitCiphertext(epochId, aid, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
+    }
+
+    function _submitPartial(bytes12 epochId, bytes32 aid, uint16 pIdx, uint16 ctIdx) internal {
+        uint8 keyIndex = manager.getAppPoolIndex(epochId, aid);
+        if (pIdx == 2) vm.prank(address(0xBEEF));
+        manager.submitPartialDecryption(
+            epochId, aid, pIdx, ctIdx,
             TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y,
-            sh.deltaX, sh.deltaY, sh.a1x, sh.a1y, sh.a2x, sh.a2y, sh.z
+            partialDecryptionHash(pIdx),
+            partialDecryptionProof(),
+            partialDecryptionInput(epochId, aid, pIdx, ctIdx, keyIndex),
+            shareProofFor(keyIndex, 2, pIdx)
         );
     }
 
     /// @dev Both committee members post their partial decryption of
     ///      `ciphertextIndex` under `aid`.
     function _submitBothPartials(bytes12 epochId, bytes32 aid, uint16 ctIdx) internal {
-        manager.submitPartialDecryption(
-            epochId, aid, 1, ctIdx,
-            TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y,
-            partialDecryptionHash(1),
-            partialDecryptionProof(),
-            partialDecryptionInputCt(epochId, aid, 1, ctIdx)
-        );
-        vm.prank(address(0xBEEF));
-        manager.submitPartialDecryption(
-            epochId, aid, 2, ctIdx,
-            TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y,
-            partialDecryptionHash(2),
-            partialDecryptionProof(),
-            partialDecryptionInputCt(epochId, aid, 2, ctIdx)
-        );
+        _submitPartial(epochId, aid, 1, ctIdx);
+        _submitPartial(epochId, aid, 2, ctIdx);
     }
+
+    // ─── Epoch creation and lottery ───────────────────────────────────────────
 
     function test_CreateEpoch_PersistsPolicy() public {
         // committeeSize=2, registered=2, α=1.0 → all eligible
@@ -252,8 +245,7 @@ contract DKGManagerTest is Test, TestHelpers {
     }
 
     function test_ClaimSlot_RejectsBeforeSeedReady() public {
-        bytes12 epochId =
-            manager.createEpoch(2, 2, 2, 10000);
+        bytes12 epochId = manager.createEpoch(2, 2, 2, 10000);
         // Don't roll forward — seed block has not been mined yet.
         vm.expectRevert(IDKGManager.SeedNotReady.selector);
         manager.claimSlot(epochId);
@@ -282,7 +274,7 @@ contract DKGManagerTest is Test, TestHelpers {
     function test_ClaimSlot_RejectsAfterSlotsFull() public {
         bytes12 epochId = _createLotteryRound();
         _claimAllSlots(epochId);
-        // epoch.status is now Contribution, so further claimSlot calls should revert
+        // epoch.status is now KeyAssembly, so further claimSlot calls should revert
         // on phase, not on slots-full (we never reach the slots-full check).
         vm.prank(address(0xCAFE));
         vm.expectRevert(IDKGManager.InvalidPhase.selector);
@@ -293,26 +285,28 @@ contract DKGManagerTest is Test, TestHelpers {
         assertEq(uint256(manager.getContributionVerifierVKeyHash()), uint256(CONTRIBUTION_PROVING_KEY_HASH));
     }
 
+    function test_GetPartialDecryptVerifierVKeyHash() public view {
+        assertEq(uint256(manager.getPartialDecryptVerifierVKeyHash()), uint256(PARTIAL_DECRYPTION_PROVING_KEY_HASH));
+    }
+
+    function test_GetPoolKeyVerifierVKeyHash() public view {
+        assertEq(uint256(manager.getPoolKeyVerifierVKeyHash()), uint256(POOLKEY_PROVING_KEY_HASH));
+    }
+
+    // ─── Contribution ─────────────────────────────────────────────────────────
+
+    /// @dev The record now stores the Poseidon `commitmentsHash` (public input
+    ///      4), which is exactly what `activatePoolKey` re-checks per row.
     function test_SubmitContribution_PersistsRecord() public {
         bytes12 epochId = createSelectedRound();
-
-        manager.submitContribution(
-            epochId,
-            1,
-            CONTRIBUTION_COMMITMENTS_HASH,
-            CONTRIBUTION_ENCRYPTED_SHARES_HASH,            contributionTranscript(2),
-            contributionProof(),
-            contributionInput(epochId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH)
-        );
+        _submitContribution(epochId, 1);
 
         DKGTypes.ContributionRecord memory record = manager.getContribution(epochId, address(this));
         IDKGManager.Epoch memory epoch = manager.getEpoch(epochId);
 
-        // contributor / commitmentsHash / encryptedSharesHash are no longer persisted
-        // (they live in the ContributionSubmitted event); only the fields the contract
-        // itself needs at finalize time remain in storage.
         assertEq(uint256(record.contributorIndex), 1);
-        assertEq(record.accepted ? uint256(1) : uint256(0), 1);
+        assertEq(uint256(record.commitmentsHash), uint256(CONTRIBUTION_COMMITMENTS_HASH));
+        assertTrue(record.accepted);
         assertEq(uint256(epoch.contributionCount), 1);
     }
 
@@ -322,35 +316,21 @@ contract DKGManagerTest is Test, TestHelpers {
         vm.prank(address(0xCAFE));
         vm.expectRevert(IDKGManager.NotSelectedParticipant.selector);
         manager.submitContribution(
-            epochId,
-            1,
-            CONTRIBUTION_COMMITMENTS_HASH,
-            CONTRIBUTION_ENCRYPTED_SHARES_HASH,            contributionTranscript(2),
-            contributionProof(),
-            contributionInput(epochId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH)
+            epochId, 1, contributorCommitmentsHash(1), contributorSharesHash(1),
+            contributionTranscript(2), contributionProof(),
+            contributionInput(epochId, 2, 2, 1, contributorCommitmentsHash(1), contributorSharesHash(1))
         );
     }
 
     function test_SubmitContribution_RejectsDuplicates() public {
         bytes12 epochId = createSelectedRound();
-
-        manager.submitContribution(
-            epochId,
-            1,
-            CONTRIBUTION_COMMITMENTS_HASH,
-            CONTRIBUTION_ENCRYPTED_SHARES_HASH,            contributionTranscript(2),
-            contributionProof(),
-            contributionInput(epochId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH)
-        );
+        _submitContribution(epochId, 1);
 
         vm.expectRevert(IDKGManager.AlreadyContributed.selector);
         manager.submitContribution(
-            epochId,
-            1,
-            CONTRIBUTION_COMMITMENTS_HASH,
-            CONTRIBUTION_ENCRYPTED_SHARES_HASH,            contributionTranscript(2),
-            contributionProof(),
-            contributionInput(epochId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH)
+            epochId, 1, contributorCommitmentsHash(1), contributorSharesHash(1),
+            contributionTranscript(2), contributionProof(),
+            contributionInput(epochId, 2, 2, 1, contributorCommitmentsHash(1), contributorSharesHash(1))
         );
     }
 
@@ -362,85 +342,100 @@ contract DKGManagerTest is Test, TestHelpers {
         // own InvalidProofInput rather than the verifier's.
         vm.expectRevert(IDKGManager.InvalidProofInput.selector);
         manager.submitContribution(
-            epochId,
-            1,
-            CONTRIBUTION_COMMITMENTS_HASH,
-            CONTRIBUTION_ENCRYPTED_SHARES_HASH,            contributionTranscript(2),
-            contributionProof(),
+            epochId, 1, contributorCommitmentsHash(1), contributorSharesHash(1),
+            contributionTranscript(2), contributionProof(),
             CONTRIBUTION_INPUT_BAD
         );
     }
 
-    function test_GetPartialDecryptVerifierVKeyHash() public view {
-        assertEq(uint256(manager.getPartialDecryptVerifierVKeyHash()), uint256(PARTIAL_DECRYPTION_PROVING_KEY_HASH));
+    /// @dev The committee section of the transcript lives at
+    ///      `[2KN, 2KN+3N)`; a transcript whose committee prefix does not match
+    ///      the lottery snapshot is rejected regardless of the proof. The
+    ///      challenge and BRLC commitment are recomputed over the altered
+    ///      words so the call gets past Fiat–Shamir and the mock verifier and
+    ///      it is the prefix check that rejects.
+    function test_SubmitContribution_RejectsWrongCommitteePrefix() public {
+        bytes12 epochId = createSelectedRound();
+        uint256[] memory words = contributionWords(2);
+        words[2 * MAX_K * MAX_N] = 7; // recipientIndexes[0] should be 1
+        bytes memory input = contributionInputForWords(
+            epochId, 2, 2, 1, contributorCommitmentsHash(1), contributorSharesHash(1), words
+        );
+        vm.expectRevert(IDKGManager.InvalidProofInput.selector);
+        manager.submitContribution(
+            epochId, 1, contributorCommitmentsHash(1), contributorSharesHash(1),
+            abi.encodePacked(words), contributionProof(), input
+        );
+        // The same envelope with the honest prefix lands: nothing else was off.
+        _submitContribution(epochId, 1);
+        assertTrue(manager.getContribution(epochId, address(this)).accepted);
     }
 
-    function test_FinalizeEpoch_PersistsHashes() public {
-        bytes12 epochId = createFinalizedRound();
+    /// @dev A transcript word at or above the scalar-field modulus commits
+    ///      exactly like its reduction, so the contract must refuse it rather
+    ///      than store the raw value. Here a masked share carries `v + p`.
+    function test_SubmitContribution_RejectsNonCanonicalWord() public {
+        bytes12 epochId = createSelectedRound();
+        uint256[] memory words = contributionWords(2);
+        uint256 msBase = 2 * MAX_K * MAX_N + 5 * MAX_N;
+        words[msBase] = words[msBase] + FR_MOD;
+        bytes memory input = contributionInputForWords(
+            epochId, 2, 2, 1, contributorCommitmentsHash(1), contributorSharesHash(1), words
+        );
+        vm.expectRevert(BRLC.TranscriptWordNotInField.selector);
+        manager.submitContribution(
+            epochId, 1, contributorCommitmentsHash(1), contributorSharesHash(1),
+            abi.encodePacked(words), contributionProof(), input
+        );
+    }
+
+    function test_SubmitContribution_RefreshesLastActiveBlock() public {
+        bytes12 epochId = createSelectedRound();
+
+        uint64 before = registry.getNode(address(this)).lastActiveBlock;
+        vm.roll(block.number + 10);
+        _submitContribution(epochId, 1);
+
+        uint64 afterBlock = registry.getNode(address(this)).lastActiveBlock;
+        assertEq(uint256(afterBlock), block.number);
+        assertTrue(afterBlock > before);
+    }
+
+    // ─── finalizeEpoch (proof-less) ──────────────────────────────────────────
+
+    function test_FinalizeEpoch_SetsLive() public {
+        bytes12 epochId = createSelectedRound();
+        _submitBothContributions(epochId);
+        _advanceToFinalize(epochId);
+        manager.finalizeEpoch(epochId);
 
         IDKGManager.Epoch memory epoch = manager.getEpoch(epochId);
-
-        // The three commitment hashes are no longer stored; consumers read them from
-        // the EpochLive event.
         assertEq(uint256(epoch.status), uint256(DKGTypes.EpochPhase.Live));
+        assertEq(uint256(epoch.contributionCount), 2);
+        // Nothing is activated or claimed yet.
+        (uint8 nextIndex, uint8 activated) = manager.getPoolStatus(epochId);
+        assertEq(uint256(nextIndex), 0);
+        assertEq(uint256(activated), 0);
+    }
+
+    function test_FinalizeEpoch_RejectsTwice() public {
+        bytes12 epochId = createLiveRound();
+        vm.expectRevert(IDKGManager.AlreadyLive.selector);
+        manager.finalizeEpoch(epochId);
     }
 
     function test_FinalizeEpoch_RejectsInsufficientContributions() public {
         bytes12 epochId = createSelectedRound();
-
-        manager.submitContribution(
-            epochId,
-            1,
-            CONTRIBUTION_COMMITMENTS_HASH,
-            CONTRIBUTION_ENCRYPTED_SHARES_HASH,            contributionTranscript(2),
-            contributionProof(),
-            contributionInput(epochId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH)
-        );
-
+        _submitContribution(epochId, 1);
         _advanceToFinalize(epochId);
+
         vm.expectRevert(IDKGManager.InsufficientContributions.selector);
-        manager.finalizeEpoch(
-            epochId,
-            FINALIZED_AGGREGATE_COMMITMENTS_HASH,
-            FINALIZED_COLLECTIVE_PUBLIC_KEY_HASH,
-            FINALIZED_SHARE_COMMITMENT_HASH,
-            finalizeTranscript(1),
-            finalizeProof(),
-            finalizeInput(
-                epochId,
-                2,
-                2,
-                1,
-                FINALIZED_AGGREGATE_COMMITMENTS_HASH,
-                FINALIZED_COLLECTIVE_PUBLIC_KEY_HASH,
-                FINALIZED_SHARE_COMMITMENT_HASH
-            )
-        );
+        manager.finalizeEpoch(epochId);
     }
 
     function test_FinalizeEpoch_RejectsBeforeFinalizeNotBeforeBlock() public {
         bytes12 epochId = createSelectedRound();
-
-        manager.submitContribution(
-            epochId, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH,
-            contributionTranscript(2), contributionProof(),
-            contributionInput(epochId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH)
-        );
-        vm.prank(address(0xBEEF));
-        manager.submitContribution(
-            epochId, 2,
-            bytes32(uint256(CONTRIBUTION_COMMITMENTS_HASH) + 1),
-            bytes32(uint256(CONTRIBUTION_ENCRYPTED_SHARES_HASH) + 1),
-            contributionTranscript(2), contributionProof(),
-            contributionInput(
-                epochId,
-                2,
-                2,
-                2,
-                bytes32(uint256(CONTRIBUTION_COMMITMENTS_HASH) + 1),
-                bytes32(uint256(CONTRIBUTION_ENCRYPTED_SHARES_HASH) + 1)
-            )
-        );
+        _submitBothContributions(epochId);
 
         // Both contributions in, threshold met — but liveNotBeforeBlock
         // not yet reached. Must revert with InvalidPhase (the gate reuses this
@@ -449,91 +444,260 @@ contract DKGManagerTest is Test, TestHelpers {
         assertTrue(block.number < uint256(r.policy.liveNotBeforeBlock));
 
         vm.expectRevert(IDKGManager.InvalidPhase.selector);
-        manager.finalizeEpoch(
-            epochId,
-            FINALIZED_AGGREGATE_COMMITMENTS_HASH,
-            FINALIZED_COLLECTIVE_PUBLIC_KEY_HASH,
-            FINALIZED_SHARE_COMMITMENT_HASH,
-            finalizeTranscript(2), finalizeProof(),
-            finalizeInput(
-                epochId, 2, 2, 2,
-                FINALIZED_AGGREGATE_COMMITMENTS_HASH,
-                FINALIZED_COLLECTIVE_PUBLIC_KEY_HASH,
-                FINALIZED_SHARE_COMMITMENT_HASH
-            )
-        );
+        manager.finalizeEpoch(epochId);
 
         // Roll exactly to liveNotBeforeBlock — should succeed.
         vm.roll(uint256(r.policy.liveNotBeforeBlock));
-        manager.finalizeEpoch(
-            epochId,
-            FINALIZED_AGGREGATE_COMMITMENTS_HASH,
-            FINALIZED_COLLECTIVE_PUBLIC_KEY_HASH,
-            FINALIZED_SHARE_COMMITMENT_HASH,
-            finalizeTranscript(2), finalizeProof(),
-            finalizeInput(
-                epochId, 2, 2, 2,
-                FINALIZED_AGGREGATE_COMMITMENTS_HASH,
-                FINALIZED_COLLECTIVE_PUBLIC_KEY_HASH,
-                FINALIZED_SHARE_COMMITMENT_HASH
-            )
-        );
-        IDKGManager.Epoch memory after_ = manager.getEpoch(epochId);
-        assertEq(uint256(after_.status), uint256(DKGTypes.EpochPhase.Live));
+        manager.finalizeEpoch(epochId);
+        assertEq(uint256(manager.getEpoch(epochId).status), uint256(DKGTypes.EpochPhase.Live));
     }
 
-    /// A finalize transcript with duplicated participant indexes
-    /// ([1, 1] instead of [1, 2]) must be rejected even when both
-    /// contributions are accepted, since otherwise the proof can finalize an
-    /// aggregate disjoint from the on-chain accumulated `_collectiveKey`.
-    function test_FinalizeEpoch_RejectsDuplicateParticipantRows() public {
+    // ─── activatePoolKey ─────────────────────────────────────────────────────
+
+    /// @dev The activation stores `aggregateCommitments[0]` as `P_j` and the
+    ///      Merkle root over the committee's share commitments. The root is
+    ///      recomputed independently by the test.
+    function test_ActivatePoolKey_PersistsKeyAndShareRoot() public {
         bytes12 epochId = createSelectedRound();
-
-        manager.submitContribution(
-            epochId, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH,
-            contributionTranscript(2), contributionProof(),
-            contributionInput(epochId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH)
-        );
-        vm.prank(address(0xBEEF));
-        manager.submitContribution(
-            epochId, 2,
-            bytes32(uint256(CONTRIBUTION_COMMITMENTS_HASH) + 1),
-            bytes32(uint256(CONTRIBUTION_ENCRYPTED_SHARES_HASH) + 1),
-            contributionTranscript(2), contributionProof(),
-            contributionInput(
-                epochId,
-                2,
-                2,
-                2,
-                bytes32(uint256(CONTRIBUTION_COMMITMENTS_HASH) + 1),
-                bytes32(uint256(CONTRIBUTION_ENCRYPTED_SHARES_HASH) + 1)
-            )
-        );
-
+        _submitBothContributions(epochId);
         _advanceToFinalize(epochId);
+        manager.finalizeEpoch(epochId);
 
+        _activateKey(epochId, 0);
+        _activateKey(epochId, 3);
+
+        (uint256 x0, uint256 y0) = manager.getPoolKey(epochId, 0);
+        (uint256 e0x, uint256 e0y) = testPoolKey(0);
+        assertEq(x0, e0x);
+        assertEq(y0, e0y);
+        (uint256 x3, uint256 y3) = manager.getPoolKey(epochId, 3);
+        (uint256 e3x, uint256 e3y) = testPoolKey(3);
+        assertEq(x3, e3x);
+        assertEq(y3, e3y);
+
+        assertEq(uint256(manager.getPoolShareRoot(epochId, 0)), uint256(expectedShareRoot(0, 2)));
+        assertEq(uint256(manager.getPoolShareRoot(epochId, 3)), uint256(expectedShareRoot(3, 2)));
+        // Distinct keys must produce distinct roots, or a partial decryption
+        // for one application would verify against another's.
+        assertTrue(manager.getPoolShareRoot(epochId, 0) != manager.getPoolShareRoot(epochId, 3));
+
+        (uint8 nextIndex, uint8 activated) = manager.getPoolStatus(epochId);
+        assertEq(uint256(nextIndex), 0);
+        assertEq(uint256(activated), (1 << 0) | (1 << 3));
+    }
+
+    function test_ActivatePoolKey_RejectsTwice() public {
+        bytes12 epochId = createLiveRound();
+        vm.expectRevert(IDKGManager.PoolKeyAlreadyActive.selector);
+        _activateKey(epochId, 0);
+    }
+
+    function test_ActivatePoolKey_RejectsKeyIndexOutOfRange() public {
+        bytes12 epochId = createLiveRound();
+        uint8 tooBig = uint8(MAX_K);
+        bytes memory transcript = poolKeyTranscript(tooBig, 2, 2);
+        bytes memory input = poolKeyInput(epochId, 2, 2, 2, tooBig);
         vm.expectRevert(IDKGManager.InvalidProofInput.selector);
-        manager.finalizeEpoch(
-            epochId,
-            FINALIZED_AGGREGATE_COMMITMENTS_HASH,
-            FINALIZED_COLLECTIVE_PUBLIC_KEY_HASH,
-            FINALIZED_SHARE_COMMITMENT_HASH,
-            finalizeTranscriptWithDuplicateRows(),
-            finalizeProof(),
-            finalizeInputWithDuplicateRows(
-                epochId,
-                FINALIZED_AGGREGATE_COMMITMENTS_HASH,
-                FINALIZED_COLLECTIVE_PUBLIC_KEY_HASH,
-                FINALIZED_SHARE_COMMITMENT_HASH
-            )
+        manager.activatePoolKey(epochId, tooBig, testTranscriptDigest(tooBig), transcript, poolKeyProof(), input);
+    }
+
+    function test_ActivatePoolKey_RejectsBeforeLive() public {
+        bytes12 epochId = createSelectedRound();
+        _submitBothContributions(epochId);
+        bytes memory transcript = poolKeyTranscript(0, 2, 2);
+        bytes memory input = poolKeyInput(epochId, 2, 2, 2, 0);
+        vm.expectRevert(IDKGManager.InvalidPhase.selector);
+        manager.activatePoolKey(epochId, 0, testTranscriptDigest(0), transcript, poolKeyProof(), input);
+    }
+
+    /// @dev A transcript with duplicated participant indexes ([1, 1] instead
+    ///      of [1, 2]) must be rejected even though both contributions are
+    ///      accepted: otherwise the proof aggregates over the wrong set.
+    function test_ActivatePoolKey_RejectsDuplicateParticipantRows() public {
+        bytes12 epochId = createSelectedRound();
+        _submitBothContributions(epochId);
+        _advanceToFinalize(epochId);
+        manager.finalizeEpoch(epochId);
+
+        uint256[] memory words = poolKeyWords(1, 2, 2);
+        words[1] = 1;                                                 // participantIndexes = [1, 1]
+        words[MAX_N + 1] = uint256(contributorCommitmentsHash(1));    // …with row 1's hash
+        vm.expectRevert(IDKGManager.InvalidProofInput.selector);
+        _activateKeyWithWords(epochId, 1, words);
+    }
+
+    /// @dev Each row must carry the contributor's own on-chain
+    ///      `commitmentsHash`; swapping one in binds the activation to
+    ///      commitments that were never accepted.
+    function test_ActivatePoolKey_RejectsWrongContributionHash() public {
+        bytes12 epochId = createLiveRound();
+
+        uint256[] memory words = poolKeyWords(1, 2, 2);
+        words[MAX_N] = uint256(contributorCommitmentsHash(1)) + 99;
+        vm.expectRevert(IDKGManager.InvalidProofInput.selector);
+        _activateKeyWithWords(epochId, 1, words);
+    }
+
+    function test_ActivatePoolKey_RejectsUnknownParticipantIndex() public {
+        bytes12 epochId = createLiveRound();
+
+        uint256[] memory words = poolKeyWords(1, 2, 2);
+        words[0] = 3; // committeeSize is 2
+        vm.expectRevert(IDKGManager.InvalidProofInput.selector);
+        _activateKeyWithWords(epochId, 1, words);
+    }
+
+    function test_ActivatePoolKey_RejectsWrongTranscriptLength() public {
+        bytes12 epochId = createLiveRound();
+        bytes memory input = poolKeyInput(epochId, 2, 2, 2, 1);
+        vm.expectRevert(IDKGManager.InvalidProofInput.selector);
+        manager.activatePoolKey(epochId, 1, testTranscriptDigest(1), hex"1234", poolKeyProof(), input);
+    }
+
+    /// @dev Rows beyond `contributionCount` and share slots beyond
+    ///      `committeeSize` must be blank. A stray participant index, a stray
+    ///      contribution hash or a non-identity share commitment in an
+    ///      inactive slot each reject the activation, even though the
+    ///      challenge and BRLC commitment are consistent with the words.
+    function test_ActivatePoolKey_RejectsNonZeroInactiveRow() public {
+        bytes12 epochId = createLiveRound();
+
+        uint256[] memory words = poolKeyWords(1, 2, 2);
+        words[2] = 1; // participantIndexes[2], contributionCount is 2
+        vm.expectRevert(IDKGManager.InvalidProofInput.selector);
+        _activateKeyWithWords(epochId, 1, words);
+
+        words = poolKeyWords(1, 2, 2);
+        words[MAX_N + 2] = 1; // contributionHashes[2]
+        vm.expectRevert(IDKGManager.InvalidProofInput.selector);
+        _activateKeyWithWords(epochId, 1, words);
+
+        words = poolKeyWords(1, 2, 2);
+        words[4 * MAX_N + 2 * 2] = 1; // shareCommitments[2].x, committeeSize is 2
+        vm.expectRevert(IDKGManager.InvalidProofInput.selector);
+        _activateKeyWithWords(epochId, 1, words);
+
+        words = poolKeyWords(1, 2, 2);
+        words[4 * MAX_N + 2 * 2 + 1] = 0; // shareCommitments[2].y must be 1
+        vm.expectRevert(IDKGManager.InvalidProofInput.selector);
+        _activateKeyWithWords(epochId, 1, words);
+
+        // The untouched vector still activates.
+        _activateKeyWithWords(epochId, 1, poolKeyWords(1, 2, 2));
+        assertEq(uint256(manager.getPoolShareRoot(epochId, 1)), uint256(expectedShareRoot(1, 2)));
+    }
+
+    /// @dev `acceptedCount` (public input 3) must equal the frozen
+    ///      `contributionCount`: an activation aggregating over fewer rows
+    ///      than were accepted would publish a key nobody holds shares of.
+    function test_ActivatePoolKey_RejectsAcceptedCountMismatch() public {
+        bytes12 epochId = createLiveRound(); // contributionCount == 2
+        uint256[] memory words = poolKeyWords(1, 1, 2);
+        bytes memory input = poolKeyInputForWords(epochId, 2, 2, 1, 1, words);
+        vm.expectRevert(IDKGManager.InvalidProofInput.selector);
+        manager.activatePoolKey(
+            epochId, 1, testTranscriptDigest(1), abi.encodePacked(words), poolKeyProof(), input
         );
     }
 
-    // `test_CreateEpoch_RejectsFinalizeNotBeforeAtOrBelowContribution` was
-    // removed when phase deadlines moved from caller-supplied params to
-    // contract-derived offsets. The constructor enforces that all per-phase
-    // offsets are strictly positive, so the inversion the old test guarded
-    // against is now structurally impossible.
+    /// @dev The digest argument must be the proof's public input 5: it is
+    ///      what the challenge anchor commits to.
+    function test_ActivatePoolKey_RejectsDigestMismatch() public {
+        bytes12 epochId = createLiveRound();
+        bytes memory transcript = poolKeyTranscript(1, 2, 2);
+        bytes memory input = poolKeyInput(epochId, 2, 2, 2, 1);
+        bytes32 other = bytes32(uint256(testTranscriptDigest(1)) ^ 1);
+        vm.expectRevert(IDKGManager.InvalidProofInput.selector);
+        manager.activatePoolKey(epochId, 1, other, transcript, poolKeyProof(), input);
+        // A challenge derived from the other digest is rejected just the same.
+        bytes memory otherInput = poolKeyInputForDigest(epochId, 2, 2, 2, 1, other, poolKeyWords(1, 2, 2));
+        vm.expectRevert(IDKGManager.InvalidProofInput.selector);
+        manager.activatePoolKey(epochId, 1, testTranscriptDigest(1), transcript, poolKeyProof(), otherInput);
+    }
+
+    /// @dev `D_1.x + p` commits like `D_1.x` but would be hashed raw into the
+    ///      share root, bricking the key for member 1. The activation must
+    ///      refuse the non-canonical word outright.
+    function test_ActivatePoolKey_RejectsNonCanonicalWord() public {
+        bytes12 epochId = createLiveRound();
+        uint256[] memory words = poolKeyWords(1, 2, 2);
+        words[4 * MAX_N] = words[4 * MAX_N] + FR_MOD;
+        vm.expectRevert(BRLC.TranscriptWordNotInField.selector);
+        _activateKeyWithWords(epochId, 1, words);
+    }
+
+    function test_GetPoolKey_RevertsWhenNotActivated() public {
+        bytes12 epochId = createLiveRound();
+        vm.expectRevert(IDKGManager.PoolKeyNotActive.selector);
+        manager.getPoolKey(epochId, 1);
+    }
+
+    // ─── Pool claim ──────────────────────────────────────────────────────────
+
+    /// @dev Registrations take the epoch's keys in order, one each.
+    function test_ClaimPoolKey_AssignsKeysInOrder() public {
+        bytes12 epochId = createLiveRound();
+        _activateKey(epochId, 1);
+        _activateKey(epochId, 2);
+
+        _registerTestApp(epochId, bytes32(uint256(101)));
+        _registerTestApp(epochId, bytes32(uint256(102)));
+        _registerTestApp(epochId, bytes32(uint256(103)));
+
+        assertEq(uint256(manager.getAppPoolIndex(epochId, bytes32(uint256(101)))), 0);
+        assertEq(uint256(manager.getAppPoolIndex(epochId, bytes32(uint256(102)))), 1);
+        assertEq(uint256(manager.getAppPoolIndex(epochId, bytes32(uint256(103)))), 2);
+        assertEq(uint256(appManager.getApplication(epochId, bytes32(uint256(103))).poolIndex), 2);
+
+        (uint8 nextIndex,) = manager.getPoolStatus(epochId);
+        assertEq(uint256(nextIndex), 3);
+    }
+
+    /// @dev The next key must be activated before it can be claimed: an
+    ///      application must never hold a key nobody can decrypt under.
+    function test_ClaimPoolKey_RejectsWhenNextKeyNotActivated() public {
+        bytes12 epochId = createLiveRound(); // only key 0 is activated
+        _registerTestApp(epochId, bytes32(uint256(201)));
+
+        bytes32 aid = bytes32(uint256(202));
+        (uint256 pkx, uint256 pky, uint256 ax, uint256 ay, uint256 z) = organizerPoP(epochId, aid);
+        DKGTypes.AppPolicy memory policy = _emptyAppPolicy();
+        vm.expectRevert(IDKGManager.PoolKeyNotActive.selector);
+        appManager.registerApplication(epochId, aid, policy, pkx, pky, ax, ay, z);
+    }
+
+    /// @dev An epoch deals exactly MAX_K keys; the (MAX_K + 1)-th application
+    ///      has to wait for the next epoch.
+    function test_ClaimPoolKey_RejectsWhenPoolExhausted() public {
+        bytes12 epochId = createLiveRound();
+        for (uint8 j = 1; j < uint8(MAX_K); j++) {
+            _activateKey(epochId, j);
+        }
+        DKGTypes.AppPolicy memory policy = _emptyAppPolicy();
+        policy.mode = DKGTypes.AppMode.Automatic;
+        for (uint256 i = 0; i < MAX_K; i++) {
+            appManager.registerApplication(epochId, bytes32(0x300 + i), policy, 0, 0, 0, 0, 0);
+        }
+        (uint8 nextIndex,) = manager.getPoolStatus(epochId);
+        assertEq(uint256(nextIndex), MAX_K);
+
+        vm.expectRevert(IDKGManager.PoolExhausted.selector);
+        appManager.registerApplication(epochId, bytes32(uint256(0x3FF)), policy, 0, 0, 0, 0, 0);
+    }
+
+    function test_ClaimPoolKey_RejectsDirectCall() public {
+        bytes12 epochId = createLiveRound();
+        vm.expectRevert(IDKGManager.Unauthorized.selector);
+        manager.claimPoolKey(epochId, bytes32(uint256(1)));
+    }
+
+    function test_GetAppPoolIndex_RevertsForUnclaimedAid() public {
+        bytes12 epochId = createLiveRound();
+        vm.expectRevert(IDKGManager.PoolKeyNotActive.selector);
+        manager.getAppPoolIndex(epochId, bytes32(uint256(0xDEAD)));
+    }
+
+    // ─── createEpoch cadence ─────────────────────────────────────────────────
 
     function test_CreateEpoch_RejectsBeforeNextEpochStartBlock() public {
         // First epoch goes through (cadence guard satisfied — no prior
@@ -544,6 +708,65 @@ contract DKGManagerTest is Test, TestHelpers {
         manager.createEpoch(2, 2, 2, 10000);
         // Roll past the cadence threshold and try again — must succeed.
         vm.roll(uint256(manager.nextEpochStartBlock()));
+        manager.createEpoch(2, 2, 2, 10000);
+    }
+
+    /// @dev With only one unclaimed key left the next epoch may be minted
+    ///      ahead of the cadence, so registrations never stall.
+    function test_CreateEpoch_AllowedEarlyWhenPoolNearlyExhausted() public {
+        bytes12 epochId = createLiveRound();
+        for (uint8 j = 1; j < uint8(MAX_K); j++) {
+            _activateKey(epochId, j);
+        }
+        DKGTypes.AppPolicy memory policy = _emptyAppPolicy();
+        policy.mode = DKGTypes.AppMode.Automatic;
+
+        // MAX_K - 2 claims: still two keys left, the cadence still binds.
+        for (uint256 i = 0; i < MAX_K - 2; i++) {
+            appManager.registerApplication(epochId, bytes32(0x400 + i), policy, 0, 0, 0, 0, 0);
+        }
+        assertTrue(block.number < uint256(manager.nextEpochStartBlock()));
+        vm.expectRevert(IDKGManager.InvalidPhase.selector);
+        manager.createEpoch(2, 2, 2, 10000);
+
+        // One more claim leaves a single key: createEpoch opens early.
+        appManager.registerApplication(epochId, bytes32(uint256(0x4FF)), policy, 0, 0, 0, 0, 0);
+        (uint8 nextIndex,) = manager.getPoolStatus(epochId);
+        assertEq(uint256(nextIndex), MAX_K - 1);
+        assertTrue(block.number < uint256(manager.nextEpochStartBlock()));
+        manager.createEpoch(2, 2, 2, 10000);
+    }
+
+    /// @dev An aborted epoch serves nobody, so the next one may start at
+    ///      once; an epoch still in preparation — even a provably dead one
+    ///      nobody has aborted yet — keeps the cadence.
+    function test_CreateEpoch_AllowedEarlyWhenNewestAborted() public {
+        bytes12 epochId = manager.createEpoch(2, 2, 2, 10000);
+        IDKGManager.Epoch memory epoch = manager.getEpoch(epochId);
+
+        // Still in CommitteeSelection: forbidden.
+        vm.roll(block.number + 2);
+        assertTrue(block.number < uint256(manager.nextEpochStartBlock()));
+        vm.expectRevert(IDKGManager.InvalidPhase.selector);
+        manager.createEpoch(2, 2, 2, 10000);
+
+        // Dead but not yet aborted: still forbidden.
+        vm.roll(uint256(epoch.policy.committeeSelectionDeadlineBlock) + 1);
+        assertTrue(block.number < uint256(manager.nextEpochStartBlock()));
+        vm.expectRevert(IDKGManager.InvalidPhase.selector);
+        manager.createEpoch(2, 2, 2, 10000);
+
+        manager.abortEpoch(epochId);
+        bytes12 next = manager.createEpoch(2, 2, 2, 10000);
+        assertEq(uint256(manager.getEpoch(next).status), uint256(DKGTypes.EpochPhase.CommitteeSelection));
+    }
+
+    /// @dev A Live epoch with keys to spare keeps the cadence too (the
+    ///      nearly-exhausted case is covered above).
+    function test_CreateEpoch_RejectsEarlyWhileNewestLiveWithKeys() public {
+        createLiveRound();
+        assertTrue(block.number < uint256(manager.nextEpochStartBlock()));
+        vm.expectRevert(IDKGManager.InvalidPhase.selector);
         manager.createEpoch(2, 2, 2, 10000);
     }
 
@@ -558,330 +781,407 @@ contract DKGManagerTest is Test, TestHelpers {
         );
     }
 
+    // ─── Partial decryption ──────────────────────────────────────────────────
+
     function test_SubmitPartialDecryption_PersistsRecord() public {
         bytes12 epochId = createFinalizedRound();
-
-        manager.submitPartialDecryption(
-            epochId,
-            TEST_AID,
-            1,
-            1,
-            TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y,
-            partialDecryptionHash(1),
-            partialDecryptionProof(),
-            partialDecryptionInput(epochId, TEST_AID, 1)
-        );
+        _submitPartial(epochId, TEST_AID, 1, 1);
 
         DKGTypes.PartialDecryptionRecord memory record = manager.getPartialDecryption(epochId, TEST_AID, 1, 1);
         IDKGManager.Epoch memory epoch = manager.getEpoch(epochId);
 
-        // `participant` and `deltaHash` are no longer persisted; off-chain consumers
-        // read those from the PartialDecryptionSubmitted event.
         assertEq(uint256(record.participantIndex), 1);
         assertEq(uint256(record.ciphertextIndex), 1);
-        assertEq(record.accepted ? uint256(1) : uint256(0), 1);
+        assertTrue(record.accepted);
         assertEq(uint256(epoch.partialDecryptionCount), 1);
     }
 
     function test_SubmitPartialDecryption_RejectsBadProofInput() public {
         bytes12 epochId = createFinalizedRound();
+        bytes32[] memory path = shareProofFor(0, 2, 1);
 
         vm.expectRevert(IDKGManager.InvalidProofInput.selector);
         manager.submitPartialDecryption(
-            epochId,
-            TEST_AID,
-            1,
-            1,
+            epochId, TEST_AID, 1, 1,
             TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y,
             partialDecryptionHash(1),
             partialDecryptionProof(),
-            PARTIAL_DECRYPTION_INPUT_BAD
+            PARTIAL_DECRYPTION_INPUT_BAD,
+            path
         );
     }
 
     function test_SubmitPartialDecryption_RejectsBeforeFinalization() public {
         bytes12 epochId = createSelectedRound();
+        bytes32[] memory path = shareProofFor(0, 2, 1);
 
         vm.expectRevert(IDKGManager.InvalidPhase.selector);
         manager.submitPartialDecryption(
-            epochId,
-            TEST_AID,
-            1,
-            1,
+            epochId, TEST_AID, 1, 1,
             TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y,
             partialDecryptionHash(1),
             partialDecryptionProof(),
-            partialDecryptionInput(epochId, TEST_AID, 1)
+            partialDecryptionInput(epochId, TEST_AID, 1, 1, 0),
+            path
         );
     }
 
     function test_SubmitPartialDecryption_RejectsDuplicates() public {
         bytes12 epochId = createFinalizedRound();
+        _submitPartial(epochId, TEST_AID, 1, 1);
 
-        manager.submitPartialDecryption(
-            epochId,
-            TEST_AID,
-            1,
-            1,
-            TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y,
-            partialDecryptionHash(1),
-            partialDecryptionProof(),
-            partialDecryptionInput(epochId, TEST_AID, 1)
-        );
-
+        bytes32[] memory path = shareProofFor(0, 2, 1);
         vm.expectRevert(IDKGManager.AlreadyPartiallyDecrypted.selector);
         manager.submitPartialDecryption(
-            epochId,
-            TEST_AID,
-            1,
-            1,
+            epochId, TEST_AID, 1, 1,
             TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y,
             partialDecryptionHash(1),
             partialDecryptionProof(),
-            partialDecryptionInput(epochId, TEST_AID, 1)
+            partialDecryptionInput(epochId, TEST_AID, 1, 1, 0),
+            path
         );
     }
 
     function test_SubmitPartialDecryption_AllowsDistinctCiphertexts() public {
         bytes12 epochId = createFinalizedRound();
-        // ciphertext 2 must also exist on-chain.
+        _submitTestCiphertext(epochId, TEST_AID); // index 2
+
+        _submitPartial(epochId, TEST_AID, 1, 1);
+        _submitPartial(epochId, TEST_AID, 1, 2);
+
+        assertEq(uint256(manager.getPartialDecryption(epochId, TEST_AID, 1, 1).ciphertextIndex), 1);
+        assertEq(uint256(manager.getPartialDecryption(epochId, TEST_AID, 1, 2).ciphertextIndex), 2);
+    }
+
+    /// @dev The Merkle path pins the member to the share it was dealt for THIS
+    ///      application's pool key. A path built for a different key — or one
+    ///      of the wrong length, or a sibling flipped — is rejected.
+    function test_SubmitPartialDecryption_RejectsBadShareProof() public {
+        bytes12 epochId = createFinalizedRound();
+
+        // Path from another pool key.
+        bytes32[] memory wrongKey = shareProofFor(1, 2, 1);
+        vm.expectRevert(IDKGManager.InvalidProofInput.selector);
+        manager.submitPartialDecryption(
+            epochId, TEST_AID, 1, 1,
+            TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y,
+            partialDecryptionHash(1), partialDecryptionProof(),
+            partialDecryptionInput(epochId, TEST_AID, 1, 1, 0), wrongKey
+        );
+
+        // Right key, tampered sibling.
+        bytes32[] memory tampered = shareProofFor(0, 2, 1);
+        tampered[2] = bytes32(uint256(tampered[2]) ^ 1);
+        vm.expectRevert(IDKGManager.InvalidProofInput.selector);
+        manager.submitPartialDecryption(
+            epochId, TEST_AID, 1, 1,
+            TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y,
+            partialDecryptionHash(1), partialDecryptionProof(),
+            partialDecryptionInput(epochId, TEST_AID, 1, 1, 0), tampered
+        );
+
+        // Wrong length.
+        bytes32[] memory short = new bytes32[](MERKLE_DEPTH - 1);
+        vm.expectRevert(IDKGManager.InvalidProofInput.selector);
+        manager.submitPartialDecryption(
+            epochId, TEST_AID, 1, 1,
+            TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y,
+            partialDecryptionHash(1), partialDecryptionProof(),
+            partialDecryptionInput(epochId, TEST_AID, 1, 1, 0), short
+        );
+
+        // …and the honest one still lands.
+        _submitPartial(epochId, TEST_AID, 1, 1);
+        assertTrue(manager.getPartialDecryption(epochId, TEST_AID, 1, 1).accepted);
+    }
+
+    /// @dev A member cannot submit another member's share commitment: the leaf
+    ///      index is derived from `participantIndex`, not from the proof, so
+    ///      participant 2's `D` never sits at leaf 0 — whichever path comes
+    ///      with it.
+    function test_SubmitPartialDecryption_RejectsShareOfAnotherParticipant() public {
+        bytes12 epochId = createFinalizedRound();
+        (uint256 d2x, uint256 d2y) = testShareCommitment(0, 2);
+        // Participant 2's D with participant 1's path, submitted at index 1.
+        bytes memory input = partialDecryptionInputWithShare(epochId, TEST_AID, 1, 1, d2x, d2y);
+        bytes32[] memory ownPath = shareProofFor(0, 2, 1);
+        vm.expectRevert(IDKGManager.InvalidProofInput.selector);
+        manager.submitPartialDecryption(
+            epochId, TEST_AID, 1, 1,
+            TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y,
+            partialDecryptionHash(1), partialDecryptionProof(), input, ownPath
+        );
+        // …and with participant 2's own (valid, for leaf 1) path.
+        bytes32[] memory theirPath = shareProofFor(0, 2, 2);
+        vm.expectRevert(IDKGManager.InvalidProofInput.selector);
+        manager.submitPartialDecryption(
+            epochId, TEST_AID, 1, 1,
+            TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y,
+            partialDecryptionHash(1), partialDecryptionProof(), input, theirPath
+        );
+    }
+
+    /// @dev A share dealt for another pool key is useless for this
+    ///      application, self-consistent path or not: the application's root
+    ///      is the one activated for ITS key.
+    function test_SubmitPartialDecryption_RejectsShareFromAnotherKey() public {
+        bytes12 epochId = createLiveRound();
+        _activateKey(epochId, 1);
+        _registerTestApp(epochId, TEST_AID); // claims key 0
+        appManager.revealOrganizerSecret(epochId, TEST_AID, TEST_ORG_SK);
+        _submitTestCiphertext(epochId, TEST_AID);
+        assertEq(uint256(manager.getAppPoolIndex(epochId, TEST_AID)), 0);
+
+        (uint256 dx, uint256 dy) = testShareCommitment(1, 1);
+        bytes memory input = partialDecryptionInputWithShare(epochId, TEST_AID, 1, 1, dx, dy);
+        // D from key 1 with key 1's (internally valid) path.
+        bytes32[] memory pathKey1 = shareProofFor(1, 2, 1);
+        vm.expectRevert(IDKGManager.InvalidProofInput.selector);
+        manager.submitPartialDecryption(
+            epochId, TEST_AID, 1, 1,
+            TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y,
+            partialDecryptionHash(1), partialDecryptionProof(), input, pathKey1
+        );
+        // D from key 1 with key 0's path.
+        bytes32[] memory pathKey0 = shareProofFor(0, 2, 1);
+        vm.expectRevert(IDKGManager.InvalidProofInput.selector);
+        manager.submitPartialDecryption(
+            epochId, TEST_AID, 1, 1,
+            TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y,
+            partialDecryptionHash(1), partialDecryptionProof(), input, pathKey0
+        );
+        // The share of key 0 lands.
+        _submitPartial(epochId, TEST_AID, 1, 1);
+    }
+
+    /// @dev Leaves and internal nodes live in separate hash domains (tags
+    ///      0x00 / 0x01): a path whose internal levels were folded with the
+    ///      leaf tag — i.e. leaf hashes standing in for nodes — does not reach
+    ///      the stored root.
+    function test_SubmitPartialDecryption_RejectsLeafHashAsInternalNode() public {
+        bytes12 epochId = createFinalizedRound();
+        bytes32[] memory leafTagged = shareProofWithNodeTag(0, 2, 1, 0);
+        bytes32[] memory honest = shareProofFor(0, 2, 1);
+        // Level 0 is a sibling leaf in both; the difference starts at level 1.
+        assertEq(uint256(leafTagged[0]), uint256(honest[0]));
+        assertTrue(leafTagged[1] != honest[1]);
+        bytes memory input = partialDecryptionInput(epochId, TEST_AID, 1, 1, 0);
+        vm.expectRevert(IDKGManager.InvalidProofInput.selector);
+        manager.submitPartialDecryption(
+            epochId, TEST_AID, 1, 1,
+            TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y,
+            partialDecryptionHash(1), partialDecryptionProof(), input, leafTagged
+        );
+    }
+
+    /// @dev Every committee member has a leaf, contributor or not: a member
+    ///      that never contributed still holds shares of every key and its
+    ///      partial decryption is accepted.
+    function test_SubmitPartialDecryption_NonContributingMemberSucceeds() public {
+        uint64 next = manager.nextEpochStartBlock();
+        if (block.number < uint256(next)) vm.roll(uint256(next));
+        // t = 1, n = 2, one valid contribution is enough.
+        bytes12 epochId = manager.createEpoch(1, 2, 1, 10000);
+        vm.roll(block.number + 2);
+        _claimAllSlots(epochId);
+        manager.submitContribution(
+            epochId, 1, contributorCommitmentsHash(1), contributorSharesHash(1),
+            contributionTranscript(2), contributionProof(),
+            contributionInput(epochId, 1, 2, 1, contributorCommitmentsHash(1), contributorSharesHash(1))
+        );
+        _advanceToFinalize(epochId);
+        manager.finalizeEpoch(epochId);
+        assertEq(uint256(manager.getEpoch(epochId).contributionCount), 1);
+
+        // One accepted row, two share slots.
+        manager.activatePoolKey(
+            epochId, 0, testTranscriptDigest(0), poolKeyTranscript(0, 1, 2), poolKeyProof(),
+            poolKeyInput(epochId, 1, 2, 1, 0)
+        );
+        assertEq(uint256(manager.getPoolShareRoot(epochId, 0)), uint256(expectedShareRoot(0, 2)));
+
+        DKGTypes.AppPolicy memory policy = _emptyAppPolicy();
+        policy.mode = DKGTypes.AppMode.Automatic;
+        appManager.registerApplication(epochId, TEST_AID, policy, 0, 0, 0, 0, 0);
         _submitTestCiphertext(epochId, TEST_AID);
 
-        manager.submitPartialDecryption(
-            epochId,
-            TEST_AID,
-            1,
-            1,
-            TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y,
-            partialDecryptionHash(1),
-            partialDecryptionProof(),
-            partialDecryptionInput(epochId, TEST_AID, 1)
-        );
-        manager.submitPartialDecryption(
-            epochId,
-            TEST_AID,
-            1,
-            2,
-            TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y,
-            partialDecryptionHash(1),
-            partialDecryptionProof(),
-            partialDecryptionInputCt(epochId, TEST_AID, 1, 2)
-        );
-
-        DKGTypes.PartialDecryptionRecord memory first = manager.getPartialDecryption(epochId, TEST_AID, 1, 1);
-        DKGTypes.PartialDecryptionRecord memory second = manager.getPartialDecryption(epochId, TEST_AID, 1, 2);
-
-        assertEq(uint256(first.ciphertextIndex), 1);
-        assertEq(uint256(second.ciphertextIndex), 2);
+        // Member 2 (0xBEEF) never contributed but is on the committee.
+        assertFalse(manager.getContribution(epochId, address(0xBEEF)).accepted);
+        _submitPartial(epochId, TEST_AID, 2, 1);
+        assertTrue(manager.getPartialDecryption(epochId, TEST_AID, 2, 1).accepted);
+        _submitPartial(epochId, TEST_AID, 1, 1);
+        assertTrue(manager.getPartialDecryption(epochId, TEST_AID, 1, 1).accepted);
     }
+
+    function test_SubmitPartialDecryption_RejectsCiphertextIndexTooLarge() public {
+        bytes12 epochId = createFinalizedRound();
+        bytes32[] memory path = shareProofFor(0, 2, 1);
+
+        vm.expectRevert(IDKGManager.InvalidPartialDecryption.selector);
+        manager.submitPartialDecryption(
+            epochId, TEST_AID, 1,
+            257, // > MAX_CIPHERTEXT_INDEX (256)
+            TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y,
+            partialDecryptionHash(1), partialDecryptionProof(),
+            partialDecryptionInput(epochId, TEST_AID, 1, 1, 0), path
+        );
+    }
+
+    function test_SubmitPartialDecryption_RejectsWhenCiphertextNotSubmitted() public {
+        bytes12 epochId = createFinalizedRound();
+        bytes32[] memory path = shareProofFor(0, 2, 1);
+
+        // createFinalizedRound submits index 1, so use index 2.
+        vm.expectRevert(IDKGManager.CiphertextNotSubmitted.selector);
+        manager.submitPartialDecryption(
+            epochId, TEST_AID, 1, 2,
+            TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y,
+            partialDecryptionHash(1), partialDecryptionProof(),
+            partialDecryptionInput(epochId, TEST_AID, 1, 2, 0), path
+        );
+    }
+
+    // ─── Combine ─────────────────────────────────────────────────────────────
 
     function test_CombineDecryption_PersistsRecord() public {
         bytes12 epochId = createFinalizedRound();
-        // ciphertext index 1 already submitted by createFinalizedRound
         _submitBothPartials(epochId, TEST_AID, 1);
-        _submitTestOrganizerShare(epochId, TEST_AID, 1);
 
         uint256 plaintext = uint256(COMBINED_PLAINTEXT_HASH);
         CombineFixture memory f =
             combineFixture(epochId, TEST_AID, 1, 2, 2, COMBINED_DECRYPTION_HASH, plaintext);
         manager.combineDecryption(
-            epochId,
-            TEST_AID,
-            1,
-            COMBINED_DECRYPTION_HASH,
-            plaintext,
-            combineTranscript(f),
-            decryptCombineProof(),
-            combineInput(f)
+            epochId, TEST_AID, 1, COMBINED_DECRYPTION_HASH, plaintext,
+            combineTranscript(f), decryptCombineProof(), combineInput(f)
         );
 
         DKGTypes.CombinedDecryptionRecord memory record = manager.getCombinedDecryption(epochId, TEST_AID, 1);
-        assertEq(record.completed ? uint256(1) : uint256(0), 1);
+        assertTrue(record.completed);
         assertEq(record.plaintext, plaintext);
         assertEq(manager.getPlaintext(epochId, TEST_AID, 1), plaintext);
     }
 
-    // ── Organizer share ────────────────────────────────────────────────────
+    /// @dev A locked application accepts ciphertexts from the start but no
+    ///      partial and no combine until the organizer publishes `sk_org`:
+    ///      `t` partials alone would already fix `P_j`'s half of the
+    ///      decryption. After the reveal both go through unchanged in shape —
+    ///      the secret is a private witness of the circuit.
+    function test_LockedApp_DecryptionRequiresReveal() public {
+        bytes12 epochId = createLiveRound();
+        bytes32 aid = bytes32(uint256(0x5A1));
+        _registerTestApp(epochId, aid);
+        _submitTestCiphertext(epochId, aid);
+        assertEq(appManager.getApplication(epochId, aid).organizerSecret, 0);
 
-    /// @dev The app manager stores only keccak(Δ ‖ A1 ‖ A2 ‖ z), and a share
-    ///      may be replaced until the ciphertext is combined so a malformed
-    ///      one cannot brick it.
-    function test_SubmitOrganizerShare_StoresHashAndOverwrites() public {
-        bytes12 epochId = createFinalizedRound();
+        vm.expectRevert(IDKGAppManager.OrganizerSecretNotRevealed.selector);
+        appManager.requireDecryptionOpen(epochId, aid);
 
-        // A deliberately malformed share lands first (nothing on chain
-        // verifies the DLEQ) — z is off by one.
-        OrgShare memory good = testOrganizerShare(epochId, TEST_AID, 1);
-        appManager.submitOrganizerShare(
-            epochId, TEST_AID, 1,
+        bytes memory input = partialDecryptionInput(epochId, aid, 1, 1, 0);
+        bytes32[] memory path = shareProofFor(0, 2, 1);
+        vm.expectRevert(IDKGAppManager.OrganizerSecretNotRevealed.selector);
+        manager.submitPartialDecryption(
+            epochId, aid, 1, 1,
             TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y,
-            good.deltaX, good.deltaY, good.a1x, good.a1y, good.a2x, good.a2y, good.z + 1
+            partialDecryptionHash(1), partialDecryptionProof(), input, path
         );
-        assertEq(
-            uint256(appManager.getOrganizerShareHash(epochId, TEST_AID, 1)),
-            uint256(keccak256(abi.encodePacked(
-                good.deltaX, good.deltaY, good.a1x, good.a1y, good.a2x, good.a2y, good.z + 1
-            )))
-        );
-
-        // The correct one replaces it.
-        _submitTestOrganizerShare(epochId, TEST_AID, 1);
-        assertEq(
-            uint256(appManager.getOrganizerShareHash(epochId, TEST_AID, 1)),
-            uint256(keccak256(abi.encodePacked(
-                good.deltaX, good.deltaY, good.a1x, good.a1y, good.a2x, good.a2y, good.z
-            )))
+        uint256 plaintext = uint256(COMBINED_PLAINTEXT_HASH);
+        CombineFixture memory f = combineFixture(epochId, aid, 1, 2, 2, COMBINED_DECRYPTION_HASH, plaintext);
+        bytes memory transcript = combineTranscript(f);
+        bytes memory combineIn = combineInput(f);
+        vm.expectRevert(IDKGAppManager.OrganizerSecretNotRevealed.selector);
+        manager.combineDecryption(
+            epochId, aid, 1, COMBINED_DECRYPTION_HASH, plaintext, transcript, decryptCombineProof(), combineIn
         );
 
-        // …and the combine that follows accepts it.
-        _submitBothPartials(epochId, TEST_AID, 1);
+        appManager.revealOrganizerSecret(epochId, aid, TEST_ORG_SK);
+        assertEq(appManager.getApplication(epochId, aid).organizerSecret, TEST_ORG_SK);
+        appManager.requireDecryptionOpen(epochId, aid);
+        _submitBothPartials(epochId, aid, 1);
+        manager.combineDecryption(
+            epochId, aid, 1, COMBINED_DECRYPTION_HASH, plaintext, transcript, decryptCombineProof(), combineIn
+        );
+        assertEq(manager.getPlaintext(epochId, aid, 1), plaintext);
+    }
+
+    /// @dev An `Automatic` application carries the identity as `PK_org`, so
+    ///      the very same transcript shape covers it.
+    function test_CombineDecryption_AutomaticApp() public {
+        bytes12 epochId = createLiveRound();
+        bytes32 aid = bytes32(uint256(0x6A1));
+        DKGTypes.AppPolicy memory policy = _emptyAppPolicy();
+        policy.mode = DKGTypes.AppMode.Automatic;
+        appManager.registerApplication(epochId, aid, policy, 0, 0, 0, 0, 0);
+        (uint256 pkx, uint256 pky) = appManager.getOrganizerPK(epochId, aid);
+        assertEq(pkx, 0);
+        assertEq(pky, 1);
+
+        _submitTestCiphertext(epochId, aid);
+        _submitBothPartials(epochId, aid, 1);
+
         uint256 plaintext = uint256(COMBINED_PLAINTEXT_HASH);
         CombineFixture memory f =
-            combineFixture(epochId, TEST_AID, 1, 2, 2, COMBINED_DECRYPTION_HASH, plaintext);
+            combineFixtureAutomatic(epochId, aid, 1, 2, 2, COMBINED_DECRYPTION_HASH, plaintext);
         manager.combineDecryption(
-            epochId, TEST_AID, 1, COMBINED_DECRYPTION_HASH, plaintext,
+            epochId, aid, 1, COMBINED_DECRYPTION_HASH, plaintext,
             combineTranscript(f), decryptCombineProof(), combineInput(f)
         );
-        assertEq(manager.getPlaintext(epochId, TEST_AID, 1), plaintext);
-
-        // Once combined the share is frozen.
-        vm.expectRevert(IDKGAppManager.AlreadyCombined.selector);
-        appManager.submitOrganizerShare(
-            epochId, TEST_AID, 1,
-            TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y,
-            good.deltaX, good.deltaY, good.a1x, good.a1y, good.a2x, good.a2y, good.z
-        );
-    }
-
-    function test_SubmitOrganizerShare_RejectsUnknownCiphertextAndApplication() public {
-        bytes12 epochId = createFinalizedRound();
-        OrgShare memory sh = testOrganizerShare(epochId, TEST_AID, 2);
-
-        // ciphertext index 2 was never submitted
-        vm.expectRevert(IDKGAppManager.CiphertextNotSubmitted.selector);
-        appManager.submitOrganizerShare(
-            epochId, TEST_AID, 2,
-            TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y,
-            sh.deltaX, sh.deltaY, sh.a1x, sh.a1y, sh.a2x, sh.a2y, sh.z
-        );
-
-        // unregistered application
-        vm.expectRevert(IDKGAppManager.InvalidApplication.selector);
-        appManager.submitOrganizerShare(
-            epochId, bytes32(uint256(0xDEAD)), 1,
-            TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y,
-            sh.deltaX, sh.deltaY, sh.a1x, sh.a1y, sh.a2x, sh.a2y, sh.z
-        );
-
-        // ciphertext coordinates that don't hash to the stored ciphertext
-        vm.expectRevert(IDKGAppManager.InvalidProofInput.selector);
-        appManager.submitOrganizerShare(
-            epochId, TEST_AID, 1,
-            TEST_CT_C2X, TEST_CT_C2Y, TEST_CT_C1X, TEST_CT_C1Y,
-            sh.deltaX, sh.deltaY, sh.a1x, sh.a1y, sh.a2x, sh.a2y, sh.z
-        );
-
-        // out-of-range response scalar
-        vm.expectRevert(IDKGAppManager.InvalidProofInput.selector);
-        appManager.submitOrganizerShare(
-            epochId, TEST_AID, 1,
-            TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y,
-            sh.deltaX, sh.deltaY, sh.a1x, sh.a1y, sh.a2x, sh.a2y,
-            BabyJubJub.SUBGROUP_ORDER
-        );
-    }
-
-    // ── combineDecryption binds the organizer words ────────────────────────
-
-    function test_CombineDecryption_RejectsMissingOrganizerShare() public {
-        bytes12 epochId = createFinalizedRound();
-        _submitBothPartials(epochId, TEST_AID, 1);
-
-        uint256 plaintext = uint256(COMBINED_PLAINTEXT_HASH);
-        CombineFixture memory f =
-            combineFixture(epochId, TEST_AID, 1, 2, 2, COMBINED_DECRYPTION_HASH, plaintext);
-        vm.expectRevert(IDKGManager.OrganizerShareMissing.selector);
-        manager.combineDecryption(
-            epochId, TEST_AID, 1, COMBINED_DECRYPTION_HASH, plaintext,
-            combineTranscript(f), decryptCombineProof(), combineInput(f)
-        );
-    }
-
-    /// @dev A transcript whose organizer response `z` differs from the
-    ///      published share fails the share-hash binding, even though the
-    ///      submitter rebuilt ρ and the BRLC commitment around it.
-    function test_CombineDecryption_RejectsTamperedOrganizerResponse() public {
-        bytes12 epochId = createFinalizedRound();
-        _submitBothPartials(epochId, TEST_AID, 1);
-        _submitTestOrganizerShare(epochId, TEST_AID, 1);
-
-        uint256 plaintext = uint256(COMBINED_PLAINTEXT_HASH);
-        CombineFixture memory f =
-            combineFixture(epochId, TEST_AID, 1, 2, 2, COMBINED_DECRYPTION_HASH, plaintext);
-        uint256[] memory words = combineWords(f);
-        words[10] = words[10] + 1; // z
-        vm.expectRevert(IDKGManager.InvalidProofInput.selector);
-        manager.combineDecryption(
-            epochId, TEST_AID, 1, COMBINED_DECRYPTION_HASH, plaintext,
-            abi.encodePacked(words), decryptCombineProof(), combineInputForWords(f, words)
-        );
-    }
-
-    /// @dev `e` is recomputed on chain from the domain, (eid, aid, ctIdx) and
-    ///      every point of the statement; the circuit only consumes it.
-    function test_CombineDecryption_RejectsChallengeMismatch() public {
-        bytes12 epochId = createFinalizedRound();
-        _submitBothPartials(epochId, TEST_AID, 1);
-        _submitTestOrganizerShare(epochId, TEST_AID, 1);
-
-        uint256 plaintext = uint256(COMBINED_PLAINTEXT_HASH);
-        CombineFixture memory f =
-            combineFixture(epochId, TEST_AID, 1, 2, 2, COMBINED_DECRYPTION_HASH, plaintext);
-        uint256[] memory words = combineWords(f);
-        words[11] = words[11] ^ 1; // e
-        vm.expectRevert(IDKGManager.InvalidProofInput.selector);
-        manager.combineDecryption(
-            epochId, TEST_AID, 1, COMBINED_DECRYPTION_HASH, plaintext,
-            abi.encodePacked(words), decryptCombineProof(), combineInputForWords(f, words)
-        );
+        assertEq(manager.getPlaintext(epochId, aid, 1), plaintext);
     }
 
     /// @dev The organizer key in the transcript must be the registered one:
-    ///      otherwise a combiner could prove a DLEQ against a key it owns.
+    ///      otherwise a combiner could prove the statement against a key it
+    ///      owns and skip the organizer's half entirely.
     function test_CombineDecryption_RejectsOrganizerKeyMismatch() public {
         bytes12 epochId = createFinalizedRound();
         _submitBothPartials(epochId, TEST_AID, 1);
-        _submitTestOrganizerShare(epochId, TEST_AID, 1);
 
         uint256 plaintext = uint256(COMBINED_PLAINTEXT_HASH);
         CombineFixture memory f =
             combineFixture(epochId, TEST_AID, 1, 2, 2, COMBINED_DECRYPTION_HASH, plaintext);
         // A different, perfectly valid BabyJubJub key.
         (f.pkOrgX, f.pkOrgY) = BabyJubJub.scalarMulBase(TEST_ORG_SK + 1);
+        bytes memory transcript = combineTranscript(f);
+        bytes memory input = combineInput(f);
         vm.expectRevert(IDKGManager.InvalidProofInput.selector);
         manager.combineDecryption(
             epochId, TEST_AID, 1, COMBINED_DECRYPTION_HASH, plaintext,
-            combineTranscript(f), decryptCombineProof(), combineInput(f)
+            transcript, decryptCombineProof(), input
         );
     }
 
-    /// @dev The organizer share of one ciphertext cannot be replayed onto
-    ///      another: `e` binds ctIdx and the hash is keyed by it.
-    function test_CombineDecryption_RejectsShareFromAnotherCiphertext() public {
+    function test_CombineDecryption_RejectsInsufficientPartials() public {
         bytes12 epochId = createFinalizedRound();
-        _submitTestCiphertext(epochId, TEST_AID); // index 2
-        _submitBothPartials(epochId, TEST_AID, 2);
-        _submitTestOrganizerShare(epochId, TEST_AID, 1); // share for index 1 only
+        _submitPartial(epochId, TEST_AID, 1, 1);
 
         uint256 plaintext = uint256(COMBINED_PLAINTEXT_HASH);
         CombineFixture memory f =
-            combineFixture(epochId, TEST_AID, 2, 2, 2, COMBINED_DECRYPTION_HASH, plaintext);
-        // Splice in the (valid) share of ciphertext 1.
-        f.share = testOrganizerShare(epochId, TEST_AID, 1);
-        vm.expectRevert(IDKGManager.OrganizerShareMissing.selector);
+            combineFixture(epochId, TEST_AID, 1, 2, 2, COMBINED_DECRYPTION_HASH, plaintext);
+        bytes memory transcript = combineTranscript(f);
+        bytes memory input = combineInput(f);
+        vm.expectRevert(IDKGManager.InsufficientPartialDecryptions.selector);
         manager.combineDecryption(
-            epochId, TEST_AID, 2, COMBINED_DECRYPTION_HASH, plaintext,
-            combineTranscript(f), decryptCombineProof(), combineInput(f)
+            epochId, TEST_AID, 1, COMBINED_DECRYPTION_HASH, plaintext,
+            transcript, decryptCombineProof(), input
+        );
+    }
+
+    function test_CombineDecryption_RejectsTwice() public {
+        bytes12 epochId = createFinalizedRound();
+        _submitBothPartials(epochId, TEST_AID, 1);
+
+        uint256 plaintext = uint256(COMBINED_PLAINTEXT_HASH);
+        CombineFixture memory f =
+            combineFixture(epochId, TEST_AID, 1, 2, 2, COMBINED_DECRYPTION_HASH, plaintext);
+        bytes memory transcript = combineTranscript(f);
+        bytes memory input = combineInput(f);
+        manager.combineDecryption(
+            epochId, TEST_AID, 1, COMBINED_DECRYPTION_HASH, plaintext,
+            transcript, decryptCombineProof(), input
+        );
+        vm.expectRevert(IDKGManager.AlreadyCombined.selector);
+        manager.combineDecryption(
+            epochId, TEST_AID, 1, COMBINED_DECRYPTION_HASH, plaintext,
+            transcript, decryptCombineProof(), input
         );
     }
 
@@ -893,24 +1193,25 @@ contract DKGManagerTest is Test, TestHelpers {
     function test_CombineDecryption_RejectsMauledPartials() public {
         bytes12 epochId = createFinalizedRound();
         _submitBothPartials(epochId, TEST_AID, 1);
-        _submitTestOrganizerShare(epochId, TEST_AID, 1);
 
         uint256 plaintext = uint256(COMBINED_PLAINTEXT_HASH);
         CombineFixture memory f =
             combineFixture(epochId, TEST_AID, 1, 2, 2, COMBINED_DECRYPTION_HASH, plaintext);
 
-        // δ_1.x lives at word 12+N.
+        // δ_1.x lives at word 6+N.
         uint256[] memory words = combineWords(f);
-        words[12 + MAX_N] = words[12 + MAX_N] + 4242;
+        words[6 + MAX_N] = words[6 + MAX_N] + 4242;
+        bytes memory mauledInput = combineInputForWords(f, words);
         vm.expectRevert(IDKGManager.InvalidProofInput.selector);
         manager.combineDecryption(
             epochId, TEST_AID, 1, COMBINED_DECRYPTION_HASH, plaintext,
-            abi.encodePacked(words), decryptCombineProof(), combineInputForWords(f, words)
+            abi.encodePacked(words), decryptCombineProof(), mauledInput
         );
 
         // Same swap hidden in an unused participant slot so the BRLC
         // commitment of the honest input still matches.
         bytes memory honest = combineTranscript(f);
+        bytes memory honestInput = combineInput(f);
         uint256 rho = BRLC.deriveChallenge(
             epochId,
             DECRYPT_COMBINE_TRANSCRIPT_DOMAIN,
@@ -918,15 +1219,51 @@ contract DKGManagerTest is Test, TestHelpers {
                 COMBINED_DECRYPTION_HASH, bytes32(plaintext), keccak256(honest)
             ))
         );
-        bytes memory mauled = _maulPreservingBrlc(honest, rho, 12 + MAX_N, 12 + MAX_N - 1, 4242);
+        bytes memory mauled = _maulPreservingBrlc(honest, rho, 6 + MAX_N, 6 + MAX_N - 1, 4242);
         vm.expectRevert(IDKGManager.InvalidProofInput.selector);
         manager.combineDecryption(
             epochId, TEST_AID, 1, COMBINED_DECRYPTION_HASH, plaintext,
-            mauled, decryptCombineProof(), combineInput(f)
+            mauled, decryptCombineProof(), honestInput
         );
     }
 
-    // ── liveness integration ───────────────────────────────────────────────
+    /// @dev `δ_1.x + p` commits like `δ_1.x`; the combine must refuse the
+    ///      non-canonical word before anything else looks at it.
+    function test_CombineDecryption_RejectsNonCanonicalWord() public {
+        bytes12 epochId = createFinalizedRound();
+        _submitBothPartials(epochId, TEST_AID, 1);
+
+        uint256 plaintext = uint256(COMBINED_PLAINTEXT_HASH);
+        CombineFixture memory f =
+            combineFixture(epochId, TEST_AID, 1, 2, 2, COMBINED_DECRYPTION_HASH, plaintext);
+        uint256[] memory words = combineWords(f);
+        words[6 + MAX_N] = words[6 + MAX_N] + FR_MOD;
+        bytes memory input = combineInputForWords(f, words);
+        vm.expectRevert(BRLC.TranscriptWordNotInField.selector);
+        manager.combineDecryption(
+            epochId, TEST_AID, 1, COMBINED_DECRYPTION_HASH, plaintext,
+            abi.encodePacked(words), decryptCombineProof(), input
+        );
+    }
+
+    function test_CombineDecryption_RejectsCiphertextIndexTooLarge() public {
+        bytes12 epochId = createFinalizedRound();
+
+        uint256 plaintext = uint256(COMBINED_PLAINTEXT_HASH);
+        CombineFixture memory f =
+            combineFixture(epochId, TEST_AID, 257, 2, 2, COMBINED_DECRYPTION_HASH, plaintext);
+        bytes memory transcript = combineTranscript(f);
+        bytes memory input = combineInput(f);
+        vm.expectRevert(IDKGManager.InvalidCombinedDecryption.selector);
+        manager.combineDecryption(
+            epochId, TEST_AID,
+            257, // > MAX_CIPHERTEXT_INDEX (256)
+            COMBINED_DECRYPTION_HASH, plaintext,
+            transcript, decryptCombineProof(), input
+        );
+    }
+
+    // ─── liveness integration ────────────────────────────────────────────────
 
     function test_CreateEpoch_UsesActiveCountAsDenominator() public {
         // Register a third node that we'll reap before the epoch is created.
@@ -963,20 +1300,11 @@ contract DKGManagerTest is Test, TestHelpers {
         vm.roll(block.number + INACTIVITY_WINDOW + 1);
         registry.reap(address(0xBEEF));
 
-        // Start a fresh epoch with activeCount = 1.
-        // Need to wait for nextEpochStartBlock if a previous epoch was just created.
         uint64 next = manager.nextEpochStartBlock();
         if (block.number < uint256(next)) vm.roll(uint256(next));
-        bytes12 epochId = manager.createEpoch(
-            1,
-            1,
-            1,
-            10000
-        );
+        bytes12 epochId = manager.createEpoch(1, 1, 1, 10000);
         vm.roll(block.number + 2);
 
-        // Reaped node cannot claim — the existing status check in claimSlot
-        // now triggers because the registry flipped them to INACTIVE.
         vm.prank(address(0xBEEF));
         vm.expectRevert(IDKGManager.NotRegistered.selector);
         manager.claimSlot(epochId);
@@ -985,28 +1313,7 @@ contract DKGManagerTest is Test, TestHelpers {
         manager.claimSlot(epochId);
     }
 
-    function test_SubmitContribution_RefreshesLastActiveBlock() public {
-        bytes12 epochId = createSelectedRound();
-
-        // Record the pre-contribution lastActiveBlock for address(this).
-        uint64 before = registry.getNode(address(this)).lastActiveBlock;
-
-        // Advance a few blocks so the SSTORE actually changes value.
-        vm.roll(block.number + 10);
-
-        manager.submitContribution(
-            epochId,
-            1,
-            CONTRIBUTION_COMMITMENTS_HASH,
-            CONTRIBUTION_ENCRYPTED_SHARES_HASH,            contributionTranscript(2),
-            contributionProof(),
-            contributionInput(epochId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH)
-        );
-
-        uint64 afterBlock = registry.getNode(address(this)).lastActiveBlock;
-        assertEq(uint256(afterBlock), block.number);
-        assertTrue(afterBlock > before);
-    }
+    // ─── abortEpoch ──────────────────────────────────────────────────────────
 
     function test_AbortEpoch_PersistsAbortedStatus() public {
         bytes12 epochId = manager.createEpoch(2, 2, 2, 10000);
@@ -1022,8 +1329,6 @@ contract DKGManagerTest is Test, TestHelpers {
         assertEq(uint256(epoch.status), uint256(DKGTypes.EpochPhase.Aborted));
     }
 
-    // ── M-01: abortEpoch cannot abort a Finalized epoch ───────────────────
-
     function test_AbortEpoch_RejectsFinalized() public {
         bytes12 epochId = createFinalizedRound();
 
@@ -1031,10 +1336,35 @@ contract DKGManagerTest is Test, TestHelpers {
         manager.abortEpoch(epochId);
     }
 
-    // ── M-03/M-04: constructor validation ─────────────────────────────────
-    // (extendRegistration tests removed — function no longer exists in the
-    // auto-cadence model.)
+    function test_AbortEpoch_AnyoneAfterKeyAssemblyDeadline() public {
+        bytes12 epochId = manager.createEpoch(2, 2, 2, 10000);
+        IDKGManager.Epoch memory epoch = manager.getEpoch(epochId);
 
+        vm.prank(address(0xCAFE));
+        vm.expectRevert(IDKGManager.InvalidPhase.selector);
+        manager.abortEpoch(epochId);
+
+        vm.roll(uint256(epoch.policy.keyAssemblyDeadlineBlock) + 1);
+        vm.prank(address(0xCAFE));
+        manager.abortEpoch(epochId);
+        assertEq(uint256(manager.getEpoch(epochId).status), uint256(DKGTypes.EpochPhase.Aborted));
+    }
+
+    /// @dev A finalizable epoch can never be aborted, not even in the gap.
+    function test_AbortEpoch_RejectsHealthyEpochDuringFinalizeGap() public {
+        bytes12 epochId = createSelectedRound();
+        _submitBothContributions(epochId);
+        IDKGManager.Epoch memory epoch = manager.getEpoch(epochId);
+        // Inside the gap between the key-assembly deadline and liveNotBefore.
+        vm.roll(uint256(epoch.policy.keyAssemblyDeadlineBlock) + 1);
+        vm.expectRevert(IDKGManager.InvalidPhase.selector);
+        manager.abortEpoch(epochId); // creator
+        vm.prank(address(0xCAFE));
+        vm.expectRevert(IDKGManager.InvalidPhase.selector);
+        manager.abortEpoch(epochId); // anyone
+    }
+
+    // ─── Constructor validation ──────────────────────────────────────────────
 
     function test_Constructor_RejectsZeroRegistry() public {
         vm.expectRevert(IDKGManager.InvalidAddress.selector);
@@ -1043,7 +1373,7 @@ contract DKGManagerTest is Test, TestHelpers {
             address(0), // zero registry
             address(verifier),
             address(partialVerifier),
-            address(finalizeVerifier),
+            address(poolKeyVerifier),
             address(decryptCombineVerifier),
             0, 0, 0, 0, 0, 0, 0
         );
@@ -1056,50 +1386,13 @@ contract DKGManagerTest is Test, TestHelpers {
             address(registry),
             address(verifier),
             address(partialVerifier),
-            address(finalizeVerifier),
+            address(poolKeyVerifier),
             address(decryptCombineVerifier),
             0, 0, 0, 0, 0, 0, 0
         );
     }
 
-    // ── L-02: ciphertextIndex upper bound ─────────────────────────────────
-
-    function test_SubmitPartialDecryption_RejectsCiphertextIndexTooLarge() public {
-        bytes12 epochId = createFinalizedRound();
-
-        vm.expectRevert(IDKGManager.InvalidPartialDecryption.selector);
-        manager.submitPartialDecryption(
-            epochId,
-            TEST_AID,
-            1,
-            257, // > MAX_CIPHERTEXT_INDEX (256)
-            TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y,
-            partialDecryptionHash(1),
-            partialDecryptionProof(),
-            partialDecryptionInput(epochId, TEST_AID, 1)
-        );
-    }
-
-    function test_CombineDecryption_RejectsCiphertextIndexTooLarge() public {
-        bytes12 epochId = createFinalizedRound();
-
-        uint256 plaintext = uint256(COMBINED_PLAINTEXT_HASH);
-        CombineFixture memory f =
-            combineFixture(epochId, TEST_AID, 257, 2, 2, COMBINED_DECRYPTION_HASH, plaintext);
-        vm.expectRevert(IDKGManager.InvalidCombinedDecryption.selector);
-        manager.combineDecryption(
-            epochId,
-            TEST_AID,
-            257, // > MAX_CIPHERTEXT_INDEX (256)
-            COMBINED_DECRYPTION_HASH,
-            plaintext,
-            combineTranscript(f),
-            decryptCombineProof(),
-            combineInput(f)
-        );
-    }
-
-    // ── submitCiphertext + DecryptionPolicy ──────────────────────────────────
+    // ─── submitCiphertext ────────────────────────────────────────────────────
 
     function test_SubmitCiphertext_StoresHashAndIncrementsCount() public {
         bytes12 epochId = createFinalizedRound();
@@ -1151,7 +1444,7 @@ contract DKGManagerTest is Test, TestHelpers {
         vm.expectRevert(IDKGManager.InvalidCiphertext.selector);
         manager.submitCiphertext(epochId, TEST_AID, 7001, 8001, 0, 1);
 
-        // Canonical-range but off-curve: e.g. (1, 1) — 168700 + 1 = 168701; 1 + 168696 = 168697.
+        // Canonical-range but off-curve: e.g. (1, 1).
         vm.expectRevert(IDKGManager.InvalidCiphertext.selector);
         manager.submitCiphertext(epochId, TEST_AID, 1, 1, 0, 1);
 
@@ -1165,25 +1458,30 @@ contract DKGManagerTest is Test, TestHelpers {
         manager.submitCiphertext(epochId, TEST_AID, Q, 1, 0, 1);
     }
 
-    function test_SubmitPartialDecryption_RejectsWhenCiphertextNotSubmitted() public {
+    /// @dev The on-chain prime-subgroup check of C_1 was dropped: it cost
+    ///      ~2 M gas and a cofactor point cannot yield a valid combine proof.
+    ///      Committee nodes subgroup-check before they release δ_i, which is
+    ///      what protects their shares. Pin the (deliberate) acceptance here.
+    function test_SubmitCiphertext_AcceptsSmallOrderC1() public {
         bytes12 epochId = createFinalizedRound();
-
-        // The gate is enforced at submitPartialDecryption itself: the
-        // proof can only bind to an existing on-chain ciphertext.
-        // createFinalizedRound submits index 1, so use index 2 which
-        // was never submitted.
-        vm.expectRevert(IDKGManager.CiphertextNotSubmitted.selector);
-        manager.submitPartialDecryption(
-            epochId,
-            TEST_AID, 1, 2,
-            TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y,
-            partialDecryptionHash(1),
-            partialDecryptionProof(), partialDecryptionInputCt(epochId, TEST_AID, 1, 2)
-        );
+        uint256 Q = 21888242871839275222246405745257275088548364400416034343698204186575808495617;
+        // (0, -1) is on the curve, is not the identity and has order 2.
+        uint16 idx = manager.submitCiphertext(epochId, TEST_AID, 0, Q - 1, TEST_CT_C2X, TEST_CT_C2Y);
+        assertEq(uint256(idx), 2);
     }
 
-    /// @dev Build a finalized epoch with a custom DecryptionPolicy.
-    // ── Lottery threshold must scale with the active set ──────────────────
+    function test_SubmitCiphertext_AssignsSequentialIndices() public {
+        bytes12 epochId = createFinalizedRound(); // the fixture already submitted one ciphertext
+        uint16 before = manager.ciphertextCount(epochId, TEST_AID);
+        uint16 first = _submitTestCiphertext(epochId, TEST_AID);
+        uint16 second = _submitTestCiphertext(epochId, TEST_AID);
+        assertEq(uint256(first), uint256(before) + 1);
+        assertEq(uint256(second), uint256(before) + 2);
+        assertEq(uint256(manager.ciphertextCount(epochId, TEST_AID)), uint256(before) + 2);
+        assertEq(uint256(manager.getEpoch(epochId).ciphertextCount), uint256(before) + 2);
+    }
+
+    // ─── Lottery threshold ───────────────────────────────────────────────────
 
     function test_CreateEpoch_LotteryThresholdScalesWithActiveSet() public {
         // registered = 2 (this + BEEF), committeeSize = 1, α = 1.0
@@ -1212,8 +1510,6 @@ contract DKGManagerTest is Test, TestHelpers {
             if (block.number < uint256(next)) vm.roll(uint256(next));
             bytes12 epochId = manager.createEpoch(1, 1, 1, 10000);
             IDKGManager.Epoch memory epoch = manager.getEpoch(epochId);
-            // Roll relative to the contract-reported seed block: via-IR folds
-            // `block.number` to a constant inside this loop.
             vm.roll(uint256(epoch.seedBlock) + 1);
             bytes32 seed = blockhash(uint256(epoch.seedBlock));
             bool filled;
@@ -1233,8 +1529,6 @@ contract DKGManagerTest is Test, TestHelpers {
         assertTrue(rejected > 0);
     }
 
-    // ── Old epochs are never evicted ───────────────────────────────────────
-
     function test_CreateEpoch_DoesNotEvictOldEpochs() public {
         bytes12 first = manager.createEpoch(2, 2, 2, 10000);
         for (uint256 i = 0; i < 70; i++) {
@@ -1244,23 +1538,58 @@ contract DKGManagerTest is Test, TestHelpers {
         assertEq(manager.getEpoch(first).organizer, address(this));
     }
 
-    // ── abortEpoch is permissionless once the key-assembly deadline passed ──
-
-    function test_AbortEpoch_AnyoneAfterKeyAssemblyDeadline() public {
-        bytes12 epochId = manager.createEpoch(2, 2, 2, 10000);
-        IDKGManager.Epoch memory epoch = manager.getEpoch(epochId);
-
-        vm.prank(address(0xCAFE));
-        vm.expectRevert(IDKGManager.InvalidPhase.selector);
-        manager.abortEpoch(epochId);
-
-        vm.roll(uint256(epoch.policy.keyAssemblyDeadlineBlock) + 1);
-        vm.prank(address(0xCAFE));
-        manager.abortEpoch(epochId);
-        assertEq(uint256(manager.getEpoch(epochId).status), uint256(DKGTypes.EpochPhase.Aborted));
+    function test_CreateEpoch_EnforcesDeploymentPolicyFloors() public {
+        DKGManager bounded = new DKGManager(
+            31337, address(registry), address(verifier), address(partialVerifier),
+            address(poolKeyVerifier), address(decryptCombineVerifier),
+            0, 0, 0, 0,
+            2,      // minThreshold
+            3,      // minCommitteeSize
+            20000   // maxLotteryAlphaBps (α ≤ 2.0)
+        );
+        vm.expectRevert(IDKGManager.InvalidPolicy.selector);
+        bounded.createEpoch(1, 3, 3, 15000); // t below floor
+        vm.expectRevert(IDKGManager.InvalidPolicy.selector);
+        bounded.createEpoch(2, 2, 2, 15000); // n below floor
+        vm.expectRevert(IDKGManager.InvalidPolicy.selector);
+        bounded.createEpoch(2, 3, 3, 30000); // α above ceiling
+        bounded.createEpoch(2, 3, 3, 20000);
     }
-    // ── Calldata transcripts must be bound by a challenge the prover cannot
-    //    know before the calldata is fixed ─────────────────────────────────
+
+    // ─── Lottery snapshot ────────────────────────────────────────────────────
+
+    function test_ClaimSlot_RejectsOperatorRegisteredAfterEpochCreation() public {
+        bytes12 epochId = manager.createEpoch(1, 1, 1, 65535);
+        address late = address(0xdEaD);
+        vm.prank(late);
+        registry.registerKey(
+            3602709693320481933414169817753642284358154248428933830091019302946389143220,
+            19404998569400271134603777992322348196323180940366382216870830366803640744216,
+            17932491275164157352977794940779755814592019455495863353086623153818614395728,
+            11035761025934598318827129374247438153606368675015247802966920305427212653389,
+            1940997602491403806671742881110463830588755899359470939853733010309975750617
+        );
+        vm.roll(uint256(manager.getEpoch(epochId).seedBlock) + 1);
+        vm.prank(late);
+        vm.expectRevert(IDKGManager.NotInSnapshot.selector);
+        manager.claimSlot(epochId);
+    }
+
+    function test_ClaimSlot_RejectsDormantOperatorReactivatedAfterEpochCreation() public {
+        address dormant = address(0xBEEF);
+        vm.roll(block.number + INACTIVITY_WINDOW + 1);
+        registry.reap(dormant);
+        bytes12 epochId = manager.createEpoch(1, 1, 1, 65535);
+        vm.prank(dormant);
+        registry.reactivate();
+        vm.roll(uint256(manager.getEpoch(epochId).seedBlock) + 1);
+        vm.prank(dormant);
+        vm.expectRevert(IDKGManager.NotInSnapshot.selector);
+        manager.claimSlot(epochId);
+    }
+
+    // ─── Calldata transcripts must be bound by a challenge the prover cannot
+    //     know before the calldata is fixed ─────────────────────────────────
 
     uint256 internal constant FR_MOD = 21888242871839275222246405745257275088548364400416034343698204186575808495617;
 
@@ -1300,158 +1629,40 @@ contract DKGManagerTest is Test, TestHelpers {
         return transcript;
     }
 
+    /// @dev Swapping two masked shares (recipients 1 and 2 would decrypt
+    ///      garbage) while preserving the BRLC commitment still fails: the
+    ///      challenge is Fiat–Shamir over the calldata itself.
     function test_SubmitContribution_RejectsMauledTranscript() public {
         bytes12 epochId = createSelectedRound();
         bytes memory honest = contributionTranscript(2);
+        uint256 msBase = 2 * MAX_K * MAX_N + 5 * MAX_N;
         uint256 rho = BRLC.deriveChallenge(
             epochId, CONTRIBUTION_TRANSCRIPT_DOMAIN,
-            keccak256(abi.encodePacked(CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH))
+            keccak256(abi.encodePacked(
+                contributorCommitmentsHash(1), contributorSharesHash(1), keccak256(honest)
+            ))
         );
-        // Swap two masked shares (words 7N, 7N+1): recipients 1 and 2 would decrypt garbage.
-        bytes memory mauled = _maulPreservingBrlc(honest, rho, 7 * MAX_N, 7 * MAX_N + 1, 12345);
+        bytes memory mauled = _maulPreservingBrlc(honest, rho, msBase, msBase + 1, 12345);
         vm.expectRevert(IDKGManager.InvalidProofInput.selector);
         manager.submitContribution(
-            epochId, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH,
+            epochId, 1, contributorCommitmentsHash(1), contributorSharesHash(1),
             mauled, contributionProof(),
-            contributionInput(epochId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH)
+            contributionInput(epochId, 2, 2, 1, contributorCommitmentsHash(1), contributorSharesHash(1))
         );
     }
 
-    function test_FinalizeEpoch_RejectsMauledTranscript() public {
-        bytes12 epochId = createSelectedRound();
-        manager.submitContribution(
-            epochId, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH,
-            contributionTranscript(2), contributionProof(),
-            contributionInput(epochId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH)
-        );
-        vm.prank(address(0xBEEF));
-        manager.submitContribution(
-            epochId, 2,
-            bytes32(uint256(CONTRIBUTION_COMMITMENTS_HASH) + 1), bytes32(uint256(CONTRIBUTION_ENCRYPTED_SHARES_HASH) + 1),
-            contributionTranscript(2), contributionProof(),
-            contributionInput(epochId, 2, 2, 2, bytes32(uint256(CONTRIBUTION_COMMITMENTS_HASH) + 1), bytes32(uint256(CONTRIBUTION_ENCRYPTED_SHARES_HASH) + 1))
-        );
-        _advanceToFinalize(epochId);
-
+    /// @dev Rewriting `P_j` (aggregate[0], word 2N) and hiding the change in an
+    ///      unused participant-index padding word is caught the same way.
+    function test_ActivatePoolKey_RejectsMauledTranscript() public {
+        bytes12 epochId = createLiveRound();
+        bytes memory honest = poolKeyTranscript(1, 2, 2);
+        bytes memory input = poolKeyInput(epochId, 2, 2, 2, 1);
         uint256 rho = BRLC.deriveChallenge(
-            epochId, FINALIZE_TRANSCRIPT_DOMAIN,
-            keccak256(abi.encodePacked(FINALIZED_AGGREGATE_COMMITMENTS_HASH, FINALIZED_COLLECTIVE_PUBLIC_KEY_HASH, FINALIZED_SHARE_COMMITMENT_HASH))
+            epochId, POOLKEY_TRANSCRIPT_DOMAIN,
+            keccak256(abi.encodePacked(testTranscriptDigest(1), keccak256(honest)))
         );
-        // Rewrite PK_ep.x (aggregate[0], word N+2N²) and hide the change in an
-        // unused participant-index padding word.
-        bytes memory mauled = _maulPreservingBrlc(finalizeTranscript(2), rho, MAX_N + 2 * MAX_N * MAX_N, MAX_N - 1, 777);
+        bytes memory mauled = _maulPreservingBrlc(honest, rho, 2 * MAX_N, MAX_N - 1, 777);
         vm.expectRevert(IDKGManager.InvalidProofInput.selector);
-        manager.finalizeEpoch(
-            epochId,
-            FINALIZED_AGGREGATE_COMMITMENTS_HASH, FINALIZED_COLLECTIVE_PUBLIC_KEY_HASH, FINALIZED_SHARE_COMMITMENT_HASH,
-            mauled, finalizeProof(),
-            finalizeInput(epochId, 2, 2, 2, FINALIZED_AGGREGATE_COMMITMENTS_HASH, FINALIZED_COLLECTIVE_PUBLIC_KEY_HASH, FINALIZED_SHARE_COMMITMENT_HASH)
-        );
-    }
-    // ── Lottery snapshot: identities registered after createEpoch stay out ──
-
-    function test_ClaimSlot_RejectsOperatorRegisteredAfterEpochCreation() public {
-        bytes12 epochId = manager.createEpoch(1, 1, 1, 65535);
-        address late = address(0xdEaD);
-        vm.prank(late);
-        registry.registerKey(
-            3602709693320481933414169817753642284358154248428933830091019302946389143220,
-            19404998569400271134603777992322348196323180940366382216870830366803640744216,
-            17932491275164157352977794940779755814592019455495863353086623153818614395728,
-            11035761025934598318827129374247438153606368675015247802966920305427212653389,
-            1940997602491403806671742881110463830588755899359470939853733010309975750617
-        );
-        vm.roll(uint256(manager.getEpoch(epochId).seedBlock) + 1);
-        vm.prank(late);
-        vm.expectRevert(IDKGManager.NotInSnapshot.selector);
-        manager.claimSlot(epochId);
-    }
-
-    function test_ClaimSlot_RejectsDormantOperatorReactivatedAfterEpochCreation() public {
-        address dormant = address(0xBEEF);
-        vm.roll(block.number + INACTIVITY_WINDOW + 1);
-        registry.reap(dormant);
-        bytes12 epochId = manager.createEpoch(1, 1, 1, 65535);
-        vm.prank(dormant);
-        registry.reactivate();
-        vm.roll(uint256(manager.getEpoch(epochId).seedBlock) + 1);
-        vm.prank(dormant);
-        vm.expectRevert(IDKGManager.NotInSnapshot.selector);
-        manager.claimSlot(epochId);
-    }
-
-    function _submitTestCiphertext(bytes12 epochId, bytes32 aid) internal returns (uint16) {
-        return manager.submitCiphertext(epochId, aid, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
-    }
-
-    /// @dev The on-chain prime-subgroup check of C_1 was dropped: it cost
-    ///      ~2 M gas and a cofactor point cannot yield a valid combine proof.
-    ///      Committee nodes subgroup-check before they release δ_i, which is
-    ///      what protects their shares. Pin the (deliberate) acceptance here.
-    function test_SubmitCiphertext_AcceptsSmallOrderC1() public {
-        bytes12 epochId = createFinalizedRound();
-        uint256 Q = 21888242871839275222246405745257275088548364400416034343698204186575808495617;
-        // (0, -1) is on the curve, is not the identity and has order 2.
-        uint16 idx = manager.submitCiphertext(epochId, TEST_AID, 0, Q - 1, TEST_CT_C2X, TEST_CT_C2Y);
-        assertEq(uint256(idx), 2);
-    }
-
-    // ── A finalizable epoch can never be aborted, not even in the gap ─────
-
-    function test_AbortEpoch_RejectsHealthyEpochDuringFinalizeGap() public {
-        bytes12 epochId = createSelectedRound();
-        manager.submitContribution(
-            epochId, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH,
-            contributionTranscript(2), contributionProof(),
-            contributionInput(epochId, 2, 2, 1, CONTRIBUTION_COMMITMENTS_HASH, CONTRIBUTION_ENCRYPTED_SHARES_HASH)
-        );
-        vm.prank(address(0xBEEF));
-        manager.submitContribution(
-            epochId, 2,
-            bytes32(uint256(CONTRIBUTION_COMMITMENTS_HASH) + 1), bytes32(uint256(CONTRIBUTION_ENCRYPTED_SHARES_HASH) + 1),
-            contributionTranscript(2), contributionProof(),
-            contributionInput(epochId, 2, 2, 2, bytes32(uint256(CONTRIBUTION_COMMITMENTS_HASH) + 1), bytes32(uint256(CONTRIBUTION_ENCRYPTED_SHARES_HASH) + 1))
-        );
-        IDKGManager.Epoch memory epoch = manager.getEpoch(epochId);
-        // Inside the gap between the key-assembly deadline and liveNotBefore.
-        vm.roll(uint256(epoch.policy.keyAssemblyDeadlineBlock) + 1);
-        vm.expectRevert(IDKGManager.InvalidPhase.selector);
-        manager.abortEpoch(epochId); // creator
-        vm.prank(address(0xCAFE));
-        vm.expectRevert(IDKGManager.InvalidPhase.selector);
-        manager.abortEpoch(epochId); // anyone
-    }
-
-    // ── Deployment policy floors bound whoever wins the createEpoch race ──
-
-    function test_CreateEpoch_EnforcesDeploymentPolicyFloors() public {
-        DKGManager bounded = new DKGManager(
-            31337, address(registry), address(verifier), address(partialVerifier),
-            address(finalizeVerifier), address(decryptCombineVerifier),
-            0, 0, 0, 0,
-            2,      // minThreshold
-            3,      // minCommitteeSize
-            20000   // maxLotteryAlphaBps (α ≤ 2.0)
-        );
-        vm.expectRevert(IDKGManager.InvalidPolicy.selector);
-        bounded.createEpoch(1, 3, 3, 15000); // t below floor
-        vm.expectRevert(IDKGManager.InvalidPolicy.selector);
-        bounded.createEpoch(2, 2, 2, 15000); // n below floor
-        vm.expectRevert(IDKGManager.InvalidPolicy.selector);
-        bounded.createEpoch(2, 3, 3, 30000); // α above ceiling
-        bounded.createEpoch(2, 3, 3, 20000);
-    }
-
-    // ── Ciphertext indices are assigned on chain; the PoK is emitted ──────
-
-    function test_SubmitCiphertext_AssignsSequentialIndicesAndEmitsProof() public {
-        bytes12 epochId = createFinalizedRound(); // the fixture already submitted one ciphertext
-        uint16 before = manager.ciphertextCount(epochId, TEST_AID);
-        uint16 first = _submitTestCiphertext(epochId, TEST_AID);
-        uint16 second = _submitTestCiphertext(epochId, TEST_AID);
-        assertEq(uint256(first), uint256(before) + 1);
-        assertEq(uint256(second), uint256(before) + 2);
-        assertEq(uint256(manager.ciphertextCount(epochId, TEST_AID)), uint256(before) + 2);
-        assertEq(uint256(manager.getEpoch(epochId).ciphertextCount), uint256(before) + 2);
+        manager.activatePoolKey(epochId, 1, testTranscriptDigest(1), mauled, poolKeyProof(), input);
     }
 }

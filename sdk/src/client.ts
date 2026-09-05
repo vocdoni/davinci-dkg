@@ -24,18 +24,23 @@ import {
   type EpochLiveEvent,
   type DecryptionCombinedEvent,
   type ApplicationRegisteredEvent,
+  type ApplicationRecord,
+  AppMode,
+  type AppModeValue,
   type BabyJubPoint,
   type Hex,
+  type PoolStatus,
+  type PoolKeyActivatedEvent,
+  type PoolKeyClaimedEvent,
+  type OrganizerSecretRevealedEvent,
 } from './types.js';
 import { buildEpochId } from './utils.js';
 import { fromRTEtoTE } from './crypto/babyjub-form.js';
+import { applicationKey } from './crypto/elgamal.js';
 
 type ManagerContract = GetContractReturnType<typeof dkgManagerAbi, PublicClient>;
 type RegistryContract = GetContractReturnType<typeof dkgRegistryAbi, PublicClient>;
 type AppManagerContract = GetContractReturnType<typeof dkgAppManagerAbi, PublicClient>;
-
-/** All-zero bytes32 — the "no organizer share" sentinel. */
-const ZERO_BYTES32 = ('0x' + '00'.repeat(32)) as `0x${string}`;
 
 /** Default chunk size for chunked getLogs (blocks per request). */
 const DEFAULT_LOG_CHUNK = 2000n;
@@ -43,6 +48,21 @@ const DEFAULT_LOG_CHUNK = 2000n;
 const MIN_LOG_CHUNK = 100n;
 /** Default fallback window when fromBlock is unknown (0). */
 const DEFAULT_FALLBACK_WINDOW = 50_000n;
+
+/**
+ * True when `err` is a viem contract revert carrying the custom error
+ * `name` (walks the cause chain; `ContractFunctionRevertedError` exposes
+ * `data.errorName`).
+ */
+function isRevertWith(err: unknown, name: string): boolean {
+  let cur: unknown = err;
+  for (let depth = 0; cur != null && depth < 8; depth++) {
+    const e = cur as { data?: { errorName?: unknown }; cause?: unknown };
+    if (e.data?.errorName === name) return true;
+    cur = e.cause;
+  }
+  return false;
+}
 
 /**
  * Returns true when the error message indicates that the requested block
@@ -329,8 +349,7 @@ export class DKGClient {
 
   /**
    * Fetch a partial decryption record for a specific participant and
-   * ciphertext index. The `delta` curve point is converted from on-chain
-   * RTE to TE for consistency with `getCollectivePublicKey`.
+   * ciphertext index.
    */
   async getPartialDecryption(
     epochId: `0x${string}`,
@@ -351,25 +370,35 @@ export class DKGClient {
    * Fetch the cached on-chain `Application` record for `(epochId, aid)`.
    * Returns an `exists: false` record when the application has not been
    * registered — check `record.exists` before using any other field. The
-   * `organizerPK` curve point is converted from on-chain RTE to TE for
-   * consistency with `getCollectivePublicKey`, so
-   * `applicationKey(pkEp, record.organizerPK)` gives the encryption key.
+   * `organizerPK` curve point is converted from on-chain RTE to TE form, and
+   * `poolIndex` names which of the epoch's `MaxK` pool keys this application
+   * claimed — see `getApplicationKey` to derive `PK_aid` directly.
+   *
+   * `organizerSecret` is `sk_org` once revealed via `revealOrganizerSecret`
+   * (`OrganizerLocked` mode) and always `0n` for `Automatic` applications,
+   * which have no organizer key at all.
    */
   async getApplication(
     epochId: `0x${string}`,
     aid: `0x${string}`,
-  ): Promise<import('./types.js').ApplicationRecord> {
+  ): Promise<ApplicationRecord> {
     const am = await this._getAppManager();
     const r = (await am.read.getApplication([epochId as any, aid as any])) as any;
     const [pkX, pkY] = fromRTEtoTE(BigInt(r.organizerPK.x), BigInt(r.organizerPK.y));
     return {
       creator: r.creator,
       organizerPK: [pkX, pkY],
+      organizerSecret: BigInt(r.organizerSecret),
+      poolIndex: Number(r.poolIndex),
       policy: {
-        authorizedSubmitter: r.policy.authorizedSubmitter,
+        mode: Number(r.policy.mode) as AppModeValue,
+        openSubmission: Boolean(r.policy.openSubmission),
+        submitters: [...(r.policy.submitters as Address[])],
         maxCiphertexts: Number(r.policy.maxCiphertexts),
         notBeforeBlock: BigInt(r.policy.notBeforeBlock),
         notAfterBlock: BigInt(r.policy.notAfterBlock),
+        decryptNotBefore: BigInt(r.policy.decryptNotBefore),
+        decryptNotAfter: BigInt(r.policy.decryptNotAfter),
       },
       createdAtBlock: BigInt(r.createdAtBlock),
       exists: Boolean(r.exists),
@@ -377,35 +406,105 @@ export class DKGClient {
   }
 
   /**
-   * `keccak256(deltaX, deltaY, a1x, a1y, a2x, a2y, z)` of the organizer share
-   * stored for `(epochId, aid, ciphertextIndex)`, or `0x00…00` when no share
-   * has been posted. The share words themselves live only in the
-   * `OrganizerShareSubmitted` event — see `getOrganizerShareEvents`.
-   *
-   * A zero hash means the committee cannot combine this ciphertext yet: the
-   * contract reverts `OrganizerShareMissing()`.
+   * `PK_org` of a registered application in TE form (the SDK convention), or
+   * `[0n, 0n]` for an unknown aid — a cheaper read than `getApplication`
+   * when only the key is needed.
    */
-  async getOrganizerShareHash(
+  async getOrganizerPK(
     epochId: `0x${string}`,
     aid: `0x${string}`,
-    ciphertextIndex: number,
-  ): Promise<`0x${string}`> {
+  ): Promise<BabyJubPoint> {
     const am = await this._getAppManager();
-    return am.read.getOrganizerShareHash([
-      epochId as any,
-      aid as any,
-      ciphertextIndex,
-    ]) as Promise<`0x${string}`>;
+    const [x, y] = (await am.read.getOrganizerPK([epochId as any, aid as any])) as [bigint, bigint];
+    if (x === 0n && y === 0n) return [0n, 0n];
+    return fromRTEtoTE(x, y);
   }
 
-  /** True when an organizer share is on chain for this ciphertext. */
-  async hasOrganizerShare(
+  /**
+   * Whether the contract accepts partial decryptions and combines for the
+   * application right now — the same check `requireDecryptionOpen` runs on
+   * `submitPartialDecryption` and `combineDecryption`. False before
+   * `policy.decryptNotBefore` (`DecryptionNotOpen()`), after
+   * `policy.decryptNotAfter` (`DecryptionClosed()`) — both unix seconds, 0 =
+   * unbounded — and, for an `OrganizerLocked` application, until the
+   * organizer has called `revealOrganizerSecret`
+   * (`OrganizerSecretNotRevealed()`). Throws `InvalidApplication()` for an
+   * aid that was never registered.
+   */
+  async isDecryptionOpen(
     epochId: `0x${string}`,
     aid: `0x${string}`,
-    ciphertextIndex: number,
   ): Promise<boolean> {
-    const h = await this.getOrganizerShareHash(epochId, aid, ciphertextIndex);
-    return h !== ZERO_BYTES32;
+    const am = await this._getAppManager();
+    try {
+      await am.read.requireDecryptionOpen([epochId as any, aid as any]);
+      return true;
+    } catch (err) {
+      if (
+        isRevertWith(err, 'DecryptionClosed') ||
+        isRevertWith(err, 'DecryptionNotOpen') ||
+        isRevertWith(err, 'OrganizerSecretNotRevealed')
+      ) {
+        return false;
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * Fetch pool key `P_j` (`keyIndex = j`) of `(epochId)` in TE form, or the
+   * identity `[0n, 1n]` if it has not been activated yet — check
+   * `getPoolStatus` first if that distinction matters.
+   */
+  async getPoolKey(
+    epochId: `0x${string}`,
+    keyIndex: number,
+  ): Promise<BabyJubPoint> {
+    const [x, y] = (await this._manager.read.getPoolKey([epochId as any, keyIndex])) as [bigint, bigint];
+    return fromRTEtoTE(x, y);
+  }
+
+  /** How far `(epochId)`'s pool of `MaxK` keys has been dealt. */
+  async getPoolStatus(epochId: `0x${string}`): Promise<PoolStatus> {
+    const [nextIndex, activated] = (await this._manager.read.getPoolStatus([
+      epochId as any,
+    ])) as [number, number];
+    return { nextIndex: Number(nextIndex), activated: Number(activated) };
+  }
+
+  /** Merkle root committing pool key `keyIndex`'s per-node shares. */
+  async getPoolShareRoot(
+    epochId: `0x${string}`,
+    keyIndex: number,
+  ): Promise<`0x${string}`> {
+    return this._manager.read.getPoolShareRoot([epochId as any, keyIndex]) as Promise<`0x${string}`>;
+  }
+
+  /** Index of the pool key `aid` claimed at registration. */
+  async getAppPoolIndex(
+    epochId: `0x${string}`,
+    aid: `0x${string}`,
+  ): Promise<number> {
+    return Number(await this._manager.read.getAppPoolIndex([epochId as any, aid as any]));
+  }
+
+  /**
+   * `PK_aid` for a registered application, in TE form: the pool key it
+   * claimed (`P_j`, `j = poolIndex`) for an `Automatic` application, or
+   * `P_j + PK_org` for an `OrganizerLocked` one. This is the key to `encrypt`
+   * under. Throws for an aid that was never registered.
+   */
+  async getApplicationKey(
+    epochId: `0x${string}`,
+    aid: `0x${string}`,
+  ): Promise<BabyJubPoint> {
+    const app = await this.getApplication(epochId, aid);
+    if (!app.exists) {
+      throw new Error(`getApplicationKey: application ${aid} is not registered in epoch ${epochId}`);
+    }
+    const poolKey = await this.getPoolKey(epochId, app.poolIndex);
+    const pkOrg = app.policy.mode === AppMode.Automatic ? undefined : app.organizerPK;
+    return applicationKey(poolKey, pkOrg);
   }
 
   /** Fetch the combined decryption record for a ciphertext index. */
@@ -455,14 +554,6 @@ export class DKGClient {
     return Number(await this._manager.read.ciphertextCount([epochId as any, aid as any]));
   }
 
-  /** Fetch the share-commitment hash for a given participant index. */
-  async getShareCommitmentHash(
-    epochId: `0x${string}`,
-    participantIndex: number,
-  ): Promise<`0x${string}`> {
-    return this._manager.read.getShareCommitmentHash([epochId as any, participantIndex]);
-  }
-
   // ── Verifier key hashes ────────────────────────────────────────────────────
 
   async getContributionVerifierVKeyHash(): Promise<`0x${string}`> {
@@ -473,8 +564,8 @@ export class DKGClient {
     return this._manager.read.getPartialDecryptVerifierVKeyHash();
   }
 
-  async getFinalizeVerifierVKeyHash(): Promise<`0x${string}`> {
-    return this._manager.read.getFinalizeVerifierVKeyHash();
+  async getPoolKeyVerifierVKeyHash(): Promise<`0x${string}`> {
+    return this._manager.read.getPoolKeyVerifierVKeyHash();
   }
 
   async getDecryptCombineVerifierVKeyHash(): Promise<`0x${string}`> {
@@ -571,44 +662,31 @@ export class DKGClient {
   }
 
   /**
-   * Fetch all EpochLive events for a specific epoch.
+   * Fetch all EpochLive events for a specific epoch. `finalizeEpoch` is now
+   * proof-less: this only marks the accepted-contributor set frozen and
+   * opens the epoch for `activatePoolKey` — no key material is available yet.
    */
-  async getEpochLiveEvents(epochId: `0x${string}`): Promise<
-    Array<{
-      aggregateCommitmentsHash: `0x${string}`;
-      collectivePublicKeyHash: `0x${string}`;
-      shareCommitmentHash: `0x${string}`;
-      blockNumber: bigint;
-      transactionHash: `0x${string}` | null;
-    }>
-  > {
+  async getEpochLiveEvents(epochId: `0x${string}`): Promise<EpochLiveEvent[]> {
     const logs = await getLogsChunked(
       this.publicClient,
       {
         address: this.managerAddress,
-        event: {
-          type: 'event',
-          name: 'EpochLive',
-          inputs: [
-            { name: 'epochId', type: 'bytes12', indexed: true },
-            { name: 'aggregateCommitmentsHash', type: 'bytes32', indexed: false },
-            { name: 'collectivePublicKeyHash', type: 'bytes32', indexed: false },
-            { name: 'shareCommitmentHash', type: 'bytes32', indexed: false },
-          ],
-        } as const,
+        event: getAbiItem({ abi: dkgManagerAbi, name: 'EpochLive' }),
         args: { epochId: epochId as any },
         fromBlock: 0n,
         toBlock: 'latest',
       },
       { fallbackWindow: 50_000n },
     );
-    return logs.map((l) => ({
-      aggregateCommitmentsHash: (l.args as any).aggregateCommitmentsHash as `0x${string}`,
-      collectivePublicKeyHash: (l.args as any).collectivePublicKeyHash as `0x${string}`,
-      shareCommitmentHash: (l.args as any).shareCommitmentHash as `0x${string}`,
-      blockNumber: l.blockNumber ?? 0n,
-      transactionHash: (l.transactionHash ?? null) as `0x${string}` | null,
-    }));
+    return logs.map((l) => {
+      const a = l.args as any;
+      return {
+        epochId: a.epochId as Hex,
+        contributionCount: Number(a.contributionCount ?? 0),
+        blockNumber: l.blockNumber ?? 0n,
+        transactionHash: (l.transactionHash ?? null) as `0x${string}` | null,
+      };
+    });
   }
 
   /**
@@ -662,40 +740,21 @@ export class DKGClient {
   }
 
   /**
-   * Fetch all `OrganizerShareSubmitted` events for `(epochId, aid)`,
-   * optionally narrowed to one `ciphertextIndex`. The contract stores only
-   * the keccak hash of the share, so this log is the only source of the
-   * words the combine circuit consumes.
-   *
-   * Coordinates are the on-chain (RTE) words — feed them straight to
-   * `verifyOrganizerShare` together with the application's `organizerPK`
-   * (converted back to RTE) and the ciphertext's `C1`. Re-submission is
-   * allowed until the ciphertext is combined, so several events may exist
-   * for one index; the last one wins.
+   * Fetch `PoolKeyActivated` events for `(epochId)`, optionally narrowed to
+   * one `keyIndex`. `activatePoolKey` is permissionless, so this is the way
+   * to discover when key `j` of the pool becomes usable.
    */
-  async getOrganizerShareEvents(
+  async getPoolKeyActivatedEvents(
     epochId: `0x${string}`,
-    aid: `0x${string}`,
-    opts?: { ciphertextIndex?: number },
-  ): Promise<
-    Array<{
-      ciphertextIndex: number;
-      delta: { x: bigint; y: bigint };
-      a1: { x: bigint; y: bigint };
-      a2: { x: bigint; y: bigint };
-      z: bigint;
-      blockNumber: bigint;
-      transactionHash: `0x${string}` | null;
-    }>
-  > {
-    const appManagerAddress = await this._getAppManagerAddress();
-    const args: Record<string, unknown> = { epochId: epochId as any, aid: aid as any };
-    if (opts?.ciphertextIndex != null) args.ctIdx = opts.ciphertextIndex;
+    opts?: { keyIndex?: number },
+  ): Promise<PoolKeyActivatedEvent[]> {
+    const args: Record<string, unknown> = { epochId: epochId as any };
+    if (opts?.keyIndex != null) args.keyIndex = opts.keyIndex;
     const logs = await getLogsChunked(
       this.publicClient,
       {
-        address: appManagerAddress,
-        event: getAbiItem({ abi: dkgAppManagerAbi, name: 'OrganizerShareSubmitted' }),
+        address: this.managerAddress,
+        event: getAbiItem({ abi: dkgManagerAbi, name: 'PoolKeyActivated' }),
         args,
         fromBlock: 0n,
         toBlock: 'latest',
@@ -705,11 +764,76 @@ export class DKGClient {
     return logs.map((l) => {
       const a = l.args as any;
       return {
-        ciphertextIndex: Number(a.ctIdx),
-        delta: { x: a.deltaX as bigint, y: a.deltaY as bigint },
-        a1: { x: a.a1x as bigint, y: a.a1y as bigint },
-        a2: { x: a.a2x as bigint, y: a.a2y as bigint },
-        z: a.z as bigint,
+        epochId: a.epochId as Hex,
+        keyIndex: Number(a.keyIndex),
+        x: a.x as bigint,
+        y: a.y as bigint,
+        blockNumber: l.blockNumber ?? 0n,
+        transactionHash: (l.transactionHash ?? null) as `0x${string}` | null,
+      };
+    });
+  }
+
+  /**
+   * Fetch `PoolKeyClaimed` events for `(epochId)`, optionally narrowed to one
+   * `aid`. Emitted once per application, at `registerApplication` time.
+   */
+  async getPoolKeyClaimedEvents(
+    epochId: `0x${string}`,
+    opts?: { aid?: `0x${string}` },
+  ): Promise<PoolKeyClaimedEvent[]> {
+    const args: Record<string, unknown> = { epochId: epochId as any };
+    if (opts?.aid != null) args.aid = opts.aid;
+    const logs = await getLogsChunked(
+      this.publicClient,
+      {
+        address: this.managerAddress,
+        event: getAbiItem({ abi: dkgManagerAbi, name: 'PoolKeyClaimed' }),
+        args,
+        fromBlock: 0n,
+        toBlock: 'latest',
+      },
+      { fallbackWindow: 50_000n },
+    );
+    return logs.map((l) => {
+      const a = l.args as any;
+      return {
+        epochId: a.epochId as Hex,
+        aid: a.aid as Hex,
+        keyIndex: Number(a.keyIndex),
+        blockNumber: l.blockNumber ?? 0n,
+        transactionHash: (l.transactionHash ?? null) as `0x${string}` | null,
+      };
+    });
+  }
+
+  /**
+   * Fetch `OrganizerSecretRevealed` events for `(epochId, aid)` — at most one
+   * ever exists, since `revealOrganizerSecret` reverts `AlreadyRevealed` on a
+   * second call.
+   */
+  async getOrganizerSecretRevealedEvents(
+    epochId: `0x${string}`,
+    aid: `0x${string}`,
+  ): Promise<OrganizerSecretRevealedEvent[]> {
+    const appManagerAddress = await this._getAppManagerAddress();
+    const logs = await getLogsChunked(
+      this.publicClient,
+      {
+        address: appManagerAddress,
+        event: getAbiItem({ abi: dkgAppManagerAbi, name: 'OrganizerSecretRevealed' }),
+        args: { epochId: epochId as any, aid: aid as any },
+        fromBlock: 0n,
+        toBlock: 'latest',
+      },
+      { fallbackWindow: 50_000n },
+    );
+    return logs.map((l) => {
+      const a = l.args as any;
+      return {
+        epochId: a.epochId as Hex,
+        aid: a.aid as Hex,
+        organizerSecret: a.organizerSecret as bigint,
         blockNumber: l.blockNumber ?? 0n,
         transactionHash: (l.transactionHash ?? null) as `0x${string}` | null,
       };
@@ -843,9 +967,7 @@ export class DKGClient {
       const a = l.args as any;
       return {
         epochId: a.epochId as Hex,
-        aggregateCommitmentsHash: a.aggregateCommitmentsHash as Hex,
-        collectivePublicKeyHash: a.collectivePublicKeyHash as Hex,
-        shareCommitmentHash: a.shareCommitmentHash as Hex,
+        contributionCount: Number(a.contributionCount ?? 0),
         blockNumber: l.blockNumber ?? 0n,
         transactionHash: (l.transactionHash ?? null) as Hex | null,
       };
@@ -907,6 +1029,8 @@ export class DKGClient {
         aid: a.aid as Hex,
         creator: a.creator as Address,
         organizerPK: [x, y] as BabyJubPoint,
+        mode: Number(a.mode) as AppModeValue,
+        poolIndex: Number(a.poolIndex ?? 0),
         blockNumber: l.blockNumber ?? 0n,
         transactionHash: (l.transactionHash ?? null) as Hex | null,
       };
@@ -966,60 +1090,6 @@ export class DKGClient {
       },
       { fallbackWindow: 50_000n },
     );
-  }
-
-  /**
-   * Returns the collective public key accumulated on-chain for the given epoch.
-   *
-   * The contract accumulates this key as contributions are submitted — each
-   * accepted contributor's commitment[0] point (a_{i,0}·G) is added to a
-   * running sum.  Once the epoch is finalized the value equals the full
-   * collective public key.  The key is available as soon as the first
-   * contribution is accepted.
-   *
-   * Returns { x: 0n, y: 1n } (the BabyJubJub identity) if no contributions
-   * have been accepted yet.
-   *
-   * IMPORTANT: do NOT encrypt and call `submitCiphertext` with the value
-   * returned during the Contribution phase. The contract's `submitCiphertext`
-   * requires `EpochPhase.Live` and will revert otherwise. Either:
-   *   - use `flow.ts:waitForCollectivePublicKeyHash` then read this getter, or
-   *   - check `getEpoch(epochId).status === EpochPhase.Live` first.
-   * Pre-finalize reads of this value are intended for monitoring/observation
-   * (e.g. displaying the in-progress accumulator), not for producing
-   * ciphertexts that will actually be sent on-chain.
-   *
-   * The point is converted from gnark's RTE form (used on-chain by the
-   * contract and the ZK circuits) to circomlib's TE form so the result
-   * composes directly with @zk-kit/baby-jubjub / circomlibjs operations
-   * (mulPointEscalar, addPoint, etc.) used by this SDK's ElGamal layer.
-   * See `crypto/babyjub-form.ts` for the rationale and the conversion
-   * formula (vendored from davinci-sdk for wire compatibility).
-   */
-  async getCollectivePublicKey(
-    epochId: `0x${string}`,
-  ): Promise<{ x: bigint; y: bigint }> {
-    const result = await this.publicClient.readContract({
-      address: this.managerAddress,
-      abi: dkgManagerAbi,
-      functionName: 'getCollectivePublicKey',
-      args: [epochId as any],
-    }) as { x: bigint; y: bigint };
-    // Identity (0, 1) is the same in both forms — no-op conversion is safe.
-    const [x, y] = fromRTEtoTE(result.x, result.y);
-    return { x, y };
-  }
-
-  /**
-   * @deprecated Use {@link getCollectivePublicKey} instead.
-   * Kept for backwards compatibility — now simply delegates to the on-chain
-   * getter which accumulates the key as contributions are submitted.
-   */
-  async getCollectivePublicKeyFromContributions(
-    epochId: `0x${string}`,
-    _participants?: Address[],
-  ): Promise<{ x: bigint; y: bigint }> {
-    return this.getCollectivePublicKey(epochId);
   }
 
   /**

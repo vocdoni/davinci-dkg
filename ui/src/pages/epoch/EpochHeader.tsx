@@ -101,13 +101,14 @@ export function EpochHeader({ detail, head, blockTimeSeconds, epochDurationBlock
         size='page'
         label='Epoch'
         title={`Epoch #${epoch.nonce}`}
-        description='One DKG run: a lottery, a committee, a collective key, and every decryption it served.'
+        description='One DKG run: a lottery, a committee, a pool of keys, and every decryption it served.'
         actions={
           <span className='flex items-center gap-3'>
             <PhaseBadge phase={epoch.status} />
             {countdown ? (
               <span className='font-mono text-[12px] text-ash'>
-                {countdown.label} · {formatCountdown(countdown, blockTimeSeconds, 'passed')}
+                {countdown.label} ·{' '}
+                {formatCountdown(countdown, blockTimeSeconds, epoch.status === 'live' ? 'ended' : 'passed')}
               </span>
             ) : null}
           </span>

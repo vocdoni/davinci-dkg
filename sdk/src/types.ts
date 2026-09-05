@@ -115,7 +115,6 @@ export interface ContributionRecord {
   contributorIndex: number;
   commitmentsHash: Hex;
   encryptedSharesHash: Hex;
-  commitmentVectorDigest: Hex;
   accepted: boolean;
 }
 
@@ -149,34 +148,103 @@ export interface NodeKey {
 
 // ── Application (P8/P9) ──────────────────────────────────────────────────────
 
-/** Per-application policy gating submitCiphertext, mirrors `DKGTypes.AppPolicy`. */
+/**
+ * Who (if anyone) holds an organizer key on top of the application's pool
+ * key, mirrors `DKGTypes.AppMode`.
+ *
+ * - `OrganizerLocked`: the application key is `PK_aid = P_j + PK_org`. The
+ *   organizer keeps `sk_org` secret until it calls `revealOrganizerSecret`
+ *   once (`InvalidOrganizerSecret` unless `sk_org·G == PK_org`); from then on
+ *   the committee combines by itself. There is no per-ciphertext organizer
+ *   share.
+ * - `Automatic`: there is no organizer key at all. `organizerPK` is the
+ *   identity `(0, 1)` and `organizerSecret` is `0`; the application key is
+ *   just the pool key `P_j`, and the committee threshold alone gates
+ *   decryption.
+ */
+export const AppMode = {
+  OrganizerLocked: 0,
+  Automatic: 1,
+} as const;
+
+export type AppModeValue = (typeof AppMode)[keyof typeof AppMode];
+
+export function appModeLabel(mode: number): string {
+  switch (mode) {
+    case AppMode.OrganizerLocked: return 'organizer-locked';
+    case AppMode.Automatic: return 'automatic';
+    default: return `Unknown(${mode})`;
+  }
+}
+
+/** Per-application policy fixed at registration, mirrors `DKGTypes.AppPolicy`. */
 export interface AppPolicy {
+  mode: AppModeValue;
+  /** Anyone may call submitCiphertext. Incompatible with a non-empty `submitters`. */
+  openSubmission: boolean;
   /**
-   * Address authorized to submit ciphertexts. Passing the zero address means
-   * "the registering address"; the contract stores it resolved, so a record
-   * read back never carries the zero address. There is no open submission.
+   * Submission allow-list (at most 32, no zero address). Empty means "the
+   * registering address only", which is what the contract falls back to.
    */
-  authorizedSubmitter: Address;
+  submitters: Address[];
   /** Maximum ciphertexts under this aid; 0 means unlimited. */
   maxCiphertexts: number;
   /** Earliest block at which submitCiphertext is valid; 0 means no floor. */
   notBeforeBlock: bigint;
   /** Latest block at which submitCiphertext is valid; 0 means no ceiling. */
   notAfterBlock: bigint;
+  /**
+   * Earliest unix time at which a partial decryption or combine is accepted;
+   * 0 means no floor. An `OrganizerLocked` application is gated on top of
+   * this by the reveal: `submitPartialDecryption` and `combineDecryption`
+   * revert `OrganizerSecretNotRevealed()` until `revealOrganizerSecret` ran.
+   */
+  decryptNotBefore: bigint;
+  /**
+   * Decryption deadline as unix seconds; 0 means never. Past it,
+   * submitPartialDecryption and combineDecryption revert `DecryptionClosed()`.
+   * Must be in the future at registration.
+   */
+  decryptNotAfter: bigint;
 }
 
 /**
- * Cached on-chain `Application` record. Every application is organizer
- * co-decryption: `PK_aid = PK_ep + PK_org`, and opening a ciphertext needs
- * both the committee threshold and the organizer's share `Δ = sk_org·C1`.
+ * What `DKGWriter.registerApplication` accepts: every field of `AppPolicy` is
+ * optional and defaults to the contract's most restrictive reading —
+ * organizer-locked, registrant-only submission, no cap, no window, no
+ * deadline.
+ */
+export type AppPolicyInput = Partial<AppPolicy>;
+
+/**
+ * Cached on-chain `Application` record. `PK_aid` is the pool key `P_j`
+ * (`poolIndex = j`, via `client.getPoolKey`) for `Automatic` applications, or
+ * `P_j + PK_org` for `OrganizerLocked` ones — see `client.getApplicationKey`.
  * `organizerPK` is in TE form (converted at the client boundary).
  */
 export interface ApplicationRecord {
   creator: Address;
   organizerPK: BabyJubPoint;
+  /**
+   * `sk_org` once revealed via `revealOrganizerSecret`; `0n` until then (and
+   * always for `Automatic`). While it is `0n` on an `OrganizerLocked`
+   * application the contract refuses every partial and combine
+   * (`OrganizerSecretNotRevealed()`), so no decryption of it exists on chain.
+   */
+  organizerSecret: bigint;
+  /** Index into the epoch's pool of `MaxK` keys this application claimed at registration. */
+  poolIndex: number;
   policy: AppPolicy;
   createdAtBlock: bigint;
   exists: boolean;
+}
+
+/** `DKGManager.getPoolStatus(epochId)` — how far the pool has been dealt. */
+export interface PoolStatus {
+  /** Index of the next unclaimed key. */
+  nextIndex: number;
+  /** Bitmap of activated keys: bit `j` set means key `j` is activated. */
+  activated: number;
 }
 
 // ── SDK config ────────────────────────────────────────────────────────────────
@@ -288,14 +356,42 @@ export interface PartialDecryptionEvent {
 
 /**
  * `DKGManager.EpochLive` — emitted once per epoch by whoever finalized it.
- * The event carries no submitter, so attribution needs the transaction
- * sender (see `DKGClient.getTransactionSenders`).
+ * `finalizeEpoch` is now proof-less; no key material is available yet, it
+ * only marks the accepted-contributor set frozen and opens the epoch for
+ * `activatePoolKey`. The event carries no submitter, so attribution needs
+ * the transaction sender (see `DKGClient.getTransactionSenders`).
  */
 export interface EpochLiveEvent {
   epochId: Hex;
-  aggregateCommitmentsHash: Hex;
-  collectivePublicKeyHash: Hex;
-  shareCommitmentHash: Hex;
+  contributionCount: number;
+  blockNumber: bigint;
+  transactionHash: Hex | null;
+}
+
+/** `DKGManager.PoolKeyActivated` — key `keyIndex` of the epoch's pool is live. */
+export interface PoolKeyActivatedEvent {
+  epochId: Hex;
+  keyIndex: number;
+  x: bigint;
+  y: bigint;
+  blockNumber: bigint;
+  transactionHash: Hex | null;
+}
+
+/** `DKGManager.PoolKeyClaimed` — an application claimed pool key `keyIndex`. */
+export interface PoolKeyClaimedEvent {
+  epochId: Hex;
+  aid: Hex;
+  keyIndex: number;
+  blockNumber: bigint;
+  transactionHash: Hex | null;
+}
+
+/** `DKGAppManager.OrganizerSecretRevealed` — a locked application's `sk_org` went public. */
+export interface OrganizerSecretRevealedEvent {
+  epochId: Hex;
+  aid: Hex;
+  organizerSecret: bigint;
   blockNumber: bigint;
   transactionHash: Hex | null;
 }
@@ -321,6 +417,8 @@ export interface ApplicationRegisteredEvent {
   aid: Hex;
   creator: Address;
   organizerPK: BabyJubPoint;
+  mode: AppModeValue;
+  poolIndex: number;
   blockNumber: bigint;
   transactionHash: Hex | null;
 }

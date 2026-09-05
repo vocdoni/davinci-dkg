@@ -162,7 +162,7 @@ jobs:
         run: go build ./cmd/...
 
       - name: Run unit tests
-        # Circuit packages run Groth16 setups (contribution alone ≈ 7 min);
+        # Circuit packages run Groth16 setups (contribution alone ≈ 10 min);
         # they are covered by the Test Circuits workflow on every change to
         # circuits/, crypto/ or the pinned hashes, and nightly.
         run: |
@@ -173,9 +173,9 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # Go integration tests (Anvil + Docker Compose deployer). Self-hosted:
-  # the pre-step regenerates all six Groth16 circuits via a trusted setup
-  # (MaxN=16 contribution circuit alone ≈ 90 s), so a cold GitHub-hosted
-  # runner would easily triple the job duration.
+  # the pre-step regenerates all four Groth16 circuits via a trusted setup
+  # (the 3.0M-constraint contribution circuit alone ≈ 10 min at MaxN=32),
+  # so a cold GitHub-hosted runner would easily triple the job duration.
   # ---------------------------------------------------------------------------
   job_go_integration_test:
     name: Go Integration Tests
@@ -227,9 +227,9 @@ jobs:
       # triple (Go pk ↔ pinned hashes ↔ Solidity verifier vk) all coming
       # from the same trusted setup run.
       #
-      # Cost: ~3–5 minutes per run (dominated by contribution + finalize
-      # trusted setup at MaxN=16). Caching is not worthwhile — Setup is
-      # non-deterministic so each run's output is fresh regardless.
+      # Cost: ~12 minutes per run (dominated by the contribution trusted
+      # setup, 3.0M constraints at MaxN=32). Caching is not worthwhile —
+      # Setup is non-deterministic so each run's output is fresh regardless.
       - name: Regenerate circuit artifacts and Solidity verifiers
         run: make circuits-compile circuits-update-hashes solidity-build
 

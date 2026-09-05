@@ -15,7 +15,7 @@ function input(overrides: Partial<DecryptionOverviewInput> = {}): DecryptionOver
     applications: [],
     ciphertexts: [],
     partials: [],
-    shares: [],
+    reveals: [],
     combines: [],
     ...overrides,
   }
@@ -31,22 +31,21 @@ describe('aggregateDecryptionProgress', () => {
           { aid: AID, ciphertextIndex: 1, participant: M1 },
           { aid: AID, ciphertextIndex: 1, participant: M2 },
         ],
-        shares: [{ aid: AID, ciphertextIndex: 1 }],
+        reveals: [{ aid: AID }],
         combines: [{ aid: AID, ciphertextIndex: 1, plaintext: 42n }],
       }),
     )
-    expect(app).toMatchObject({ submitted: 1, sharesReleased: 1, combined: 1 })
+    expect(app).toMatchObject({ submitted: 1, secretRevealed: true, combined: 1 })
     expect(app.ciphertexts[0]).toMatchObject({
       index: 1,
       partials: 2,
       participants: [M1, M2],
-      organizerShare: true,
       combined: true,
       plaintext: 42n,
     })
   })
 
-  it('counts distinct members only, and tolerates repeated share events', () => {
+  it('counts distinct members only, and a reveal for an unknown aid changes nothing', () => {
     const [app] = aggregateDecryptionProgress(
       input({
         applications: [{ aid: AID, creator: ORG, blockNumber: 1n }],
@@ -55,14 +54,11 @@ describe('aggregateDecryptionProgress', () => {
           { aid: AID, ciphertextIndex: 1, participant: M1 },
           { aid: AID, ciphertextIndex: 1, participant: M1.toLowerCase() },
         ],
-        shares: [
-          { aid: AID, ciphertextIndex: 1 },
-          { aid: AID, ciphertextIndex: 1 },
-        ],
+        reveals: [{ aid: OTHER }],
       }),
     )
     expect(app.ciphertexts[0].partials).toBe(1)
-    expect(app.sharesReleased).toBe(1)
+    expect(app.secretRevealed).toBe(false)
   })
 
   it('keeps a registered-but-idle application, and never crosses aids', () => {

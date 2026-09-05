@@ -6,7 +6,7 @@ import {DKGRegistry} from "../src/DKGRegistry.sol";
 import {DKGManager} from "../src/DKGManager.sol";
 import {DKGAppManager} from "../src/DKGAppManager.sol";
 import {ContributionVerifier} from "../src/verifiers/ContributionVerifier.sol";
-import {FinalizeVerifier} from "../src/verifiers/FinalizeVerifier.sol";
+import {PoolKeyVerifier} from "../src/verifiers/PoolKeyVerifier.sol";
 import {PartialDecryptVerifier} from "../src/verifiers/PartialDecryptVerifier.sol";
 import {DecryptCombineVerifier} from "../src/verifiers/DecryptCombineVerifier.sol";
 
@@ -46,8 +46,8 @@ contract DeployAllScript is Script {
         ContributionVerifier contributionVerifier = new ContributionVerifier();
         console.log("ContributionVerifier deployed at:", address(contributionVerifier));
 
-        FinalizeVerifier finalizeVerifier = new FinalizeVerifier();
-        console.log("FinalizeVerifier deployed at:", address(finalizeVerifier));
+        PoolKeyVerifier poolKeyVerifier = new PoolKeyVerifier();
+        console.log("PoolKeyVerifier deployed at:", address(poolKeyVerifier));
 
         PartialDecryptVerifier partialDecryptVerifier = new PartialDecryptVerifier();
         console.log("PartialDecryptVerifier deployed at:", address(partialDecryptVerifier));
@@ -64,7 +64,7 @@ contract DeployAllScript is Script {
             address(registry),
             address(contributionVerifier),
             address(partialDecryptVerifier),
-            address(finalizeVerifier),
+            address(poolKeyVerifier),
             address(decryptCombineVerifier),
             epochDurationBlocks,
             committeeSelectionBlocks,
@@ -87,8 +87,8 @@ contract DeployAllScript is Script {
 
         // Deploy the sibling app manager (per-application surface). It only
         // needs the manager address (cyclic dependency resolved by
-        // setAppManager afterwards); the organizer share is verified inside
-        // the combine circuit, so no verifier is wired here.
+        // setAppManager afterwards); the organizer secret is a private
+        // witness of the combine circuit, so no verifier is wired here.
         DKGAppManager appManager = new DKGAppManager(address(manager));
         console.log("DKGAppManager deployed at:", address(appManager));
 

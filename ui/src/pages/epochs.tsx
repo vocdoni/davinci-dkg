@@ -168,7 +168,7 @@ export function EpochsPage() {
         size='page'
         label='Epochs'
         title='Epochs'
-        description='Every epoch the manager has created, newest first. One epoch is one DKG run: a lottery, a committee, a collective key and the decryptions it served.'
+        description='Every epoch the manager has created, newest first. One epoch is one DKG run: a lottery, a committee, a pool of keys and the decryptions it served.'
       />
 
       <StatRow>

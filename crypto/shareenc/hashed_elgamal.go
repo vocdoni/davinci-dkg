@@ -16,8 +16,11 @@ type Ciphertext struct {
 	MaskedShare *big.Int
 }
 
-// EncryptShare masks one Shamir share for a recipient using the protocol transcript.
-func EncryptShare(epochID string, contributorIndex, recipientIndex uint16, share *big.Int, recipient types.NodeKey) (*Ciphertext, error) {
+// EncryptShare masks one Shamir share for a recipient using the protocol
+// transcript. keyIndex is the pool key the share belongs to (0..MaxK-1).
+func EncryptShare(
+	epochID string, contributorIndex, recipientIndex uint16, keyIndex uint8, share *big.Int, recipient types.NodeKey,
+) (*Ciphertext, error) {
 	modulus := group.ScalarField()
 	nonce, err := rand.Int(rand.Reader, modulus)
 	if err != nil {
@@ -27,13 +30,14 @@ func EncryptShare(epochID string, contributorIndex, recipientIndex uint16, share
 		nonce = big.NewInt(1)
 	}
 
-	return EncryptShareWithNonce(epochID, contributorIndex, recipientIndex, share, recipient, nonce)
+	return EncryptShareWithNonce(epochID, contributorIndex, recipientIndex, keyIndex, share, recipient, nonce)
 }
 
 // EncryptShareWithNonce masks one Shamir share for a recipient using caller-provided randomness.
 func EncryptShareWithNonce(
 	epochID string,
 	contributorIndex, recipientIndex uint16,
+	keyIndex uint8,
 	share *big.Int,
 	recipient types.NodeKey,
 	nonce *big.Int,
@@ -42,6 +46,7 @@ func EncryptShareWithNonce(
 		new(big.Int).SetBytes([]byte(epochID)),
 		contributorIndex,
 		recipientIndex,
+		keyIndex,
 		share,
 		recipient,
 		nonce,
@@ -52,16 +57,18 @@ func EncryptShareWithNonce(
 func EncryptShareWithNonceRoundHash(
 	roundHash *big.Int,
 	contributorIndex, recipientIndex uint16,
+	keyIndex uint8,
 	share *big.Int,
 	recipient types.NodeKey,
 	nonce *big.Int,
 ) (*Ciphertext, error) {
-	return encryptShareWithRoundValue(roundHash, contributorIndex, recipientIndex, share, recipient, nonce)
+	return encryptShareWithRoundValue(roundHash, contributorIndex, recipientIndex, keyIndex, share, recipient, nonce)
 }
 
 func encryptShareWithRoundValue(
 	roundValue *big.Int,
 	contributorIndex, recipientIndex uint16,
+	keyIndex uint8,
 	share *big.Int,
 	recipient types.NodeKey,
 	nonce *big.Int,
@@ -99,7 +106,7 @@ func encryptShareWithRoundValue(
 	shared := group.NewPoint()
 	shared.ScalarMult(recipientPoint, nonce)
 
-	mask, err := shareMask(roundValue, contributorIndex, recipientIndex, group.Encode(shared))
+	mask, err := shareMask(roundValue, contributorIndex, recipientIndex, keyIndex, group.Encode(shared))
 	if err != nil {
 		return nil, err
 	}
@@ -114,11 +121,14 @@ func encryptShareWithRoundValue(
 }
 
 // DecryptShare removes the masking term from one encrypted share.
-func DecryptShare(epochID string, contributorIndex, recipientIndex uint16, ciphertext Ciphertext, privateKey *big.Int) (*big.Int, error) {
+func DecryptShare(
+	epochID string, contributorIndex, recipientIndex uint16, keyIndex uint8, ciphertext Ciphertext, privateKey *big.Int,
+) (*big.Int, error) {
 	return DecryptShareRoundHash(
 		new(big.Int).SetBytes([]byte(epochID)),
 		contributorIndex,
 		recipientIndex,
+		keyIndex,
 		ciphertext,
 		privateKey,
 	)
@@ -128,6 +138,7 @@ func DecryptShare(epochID string, contributorIndex, recipientIndex uint16, ciphe
 func DecryptShareRoundHash(
 	roundHash *big.Int,
 	contributorIndex, recipientIndex uint16,
+	keyIndex uint8,
 	ciphertext Ciphertext,
 	privateKey *big.Int,
 ) (*big.Int, error) {
@@ -149,7 +160,7 @@ func DecryptShareRoundHash(
 	shared := group.NewPoint()
 	shared.ScalarMult(ephemeral, privateKey)
 
-	mask, err := shareMask(roundHash, contributorIndex, recipientIndex, group.Encode(shared))
+	mask, err := shareMask(roundHash, contributorIndex, recipientIndex, keyIndex, group.Encode(shared))
 	if err != nil {
 		return nil, err
 	}
@@ -159,11 +170,16 @@ func DecryptShareRoundHash(
 	return share, nil
 }
 
-func shareMask(roundHash *big.Int, contributorIndex, recipientIndex uint16, shared types.CurvePoint) (*big.Int, error) {
+// shareMask mirrors circuits/common.ShareMaskHash: keyIndex separates the
+// MaxK shares one contributor sends the same recipient under one ECDH secret.
+func shareMask(
+	roundHash *big.Int, contributorIndex, recipientIndex uint16, keyIndex uint8, shared types.CurvePoint,
+) (*big.Int, error) {
 	meta, err := dkghash.HashFieldElements(
 		dkghash.DomainValue(dkghash.DomainShareEncryption),
 		roundHash,
 		new(big.Int).SetUint64((uint64(contributorIndex)<<16)|uint64(recipientIndex)),
+		new(big.Int).SetUint64(uint64(keyIndex)),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("hash metadata: %w", err)

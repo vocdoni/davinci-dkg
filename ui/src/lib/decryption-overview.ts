@@ -3,7 +3,7 @@
 // The chain keeps applications in a mapping, so the only way to enumerate them
 // is the `ApplicationRegistered` log; the rest of the pipeline is likewise
 // reconstructed from events. Pure, so the shape of the "submitted → partials →
-// organizer share → combined" visual is testable without a chain.
+// combined" visual, and the per-application reveal, is testable without a chain.
 
 export interface DecryptionOverviewInput {
   applications: readonly { aid: string; creator: string; blockNumber: bigint }[]
@@ -14,8 +14,8 @@ export interface DecryptionOverviewInput {
     blockNumber: bigint
   }[]
   partials: readonly { aid: string; ciphertextIndex: number; participant: string }[]
-  /** `OrganizerShareSubmitted`, with the aid the query fetched them for. */
-  shares: readonly { aid: string; ciphertextIndex: number }[]
+  /** `OrganizerSecretRevealed` — one per organizer-locked application, ever. */
+  reveals: readonly { aid: string }[]
   combines: readonly { aid: string; ciphertextIndex: number; plaintext: bigint }[]
 }
 
@@ -26,7 +26,6 @@ export interface CiphertextProgress {
   /** Distinct committee members that published a partial for this ciphertext. */
   participants: string[]
   partials: number
-  organizerShare: boolean
   combined: boolean
   plaintext: bigint | null
 }
@@ -36,8 +35,9 @@ export interface ApplicationProgress {
   creator: string
   registeredAtBlock: bigint
   ciphertexts: CiphertextProgress[]
+  /** `sk_org` is out (or was never needed), so `t` partials suffice. */
+  secretRevealed: boolean
   submitted: number
-  sharesReleased: number
   combined: number
 }
 
@@ -65,8 +65,8 @@ export function aggregateDecryptionProgress(
         creator: '',
         registeredAtBlock: 0n,
         ciphertexts: [],
+        secretRevealed: false,
         submitted: 0,
-        sharesReleased: 0,
         combined: 0,
       }
       apps.set(key, row)
@@ -91,7 +91,6 @@ export function aggregateDecryptionProgress(
       blockNumber: c.blockNumber,
       participants: [],
       partials: 0,
-      organizerShare: false,
       combined: false,
       plaintext: null,
     }
@@ -109,11 +108,9 @@ export function aggregateDecryptionProgress(
     ct.partials = ct.participants.length
   }
 
-  for (const s of input.shares) {
-    const ct = cts.get(ctKey(s.aid, s.ciphertextIndex))
-    // Re-submission overwrites on chain, so several events for one index are
-    // normal and still mean exactly "the share is released".
-    if (ct) ct.organizerShare = true
+  for (const r of input.reveals) {
+    const row = apps.get(r.aid.toLowerCase())
+    if (row) row.secretRevealed = true
   }
 
   for (const c of input.combines) {
@@ -127,7 +124,6 @@ export function aggregateDecryptionProgress(
   for (const row of out) {
     row.ciphertexts.sort((a, b) => a.index - b.index)
     row.submitted = row.ciphertexts.length
-    row.sharesReleased = row.ciphertexts.filter((c) => c.organizerShare).length
     row.combined = row.ciphertexts.filter((c) => c.combined).length
   }
   // Newest application first — the one someone is most likely watching.

@@ -33,14 +33,14 @@ func TestContributionCircuitRejectsOversizedShares(t *testing.T) {
 	// is well outside [0, r). The circuit's `AssertIsLessOrEqual(...,
 	// subgroupOrderMinusOne)` constraint must reject it.
 	//
-	// witness.Shares is []frontend.Variable (assigned to *big.Int by
-	// BuildWitness); type-assert before doing big-int arithmetic.
-	honest, ok := witness.Shares[0].(*big.Int)
-	c.Assert(ok, qt.IsTrue, qt.Commentf("expected witness.Shares[0] to be *big.Int"))
+	// witness.Shares is [MaxKeys][MaxRecipients]frontend.Variable (assigned
+	// to *big.Int by BuildWitness); type-assert before big-int arithmetic.
+	honest, ok := witness.Shares[0][0].(*big.Int)
+	c.Assert(ok, qt.IsTrue, qt.Commentf("expected witness.Shares[0][0] to be *big.Int"))
 	rbjj := group.ScalarField()
 	tampered := new(big.Int).Mul(big.NewInt(7), rbjj)
 	tampered.Add(tampered, honest)
-	witness.Shares[0] = tampered
+	witness.Shares[0][0] = tampered
 
 	// Use SolvingFailed (not ProveAndVerify) so we don't pay the cost of
 	// running through the prover — the constraint solver alone is enough
@@ -58,8 +58,8 @@ func TestContributionCircuitRejectsOversizedCoefficients(t *testing.T) {
 
 	asn := testAssignment()
 	rbjj := group.ScalarField()
-	// Make Coefficients[0] equal to r_bjj exactly (out of range by 1).
-	asn.Coefficients[0] = new(big.Int).Set(rbjj)
+	// Make key 0's constant term equal to r_bjj exactly (out of range by 1).
+	asn.Coefficients[0][0] = new(big.Int).Set(rbjj)
 
 	witness, _, err := BuildWitness(asn)
 	c.Assert(err, qt.IsNil)

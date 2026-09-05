@@ -111,34 +111,42 @@ func stressRoundHashes(n int) []*big.Int {
 }
 
 // randCoefficients generates random-ish coefficients from a seed so that
-// the test is reproducible but exercises many different values.
-func randCoefficients(seed int64, threshold int) []*big.Int {
+// the test is reproducible but exercises many different values. One
+// independent polynomial per pool key.
+func randCoefficients(seed int64, threshold int) [][]*big.Int {
 	rbjj := group.ScalarField()
 	rnd := mathrand.New(mathrand.NewSource(seed))
-	coeffs := make([]*big.Int, threshold)
-	for k := range threshold {
-		b := make([]byte, 32)
-		_, _ = rnd.Read(b)
-		v := new(big.Int).SetBytes(b)
-		v.Mod(v, rbjj)
-		coeffs[k] = v
+	sets := make([][]*big.Int, MaxKeys)
+	for j := range MaxKeys {
+		sets[j] = make([]*big.Int, threshold)
+		for k := range threshold {
+			b := make([]byte, 32)
+			_, _ = rnd.Read(b)
+			v := new(big.Int).SetBytes(b)
+			v.Mod(v, rbjj)
+			sets[j][k] = v
+		}
 	}
-	return coeffs
+	return sets
 }
 
 // randCryptoCoefficients generates cryptographically random r_bjj-scale
-// coefficients to stress the AddModSubgroupOrder path.
-func randCryptoCoefficients(threshold int) ([]*big.Int, error) {
+// coefficients to stress the AddModSubgroupOrder path, one polynomial per
+// pool key.
+func randCryptoCoefficients(threshold int) ([][]*big.Int, error) {
 	rbjj := group.ScalarField()
-	coeffs := make([]*big.Int, threshold)
-	for k := range threshold {
-		v, err := rand.Int(rand.Reader, rbjj)
-		if err != nil {
-			return nil, err
+	sets := make([][]*big.Int, MaxKeys)
+	for j := range MaxKeys {
+		sets[j] = make([]*big.Int, threshold)
+		for k := range threshold {
+			v, err := rand.Int(rand.Reader, rbjj)
+			if err != nil {
+				return nil, err
+			}
+			sets[j][k] = v
 		}
-		coeffs[k] = v
 	}
-	return coeffs, nil
+	return sets, nil
 }
 
 // TestContributionCircuitStress runs repeated prove+verify cycles with varied
@@ -193,12 +201,12 @@ func TestContributionCircuitStress(t *testing.T) {
 		threshold      int
 		contributorIdx int
 		roundHash      *big.Int
-		coefficients   []*big.Int
+		coefficients   [][]*big.Int
 		err            error
 	}
 	var failures []failureInfo
 
-	prove := func(n, threshold, contributorIdx int, roundHash *big.Int, coefficients []*big.Int) error {
+	prove := func(n, threshold, contributorIdx int, roundHash *big.Int, coefficients [][]*big.Int) error {
 		recipientIndexes := make([]uint16, n)
 		recipientKeys := make([]types.NodeKey, n)
 		nonces := make([]*big.Int, n)
@@ -241,10 +249,11 @@ func TestContributionCircuitStress(t *testing.T) {
 			t.Run("small_coeffs", func(t *testing.T) {
 				for _, rh := range roundHashes {
 					for i := range n {
-						coefficients := make([]*big.Int, threshold)
+						base := make([]*big.Int, threshold)
 						for k := range threshold {
-							coefficients[k] = big.NewInt(int64((i+1)*10 + k + 1))
+							base[k] = big.NewInt(int64((i+1)*10 + k + 1))
 						}
+						coefficients := poolCoefficients(base)
 						if err := prove(n, threshold, i+1, rh, coefficients); err != nil {
 							info := failureInfo{n: n, threshold: threshold, contributorIdx: i + 1, roundHash: rh, coefficients: coefficients, err: err}
 							failures = append(failures, info)
@@ -301,8 +310,10 @@ func TestContributionCircuitStress(t *testing.T) {
 		for _, f := range failures {
 			t.Logf("n=%d t=%d contributor=%d roundHash=%s err=%v",
 				f.n, f.threshold, f.contributorIdx, f.roundHash.String(), f.err)
-			for k, c := range f.coefficients {
-				t.Logf("  coeff[%d] = %s", k, c.String())
+			for j, set := range f.coefficients {
+				for k, coefficient := range set {
+					t.Logf("  coeff[key %d][%d] = %s", j, k, coefficient.String())
+				}
 			}
 		}
 	}
@@ -332,10 +343,11 @@ func TestContributionCircuitStressRepeat(t *testing.T) {
 		recipientIndexes[j] = uint16(j + 1)
 		nonces[j] = big.NewInt(int64(1000 + j + 1))
 	}
-	coefficients := make([]*big.Int, threshold)
+	base := make([]*big.Int, threshold)
 	for k := range threshold {
-		coefficients[k] = big.NewInt(int64(contributorI*10 + k + 1))
+		base[k] = big.NewInt(int64(contributorI*10 + k + 1))
 	}
+	coefficients := poolCoefficients(base)
 
 	runtime, err := Artifacts.LoadOrSetupForCircuit(context.Background(), &ContributionCircuit{})
 	c.Assert(err, qt.IsNil)

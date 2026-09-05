@@ -8,18 +8,18 @@ import {DKGTypes} from "./libraries/DKGTypes.sol";
 import {DKGProtocol} from "./libraries/DKGProtocol.sol";
 
 /// @title  DKGAppManager
-/// @notice Per-application surface (organizer registration + organizer share
-///         publication) for the davinci-dkg system. Sibling to `DKGManager`;
-///         communicates with it through the narrow `IDKGManager` view surface
-///         (`getEpoch`, `getCiphertextHash`, `getCombinedDecryption`) and is
-///         consulted by `DKGManager` via `IDKGAppManager` at
-///         `submitCiphertext` / `combineDecryption` time.
+/// @notice Per-application surface (organizer registration, pool-key claim,
+///         submission policy and decryption window) for the davinci-dkg
+///         system. Sibling to `DKGManager`; drives it through the narrow
+///         `IDKGManager` surface (`getEpoch`, `claimPoolKey`) and is consulted
+///         by it via `IDKGAppManager` at `submitCiphertext` /
+///         `submitPartialDecryption` / `combineDecryption` time.
 ///
 ///         Was carved out of `DKGManager` to keep the latter's runtime size
 ///         under the EIP-170 24,576-byte limit. No protocol behaviour change.
 contract DKGAppManager is IDKGAppManager {
-    /// @dev Must mirror `DKGManager.MAX_CIPHERTEXT_INDEX`.
-    uint16 internal constant MAX_CIPHERTEXT_INDEX = 256;
+    /// @dev Bounds the allow-list scan in `requireCanSubmitCiphertext`.
+    uint256 internal constant MAX_SUBMITTERS = 32;
 
     /// @notice The sibling DKGManager whose epochs this contract registers
     ///         applications against. Immutable.
@@ -33,15 +33,6 @@ contract DKGAppManager is IDKGAppManager {
     ///      for explorers. Append-only; never reordered.
     mapping(bytes12 epochId => bytes32[] aids) internal epochAidsList;
 
-    /// @dev Per-(eid, aid, ciphertextIndex) organizer share commitments:
-    ///      `keccak256(abi.encodePacked(Δ.x, Δ.y, A1.x, A1.y, A2.x, A2.y, z))`.
-    ///      Written by `submitOrganizerShare`, read by
-    ///      `DKGManager.combineDecryption` through `getOrganizerShareHash`,
-    ///      which binds the combine transcript's organizer words to it. The
-    ///      DLEQ itself is verified inside the combine SNARK, never here.
-    mapping(bytes12 epochId => mapping(bytes32 aid => mapping(uint16 ciphertextIndex => bytes32 shareHash)))
-        internal organizerShares;
-
     constructor(address _manager) {
         if (_manager == address(0)) revert InvalidAddress();
         MANAGER = _manager;
@@ -49,17 +40,28 @@ contract DKGAppManager is IDKGAppManager {
 
     // ─── Application lifecycle ───────────────────────────────────────────────
 
-    /// @notice Register an application against a Live epoch. Verifies a Schnorr
-    ///         proof of knowledge of `sk_org`:
+    /// @notice Register an application against a Live epoch and claim the
+    ///         epoch's next activated pool key `P_j`.
+    ///
+    ///         `OrganizerLocked`: verifies a Schnorr proof of knowledge of
+    ///         `sk_org`,
     ///
     ///             c = keccak256(domain || eid || aid || PK_org || A) mod L
     ///             z·G == A + c·PK_org
     ///
-    ///         The application key is `PK_aid = PK_ep + PK_org`; losing
-    ///         `sk_org` makes every ciphertext of the application permanently
-    ///         undecryptable.
-    /// @dev    `policy.authorizedSubmitter == address(0)` resolves to
-    ///         `msg.sender` — there is no open submission.
+    ///         and the application key is `PK_aid = P_j + PK_org`. Losing
+    ///         `sk_org` leaves the ciphertexts sealed until (and unless) the
+    ///         organizer calls `revealOrganizerSecret`.
+    ///
+    ///         `Automatic`: there is no organizer key. The `pkOrg*` and
+    ///         `schnorr*` arguments are ignored, `organizerPK` is stored as
+    ///         the identity `(0, 1)` and `PK_aid = P_j` — the committee
+    ///         decrypts on its own, and confidentiality rests on the threshold
+    ///         plus the fact that `P_j` is this application's own key.
+    /// @dev    Submission is open to anyone (`policy.openSubmission`), to the
+    ///         `policy.submitters` allow-list, or — when both are empty — to
+    ///         `msg.sender` only. The pool claim is the last step so a
+    ///         rejected registration never burns a key.
     function registerApplication(
         bytes12 epochId,
         bytes32 aid,
@@ -74,86 +76,73 @@ contract DKGAppManager is IDKGAppManager {
         if (epoch.organizer == address(0)) revert InvalidEpoch();
         if (epoch.status != DKGTypes.EpochPhase.Live) revert InvalidPhase();
         _requireValidAid(aid);
-        DKGTypes.Application storage existing = applications[epochId][aid];
-        if (existing.exists) revert ApplicationAlreadyExists();
+        DKGTypes.Application storage app = applications[epochId][aid];
+        if (app.exists) revert ApplicationAlreadyExists();
+        _requireValidPolicy(policy);
 
-        BabyJubJub.requireValidPoint(pkOrgX, pkOrgY);
-        BabyJubJub.requireValidPoint(schnorrAx, schnorrAy);
-
-        if (
-            !_verifyOrganizerSchnorr(
-                epochId, aid, pkOrgX, pkOrgY, schnorrAx, schnorrAy, schnorrZ
-            )
-        ) revert InvalidSchnorrProof();
-
-        DKGTypes.AppPolicy memory resolved = policy;
-        if (resolved.authorizedSubmitter == address(0)) resolved.authorizedSubmitter = msg.sender;
-
-        existing.creator = msg.sender;
-        existing.organizerPK = DKGTypes.Point({x: pkOrgX, y: pkOrgY});
-        existing.policy = resolved;
-        existing.createdAtBlock = uint64(block.number);
-        existing.exists = true;
-        epochAidsList[epochId].push(aid);
-
-        emit ApplicationRegistered(epochId, aid, msg.sender, pkOrgX, pkOrgY);
-    }
-
-    /// @notice Publish the organizer's `Δ = sk_org · C_1` for one ciphertext
-    ///         together with the Chaum–Pedersen DLEQ `(A1, A2, z)` proving
-    ///         `log_G(PK_org) == log_{C_1}(Δ)`.
-    /// @dev    Permissionless and unverified on chain: the contract only binds
-    ///         the words to `(eid, aid, ctIdx)` by storing their hash. The
-    ///         combine SNARK verifies the DLEQ against the registered
-    ///         `PK_org` and the challenge `e` that `DKGManager` recomputes
-    ///         from the same words, so a bogus share can never produce a
-    ///         combine proof — it can only be overwritten by a correct one.
-    function submitOrganizerShare(
-        bytes12 epochId,
-        bytes32 aid,
-        uint16 ciphertextIndex,
-        uint256 c1x,
-        uint256 c1y,
-        uint256 c2x,
-        uint256 c2y,
-        uint256 deltaX,
-        uint256 deltaY,
-        uint256 a1x,
-        uint256 a1y,
-        uint256 a2x,
-        uint256 a2y,
-        uint256 z
-    ) external {
-        IDKGManager.Epoch memory epoch = IDKGManager(MANAGER).getEpoch(epochId);
-        if (epoch.organizer == address(0)) revert InvalidEpoch();
-        if (epoch.status != DKGTypes.EpochPhase.Live) revert InvalidPhase();
-        if (ciphertextIndex == 0 || ciphertextIndex > MAX_CIPHERTEXT_INDEX) revert InvalidCiphertext();
-        if (!applications[epochId][aid].exists) revert InvalidApplication();
-
-        // Bind (C1, C2) to the on-chain ciphertext stored on the manager: the
-        // DLEQ is only meaningful relative to the authoritative C1.
-        bytes32 storedCt = IDKGManager(MANAGER).getCiphertextHash(epochId, aid, ciphertextIndex);
-        if (storedCt == bytes32(0)) revert CiphertextNotSubmitted();
-        if (_hash4(c1x, c1y, c2x, c2y) != storedCt) revert InvalidProofInput();
-
-        // A malformed share must never brick a ciphertext, so re-submission
-        // overwrites — until the plaintext is on chain and the share is moot.
-        if (IDKGManager(MANAGER).getCombinedDecryption(epochId, aid, ciphertextIndex).completed) {
-            revert AlreadyCombined();
+        uint256 keyX;
+        uint256 keyY;
+        if (policy.mode == DKGTypes.AppMode.Automatic) {
+            // No organizer half at all: store the identity so the combine
+            // transcript's PK_org binding needs no mode-specific branch.
+            keyY = 1;
+        } else {
+            BabyJubJub.requireValidPoint(pkOrgX, pkOrgY);
+            BabyJubJub.requireValidPoint(schnorrAx, schnorrAy);
+            if (
+                !_verifyOrganizerSchnorr(epochId, aid, pkOrgX, pkOrgY, schnorrAx, schnorrAy, schnorrZ)
+            ) revert InvalidSchnorrProof();
+            keyX = pkOrgX;
+            keyY = pkOrgY;
         }
 
-        // Cheap well-formedness. Δ must be a real point (a small-order or
-        // identity Δ can never satisfy the in-circuit DLEQ anyway, but
-        // rejecting it here keeps the stored words meaningful); A1/A2 must be
-        // canonical and on-curve, `z` a canonical scalar.
-        BabyJubJub.requireValidPoint(deltaX, deltaY);
-        if (!BabyJubJub.isOnCurve(a1x, a1y) || !BabyJubJub.isOnCurve(a2x, a2y)) revert InvalidProofInput();
-        if (z >= BabyJubJub.SUBGROUP_ORDER) revert InvalidProofInput();
+        // Reverts PoolExhausted / PoolKeyNotActive; only the app manager may
+        // call it, and it moves the epoch's pool cursor forward by one.
+        uint8 poolIndex = IDKGManager(MANAGER).claimPoolKey(epochId, aid);
 
-        organizerShares[epochId][aid][ciphertextIndex] =
-            keccak256(abi.encodePacked(deltaX, deltaY, a1x, a1y, a2x, a2y, z));
+        app.creator = msg.sender;
+        app.organizerPK = DKGTypes.Point({x: keyX, y: keyY});
+        app.poolIndex = poolIndex;
+        // Field by field: a calldata struct holding a dynamic array cannot be
+        // assigned to storage in one go.
+        DKGTypes.AppPolicy storage stored = app.policy;
+        stored.mode = policy.mode;
+        stored.openSubmission = policy.openSubmission;
+        stored.submitters = policy.submitters;
+        stored.maxCiphertexts = policy.maxCiphertexts;
+        stored.notBeforeBlock = policy.notBeforeBlock;
+        stored.notAfterBlock = policy.notAfterBlock;
+        stored.decryptNotBefore = policy.decryptNotBefore;
+        stored.decryptNotAfter = policy.decryptNotAfter;
+        app.createdAtBlock = uint64(block.number);
+        app.exists = true;
+        epochAidsList[epochId].push(aid);
 
-        emit OrganizerShareSubmitted(epochId, aid, ciphertextIndex, deltaX, deltaY, a1x, a1y, a2x, a2y, z);
+        emit ApplicationRegistered(epochId, aid, msg.sender, keyX, keyY, policy.mode, poolIndex);
+    }
+
+    /// @notice Publish `sk_org` for an `OrganizerLocked` application.
+    /// @dev    Permissionless and one-shot: the contract checks
+    ///         `sk_org·G == PK_org`, so only the real secret is accepted and
+    ///         whoever holds it may publish it. Afterwards the committee can
+    ///         combine every ciphertext of the application by itself — the
+    ///         combine circuit takes `sk_org` as a private witness, so there
+    ///         is no per-ciphertext organizer artefact either way. There is no
+    ///         un-reveal.
+    function revealOrganizerSecret(bytes12 epochId, bytes32 aid, uint256 organizerSecret) external {
+        DKGTypes.Application storage app = applications[epochId][aid];
+        if (!app.exists) revert InvalidApplication();
+        // Automatic applications have no secret to reveal: their key is the
+        // identity and `organizerSecret` is structurally 0.
+        if (app.policy.mode != DKGTypes.AppMode.OrganizerLocked) revert AlreadyRevealed();
+        if (app.organizerSecret != 0) revert AlreadyRevealed();
+        if (organizerSecret == 0 || organizerSecret >= BabyJubJub.SUBGROUP_ORDER) revert InvalidOrganizerSecret();
+        (uint256 gx, uint256 gy) = BabyJubJub.scalarMulBase(organizerSecret);
+        DKGTypes.Point storage pk = app.organizerPK;
+        if (gx != pk.x || gy != pk.y) revert InvalidOrganizerSecret();
+
+        app.organizerSecret = organizerSecret;
+        emit OrganizerSecretRevealed(epochId, aid, organizerSecret);
     }
 
     /// @notice Read an application record.
@@ -167,12 +156,26 @@ contract DKGAppManager is IDKGAppManager {
 
     // ─── Cross-contract APIs (called by DKGManager) ───────────────────────────
 
-    function getOrganizerShareHash(bytes12 epochId, bytes32 aid, uint16 ciphertextIndex)
-        external
-        view
-        returns (bytes32)
-    {
-        return organizerShares[epochId][aid][ciphertextIndex];
+    function getOrganizerPK(bytes12 epochId, bytes32 aid) external view returns (uint256, uint256) {
+        DKGTypes.Point storage pk = applications[epochId][aid].organizerPK;
+        return (pk.x, pk.y);
+    }
+
+    function requireDecryptionOpen(bytes12 epochId, bytes32 aid) external view {
+        DKGTypes.Application storage app = applications[epochId][aid];
+        if (!app.exists) revert InvalidApplication();
+        DKGTypes.AppPolicy storage ap = app.policy;
+        // A sealed locked application has nothing the committee may act on:
+        // `t` partials alone would already fix `P_j`'s half of the
+        // decryption, so neither partials nor combines exist before the
+        // organizer reveals `sk_org`.
+        if (ap.mode == DKGTypes.AppMode.OrganizerLocked && app.organizerSecret == 0) {
+            revert OrganizerSecretNotRevealed();
+        }
+        uint64 opensAt = ap.decryptNotBefore;
+        if (opensAt != 0 && block.timestamp < opensAt) revert DecryptionNotOpen();
+        uint64 deadline = ap.decryptNotAfter;
+        if (deadline != 0 && block.timestamp > deadline) revert DecryptionClosed();
     }
 
     function requireCanSubmitCiphertext(
@@ -183,12 +186,13 @@ contract DKGAppManager is IDKGAppManager {
     ) external view {
         DKGTypes.Application storage app = applications[epochId][aid];
         if (!app.exists) revert InvalidApplication();
-        DKGTypes.AppPolicy memory ap = app.policy;
-        // Always set: registration resolves a zero submitter to the registrant.
-        if (sender != ap.authorizedSubmitter) revert NotOwner();
+        DKGTypes.AppPolicy storage ap = app.policy;
+        if (!ap.openSubmission && !_isSubmitter(app, sender)) revert NotOwner();
         if (ap.notBeforeBlock != 0 && uint64(block.number) < ap.notBeforeBlock) revert DecryptionNotYetAllowed();
         if (ap.notAfterBlock  != 0 && uint64(block.number) > ap.notAfterBlock)  revert DecryptionExpired();
         if (ap.maxCiphertexts != 0 && ciphertextIndex > ap.maxCiphertexts) revert DecryptionLimitReached();
+        // A ciphertext nobody may ever decrypt is not worth storing.
+        if (ap.decryptNotAfter != 0 && block.timestamp > ap.decryptNotAfter) revert DecryptionClosed();
     }
 
     function getRegisteredAids(bytes12 epochId) external view returns (bytes32[] memory) {
@@ -196,6 +200,33 @@ contract DKGAppManager is IDKGAppManager {
     }
 
     // ─── Internals ────────────────────────────────────────────────────────────
+
+    /// @dev Allow-list semantics: empty list → the registrant only.
+    function _isSubmitter(DKGTypes.Application storage app, address sender) internal view returns (bool) {
+        address[] storage list = app.policy.submitters;
+        uint256 n = list.length;
+        if (n == 0) return sender == app.creator;
+        for (uint256 i; i < n; i++) {
+            if (list[i] == sender) return true;
+        }
+        return false;
+    }
+
+    /// @dev Reject contradictory or useless policies up front.
+    function _requireValidPolicy(DKGTypes.AppPolicy calldata p) internal view {
+        uint256 n = p.submitters.length;
+        if (n > MAX_SUBMITTERS || (p.openSubmission && n != 0)) revert InvalidPolicy();
+        for (uint256 i; i < n; i++) {
+            if (p.submitters[i] == address(0)) revert InvalidPolicy();
+        }
+        // A decryption window that is already over, or that closes before it
+        // opens, would make every ciphertext of the application dead on
+        // arrival.
+        if (p.decryptNotAfter != 0 && p.decryptNotAfter <= block.timestamp) revert InvalidPolicy();
+        if (p.decryptNotBefore != 0 && p.decryptNotAfter != 0 && p.decryptNotBefore > p.decryptNotAfter) {
+            revert InvalidPolicy();
+        }
+    }
 
     /// @dev `aid` is bound into the partial-decrypt and combine proofs as a
     ///      BN254 scalar-field public input, so an id at or above the field
@@ -241,14 +272,4 @@ contract DKGAppManager is IDKGAppManager {
         return BabyJubJub.verifySchnorrEquation(z, c, ax, ay, pkX, pkY);
     }
 
-    function _hash4(uint256 a, uint256 b, uint256 c, uint256 d) internal pure returns (bytes32 h) {
-        assembly ("memory-safe") {
-            let p := mload(0x40)
-            mstore(p, a)
-            mstore(add(p, 0x20), b)
-            mstore(add(p, 0x40), c)
-            mstore(add(p, 0x60), d)
-            h := keccak256(p, 0x80)
-        }
-    }
 }

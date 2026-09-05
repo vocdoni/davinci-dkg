@@ -83,8 +83,8 @@ function EpochPage() {
 - **Blocks are `number`s** everywhere in the store; curve coordinates,
   plaintexts and the lottery threshold τ stay `bigint`.
 - **Slots are 0-based, participant indices are 1-based.** `SlotClaimed.slot`
-  counts from 0; `contributorIndex`, `participantIndex` and
-  `getShareCommitmentHash` count from 1 (`epochParticipants[i - 1]`). Selectors
+  counts from 0; `contributorIndex` and `participantIndex` count from 1
+  (`epochParticipants[i - 1]`; a partial's Merkle leaf is `index - 1`). Selectors
   expose both (`CommitteeRow.slot` / `.participantIndex`) and the partial
   matrix is addressed by **slot**. `ciphertextIndex` is 1-based too.
 - **τ as a fraction**: `epochDetail(...).lottery.thresholdFraction` is
@@ -109,8 +109,9 @@ function EpochPage() {
 
 `createDemoDataSource()` serves `src/fixtures/synthetic.ts`: 300 operators,
 8 epochs of 64 members (t = 33, m_min = 40), one aborted, one in KeyAssembly,
-2 applications × 8 ciphertexts per Live epoch, partials in waves, some
-withheld organizer shares, gas figures from `BENCHMARKS.md`. Its head block
+four pool keys activated per Live epoch, 2 applications × 8 ciphertexts
+(one organizer-locked, one automatic), partials in waves, one organizer secret
+still kept, gas figures from `BENCHMARKS.md`. Its head block
 advances every 12 s. Pass options through `createDataSource({ demoOptions })`
 to shrink it (tests use 24 operators / 4 epochs / committee 6).
 

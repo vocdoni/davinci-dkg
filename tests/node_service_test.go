@@ -3,6 +3,7 @@ package tests
 import (
 	"context"
 	"math/big"
+	"math/bits"
 	"testing"
 	"time"
 
@@ -17,11 +18,12 @@ import (
 
 // TestNodesServiceApplicationCiphertexts runs three real node instances
 // against the harness chain and checks the whole production path: lottery
-// claim, contribution, finalize, then partial decryption + combine for
-// ciphertexts submitted under two registered applications. The test plays the
-// organizer: it registers each application with its own sk_org, encrypts
-// under PK_aid = PK_ep + PK_org and releases the organizer share. The nodes
-// must not combine anything before that share is on chain.
+// claim, contribution, the proof-less finalize, pool-key activation, then
+// partial decryption + combine for ciphertexts submitted under two
+// applications. One is automatic — the committee owns it end to end — and
+// one is organizer-locked: the contract refuses every partial of it until
+// the organizer calls revealOrganizerSecret, so the nodes park its slots and
+// nothing of it exists on chain before the reveal half way through the test.
 func TestNodesServiceApplicationCiphertexts(t *testing.T) {
 	if !helpers.IsIntegrationEnabled() {
 		t.Skip("integration tests disabled")
@@ -38,6 +40,7 @@ func TestNodesServiceApplicationCiphertexts(t *testing.T) {
 			ManagerAddr:           services.Addresses.Manager.Hex(),
 			PollInterval:          time.Second,
 			AutoCreateEpochs:      false,
+			ActivateAhead:         2,
 			DecryptLookbackBlocks: 5,
 		}
 		n, err := node.New(cfg)
@@ -72,25 +75,39 @@ func TestNodesServiceApplicationCiphertexts(t *testing.T) {
 		return err == nil && e.Status == 3
 	}), qt.IsNil, qt.Commentf("nodes must claim, contribute and finalize on their own"))
 
-	pkRaw, err := services.Manager.GetCollectivePublicKey(services.CallOpts(ctx), epochID)
-	c.Assert(err, qt.IsNil)
-	pkEp := types.CurvePoint{X: pkRaw.X, Y: pkRaw.Y}
+	// The nodes activate pool keys as soon as the epoch is Live and keep a
+	// couple of unclaimed ones ahead; two are enough for this test.
+	c.Assert(helpers.WaitUntilCondition(ctx, time.Second, func() bool {
+		status, err := services.Manager.GetPoolStatus(services.CallOpts(ctx), epochID)
+		return err == nil && bits.OnesCount8(status.Activated) >= 2
+	}), qt.IsNil, qt.Commentf("nodes must activate the epoch's pool keys on their own"))
 
-	// ── two applications, each with its own organizer key ─────────────────
+	// ── two applications: one automatic, one organizer-locked ─────────────
 	self := selfActor()
-	aidA, skOrgA := randomAid(c), randomOrganizerSecret(c)
-	aidB, skOrgB := randomAid(c), randomOrganizerSecret(c)
-	skOrgFor := map[[32]byte]*big.Int{aidA: skOrgA, aidB: skOrgB}
+	aidAuto := randomAid(c)
+	aidLocked := randomAid(c)
+	skOrg := randomOrganizerSecret(c)
+
+	c.Assert(helpers.RegisterApplication(
+		ctx, self, services.AppManager, epochID, aidAuto, nil,
+		golangtypes.DKGTypesAppPolicy{Mode: uint8(types.AppModeAutomatic)},
+	), qt.IsNil)
+	c.Assert(helpers.RegisterApplication(
+		ctx, self, services.AppManager, epochID, aidLocked, skOrg, golangtypes.DKGTypesAppPolicy{},
+	), qt.IsNil)
+
 	pkFor := map[[32]byte]types.CurvePoint{}
-	for aid, skOrg := range skOrgFor {
-		c.Assert(helpers.RegisterApplication(
-			ctx, self, services.AppManager, epochID, aid, skOrg, golangtypes.DKGTypesAppPolicy{},
-		), qt.IsNil)
-		rec, err := services.AppManager.GetApplication(services.CallOpts(ctx), epochID, aid)
-		c.Assert(err, qt.IsNil)
+	for _, aid := range [][32]byte{aidAuto, aidLocked} {
+		rec, recErr := services.AppManager.GetApplication(services.CallOpts(ctx), epochID, aid)
+		c.Assert(recErr, qt.IsNil)
 		c.Assert(rec.Exists, qt.IsTrue)
-		pkAid, err := elgamal.ApplicationKey(pkEp, types.CurvePoint{X: rec.OrganizerPK.X, Y: rec.OrganizerPK.Y})
-		c.Assert(err, qt.IsNil)
+		x, y, keyErr := services.Manager.GetPoolKey(services.CallOpts(ctx), epochID, rec.PoolIndex)
+		c.Assert(keyErr, qt.IsNil)
+		pkAid, keyErr := elgamal.ApplicationKey(
+			types.CurvePoint{X: x, Y: y},
+			types.CurvePoint{X: rec.OrganizerPK.X, Y: rec.OrganizerPK.Y},
+		)
+		c.Assert(keyErr, qt.IsNil)
 		pkFor[aid] = pkAid
 	}
 
@@ -101,33 +118,67 @@ func TestNodesServiceApplicationCiphertexts(t *testing.T) {
 		m   *big.Int
 	}
 	wants := []want{
-		{aidA, 1, big.NewInt(42)},
-		{aidA, 2, big.NewInt(1_000_000)},
-		{aidB, 1, big.NewInt(7)},
+		{aidAuto, 1, big.NewInt(42)},
+		{aidAuto, 2, big.NewInt(1_000_000)},
+		{aidLocked, 1, big.NewInt(7)},
+		{aidLocked, 2, big.NewInt(123_456)},
 	}
 	for _, w := range wants {
-		c1, c2, err := elgamal.Encrypt(pkFor[w.aid], w.m)
-		c.Assert(err, qt.IsNil)
-		assigned, err := helpers.SubmitCiphertextAs(ctx, self, epochID, w.aid, c1, c2)
-		c.Assert(err, qt.IsNil)
+		c1, c2, encErr := elgamal.Encrypt(pkFor[w.aid], w.m)
+		c.Assert(encErr, qt.IsNil)
+		assigned, subErr := helpers.SubmitCiphertextAs(ctx, self, epochID, w.aid, c1, c2)
+		c.Assert(subErr, qt.IsNil)
 		c.Assert(assigned, qt.Equals, w.idx, qt.Commentf("indices are assigned sequentially per application"))
-
-		// The organizer half. Until this lands the committee can only
-		// recover sk_ep·C1, so no node may combine.
-		_, _, err = helpers.SubmitOrganizerShareAs(
-			ctx, self, services.AppManager, epochID, w.aid, assigned, c1, c2, skOrgFor[w.aid],
-		)
-		c.Assert(err, qt.IsNil)
 	}
 
-	// ── the committee must decrypt every one of them ──────────────────────
+	// ── the automatic application decrypts on its own ─────────────────────
 	for _, w := range wants {
-		c.Assert(helpers.WaitUntilCondition(ctx, time.Second, func() bool {
-			rec, err := services.Manager.GetCombinedDecryption(services.CallOpts(ctx), epochID, w.aid, w.idx)
-			return err == nil && rec.Completed
-		}), qt.IsNil, qt.Commentf("aid=%x idx=%d never combined", w.aid, w.idx))
-		got, err := services.Manager.GetPlaintext(services.CallOpts(ctx), epochID, w.aid, w.idx)
-		c.Assert(err, qt.IsNil)
-		c.Assert(got.String(), qt.Equals, w.m.String())
+		if w.aid != aidAuto {
+			continue
+		}
+		waitCombined(ctx, c, epochID, w.aid, w.idx, w.m)
 	}
+
+	// ── the locked one stays sealed until the secret is out ───────────────
+	// The automatic combines above took the nodes through many ticks with
+	// the locked ciphertexts pending; not one partial of them may be on
+	// chain, let alone a combine — the contract reverts
+	// OrganizerSecretNotRevealed and the nodes park the slots instead.
+	for _, w := range wants {
+		if w.aid != aidLocked {
+			continue
+		}
+		for member := uint16(1); member <= 3; member++ {
+			partial, partialErr := services.Manager.GetPartialDecryption(services.CallOpts(ctx), epochID, w.aid, member, w.idx)
+			c.Assert(partialErr, qt.IsNil)
+			c.Assert(partial.Accepted, qt.IsFalse,
+				qt.Commentf("aid=%x idx=%d member %d posted a partial before the reveal", w.aid, w.idx, member))
+		}
+		rec, recErr := services.Manager.GetCombinedDecryption(services.CallOpts(ctx), epochID, w.aid, w.idx)
+		c.Assert(recErr, qt.IsNil)
+		c.Assert(rec.Completed, qt.IsFalse,
+			qt.Commentf("aid=%x idx=%d combined without the organizer secret", w.aid, w.idx))
+	}
+
+	// The reveal wakes the parked slots; partials and combines follow.
+	c.Assert(helpers.RevealOrganizerSecretAs(ctx, self, services.AppManager, epochID, aidLocked, skOrg), qt.IsNil)
+
+	for _, w := range wants {
+		if w.aid != aidLocked {
+			continue
+		}
+		waitCombined(ctx, c, epochID, w.aid, w.idx, w.m)
+	}
+}
+
+// waitCombined blocks until the nodes combined (epochID, aid, idx) and
+// asserts the recovered plaintext.
+func waitCombined(ctx context.Context, c *qt.C, epochID [12]byte, aid [32]byte, idx uint16, want *big.Int) {
+	c.Assert(helpers.WaitUntilCondition(ctx, time.Second, func() bool {
+		rec, err := services.Manager.GetCombinedDecryption(services.CallOpts(ctx), epochID, aid, idx)
+		return err == nil && rec.Completed
+	}), qt.IsNil, qt.Commentf("aid=%x idx=%d never combined", aid, idx))
+	got, err := services.Manager.GetPlaintext(services.CallOpts(ctx), epochID, aid, idx)
+	c.Assert(err, qt.IsNil)
+	c.Assert(got.String(), qt.Equals, want.String())
 }

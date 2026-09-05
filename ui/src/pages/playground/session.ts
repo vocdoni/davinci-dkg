@@ -3,15 +3,17 @@
 // `~lib/organizer-secret` owns `sk_org`; this owns everything else the
 // walkthrough needs to pick up where it left off after a reload: the value
 // that was encrypted, the ciphertext built from it, the index the contract
-// assigned, the share decision and the transaction records. None of it is
-// sensitive — all of it is either public on chain or reconstructible — but
-// losing it would strand the "verify locally" step, which compares what the
-// chain stores against what this browser built.
+// assigned, the pool key the registration claimed, the reveal decision and
+// the transaction records. None of it is sensitive — all of it is either
+// public on chain or reconstructible — but losing it would strand the
+// "verify locally" step, which compares what the chain stores against what
+// this browser built.
 //
 // Same lifetime as the secret (`sessionStorage`, dies with the tab) so a
 // resumed walkthrough never has half its state.
 
-import type { PlaygroundState, SerialCiphertext, ShareDecision, TxSlot, TxState } from './machine'
+import type { AppModeName } from '~indexer/types'
+import type { PlaygroundState, RevealDecision, SerialCiphertext, TxSlot, TxState } from './machine'
 
 const PREFIX = 'davinci-dkg:playground:'
 
@@ -19,9 +21,13 @@ export interface PlaygroundSession {
   value: string
   ciphertext: SerialCiphertext | null
   ciphertextIndex: number | null
-  share: ShareDecision
+  reveal: RevealDecision
+  mode: AppModeName
   cap: number
   submitter: string
+  decryptNotBefore: string
+  decryptNotAfter: string
+  poolIndex: number | null
   txs: Partial<Record<TxSlot, TxState>>
 }
 
@@ -34,9 +40,13 @@ export function saveSession(epochId: string, aid: string, state: PlaygroundState
     value: state.value,
     ciphertext: state.ciphertext,
     ciphertextIndex: state.ciphertextIndex,
-    share: state.share,
+    reveal: state.reveal,
+    mode: state.mode,
     cap: state.cap,
     submitter: state.submitter,
+    decryptNotBefore: state.decryptNotBefore,
+    decryptNotAfter: state.decryptNotAfter,
+    poolIndex: state.poolIndex,
     txs: state.txs,
   }
   try {
@@ -57,9 +67,13 @@ export function loadSession(epochId: string, aid: string): PlaygroundSession | n
       value: typeof parsed.value === 'string' ? parsed.value : '',
       ciphertext: parsed.ciphertext ?? null,
       ciphertextIndex: typeof parsed.ciphertextIndex === 'number' ? parsed.ciphertextIndex : null,
-      share: parsed.share === 'released' || parsed.share === 'withheld' ? parsed.share : 'undecided',
+      reveal: parsed.reveal === 'revealed' || parsed.reveal === 'kept' ? parsed.reveal : 'undecided',
+      mode: parsed.mode === 'automatic' ? 'automatic' : 'organizer-locked',
       cap: typeof parsed.cap === 'number' ? parsed.cap : 4,
       submitter: typeof parsed.submitter === 'string' ? parsed.submitter : '',
+      decryptNotBefore: typeof parsed.decryptNotBefore === 'string' ? parsed.decryptNotBefore : '',
+      decryptNotAfter: typeof parsed.decryptNotAfter === 'string' ? parsed.decryptNotAfter : '',
+      poolIndex: typeof parsed.poolIndex === 'number' ? parsed.poolIndex : null,
       txs: parsed.txs ?? {},
     }
   } catch {

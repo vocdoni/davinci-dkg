@@ -1,5 +1,5 @@
 // Contract state the events do not carry: epoch structs, registry records,
-// application records, share commitments and transaction metadata.
+// application records, the pool cursor and transaction metadata.
 //
 // Everything goes through `multicall` against the canonical Multicall3
 // address (deployed on Sepolia and pre-deployed by Anvil). A chain without it
@@ -8,7 +8,7 @@
 
 import { dkgAppManagerAbi, dkgManagerAbi, dkgRegistryAbi, fromRTEtoTE } from '@vocdoni/davinci-dkg-sdk'
 import type { Abi, Address, PublicClient } from 'viem'
-import type { Aid, ChainMeta, EpochId, EpochPolicy, Hex, TxMeta } from './types'
+import { appModeName, type Aid, type ChainMeta, type EpochId, type EpochPolicy, type Hex, type TxMeta } from './types'
 import type { ApplicationStateUpdate, EpochStateUpdate, OperatorStateUpdate } from './reduce'
 
 /** Canonical Multicall3 deployment, identical on every supported chain. */
@@ -197,8 +197,9 @@ export class StateReader {
   }
 
   /**
-   * `getEpoch` + `selectedParticipants` (+ `getCollectivePublicKey` once the
-   * epoch is Live) for each id, in one batch.
+   * `getEpoch` + `selectedParticipants` + `getPoolStatus` for each id, in one
+   * batch. The pool keys themselves come from `PoolKeyActivated`; the status
+   * read only keeps the claim cursor honest on a chain nobody is watching.
    */
   async readEpochs(ids: EpochId[], stateBlock: number): Promise<Map<string, EpochStateUpdate>> {
     const out = new Map<string, EpochStateUpdate>()
@@ -212,18 +213,13 @@ export class StateReader {
         functionName: 'selectedParticipants',
         args: [id],
       })
-      calls.push({
-        address: this.managerAddress,
-        abi: MANAGER_ABI,
-        functionName: 'getCollectivePublicKey',
-        args: [id],
-      })
+      calls.push({ address: this.managerAddress, abi: MANAGER_ABI, functionName: 'getPoolStatus', args: [id] })
     }
     const results = await this.read(calls)
     ids.forEach((id, i) => {
       const epochResult = results[i * 3]
       const participantsResult = results[i * 3 + 1]
-      const pkResult = results[i * 3 + 2]
+      const poolResult = results[i * 3 + 2]
       if (!epochResult?.ok) return
       const raw = epochResult.value as {
         policy: Record<string, unknown>
@@ -254,50 +250,14 @@ export class StateReader {
       if (participantsResult?.ok && Array.isArray(participantsResult.value)) {
         update.committee = (participantsResult.value as string[]).map((a) => a.toLowerCase() as Address)
       }
-      if (pkResult?.ok) {
-        const point = pkResult.value as { x: bigint; y: bigint }
-        const [x, y] = fromRTEtoTE(big(point?.x), big(point?.y))
-        update.collectivePublicKey = x === 0n && y === 1n ? null : { x, y }
+      if (poolResult?.ok) {
+        // `(nextIndex, activated)` as a tuple or a struct, depending on the decoder.
+        const value = poolResult.value as [unknown, unknown] | { nextIndex?: unknown }
+        const next = Array.isArray(value) ? value[0] : value?.nextIndex
+        if (next != null) update.poolNext = num(next)
       }
       out.set(id.toLowerCase(), update)
     })
-    return out
-  }
-
-  /**
-   * `D_i` for every committee member of every given epoch, in one batch.
-   *
-   * Participant indices are 1-based on chain (`epochParticipants[i - 1]` is
-   * the slot that owns index `i`), so the returned arrays are indexed by slot:
-   * `result[epochId][slot]` is `getShareCommitmentHash(epochId, slot + 1)`.
-   */
-  async readShareCommitments(
-    epochs: Array<{ id: EpochId; committeeSize: number }>,
-  ): Promise<Map<string, (Hex | null)[]>> {
-    const out = new Map<string, (Hex | null)[]>()
-    const wanted = epochs.filter((epoch) => epoch.committeeSize > 0)
-    if (wanted.length === 0) return out
-    const calls: CallSpec[] = []
-    for (const epoch of wanted) {
-      for (let slot = 0; slot < epoch.committeeSize; slot++) {
-        calls.push({
-          address: this.managerAddress,
-          abi: MANAGER_ABI,
-          functionName: 'getShareCommitmentHash',
-          args: [epoch.id, slot + 1],
-        })
-      }
-    }
-    const results = await this.read(calls)
-    let cursor = 0
-    for (const epoch of wanted) {
-      const hashes: (Hex | null)[] = []
-      for (let slot = 0; slot < epoch.committeeSize; slot++) {
-        const result = results[cursor++]
-        hashes.push(result?.ok ? (result.value as Hex) : null)
-      }
-      out.set(epoch.id.toLowerCase(), hashes)
-    }
     return out
   }
 
@@ -360,25 +320,41 @@ export class StateReader {
       const app = result.value as {
         creator: string
         organizerPK: { x: bigint; y: bigint }
+        organizerSecret: bigint
+        poolIndex: number
         policy: {
-          authorizedSubmitter: string
+          mode: number
+          openSubmission: boolean
+          submitters: readonly string[]
           maxCiphertexts: number
           notBeforeBlock: bigint
           notAfterBlock: bigint
+          decryptNotBefore: bigint
+          decryptNotAfter: bigint
         }
         createdAtBlock: bigint
         exists: boolean
       }
       if (!app?.exists) return
       const [x, y] = fromRTEtoTE(big(app.organizerPK?.x), big(app.organizerPK?.y))
+      const mode = appModeName(num(app.policy.mode))
+      // The record holds 0 until `revealOrganizerSecret` (and forever for an
+      // automatic application, which has no organizer key).
+      const secret = big(app.organizerSecret)
       out.set(`${epoch.toLowerCase()}:${aid.toLowerCase()}`, {
         creator: app.creator.toLowerCase() as Address,
         organizerPK: { x, y },
+        mode,
+        poolIndex: num(app.poolIndex),
+        organizerSecret: mode === 'organizer-locked' && secret > 0n ? secret : null,
         policy: {
-          authorizedSubmitter: app.policy.authorizedSubmitter.toLowerCase() as Address,
+          openSubmission: Boolean(app.policy.openSubmission),
+          submitters: (app.policy.submitters ?? []).map((s) => s.toLowerCase() as Address),
           maxCiphertexts: num(app.policy.maxCiphertexts),
           notBeforeBlock: num(app.policy.notBeforeBlock),
           notAfterBlock: num(app.policy.notAfterBlock),
+          decryptNotBefore: num(app.policy.decryptNotBefore),
+          decryptNotAfter: num(app.policy.decryptNotAfter),
         },
         createdBlock: num(app.createdAtBlock),
         stateBlock,

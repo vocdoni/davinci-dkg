@@ -18,6 +18,9 @@
 /dkg-runner
 /circuit-compile
 /dkgcli
+
+# ---- Circuit artifacts staged by CI (battery.yml) --------------------------
+/.artifacts/
 *.test
 *.exe
 

@@ -10,10 +10,6 @@
 // (`dleqChallenge`, `verifyDleq`) is verify-only here because committee
 // partial decryptions are produced by the Go node together with their
 // Groth16 wrapper.
-//
-// The organizer's decryption-share DLEQ lives in `dleq.ts`: it is keccak-based
-// (not Poseidon) and the SDK both proves and verifies it, because the
-// organizer runs in a browser.
 
 import {
   Base8,
@@ -293,6 +289,20 @@ export function verifyOrganizerSchnorr(
   const lhs = mulPointEscalar(Base8, proof.z);
   const rhs = addPoint(A, mulPointEscalar(PK, c % subOrder));
   return pointEq(lhs, rhs);
+}
+
+/**
+ * `PK_org = sk_org·G` in the on-chain (RTE) form `registerApplication` and
+ * `revealOrganizerSecret` take. Useful to derive/check an organizer's public
+ * key off-chain without building a full Schnorr proof (`proveOrganizer`
+ * already calls this internally for `OrganizerLocked` registration).
+ */
+export function organizerPublicKey(skOrg: bigint): { pkOrgX: bigint; pkOrgY: bigint } {
+  requireScalarInRange('organizer secret', skOrg);
+  if (skOrg === 0n) throw new Error('organizer secret must be non-zero');
+  const PK_TE = mulPointEscalar(Base8, skOrg);
+  const [pkX, pkY] = fromTEtoRTE(PK_TE[0], PK_TE[1]);
+  return { pkOrgX: pkX, pkOrgY: pkY };
 }
 
 /**

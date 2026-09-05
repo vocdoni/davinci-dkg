@@ -3,26 +3,23 @@
 //
 // Everything here runs in the browser in both modes: the secret is drawn
 // locally, `PK_org = sk_org·G` and the Schnorr proof of possession are built
-// locally, the ElGamal ciphertext is built locally, and the Chaum-Pedersen
-// DLEQ that releases the share is built locally. An organizer needs no circuit
-// artifacts and no prover — all the expensive proving is on the committee's
-// side.
+// locally, and the ElGamal ciphertext is built locally. Revealing the secret
+// later needs no proof at all — the contract checks `sk_org·G = PK_org`
+// itself. An organizer needs no circuit artifacts and no prover; all the
+// expensive proving is on the committee's side.
 //
-// Both proofs are drawn against a nonce this module supplies rather than the
-// SDK's internal one, for one reason: the "advanced" toggle prints the exact
-// words that go into the transaction, and it can only do that if it holds the
-// witness the writer will use.
+// The Schnorr proof is drawn against a nonce this module supplies rather than
+// the SDK's internal one, for one reason: the "advanced" toggle prints the
+// exact words that go into the transaction, and it can only do that if it
+// holds the witness the writer will use.
 
 import { Base8, mulPointEscalar, subOrder } from '@zk-kit/baby-jubjub'
 import {
   applicationKey,
-  encryptForApplication,
-  organizerShareChallenge,
+  encrypt,
   pointFromTEtoRTE,
   proveOrganizer,
-  proveOrganizerShare,
   randomOrganizerSecret,
-  verifyOrganizerShare,
   type BabyJubPoint,
   type ElGamalCiphertext,
 } from '@vocdoni/davinci-dkg-sdk'
@@ -83,9 +80,9 @@ export function organizerPublicKey(skOrg: bigint): BabyJubPoint {
   return mulPointEscalar(Base8, skOrg) as BabyJubPoint
 }
 
-/** `PK_aid = PK_ep + PK_org`. */
-export function applicationPublicKey(pkEp: BabyJubPoint, pkOrg: BabyJubPoint): BabyJubPoint {
-  return applicationKey(pkEp, pkOrg)
+/** `PK_aid = P_j` (automatic) or `P_j + PK_org` (organizer-locked). */
+export function applicationPublicKey(poolKey: BabyJubPoint, pkOrg: BabyJubPoint | null): BabyJubPoint {
+  return applicationKey(poolKey, pkOrg ?? undefined)
 }
 
 export interface RegistrationProof {
@@ -104,49 +101,9 @@ export function registrationProof(skOrg: bigint, epochId: Hex, aid: Hex): Regist
   return { nonce, pkOrg: [pkOrgX, pkOrgY], a: [proof.ax, proof.ay], z: proof.z }
 }
 
-export interface ShareProof {
-  nonce: bigint
-  /** The keccak challenge the contract recomputes and the combine SNARK reuses. */
-  e: bigint
-  /** Δ = sk_org·C1, RTE form. */
-  delta: BabyJubPoint
-  a1: BabyJubPoint
-  a2: BabyJubPoint
-  z: bigint
-  /** Self-check: the DLEQ verifies against the registered `PK_org`. */
-  valid: boolean
-}
-
-/** The Chaum-Pedersen DLEQ `submitOrganizerShare` puts on chain. */
-export function shareProof(
-  epochId: Hex,
-  aid: Hex,
-  ciphertextIndex: number,
-  skOrg: bigint,
-  ciphertext: ElGamalCiphertext
-): ShareProof {
-  const nonce = randomNonce()
-  const share = proveOrganizerShare(epochId, aid, ciphertextIndex, skOrg, ciphertext.c1, nonce)
-  const pkOrgRte = pointFromTEtoRTE(organizerPublicKey(skOrg))
-  const c1Rte = pointFromTEtoRTE(ciphertext.c1)
-  return {
-    nonce,
-    e: organizerShareChallenge(epochId, aid, ciphertextIndex, pkOrgRte, c1Rte, share.delta, share.a1, share.a2),
-    delta: share.delta,
-    a1: share.a1,
-    a2: share.a2,
-    z: share.z,
-    valid: verifyOrganizerShare(epochId, aid, ciphertextIndex, pkOrgRte, c1Rte, share.delta, share),
-  }
-}
-
-/** Encrypt `value` under `PK_aid = PK_ep + PK_org`. */
-export async function encryptValue(
-  value: bigint,
-  pkEp: BabyJubPoint,
-  pkOrg: BabyJubPoint
-): Promise<ElGamalCiphertext> {
-  return encryptForApplication(value, pkEp, pkOrg)
+/** Encrypt `value` under `PK_aid`. */
+export async function encryptValue(value: bigint, pkAid: BabyJubPoint): Promise<ElGamalCiphertext> {
+  return encrypt(value, pkAid)
 }
 
 /** Parse the plaintext field: a non-negative integer under the BSGS cap. */
@@ -175,7 +132,7 @@ export function deserialiseCiphertext(ct: SerialCiphertext): ElGamalCiphertext {
   }
 }
 
-/** The six calldata words `submitCiphertext` actually sends, in RTE form. */
+/** The four calldata words `submitCiphertext` actually sends, in RTE form. */
 export function ciphertextWords(ct: ElGamalCiphertext): Array<{ label: string; value: bigint }> {
   const [c1x, c1y] = pointFromTEtoRTE(ct.c1)
   const [c2x, c2y] = pointFromTEtoRTE(ct.c2)

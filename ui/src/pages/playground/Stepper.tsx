@@ -7,7 +7,7 @@ import {
   EncryptStep,
   EpochStep,
   RegisterStep,
-  ShareStep,
+  RevealStep,
   SubmitStep,
   VerifyStep,
   WatchStep,
@@ -22,7 +22,7 @@ const PANELS: Record<StepId, (props: StepProps) => JSX.Element> = {
   register: RegisterStep,
   encrypt: EncryptStep,
   submit: SubmitStep,
-  share: ShareStep,
+  reveal: RevealStep,
   watch: WatchStep,
   verify: VerifyStep,
 }
@@ -50,7 +50,7 @@ export function Stepper({ chain, epochs, options }: StepperProps) {
         size='page'
         label='Organizer'
         title='Playground'
-        description='Register an application against a live epoch, encrypt a value under its key, submit it, decide when the plaintext may exist, and check the result against what this browser built.'
+        description='Register an application against a live epoch — claiming one of its pool keys — encrypt a value under that key, submit it, decide when to reveal the organizer secret, and check the result against what this browser built.'
         actions={
           <div className='flex items-center gap-4'>
             {chain.kind === 'demo' ? (
@@ -77,6 +77,7 @@ export function Stepper({ chain, epochs, options }: StepperProps) {
           <Card flush className='p-3'>
             <StepRail
               active={controller.step}
+              furthest={controller.furthest}
               status={(step) => stepStatus(step, state, controller.facts)}
               onSelect={controller.actions.goto}
             />
@@ -99,7 +100,10 @@ export function Stepper({ chain, epochs, options }: StepperProps) {
 
         <div className='flex min-w-0 flex-col gap-6'>
           <Panel_ controller={controller} chain={chain} epochs={epochs} />
-          <Panel title='Activity log' description='Every action this walkthrough took, newest first.'>
+          <Panel
+            title='Activity log'
+            description='Every action this walkthrough took, newest first — and the combine, once the committee lands it.'
+          >
             <ActivityLog entries={state.log} />
           </Panel>
         </div>

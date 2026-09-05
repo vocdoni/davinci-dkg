@@ -1,6 +1,7 @@
 package decryptcombine
 
 import (
+	"context"
 	"math/big"
 	"testing"
 
@@ -8,16 +9,31 @@ import (
 	"github.com/consensys/gnark/test"
 	qt "github.com/frankban/quicktest"
 	"github.com/vocdoni/davinci-dkg/crypto/group"
+	"github.com/vocdoni/davinci-dkg/types"
 )
 
-// The organizer's share is the only decryption input that is not backed by
-// a Groth16 proof of its own — the contract stores it verbatim. Its
-// soundness therefore rests entirely on the Chaum-Pedersen relation this
-// circuit checks. Each case below forges one word of the share while
-// keeping every digest self-consistent (the assignment is re-built, so
-// CombineHash, ρ and the BRLC all match the forged words); the only
-// constraint left to catch the forgery is the DLEQ itself.
-func TestDecryptCombineRejectsForgedOrganizerShare(t *testing.T) {
+// automaticAssignment builds the same 1-of-1 combine as testAssignment for
+// an automatic application: no organizer key at all, so PK_org is the
+// identity, sk_org = 0 and Δ_org drops out of C2.
+func automaticAssignment() Assignment {
+	asn := testAssignment()
+	c2Point := mustDecode(asn.CiphertextC2)
+	negDeltaOrg := group.NewPoint()
+	negDeltaOrg.Neg(mustDecode(organizerShare(asn.CiphertextC1)))
+	c2Point.Add(c2Point, negDeltaOrg)
+
+	asn.OrganizerPK = types.CurvePoint{X: big.NewInt(0), Y: big.NewInt(1)}
+	asn.OrganizerSecret = big.NewInt(0)
+	asn.CiphertextC2 = group.Encode(c2Point)
+	return asn
+}
+
+// The organizer half of the combine is now a knowledge statement: the
+// prover must exhibit sk_org with PK_org = sk_org·G, and Δ_org is derived
+// from it in circuit rather than read from calldata. A secret that is not
+// the discrete log of the application's registered key must not solve —
+// otherwise a combiner could invent any Δ_org and shift the plaintext.
+func TestDecryptCombineRejectsWrongOrganizerSecret(t *testing.T) {
 	c := qt.New(t)
 	assert := test.NewAssert(t)
 	honest := testAssignment()
@@ -28,102 +44,95 @@ func TestDecryptCombineRejectsForgedOrganizerShare(t *testing.T) {
 		assert.SolvingSucceeded(&DecryptCombineCircuit{}, witness, test.WithCurves(ecc.BN254))
 	})
 
-	// Δ' = Δ + G with C2' = C2 + G keeps the decryption identity intact, so
-	// only z·C1 == A2 + e·Δ can reject it. Without the DLEQ a combiner could
-	// pick any Δ and shift the recovered plaintext at will.
-	t.Run("shifted-delta", func(t *testing.T) {
+	// sk' = sk + 1 with the registered PK_org: PK_org != sk'·G.
+	t.Run("shifted-secret", func(t *testing.T) {
 		forged := honest
-		forged.DeltaOrg = addGenerator(honest.DeltaOrg)
-		forged.CiphertextC2 = addGenerator(honest.CiphertextC2)
+		forged.OrganizerSecret = new(big.Int).Add(honest.OrganizerSecret, big.NewInt(1))
 		witness, _, err := BuildWitness(forged)
 		c.Assert(err, qt.IsNil)
 		assert.SolvingFailed(&DecryptCombineCircuit{}, witness, test.WithCurves(ecc.BN254))
 	})
 
-	t.Run("tampered-z", func(t *testing.T) {
+	// A secret whose key is a different (well-formed) point: the whole
+	// assignment is rebuilt so CombineHash, ρ and the BRLC are all
+	// self-consistent, leaving PK_org == sk·G as the only check that can
+	// reject it.
+	t.Run("other-organizer-key", func(t *testing.T) {
+		other := big.NewInt(7)
+		pk := group.NewPoint()
+		pk.ScalarBaseMult(other)
 		forged := honest
-		forged.OrganizerProof.Response = new(big.Int).Add(honest.OrganizerProof.Response, big.NewInt(1))
-		witness, _, err := BuildWitness(forged)
-		c.Assert(err, qt.IsNil)
-		assert.SolvingFailed(&DecryptCombineCircuit{}, witness, test.WithCurves(ecc.BN254))
-	})
-
-	t.Run("wrong-organizer-key", func(t *testing.T) {
-		forged := honest
-		forged.OrganizerPK = addGenerator(honest.OrganizerPK)
-		witness, _, err := BuildWitness(forged)
-		c.Assert(err, qt.IsNil)
-		assert.SolvingFailed(&DecryptCombineCircuit{}, witness, test.WithCurves(ecc.BN254))
-	})
-
-	t.Run("swapped-commitments", func(t *testing.T) {
-		forged := honest
-		forged.OrganizerProof.A1, forged.OrganizerProof.A2 = honest.OrganizerProof.A2, honest.OrganizerProof.A1
+		forged.OrganizerPK = group.Encode(pk)
 		witness, _, err := BuildWitness(forged)
 		c.Assert(err, qt.IsNil)
 		assert.SolvingFailed(&DecryptCombineCircuit{}, witness, test.WithCurves(ecc.BN254))
 	})
 }
 
-// `e` is a transcript word, not something the circuit recomputes (keccak in
-// a SNARK is far too expensive). The contract pins it to the keccak of the
-// calldata; here we only need the algebraic half: a witness whose `e` is not
-// the one the two verification equations were built for must not solve.
-func TestDecryptCombineRejectsTamperedChallengeWord(t *testing.T) {
+// Automatic applications register the identity key and a zero secret. Both
+// in-circuit multiplications must yield the identity for that witness:
+// FixedBaseMul short-circuits every zero nibble, and gnark's fake-GLV
+// ScalarMul has an explicit zero-scalar branch in its half-GCD hint. The
+// full prove/verify (not just SolvingSucceeded) is what pins that the
+// gadgets really do handle the degenerate case.
+func TestDecryptCombineAcceptsAutomaticApplication(t *testing.T) {
 	c := qt.New(t)
 
-	witness, _, err := BuildWitness(testAssignment())
+	witness, publicInputs, err := BuildWitness(automaticAssignment())
 	c.Assert(err, qt.IsNil)
-	e, ok := witness.OrganizerE.(*big.Int)
-	c.Assert(ok, qt.IsTrue)
-	witness.OrganizerE = new(big.Int).Add(e, big.NewInt(1))
+
+	assert := test.NewAssert(t)
+	assert.SolvingSucceeded(&DecryptCombineCircuit{}, witness, test.WithCurves(ecc.BN254))
+
+	runtime, err := Artifacts.LoadOrSetupForCircuit(context.Background(), &DecryptCombineCircuit{})
+	c.Assert(err, qt.IsNil)
+	proof, err := runtime.ProveAndVerify(witness)
+	c.Assert(err, qt.IsNil)
+	c.Assert(runtime.Verify(proof, publicInputs.PublicWitness()), qt.IsNil)
+}
+
+// The mirror image: a zero secret only opens the identity key. An
+// organizer-locked application whose PK_org is a real point cannot be
+// combined by claiming sk_org = 0, even when C2 was assembled without any
+// organizer share (so the decryption identity holds with Δ_org = O).
+func TestDecryptCombineRejectsZeroSecretForRealOrganizerKey(t *testing.T) {
+	c := qt.New(t)
+
+	forged := automaticAssignment()
+	forged.OrganizerPK = organizerPK()
+	witness, _, err := BuildWitness(forged)
+	c.Assert(err, qt.IsNil)
 
 	assert := test.NewAssert(t)
 	assert.SolvingFailed(&DecryptCombineCircuit{}, witness, test.WithCurves(ecc.BN254))
 }
 
-// Both organizer scalars are range-bound to [0, r_bjj): a non-canonical
-// z' = z + r_bjj satisfies the group equations but would give the same share
-// two distinct on-chain encodings.
-func TestDecryptCombineRejectsNonCanonicalOrganizerScalars(t *testing.T) {
+// The organizer secret is range-bound to [0, r_bjj): sk' = sk + r_bjj
+// multiplies to the same two points but is a second witness for the same
+// statement.
+func TestDecryptCombineRejectsNonCanonicalOrganizerSecret(t *testing.T) {
 	c := qt.New(t)
-	order := group.ScalarField()
-	assert := test.NewAssert(t)
 
 	witness, _, err := BuildWitness(testAssignment())
 	c.Assert(err, qt.IsNil)
-
-	z, ok := witness.OrganizerZ.(*big.Int)
+	secret, ok := witness.OrganizerSecret.(*big.Int)
 	c.Assert(ok, qt.IsTrue)
 	tampered := *witness
-	tampered.OrganizerZ = new(big.Int).Add(z, order)
-	assert.SolvingFailed(&DecryptCombineCircuit{}, &tampered, test.WithCurves(ecc.BN254))
+	tampered.OrganizerSecret = new(big.Int).Add(secret, group.ScalarField())
 
-	e, ok := witness.OrganizerE.(*big.Int)
-	c.Assert(ok, qt.IsTrue)
-	tampered = *witness
-	tampered.OrganizerE = new(big.Int).Add(e, order)
+	assert := test.NewAssert(t)
 	assert.SolvingFailed(&DecryptCombineCircuit{}, &tampered, test.WithCurves(ecc.BN254))
 }
 
 // The organizer share is a mandatory addend of the decryption identity:
-// C2 = m·G + Σ λ_k δ_k + Δ_org. A ciphertext assembled without it (the old
-// public-derivation path) must no longer combine.
+// C2 = m·G + Σ λ_k δ_k + Δ_org. A ciphertext under a real organizer key
+// that was assembled without it must not combine.
 func TestDecryptCombineRequiresOrganizerShareInC2(t *testing.T) {
 	c := qt.New(t)
 
-	honest := testAssignment()
-	c2Point, err := group.Decode(honest.CiphertextC2)
-	c.Assert(err, qt.IsNil)
-	deltaOrgPoint, err := group.Decode(honest.DeltaOrg)
-	c.Assert(err, qt.IsNil)
-	negDeltaOrg := group.NewPoint()
-	negDeltaOrg.Neg(deltaOrgPoint)
-	withoutShare := group.NewPoint()
-	withoutShare.Add(c2Point, negDeltaOrg)
-
-	forged := honest
-	forged.CiphertextC2 = group.Encode(withoutShare)
+	forged := automaticAssignment()
+	forged.OrganizerPK = organizerPK()
+	forged.OrganizerSecret = new(big.Int).Set(testSkOrg)
 	witness, _, err := BuildWitness(forged)
 	c.Assert(err, qt.IsNil)
 
@@ -138,14 +147,19 @@ func TestBuildWitnessRejectsMalformedOrganizerInputs(t *testing.T) {
 
 	base := testAssignment()
 
-	missingProof := base
-	missingProof.OrganizerProof.Response = nil
-	_, _, err := BuildWitness(missingProof)
+	missingSecret := base
+	missingSecret.OrganizerSecret = nil
+	_, _, err := BuildWitness(missingSecret)
 	c.Assert(err, qt.Not(qt.IsNil))
 
-	nonCanonicalZ := base
-	nonCanonicalZ.OrganizerProof.Response = new(big.Int).Add(base.OrganizerProof.Response, group.ScalarField())
-	_, _, err = BuildWitness(nonCanonicalZ)
+	nonCanonicalSecret := base
+	nonCanonicalSecret.OrganizerSecret = new(big.Int).Add(base.OrganizerSecret, group.ScalarField())
+	_, _, err = BuildWitness(nonCanonicalSecret)
+	c.Assert(err, qt.Not(qt.IsNil))
+
+	missingKey := base
+	missingKey.OrganizerPK = types.CurvePoint{}
+	_, _, err = BuildWitness(missingKey)
 	c.Assert(err, qt.Not(qt.IsNil))
 
 	oversizedEid := base

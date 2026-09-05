@@ -45,8 +45,8 @@ describe('ApplicationsPage', () => {
     renderPage(source, <ApplicationsPage />)
 
     expect(screen.getByText(`${apps.length} applications`)).toBeInTheDocument()
-    expect(screen.getByText('Pending shares')).toBeInTheDocument()
-    expect(screen.getByText('ciphertexts still waiting on an organizer share')).toBeInTheDocument()
+    expect(screen.getByText('Secrets kept')).toBeInTheDocument()
+    expect(screen.getByText('locked applications, sk_org not revealed yet')).toBeInTheDocument()
 
     const links = screen.getAllByRole('link').filter((a) => a.getAttribute('href')?.startsWith('/applications/'))
     expect(links.length).toBe(apps.length)

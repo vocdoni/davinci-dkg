@@ -6,13 +6,13 @@ import (
 	"testing"
 
 	qt "github.com/frankban/quicktest"
-	"github.com/vocdoni/davinci-dkg/crypto/dleq"
 	"github.com/vocdoni/davinci-dkg/crypto/group"
 	"github.com/vocdoni/davinci-dkg/types"
+	"github.com/vocdoni/davinci-node/crypto/ecc"
 )
 
 // Fixed context for the fixtures below. RoundHash must fit in 12 bytes and
-// Aid in 32, because both feed the keccak organizer-share transcript.
+// Aid in 32, because both are calldata-shaped on chain.
 var (
 	testRoundHash = big.NewInt(5555)
 	testAid       = big.NewInt(0xAA)
@@ -20,7 +20,8 @@ var (
 	testSkOrg     = big.NewInt(4242)
 )
 
-// testAssignment builds a 1-of-1 combine over a real organizer share:
+// testAssignment builds a 1-of-1 combine for an organizer-locked
+// application whose secret has been revealed:
 //
 //	C1 = 5·G, Δ_org = sk_org·C1, δ_1 = 14·G, m = 3
 //	C2 = m·G + λ_1·δ_1 + Δ_org  (λ_1 = 1 for a single share at x = 1)
@@ -29,12 +30,7 @@ func testAssignment() Assignment {
 	c1Point.ScalarBaseMult(big.NewInt(5))
 	c1 := group.Encode(c1Point)
 
-	deltaOrg, proof := mustOrganizerShare(c1)
-	deltaOrgPoint, err := group.Decode(deltaOrg)
-	if err != nil {
-		panic(err)
-	}
-
+	deltaOrgPoint := mustDecode(organizerShare(c1))
 	delta0Point := group.NewPoint()
 	delta0Point.ScalarBaseMult(big.NewInt(14))
 	messagePoint := group.NewPoint()
@@ -48,9 +44,8 @@ func testAssignment() Assignment {
 		RoundHash:          new(big.Int).Set(testRoundHash),
 		Aid:                new(big.Int).Set(testAid),
 		CtIdx:              new(big.Int).Set(testCtIdx),
-		DeltaOrg:           deltaOrg,
 		OrganizerPK:        organizerPK(),
-		OrganizerProof:     proof,
+		OrganizerSecret:    new(big.Int).Set(testSkOrg),
 		Threshold:          1,
 		CiphertextC1:       c1,
 		CiphertextC2:       group.Encode(c2Point),
@@ -66,32 +61,21 @@ func organizerPK() types.CurvePoint {
 	return group.Encode(pk)
 }
 
-// mustOrganizerShare produces the organizer's Δ and DLEQ for the fixed test
-// context, exactly the way an organizer's browser would.
-func mustOrganizerShare(c1 types.CurvePoint) (types.CurvePoint, dleq.Proof) {
-	var eid [12]byte
-	testRoundHash.FillBytes(eid[:])
-	var aid [32]byte
-	testAid.FillBytes(aid[:])
-	delta, proof, err := dleq.ProveOrganizerShare(eid, aid, uint16(testCtIdx.Uint64()), testSkOrg, c1)
-	if err != nil {
-		panic(err)
-	}
-	return delta, proof
+// organizerShare returns Δ_org = sk_org·C1 for the fixed test organizer,
+// the value the circuit now derives from the secret instead of reading it
+// from calldata.
+func organizerShare(c1 types.CurvePoint) types.CurvePoint {
+	delta := group.NewPoint()
+	delta.ScalarMult(mustDecode(c1), testSkOrg)
+	return group.Encode(delta)
 }
 
-// addGenerator returns p + G, used to build points that are well-formed but
-// not what the DLEQ was proved over.
-func addGenerator(p types.CurvePoint) types.CurvePoint {
+func mustDecode(p types.CurvePoint) ecc.Point {
 	point, err := group.Decode(p)
 	if err != nil {
 		panic(err)
 	}
-	g := group.NewPoint()
-	g.ScalarBaseMult(big.NewInt(1))
-	sum := group.NewPoint()
-	sum.Add(point, g)
-	return group.Encode(sum)
+	return point
 }
 
 func TestBuildWitness(t *testing.T) {
@@ -104,7 +88,7 @@ func TestBuildWitness(t *testing.T) {
 	c.Assert(publicInputs.PlaintextHash, qt.Not(qt.IsNil))
 }
 
-// The public-input order is the contract's ABI: pi[0..10] must stay exactly
+// The public-input order is the contract's ABI: pi[0..8] must stay exactly
 // as documented or DKGManager reads the wrong words.
 func TestPublicInputAndTranscriptLayout(t *testing.T) {
 	c := qt.New(t)
@@ -114,48 +98,36 @@ func TestPublicInputAndTranscriptLayout(t *testing.T) {
 	c.Assert(err, qt.IsNil)
 
 	scalars := publicInputs.Scalars()
-	c.Assert(scalars, qt.HasLen, 11)
+	c.Assert(scalars, qt.HasLen, 9)
 	c.Assert(scalars[0].Cmp(testRoundHash), qt.Equals, 0)
 	c.Assert(scalars[1].Cmp(testAid), qt.Equals, 0)
 	c.Assert(scalars[2].Cmp(testCtIdx), qt.Equals, 0)
-	c.Assert(scalars[3].Cmp(asn.DeltaOrg.X), qt.Equals, 0)
-	c.Assert(scalars[4].Cmp(asn.DeltaOrg.Y), qt.Equals, 0)
-	c.Assert(scalars[5].Int64(), qt.Equals, int64(1)) // threshold
-	c.Assert(scalars[6].Int64(), qt.Equals, int64(1)) // share count
-	c.Assert(scalars[7].Cmp(publicInputs.CombineHash), qt.Equals, 0)
-	c.Assert(scalars[8].Cmp(publicInputs.PlaintextHash), qt.Equals, 0)
-	c.Assert(scalars[9].Cmp(publicInputs.Challenge), qt.Equals, 0)
-	c.Assert(scalars[10].Cmp(publicInputs.TranscriptCommitment), qt.Equals, 0)
+	c.Assert(scalars[3].Int64(), qt.Equals, int64(1)) // threshold
+	c.Assert(scalars[4].Int64(), qt.Equals, int64(1)) // share count
+	c.Assert(scalars[5].Cmp(publicInputs.CombineHash), qt.Equals, 0)
+	c.Assert(scalars[6].Cmp(publicInputs.PlaintextHash), qt.Equals, 0)
+	c.Assert(scalars[7].Cmp(publicInputs.Challenge), qt.Equals, 0)
+	c.Assert(scalars[8].Cmp(publicInputs.TranscriptCommitment), qt.Equals, 0)
 
 	transcript := publicInputs.TranscriptScalars()
 	c.Assert(transcript, qt.HasLen, TranscriptWords)
-	c.Assert(transcript, qt.HasLen, 12+3*MaxShares)
+	c.Assert(transcript, qt.HasLen, 6+3*MaxShares)
 	want := []*big.Int{
 		asn.CiphertextC1.X, asn.CiphertextC1.Y, asn.CiphertextC2.X, asn.CiphertextC2.Y,
 		asn.OrganizerPK.X, asn.OrganizerPK.Y,
-		asn.OrganizerProof.A1.X, asn.OrganizerProof.A1.Y,
-		asn.OrganizerProof.A2.X, asn.OrganizerProof.A2.Y,
-		asn.OrganizerProof.Response,
 	}
 	for i, value := range want {
 		c.Assert(transcript[i].Cmp(value), qt.Equals, 0, qt.Commentf("transcript word %d", i))
 	}
-	// w[11] is the keccak challenge the contract recomputes from calldata.
-	var eid [12]byte
-	testRoundHash.FillBytes(eid[:])
-	var aid [32]byte
-	testAid.FillBytes(aid[:])
-	wantE := dleq.OrganizerShareChallenge(
-		eid, aid, uint16(testCtIdx.Uint64()),
-		asn.OrganizerPK, asn.CiphertextC1, asn.DeltaOrg,
-		asn.OrganizerProof.A1, asn.OrganizerProof.A2,
-	)
-	c.Assert(transcript[11].Cmp(wantE), qt.Equals, 0)
-	c.Assert(publicInputs.OrganizerE.Cmp(wantE), qt.Equals, 0)
 	// Indexes then partials.
-	c.Assert(transcript[12].Int64(), qt.Equals, int64(1))
-	c.Assert(transcript[12+MaxShares].Cmp(asn.PartialDecryptions[0].X), qt.Equals, 0)
-	c.Assert(transcript[12+MaxShares+1].Cmp(asn.PartialDecryptions[0].Y), qt.Equals, 0)
+	c.Assert(transcript[6].Int64(), qt.Equals, int64(1))
+	c.Assert(transcript[6+MaxShares].Cmp(asn.PartialDecryptions[0].X), qt.Equals, 0)
+	c.Assert(transcript[6+MaxShares+1].Cmp(asn.PartialDecryptions[0].Y), qt.Equals, 0)
+
+	// BRLCCommitment is the contract's fold of that same vector.
+	commitment, err := publicInputs.BRLCCommitment(publicInputs.Challenge)
+	c.Assert(err, qt.IsNil)
+	c.Assert(commitment.Cmp(publicInputs.TranscriptCommitment), qt.Equals, 0)
 }
 
 func TestDecryptCombineCircuitProveAndVerify(t *testing.T) {

@@ -7,14 +7,17 @@ import {
 } from 'viem';
 import { dkgManagerAbi, dkgRegistryAbi, dkgAppManagerAbi } from './abi.js';
 import {
+  AppMode,
+  type AppPolicy,
+  type AppPolicyInput,
   type CreateEpochParams,
   type ElGamalCiphertext,
   type DKGWriterConfig,
 } from './types.js';
 import { DKGClient } from './client.js';
 import { fromTEtoRTE } from './crypto/babyjub-form.js';
+import { buildElGamal } from './crypto/elgamal.js';
 import { proveOperator, proveOrganizer } from './schnorr.js';
-import { proveOrganizerShare } from './dleq.js';
 
 /** Outcome of `DKGWriter.submitCiphertext` (the call waits for the receipt). */
 export interface SubmitCiphertextResult {
@@ -26,6 +29,24 @@ export interface SubmitCiphertextResult {
    * it for `getPlaintext`, `waitForDecryption`, `getCombinedDecryption`.
    */
   ciphertextIndex: number;
+}
+
+/**
+ * Fill in the defaults of a partial `AppPolicy`: organizer-locked,
+ * registrant-only submission, no cap, no block window, no decryption deadline
+ * — the contract's most restrictive reading of every field.
+ */
+export function normalizeAppPolicy(policy: AppPolicyInput = {}): AppPolicy {
+  return {
+    mode: policy.mode ?? AppMode.OrganizerLocked,
+    openSubmission: policy.openSubmission ?? false,
+    submitters: policy.submitters ?? [],
+    maxCiphertexts: policy.maxCiphertexts ?? 0,
+    notBeforeBlock: policy.notBeforeBlock ?? 0n,
+    notAfterBlock: policy.notAfterBlock ?? 0n,
+    decryptNotBefore: policy.decryptNotBefore ?? 0n,
+    decryptNotAfter: policy.decryptNotAfter ?? 0n,
+  };
 }
 
 /**
@@ -133,14 +154,38 @@ export class DKGWriter extends DKGClient {
   }
 
   /**
-   * Finalize a epoch by submitting the aggregate commitments and collective
-   * public key (ZK proof required).
+   * Finalize a epoch: freezes the accepted-contributor set and opens it for
+   * `activatePoolKey`. Proof-less — no key material exists yet.
    */
-  async finalizeEpoch(
+  async finalizeEpoch(epochId: `0x${string}`): Promise<Hash> {
+    const { request } = await this.publicClient.simulateContract({
+      address: this.managerAddress,
+      abi: dkgManagerAbi,
+      functionName: 'finalizeEpoch',
+      args: [epochId as any],
+      account: this._writerAccount,
+    });
+    return this.walletClient.writeContract(request);
+  }
+
+  /**
+   * Activate pool key `keyIndex` of `(epochId)` by proving its Merkle-rooted
+   * transcript against the epoch's accepted contributions. Permissionless —
+   * anyone holding the transcript and proof may call it. Emits
+   * `PoolKeyActivated`; `registerApplication` cannot claim a key until this
+   * has run for it.
+   *
+   * `transcriptDigest` is the Poseidon digest of the masked transcript words
+   * (public input 5 of the poolkey circuit, `MultiHash(eid, keyIndex, w…)`).
+   * The contract checks it against `input` and anchors the BRLC challenge on
+   * `keccak(transcriptDigest ‖ keccak(transcript))`, so the prover's words
+   * and the calldata words are bound together — pass the digest the prover
+   * emitted alongside `transcript`/`proof`/`input`.
+   */
+  async activatePoolKey(
     epochId: `0x${string}`,
-    aggregateCommitmentsHash: `0x${string}`,
-    collectivePublicKeyHash: `0x${string}`,
-    shareCommitmentHash: `0x${string}`,
+    keyIndex: number,
+    transcriptDigest: `0x${string}`,
     transcript: `0x${string}`,
     proof: `0x${string}`,
     input: `0x${string}`,
@@ -148,16 +193,8 @@ export class DKGWriter extends DKGClient {
     const { request } = await this.publicClient.simulateContract({
       address: this.managerAddress,
       abi: dkgManagerAbi,
-      functionName: 'finalizeEpoch',
-      args: [
-        epochId as any,
-        aggregateCommitmentsHash,
-        collectivePublicKeyHash,
-        shareCommitmentHash,
-        transcript,
-        proof,
-        input,
-      ],
+      functionName: 'activatePoolKey',
+      args: [epochId as any, keyIndex, transcriptDigest, transcript, proof, input],
       account: this._writerAccount,
     });
     return this.walletClient.writeContract(request);
@@ -173,6 +210,10 @@ export class DKGWriter extends DKGClient {
    * pi[5..6] to c1. Pass them as TE coords; the
    * writer converts to RTE before sending, matching the convention used
    * by `submitCiphertext`.
+   *
+   * `shareProof` is the depth-5 Merkle proof binding this participant's
+   * share to `poolShareRoots[epochId][poolIndex]` (the application's pool
+   * key, resolved via `getAppPoolIndex`).
    */
   async submitPartialDecryption(
     epochId: `0x${string}`,
@@ -183,6 +224,7 @@ export class DKGWriter extends DKGClient {
     deltaHash: `0x${string}`,
     proof: `0x${string}`,
     input: `0x${string}`,
+    shareProof: `0x${string}`[],
   ): Promise<Hash> {
     const [c1xR, c1yR] = fromTEtoRTE(c1x, c1y);
     const [c2xR, c2yR] = fromTEtoRTE(c2x, c2y);
@@ -191,7 +233,7 @@ export class DKGWriter extends DKGClient {
       abi: dkgManagerAbi,
       functionName: 'submitPartialDecryption',
       args: [epochId as any, aid as any, participantIndex, ciphertextIndex,
-        c1xR, c1yR, c2xR, c2yR, deltaHash, proof, input],
+        c1xR, c1yR, c2xR, c2yR, deltaHash, proof, input, shareProof],
       account: this._writerAccount,
     });
     return this.walletClient.writeContract(request);
@@ -200,9 +242,9 @@ export class DKGWriter extends DKGClient {
   /**
    * Submit a ciphertext to be threshold-decrypted by the committee. The
    * epoch must be Live and `aid` must name a registered application whose
-   * `AppPolicy` admits this submission (authorized submitter, block window,
-   * cap). There is no epoch-key path: an unregistered `aid` — including the
-   * all-zero one — reverts.
+   * `AppPolicy` admits this submission (submission policy, block window,
+   * cap, decryption deadline). There is no epoch-key path: an unregistered
+   * `aid` — including the all-zero one — reverts.
    *
    * The ciphertext index is assigned on-chain (1, 2, … per `(epochId, aid)`)
    * and returned in the result, read back from the `CiphertextSubmitted`
@@ -211,8 +253,9 @@ export class DKGWriter extends DKGClient {
    * There is no proof of knowledge of the ElGamal randomness: the calldata is
    * just `(C1, C2)`. An aggregated tally has no single party who knows its
    * randomness, so such a proof is incompatible with homomorphic aggregation;
-   * cross-application replay is stopped instead by the per-application
-   * organizer key (a copied `C1` opened elsewhere only yields `sk_ep·C1`).
+   * cross-application replay is stopped instead by each application's own
+   * pool key (a copied `C1` opened under a different `aid` only yields shares
+   * of the wrong `PK_aid`, not this ciphertext's plaintext).
    *
    * `ciphertext` is expected in circomlib TE form (what this SDK's `encrypt`
    * returns) and converted to gnark RTE form just before sending so the
@@ -254,14 +297,32 @@ export class DKGWriter extends DKGClient {
     return { hash, receipt, ciphertextIndex: Number(submitted.args.ciphertextIndex) };
   }
 
+
+  /**
+   * Encrypt `plaintext` under the application's key and submit it in one go.
+   * The key is `getApplicationKey(epochId, aid)`: the pool key the
+   * application claimed, plus `PK_org` when it is organizer-locked. `k` is
+   * the ElGamal nonce; leave it undefined to draw a fresh one. Returns the
+   * submission result together with the ciphertext that went on chain.
+   */
+  async encryptAndSubmit(
+    epochId: `0x${string}`,
+    aid: `0x${string}`,
+    plaintext: bigint,
+    k?: bigint,
+  ): Promise<SubmitCiphertextResult & { ciphertext: ElGamalCiphertext }> {
+    const pkAid = await this.getApplicationKey(epochId, aid);
+    const elgamal = await buildElGamal();
+    const ciphertext = elgamal.encrypt(plaintext, pkAid, k);
+    const result = await this.submitCiphertext(epochId, aid, ciphertext);
+    return { ...result, ciphertext };
+  }
   /**
    * Combine partial decryptions to finalize a decryption. The on-chain
    * `CombinedDecryptionRecord` will hold the recovered `plaintext` and a
    * `DecryptionCombined` event is emitted.
    *
-   * `aid` is the per-application identifier. The call reverts
-   * `OrganizerShareMissing()` unless the organizer share for this ciphertext
-   * is already on chain.
+   * `aid` is the per-application identifier.
    */
   async combineDecryption(
     epochId: `0x${string}`,
@@ -297,32 +358,67 @@ export class DKGWriter extends DKGClient {
   /**
    * Register an application against `(epochId, aid)`.
    *
-   * Every application is organizer co-decryption: the key ciphertexts are
-   * encrypted under is `PK_aid = PK_ep + PK_org` with `PK_org = sk_org·G`, and
-   * opening one needs both the committee threshold and the organizer's share.
-   * The writer derives `PK_org` from `skOrg` and builds the Schnorr proof of
-   * possession the contract verifies; only the public key and the proof leave
-   * the browser.
+   * The application key is the pool key it claims plus, for an
+   * `OrganizerLocked` application, an organizer key on top:
    *
-   * **Keep `skOrg`.** It is the application's only decryption capability: lose
-   * it and every ciphertext submitted under this `aid` is permanently
-   * undecryptable. Draw it with `randomOrganizerSecret()`.
+   *   PK_aid = P_j                (AppMode.Automatic)
+   *   PK_aid = P_j + PK_org       (AppMode.OrganizerLocked, PK_org = sk_org·G)
    *
-   * `policy.authorizedSubmitter` of the zero address means "the registering
-   * address"; the contract stores it resolved. There is no open submission.
+   * `P_j` — one of the epoch's `MaxK` pool keys — is assigned on chain
+   * (`claimPoolKey`, called internally) and does not depend on anything
+   * supplied here; read it back with `client.getApplicationKey(epochId, aid)`.
+   *
+   * `policy.mode` decides who else can decrypt:
+   *
+   * - `AppMode.OrganizerLocked` (default): pass `skOrg`. The writer derives
+   *   `PK_org` and builds the Schnorr proof of possession the contract
+   *   verifies; only the public key and the proof leave the caller. The
+   *   organizer keeps `skOrg` secret until calling `revealOrganizerSecret`;
+   *   until then the contract refuses every partial decryption and combine
+   *   of the application (`OrganizerSecretNotRevealed()`), and from then on
+   *   the committee combines by itself, with no per-ciphertext share.
+   *   **Keep `skOrg` until you're ready to reveal it.** Losing it
+   *   makes every ciphertext under this `aid` permanently undecryptable.
+   *   Draw it with `randomOrganizerSecret()`.
+   * - `AppMode.Automatic`: there is no organizer key at all — omit `skOrg`
+   *   (passing one throws). The contract stores the fixed identity `(0, 1)`
+   *   with a zero Schnorr proof, and the committee threshold alone gates
+   *   decryption.
+   *
+   * Every other policy field is optional (see `normalizeAppPolicy`): an empty
+   * `submitters` list means "the registering address only", `openSubmission`
+   * lets anyone submit, `decryptNotAfter` (unix seconds) closes decryption
+   * for good. A contradictory policy reverts `InvalidPolicy()`.
    *
    * `nonce` pins the Schnorr witness and exists only for tests.
    */
   async registerApplication(
     epochId: `0x${string}`,
     aid: `0x${string}`,
-    policy: import('./types.js').AppPolicy,
-    skOrg: bigint,
+    policy: AppPolicyInput,
+    skOrg?: bigint,
     nonce?: bigint,
   ): Promise<Hash> {
-    // proveOrganizer returns PK_org and the witness already in the on-chain
-    // (RTE) form the contract's transcript hashes, so nothing is converted here.
-    const { pkOrgX, pkOrgY, proof } = proveOrganizer(skOrg, epochId, aid, nonce);
+    const full = normalizeAppPolicy(policy);
+    if (full.mode === AppMode.Automatic) {
+      if (skOrg != null) {
+        throw new Error('registerApplication: Automatic mode has no organizer key; omit skOrg');
+      }
+    } else if (skOrg == null) {
+      throw new Error('registerApplication: OrganizerLocked mode requires skOrg');
+    }
+    // Automatic mode has no organizer key: the fixed identity with a zero
+    // Schnorr proof is what the contract stores regardless of input. The
+    // OrganizerLocked branch's PK_org (and the witness) come back already in
+    // the on-chain (RTE) form the contract's transcript hashes, so nothing
+    // needs converting here.
+    const words =
+      full.mode === AppMode.Automatic
+        ? { pkOrgX: 0n, pkOrgY: 1n, ax: 0n, ay: 0n, z: 0n }
+        : (() => {
+            const { pkOrgX, pkOrgY, proof } = proveOrganizer(skOrg!, epochId, aid, nonce);
+            return { pkOrgX, pkOrgY, ax: proof.ax, ay: proof.ay, z: proof.z };
+          })();
     const appManagerAddress = await this._getAppManagerAddress();
     const { request } = await this.publicClient.simulateContract({
       address: appManagerAddress,
@@ -331,12 +427,12 @@ export class DKGWriter extends DKGClient {
       args: [
         epochId as any,
         aid as any,
-        policy as any,
-        pkOrgX,
-        pkOrgY,
-        proof.ax,
-        proof.ay,
-        proof.z,
+        full,
+        words.pkOrgX,
+        words.pkOrgY,
+        words.ax,
+        words.ay,
+        words.z,
       ],
       account: this._writerAccount,
     });
@@ -344,55 +440,24 @@ export class DKGWriter extends DKGClient {
   }
 
   /**
-   * Release the organizer's decryption share `Δ = sk_org·C1` for one
-   * ciphertext, with the Chaum-Pedersen DLEQ binding it to the application's
-   * registered `PK_org`.
-   *
-   * The contract stores only `keccak256(Δ ‖ A1 ‖ A2 ‖ z)` and does not verify
-   * the DLEQ; the committee's combine SNARK does, taking the challenge `e`
-   * from the transcript that the contract recomputes. Anyone may relay a
-   * share, and re-submission overwrites until the ciphertext is combined, so a
-   * malformed share cannot brick a ciphertext.
-   *
-   * `ciphertext` must be the exact `(C1, C2)` stored on chain — the contract
-   * checks it against the stored hash. Pass it in TE form (the SDK's
-   * convention); the writer converts to RTE before sending. Fetch it from
-   * `client.getCiphertextSubmittedEvents` / `watchCiphertextSubmitted` and
-   * convert with `fromRTEtoTE` if you read the raw event words.
+   * Reveal `sk_org` for an `OrganizerLocked` application. Until this runs the
+   * contract refuses every partial decryption and combine of the application
+   * (`OrganizerSecretNotRevealed()`); from then on the committee combines by
+   * itself — no per-ciphertext organizer share. Reverts
+   * `InvalidOrganizerSecret()` unless `sk_org·G == PK_org`, and
+   * `AlreadyRevealed()` on a second call.
    */
-  async submitOrganizerShare(
+  async revealOrganizerSecret(
     epochId: `0x${string}`,
     aid: `0x${string}`,
-    ciphertextIndex: number,
-    ciphertext: ElGamalCiphertext,
     skOrg: bigint,
-    nonce?: bigint,
   ): Promise<Hash> {
-    const share = proveOrganizerShare(
-      epochId,
-      aid,
-      ciphertextIndex,
-      skOrg,
-      ciphertext.c1,
-      nonce,
-    );
-    const [c1xR, c1yR] = fromTEtoRTE(ciphertext.c1[0], ciphertext.c1[1]);
-    const [c2xR, c2yR] = fromTEtoRTE(ciphertext.c2[0], ciphertext.c2[1]);
     const appManagerAddress = await this._getAppManagerAddress();
     const { request } = await this.publicClient.simulateContract({
       address: appManagerAddress,
       abi: dkgAppManagerAbi,
-      functionName: 'submitOrganizerShare',
-      args: [
-        epochId as any,
-        aid as any,
-        ciphertextIndex,
-        c1xR, c1yR, c2xR, c2yR,
-        share.delta[0], share.delta[1],
-        share.a1[0], share.a1[1],
-        share.a2[0], share.a2[1],
-        share.z,
-      ],
+      functionName: 'revealOrganizerSecret',
+      args: [epochId as any, aid as any, skOrg],
       account: this._writerAccount,
     });
     return this.walletClient.writeContract(request);

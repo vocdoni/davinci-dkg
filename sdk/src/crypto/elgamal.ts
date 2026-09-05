@@ -171,21 +171,20 @@ export async function buildElGamal(): Promise<ElGamal> {
 // ─── application keys and organizer secrets ─────────────────────────────────
 
 /**
- * Derive the per-application public key from the epoch key and the
- * application's organizer key:
+ * Derive the per-application public key from the application's activated
+ * pool key and, for an `OrganizerLocked` application, its organizer key:
  *
- *   PK_aid = PK_ep + PK_org
+ *   PK_aid = P_j                (AppMode.Automatic)
+ *   PK_aid = P_j + PK_org       (AppMode.OrganizerLocked)
  *
- * Both inputs and the result are in the circomlib TE form this SDK works in
- * (`client.getCollectivePublicKey` and `client.getApplication` both return TE),
- * so the result can be handed straight to `encrypt`.
- *
- * There is no public-derivation variant: an application without a registered
- * organizer key cannot be decrypted, and one cannot be registered without a
- * proof of possession of `sk_org`.
+ * `poolKey` comes from `client.getPoolKey(epochId, app.poolIndex)` /
+ * `client.getApplicationKey`; `pkOrg` from `client.getApplication(...).organizerPK`
+ * — omit it (or leave it undefined) for `Automatic` applications, which have
+ * no organizer key at all. Both inputs and the result are in the circomlib TE
+ * form this SDK works in, so the result can be handed straight to `encrypt`.
  */
-export function applicationKey(pkEp: BabyJubPoint, pkOrg: BabyJubPoint): BabyJubPoint {
-  return addPoint(pkEp, pkOrg) as BabyJubPoint;
+export function applicationKey(poolKey: BabyJubPoint, pkOrg?: BabyJubPoint): BabyJubPoint {
+  return pkOrg === undefined ? poolKey : (addPoint(poolKey, pkOrg) as BabyJubPoint);
 }
 
 /**

@@ -9,12 +9,14 @@ import { keccak256, toHex } from 'viem';
 import {
   DomainOperatorRegisterV1,
   DomainOrganizerRegisterV1,
-  DomainDLEQV1,
-  DomainOrganizerShareV1,
+  DomainContributionTranscriptV1,
+  DomainPoolKeyTranscriptV1,
+  DomainDecryptCombineTranscriptV1,
   DomainOperatorRegisterV1Str,
   DomainOrganizerRegisterV1Str,
-  DomainDLEQV1Str,
-  DomainOrganizerShareV1Str,
+  DomainContributionTranscriptV1Str,
+  DomainPoolKeyTranscriptV1Str,
+  DomainDecryptCombineTranscriptV1Str,
 } from '../src/protocol';
 import { SUBGROUP_ORDER } from '../src/schnorr';
 
@@ -31,29 +33,18 @@ describe('protocol constants', () => {
     );
   });
 
-  it('DOMAIN_DLEQ_V1 matches the Go vector', () => {
-    expect(DomainDLEQV1).toBe(
-      '0x48fabea26e7a072780483852e403ea60b2f51a07c735c3e4b852ac6bb99b5a91',
-    );
-  });
-
-  it('DOMAIN_ORGANIZER_SHARE_V1 matches the Go vector', () => {
-    expect(DomainOrganizerShareV1).toBe(
-      '0x1608b6df1dd60f54655f6e7cf082d648cc3ca53756f1527d1f112085c2ddad2d',
-    );
-  });
-
   it('every digest is keccak256 of its documented preimage', () => {
     const pairs: Array<[string, `0x${string}`]> = [
       [DomainOperatorRegisterV1Str, DomainOperatorRegisterV1],
       [DomainOrganizerRegisterV1Str, DomainOrganizerRegisterV1],
-      [DomainDLEQV1Str, DomainDLEQV1],
-      [DomainOrganizerShareV1Str, DomainOrganizerShareV1],
+      [DomainContributionTranscriptV1Str, DomainContributionTranscriptV1],
+      [DomainPoolKeyTranscriptV1Str, DomainPoolKeyTranscriptV1],
+      [DomainDecryptCombineTranscriptV1Str, DomainDecryptCombineTranscriptV1],
     ];
     for (const [preimage, digest] of pairs) {
       expect(keccak256(toHex(preimage))).toBe(digest);
     }
-    // All four are distinct — that separation is what stops a proof from one
+    // All are distinct — that separation is what stops a proof from one
     // transcript being replayed into another.
     expect(new Set(pairs.map(([, d]) => d)).size).toBe(pairs.length);
   });

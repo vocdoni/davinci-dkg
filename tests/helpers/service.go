@@ -193,6 +193,13 @@ func setupLocalHarness(ctx context.Context) (*HarnessConfig, func(), error) {
 		"CONTRIBUTION_VERIFIER":      common.HexToAddress("0x3000000000000000000000000000000000000003").Hex(),
 		"PARTIAL_DECRYPT_VERIFIER":   common.HexToAddress("0x4000000000000000000000000000000000000004").Hex(),
 	}
+	// Runs that need a longer key-assembly window (the n=20 gas profile)
+	// set it in the host environment; the compose file defaults it to 25.
+	for _, name := range []string{"KEY_ASSEMBLY_BLOCKS", "EPOCH_DURATION_BLOCKS", "COMMITTEE_SELECTION_BLOCKS"} {
+		if v := os.Getenv(name); v != "" {
+			composeEnv[name] = v
+		}
+	}
 
 	composePath, err := repoPath("tests", "docker", "docker-compose.yml")
 	if err != nil {

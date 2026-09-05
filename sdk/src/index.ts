@@ -1,6 +1,6 @@
 // ── Core clients ──────────────────────────────────────────────────────────────
 export { DKGClient } from './client.js';
-export { DKGWriter, type SubmitCiphertextResult } from './writer.js';
+export { DKGWriter, normalizeAppPolicy, type SubmitCiphertextResult } from './writer.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 export {
@@ -24,7 +24,11 @@ export {
   type PollOptions,
   type EpochEvent,
   type EpochEntry,
+  AppMode,
+  appModeLabel,
+  type AppModeValue,
   type AppPolicy,
+  type AppPolicyInput,
   type ApplicationRecord,
   type ActivityScanOptions,
   type SlotClaimedEvent,
@@ -33,6 +37,10 @@ export {
   type EpochLiveEvent,
   type DecryptionCombinedEvent,
   type ApplicationRegisteredEvent,
+  type PoolStatus,
+  type PoolKeyActivatedEvent,
+  type PoolKeyClaimedEvent,
+  type OrganizerSecretRevealedEvent,
 } from './types.js';
 
 // ── ABI ───────────────────────────────────────────────────────────────────────
@@ -45,7 +53,7 @@ export { buildEpochId, parseEpochId } from './utils.js';
 export {
   waitForEpochPhase,
   waitForDecryption,
-  waitForOrganizerShare,
+  waitForPoolKeyActivated,
   decryptionProgress,
   watchNewRounds,
   watchNewEpochs,
@@ -60,10 +68,9 @@ export {
   encrypt,
   encryptForApplication,
   decrypt,
-  waitForCollectivePublicKeyHash,
+  waitForPoolKey,
   waitForCombinedDecryption,
   demonstrateEncryptDecryptFlow,
-  type CollectivePublicKey,
 } from './flow.js';
 
 // ── Crypto ────────────────────────────────────────────────────────────────────
@@ -80,12 +87,14 @@ export {
 export {
   DomainOperatorRegisterV1,
   DomainOrganizerRegisterV1,
-  DomainDLEQV1,
-  DomainOrganizerShareV1,
   DomainOperatorRegisterV1Str,
   DomainOrganizerRegisterV1Str,
-  DomainDLEQV1Str,
-  DomainOrganizerShareV1Str,
+  DomainContributionTranscriptV1,
+  DomainPoolKeyTranscriptV1,
+  DomainDecryptCombineTranscriptV1,
+  DomainContributionTranscriptV1Str,
+  DomainPoolKeyTranscriptV1Str,
+  DomainDecryptCombineTranscriptV1Str,
 } from './protocol.js';
 
 // ── Schnorr / DLEQ provers and verifiers ─────────────────────────────────────
@@ -96,6 +105,7 @@ export {
   verifyOrganizerSchnorr,
   organizerSchnorrChallenge,
   proveOrganizer,
+  organizerPublicKey,
   verifyDleq,
   dleqChallenge,
   DOMAIN_PARTIAL_DECRYPT,
@@ -106,12 +116,3 @@ export {
   type DleqPoints,
   type DleqTranscriptInputs,
 } from './schnorr.js';
-
-// ── Organizer decryption share ───────────────────────────────────────────────
-export {
-  organizerShareChallenge,
-  proveOrganizerShare,
-  verifyOrganizerShare,
-  type OrganizerShare,
-  type OrganizerShareProof,
-} from './dleq.js';

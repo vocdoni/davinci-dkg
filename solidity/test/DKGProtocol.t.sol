@@ -25,17 +25,24 @@ contract DKGProtocolTest is Test {
         );
     }
 
-    function test_DomainDLEQV1_MatchesGoVector() public pure {
+    function test_DomainContributionTranscriptV1_MatchesGoVector() public pure {
         assertEq(
-            uint256(DKGProtocol.DOMAIN_DLEQ_V1),
-            uint256(0x48fabea26e7a072780483852e403ea60b2f51a07c735c3e4b852ac6bb99b5a91)
+            uint256(DKGProtocol.DOMAIN_CONTRIBUTION_TRANSCRIPT_V1),
+            uint256(0x29aa19fbd94aef15994e2f585c00bbd3e7aa5aefc9372efb2ce55433ca0c6a72)
         );
     }
 
-    function test_DomainOrganizerShareV1_MatchesGoVector() public pure {
+    function test_DomainPoolKeyTranscriptV1_MatchesGoVector() public pure {
         assertEq(
-            uint256(DKGProtocol.DOMAIN_ORGANIZER_SHARE_V1),
-            uint256(0x1608b6df1dd60f54655f6e7cf082d648cc3ca53756f1527d1f112085c2ddad2d)
+            uint256(DKGProtocol.DOMAIN_POOLKEY_TRANSCRIPT_V1),
+            uint256(0xae031fc261aed61242596185b006e57bdcba774d6ea39d3348a9a570b38d9ff4)
+        );
+    }
+
+    function test_DomainDecryptCombineTranscriptV1_MatchesGoVector() public pure {
+        assertEq(
+            uint256(DKGProtocol.DOMAIN_DECRYPT_COMBINE_TRANSCRIPT_V1),
+            uint256(0xb22315ced73b8ff8bb301780e4a47d6c7771b0e8a551a02a7c0df167eca08dcb)
         );
     }
 }

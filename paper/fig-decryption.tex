@@ -1,0 +1,27 @@
+% Decryption of one ciphertext: submitter, contract, committee member, organizer.
+% For a locked application the reveal comes first: the contract refuses partials
+% and combines until it (OrganizerSecretNotRevealed).
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[font=\footnotesize, >=stealth]
+  \def\colS{0} \def\colC{3.6} \def\colM{7.2} \def\colO{10.6}
+  \foreach \x/\n in {\colS/Submitter, \colC/Contract, \colM/Member $i \in [n]$, \colO/Organizer} {
+    \node[draw, rounded corners=2pt, minimum width=1.8cm] at (\x,0) {\n};
+    \draw[dashed, gray] (\x,-0.3) -- (\x,-7.8);
+  }
+  \draw[->] (\colS,-0.8) -- node[above] {$\mathsf{submitCiphertext}(\mathtt{aid}, C_1, C_2)$} (\colC,-0.8);
+  \node[anchor=west, inner sep=1pt] at (\colC+0.1,-1.3) {policy; assign $\mathtt{ctIdx}$; point checks only};
+  \draw[->] (\colC,-1.9) -- node[above] {event $(\mathtt{ctIdx}, C_1, C_2)$} (\colM,-1.9);
+  \node[anchor=west, inner sep=1pt] at (\colM+0.1,-2.4) {check $C_1 \in \GC$ off chain; wait for the gate};
+  \draw[->] (\colO,-3.0) -- node[above, pos=0.60] {$\mathsf{revealOrganizerSecret}(\mathsf{sk}_{\mathtt{org}})$, once per application, when the organizer decides} (\colC,-3.0);
+  \node[anchor=west, inner sep=1pt] at (\colC+0.1,-3.5) {$\mathsf{sk}_{\mathtt{org}} G = \mathsf{PK}_{\mathtt{org}}$; store the secret; the gate opens};
+  \node[anchor=west, inner sep=1pt] at (\colM+0.1,-4.1) {$\delta_i := e_{j,i} C_1$, DLEQ, SNARK, path of $D_{j,i}$};
+  \draw[->] (\colM,-4.7) -- node[above] {$\mathsf{submitPartialDecryption}(\delta_i, \pi, \mathsf{path})$} (\colC,-4.7);
+  \node[anchor=west, inner sep=1pt] at (\colC+0.1,-5.2) {gate open; path against $\mroot{j}$; verify $\pi$};
+  \draw[->] (\colM,-5.8) -- node[above] {$\mathsf{combineDecryption}(m, \pi)$, staggered by seed} (\colC,-5.8);
+  \node[anchor=west, inner sep=1pt] at (\colC+0.1,-6.3) {gate open; $\pi$ knows $\mathsf{sk}_{\mathtt{org}}$, checks $\sum_k \lambda_k \delta_{x_k}$; store $m$};
+  \draw[->] (\colC,-7.0) -- node[above] {$m$} (\colS,-7.0);
+\end{tikzpicture}
+\caption{Threshold decryption of one ciphertext of an application on pool key $P_j$. Every arrow into the contract is a transaction. The contract verifies a Groth16 proof for each partial and for the combine, and a Keccak Merkle path binding each partial's $D_{j,i}$ to the application's key; any committee member, contributor or not, may post a partial. The gate is the decryption window and, for an organizer-locked application, the reveal, which therefore comes first---the contract refuses every partial and combine until it---and happens once per application rather than per ciphertext; an automatic application has no organizer arrow at all (\S\ref{subsec:derivation}), and its combine proves knowledge of the secret $0$.}
+\label{fig:decryption}
+\end{figure}

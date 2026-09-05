@@ -16,6 +16,7 @@ import {
 import { blocksToDuration, shortHash } from '~lib/format'
 import { paths } from '~routes/paths'
 import { cn } from '~lib/cn'
+import { POOL_SIZE, type AppModeName } from '~indexer/types'
 import type { PlaygroundController } from './controller'
 import type { EpochOption } from './controller'
 import { NextButton, Record, StepPanel, Transcript, TxLine, Words } from './parts'
@@ -41,6 +42,16 @@ export interface StepProps {
 const point = (label: string, p: readonly [bigint, bigint] | null) =>
   p ? [{ label: `${label}.x`, value: p[0] }, { label: `${label}.y`, value: p[1] }] : []
 
+/**
+ * A field element cut down to a glance — the same decimal the transcripts
+ * print in full, so a coordinate shown inline and the one behind "advanced"
+ * read as the same number.
+ */
+const shortWord = (value: bigint): string => {
+  const text = value.toString()
+  return text.length > 14 ? `${text.slice(0, 12)}…` : text
+}
+
 // ── 1. connect ───────────────────────────────────────────────────────────────
 
 export function ConnectStep({ controller, chain }: StepProps) {
@@ -53,13 +64,13 @@ export function ConnectStep({ controller, chain }: StepProps) {
           <p>
             You are about to play the <strong className='text-silver'>organizer</strong> of an application. An organizer
             never creates an epoch and never runs a prover: the operator set produces epochs on a fixed block cadence
-            all by itself, and everything below is a handful of curve multiplications in this tab plus three cheap
-            transactions.
+            all by itself, and everything below is a handful of curve multiplications in this tab plus two or three
+            cheap transactions.
           </p>
           <p className='mt-2'>
             {chain.kind === 'demo'
               ? 'Demo mode: the wallet, the transactions and the committee are simulated from the synthetic fixture. No chain is touched and nothing is signed.'
-              : 'The wallet you connect pays for three transactions and, by default, becomes the application’s authorised submitter.'}
+              : 'The wallet you connect pays for the transactions and, by default, is the only address allowed to submit ciphertexts.'}
           </p>
         </>
       }
@@ -117,7 +128,7 @@ export function EpochStep({ controller, epochs }: StepProps) {
     return (
       <StepPanel
         step='epoch'
-        intro='An application can only be registered against an epoch whose collective key is already assembled — an epoch in the Live phase. There is none right now.'
+        intro='An application can only be registered against an epoch whose pool keys are being activated — an epoch in the Live phase. There is none right now.'
       >
         {newest ? (
           <Record
@@ -146,7 +157,7 @@ export function EpochStep({ controller, epochs }: StepProps) {
         <Callout tone='info' title='Nothing to do — this resolves itself' className='mt-4'>
           Epochs are produced by the operator set, not by applications: every node races to call{' '}
           <code className='font-mono text-emerald'>createEpoch</code> the moment the cadence window opens, then the
-          lottery picks a committee, the committee assembles the key and the epoch flips to Live. Come back when the
+          lottery picks a committee, the committee deals the pool and the epoch flips to Live. Come back when the
           countdown above runs out.
         </Callout>
       </StepPanel>
@@ -158,8 +169,8 @@ export function EpochStep({ controller, epochs }: StepProps) {
       step='epoch'
       intro={
         locked
-          ? 'The application is registered against this epoch, so it is pinned: PK_aid = PK_ep + PK_org is bound to this epoch’s key, and a newer epoch going Live changes nothing below.'
-          : 'The newest Live epoch is selected by default. Any Live epoch works — its committee is already assembled and its collective key PK_ep is on chain.'
+          ? 'The application is registered against this epoch, so it is pinned: it claimed one of this epoch’s pool keys, and a newer epoch going Live changes nothing below.'
+          : `The newest Live epoch is selected by default. Any Live epoch with a free pool key works — each epoch deals ${POOL_SIZE} keys, one per application, and its nodes keep a couple activated ahead of demand.`
       }
       actions={<NextButton onClick={controller.actions.confirmEpoch}>Register an application →</NextButton>}
     >
@@ -204,8 +215,15 @@ export function EpochStep({ controller, epochs }: StepProps) {
                 <span className='font-mono text-[11px] tnum text-ash'>
                   live since {option.liveSinceBlock != null ? `#${option.liveSinceBlock}` : '—'}
                 </span>
-                <span className='min-w-0 font-mono text-[11px] text-ash' title={option.key ? option.key.x.toString() : ''}>
-                  PK_ep {option.key ? `${option.key.x.toString(16).slice(0, 10)}…` : '—'}
+                <span
+                  className={cn(
+                    'min-w-0 font-mono text-[11px]',
+                    option.poolActivated > option.poolClaimed ? 'text-ash' : 'text-amber'
+                  )}
+                  title={`${POOL_SIZE} keys per epoch: ${option.poolActivated} activated (${option.poolActivated - option.poolClaimed} still free), ${option.poolClaimed} claimed by applications, ${POOL_SIZE - option.poolActivated} not activated yet`}
+                >
+                  {option.poolActivated - option.poolClaimed} activated free · {option.poolClaimed} claimed ·{' '}
+                  {POOL_SIZE - option.poolActivated} not activated
                 </span>
               </button>
             </li>
@@ -217,7 +235,7 @@ export function EpochStep({ controller, epochs }: StepProps) {
           <Link to={paths.epoch(epochId)} className='text-emerald hover:underline'>
             Open this epoch in the explorer
           </Link>{' '}
-          to see its lottery, committee and key.
+          to see its lottery, committee and pool.
         </p>
       ) : null}
     </StepPanel>
@@ -231,6 +249,7 @@ export function RegisterStep({ controller, chain }: StepProps) {
   const [paste, setPaste] = useState('')
   const [pasteError, setPasteError] = useState<string | null>(null)
   const registered = state.registered
+  const automatic = state.mode === 'automatic'
 
   return (
     <StepPanel
@@ -238,16 +257,26 @@ export function RegisterStep({ controller, chain }: StepProps) {
       intro={
         <>
           <p>
-            Registration publishes <code className='font-mono text-emerald'>PK_org = sk_org·G</code> with a Schnorr
-            proof that you hold <code className='font-mono text-emerald'>sk_org</code>. From then on the application’s
-            encryption key is <code className='font-mono text-emerald'>PK_aid = PK_ep + PK_org</code>, so opening a
-            ciphertext needs both the committee threshold and you.
+            Registration claims the epoch’s next activated pool key{' '}
+            <code className='font-mono text-emerald'>P_j</code> — one key per application, {POOL_SIZE} per epoch — and
+            the <strong className='text-silver'>mode</strong> decides whether an organizer key sits on top of it.
           </p>
-          <p className='mt-2'>
-            The secret itself never leaves this tab. <strong className='text-silver'>It is also not recoverable</strong>{' '}
-            — nothing on chain can reconstruct it, and without it every ciphertext of this application stays encrypted
-            forever.
-          </p>
+          {automatic ? (
+            <p className='mt-2'>
+              <strong className='text-silver'>Automatic:</strong> no organizer key at all. The encryption key is{' '}
+              <code className='font-mono text-emerald'>PK_aid = P_j</code>, the committee combines on its own the
+              moment <code className='font-mono text-emerald'>t</code> partials are in, and confidentiality rests on the
+              committee threshold plus the decryption window below.
+            </p>
+          ) : (
+            <p className='mt-2'>
+              <strong className='text-silver'>Organizer-locked:</strong> the registration publishes{' '}
+              <code className='font-mono text-emerald'>PK_org = sk_org·G</code> with a Schnorr proof of possession, so
+              the key is <code className='font-mono text-emerald'>PK_aid = P_j + PK_org</code> and nothing combines
+              until you reveal <code className='font-mono text-emerald'>sk_org</code> — once, later, when you decide.
+              Until then the secret never leaves this tab and is not recoverable.
+            </p>
+          )}
         </>
       }
       error={state.error}
@@ -259,12 +288,12 @@ export function RegisterStep({ controller, chain }: StepProps) {
             <Button
               variant='primary'
               loading={state.busy === 'register'}
-              disabled={!secret || !state.aid || !chain.wallet.connected}
+              disabled={(!automatic && !secret) || !state.aid || !chain.wallet.connected}
               onClick={() => void controller.actions.register()}
             >
               Register application
             </Button>
-            <span className='text-[12px] text-ash'>one transaction, ~408k gas</span>
+            <span className='text-[12px] text-ash'>one transaction, ~408k gas · claims the next free pool key</span>
           </>
         )
       }
@@ -289,7 +318,12 @@ export function RegisterStep({ controller, chain }: StepProps) {
           </p>
         </div>
 
-        {secret ? (
+        {automatic ? (
+          <Callout tone='info' title='No organizer key'>
+            An automatic application registers with the identity as its organizer key and no proof. There is no secret
+            to keep and nothing for you to do after the ciphertexts are in — which is exactly the trade it makes.
+          </Callout>
+        ) : secret ? (
           <div>
             <div className='label-caps mb-1.5 text-[11px] text-pewter'>organizer secret (sk_org)</div>
             <div className='flex flex-wrap items-center gap-2'>
@@ -313,7 +347,7 @@ export function RegisterStep({ controller, chain }: StepProps) {
           </div>
         ) : null}
 
-        {!registered ? (
+        {!registered && !automatic ? (
           <details className='rounded-sm border border-charcoal px-4 py-3'>
             <summary className='cursor-pointer text-[12px] text-pewter'>Bring your own secret instead</summary>
             <div className='mt-3 flex flex-wrap items-end gap-2'>
@@ -338,7 +372,22 @@ export function RegisterStep({ controller, chain }: StepProps) {
           </details>
         ) : null}
 
-        <div className='grid gap-4 sm:grid-cols-2'>
+        <div className='grid gap-4 sm:grid-cols-3'>
+          <Select
+            label='mode'
+            disabled={registered}
+            value={state.mode}
+            onChange={(e) => controller.actions.setMode(e.target.value as AppModeName)}
+            options={[
+              { value: 'organizer-locked', label: 'organizer-locked (default)' },
+              { value: 'automatic', label: 'automatic' },
+            ]}
+            hint={
+              automatic
+                ? 'policy.mode = Automatic — PK_aid = P_j; the committee decrypts on its own.'
+                : 'policy.mode = OrganizerLocked — PK_aid = P_j + PK_org; you reveal sk_org once.'
+            }
+          />
           <Select
             label='ciphertext cap'
             disabled={registered}
@@ -359,14 +408,37 @@ export function RegisterStep({ controller, chain }: StepProps) {
             placeholder={chain.wallet.address ?? '0x… (defaults to you)'}
             value={state.submitter}
             onChange={(e) => controller.actions.setSubmitter(e.target.value)}
-            hint='Only this address may submit ciphertexts. Left empty it resolves to the registering wallet — there is no open submission.'
+            hint='Becomes the one-address allow-list (policy.submitters). Left empty only the registering wallet may submit; the SDK can also open submission to anyone.'
+          />
+        </div>
+
+        <div className='grid gap-4 sm:grid-cols-2'>
+          <Input
+            type='datetime-local'
+            label='decryption opens'
+            disabled={registered}
+            value={state.decryptNotBefore}
+            onChange={(e) => controller.actions.setWindow(e.target.value, state.decryptNotAfter)}
+            hint='policy.decryptNotBefore — partials and combines revert DecryptionNotOpen() before it. Empty: no floor.'
+          />
+          <Input
+            type='datetime-local'
+            label='decryption closes'
+            disabled={registered}
+            value={state.decryptNotAfter}
+            onChange={(e) => controller.actions.setWindow(state.decryptNotBefore, e.target.value)}
+            hint={
+              chain.kind === 'demo'
+                ? 'policy.decryptNotAfter — a hard stop, must lie in the future. Empty: never. The demo committee ignores the window.'
+                : 'policy.decryptNotAfter — a hard stop, must lie in the future; after it nothing decrypts, ever. Empty: never.'
+            }
           />
         </div>
 
         {registered ? (
           <div className='flex flex-col gap-3'>
             <Callout tone='ok' title='Application registered'>
-              The epoch is pinned from here on.{' '}
+              Pool key {state.poolIndex ?? '?'} is yours and the epoch is pinned from here on.{' '}
               {controller.epochId && state.aid ? (
                 <Link
                   to={paths.application(controller.epochId, state.aid)}
@@ -385,14 +457,16 @@ export function RegisterStep({ controller, chain }: StepProps) {
         <Transcript
           title='registration transcript'
           note={
-            transcripts.registration
-              ? 'The words this transaction carried. e = keccak(DOMAIN_ORGANIZER_REGISTER_V1 ‖ eid ‖ aid ‖ PK_org ‖ A) mod q, z = w + e·sk_org.'
-              : 'PK_org, derived from the secret above. The Schnorr witness A and the response z appear once the transaction is sent.'
+            automatic
+              ? 'Automatic mode sends no key and no proof: the contract stores the identity (0, 1) as PK_org whatever the calldata says.'
+              : transcripts.registration
+                ? 'The words this transaction carried. e = keccak(DOMAIN_ORGANIZER_REGISTER_V1 ‖ eid ‖ aid ‖ PK_org ‖ A) mod q, z = w + e·sk_org.'
+                : 'PK_org, derived from the secret above. The Schnorr witness A and the response z appear once the transaction is sent.'
           }
         >
           <Words
             items={[
-              ...point('PK_org', transcripts.registration?.pkOrg ?? organizerKey),
+              ...(automatic ? point('PK_org', [0n, 1n]) : point('PK_org', transcripts.registration?.pkOrg ?? organizerKey)),
               ...point('A', transcripts.registration?.a ?? null),
               ...(transcripts.registration ? [{ label: 'z', value: transcripts.registration.z }] : []),
             ]}
@@ -405,8 +479,9 @@ export function RegisterStep({ controller, chain }: StepProps) {
 
 // ── 4. encrypt ───────────────────────────────────────────────────────────────
 
-export function EncryptStep({ controller, chain }: StepProps) {
-  const { state, words, applicationKeyPoint, ciphertext } = controller
+export function EncryptStep({ controller }: StepProps) {
+  const { state, words, keys, keysError, ciphertext } = controller
+  const automatic = state.mode === 'automatic'
   return (
     <StepPanel
       step='encrypt'
@@ -416,7 +491,17 @@ export function EncryptStep({ controller, chain }: StepProps) {
             ElGamal on BabyJubJub, entirely in this tab:{' '}
             <code className='font-mono text-emerald'>C1 = k·G</code>,{' '}
             <code className='font-mono text-emerald'>C2 = m·G + k·PK_aid</code> for a fresh random{' '}
-            <code className='font-mono text-emerald'>k</code>.
+            <code className='font-mono text-emerald'>k</code>, where{' '}
+            <code className='font-mono text-emerald'>PK_aid</code> is what the SDK’s{' '}
+            <code className='font-mono text-emerald'>getApplicationKey</code> returns for this application:{' '}
+            {automatic ? (
+              <>
+                its pool key <code className='font-mono text-emerald'>P_j</code>
+              </>
+            ) : (
+              <code className='font-mono text-emerald'>P_j + PK_org</code>
+            )}
+            .
           </p>
           <p className='mt-2'>
             The plaintext is a non-negative integer below 2<sup>50</sup> — the cap of the baby-step / giant-step
@@ -429,7 +514,7 @@ export function EncryptStep({ controller, chain }: StepProps) {
         <>
           <Button
             variant={ciphertext ? 'secondary' : 'primary'}
-            disabled={!chain.epochKey || state.ciphertextIndex != null}
+            disabled={!state.registered || state.ciphertextIndex != null}
             onClick={() => void controller.actions.encrypt()}
           >
             {ciphertext ? 'Re-encrypt' : 'Encrypt'}
@@ -450,11 +535,20 @@ export function EncryptStep({ controller, chain }: StepProps) {
           hint={state.ciphertextIndex != null ? 'Frozen: this value is already on chain.' : 'Integer, below 2^50.'}
         />
       </div>
-      {!chain.epochKey ? (
-        <Callout tone='warn' title='No collective key yet' className='mt-4'>
-          The selected epoch has not published <code className='font-mono'>PK_ep</code>.
+      {keysError ? (
+        <Callout tone='warn' title='The application key could not be read yet' className='mt-4'>
+          {keysError} — retried on the next block.
         </Callout>
-      ) : null}
+      ) : keys ? (
+        <p className='mt-4 text-[12px] text-ash'>
+          Pool key {keys.poolIndex} · PK_aid.x{' '}
+          <span className='font-mono text-silver' title={keys.key[0].toString()}>
+            {shortWord(keys.key[0])}
+          </span>
+        </p>
+      ) : (
+        <p className='mt-4 text-[12px] text-ash'>Reading the application key off the chain…</p>
+      )}
       {ciphertext ? (
         <div className='mt-5'>
           <div className='label-caps mb-2 text-[11px] text-pewter'>ciphertext — the four calldata words</div>
@@ -467,7 +561,11 @@ export function EncryptStep({ controller, chain }: StepProps) {
           note='TE (circomlib) form, the convention the SDK and the indexer both use. The words above are the same points in the gnark RTE form the contract stores.'
         >
           <Words
-            items={[...point('PK_ep', chain.epochKey), ...point('PK_aid', applicationKeyPoint)]}
+            items={[
+              ...point(`P_${keys?.poolIndex ?? 'j'}`, keys?.poolKey ?? null),
+              ...(keys?.organizerPK ? point('PK_org', keys.organizerPK) : []),
+              ...point('PK_aid', keys?.key ?? null),
+            ]}
             columns={1}
           />
         </Transcript>
@@ -489,9 +587,10 @@ export function SubmitStep({ controller }: StepProps) {
           <p>
             Six calldata words and no proof at all. There is deliberately no proof of knowledge of the randomness{' '}
             <code className='font-mono text-emerald'>k</code>: the submitter of a homomorphically aggregated tally
-            cannot know it. Replay across applications is stopped by the organizer key instead — a{' '}
+            cannot know it. Replay across applications is stopped by the pool keys instead — every application has
+            its own <code className='font-mono text-emerald'>P_j</code>, so a{' '}
             <code className='font-mono text-emerald'>C1</code> copied into another application and opened there only
-            yields <code className='font-mono text-emerald'>sk_ep·C1</code>.
+            yields a value under a different key.
           </p>
           <p className='mt-2'>
             The contract checks the points are canonical, on-curve and non-identity, assigns the next index for this
@@ -503,7 +602,11 @@ export function SubmitStep({ controller }: StepProps) {
       error={state.error}
       actions={
         done ? (
-          <NextButton onClick={() => controller.actions.goto('share')}>Decide about the share →</NextButton>
+          state.mode === 'automatic' ? (
+            <NextButton onClick={() => controller.actions.goto('watch')}>Watch the decryption →</NextButton>
+          ) : (
+            <NextButton onClick={() => controller.actions.goto('reveal')}>Decide about the secret →</NextButton>
+          )
         ) : (
           <>
             <Button
@@ -535,29 +638,56 @@ export function SubmitStep({ controller }: StepProps) {
   )
 }
 
-// ── 6. share ─────────────────────────────────────────────────────────────────
+// ── 6. reveal ────────────────────────────────────────────────────────────────
 
-export function ShareStep({ controller }: StepProps) {
-  const { state, transcripts } = controller
-  const decided = state.share !== 'undecided'
+export function RevealStep({ controller }: StepProps) {
+  const { state, secret, organizerKey } = controller
+  const decided = state.reveal !== 'undecided'
+  if (state.mode === 'automatic') {
+    return (
+      <StepPanel
+        step='reveal'
+        intro={
+          <>
+            <p>
+              Nothing to do here. This application is <strong className='text-silver'>automatic</strong>: it has no
+              organizer key, so once <code className='font-mono text-emerald'>t</code> partials are in — and the
+              decryption window is open — a committee node combines them by itself.
+            </p>
+            <p className='mt-2'>
+              There is no secret to keep and no way to stop the plaintext from appearing — that is the trade an
+              automatic application makes. An organizer-locked application keeps this step for its organizer.
+            </p>
+          </>
+        }
+        actions={<NextButton onClick={() => controller.actions.goto('watch')}>Watch the decryption →</NextButton>}
+      >
+        <Callout tone='info' title='No organizer key'>
+          The combine proof runs with the identity as <code className='font-mono'>PK_org</code> and a zero secret; the
+          only thing gating this ciphertext is the committee threshold.
+        </Callout>
+      </StepPanel>
+    )
+  }
   return (
     <StepPanel
-      step='share'
+      step='reveal'
       intro={
         <>
           <p>
-            The committee will answer this ciphertext on its own — you do not ask it to. Its partials alone open
-            nothing: the plaintext exists only once you publish{' '}
-            <code className='font-mono text-emerald'>Δ = sk_org·C1</code> with a Chaum–Pedersen DLEQ proving the same
-            secret relates <code className='font-mono text-emerald'>(G, PK_org)</code> and{' '}
-            <code className='font-mono text-emerald'>(C1, Δ)</code>.
+            Nothing happens to this ciphertext until you act. The contract refuses every partial decryption and every
+            combine of an organizer-locked application with{' '}
+            <code className='font-mono text-emerald'>OrganizerSecretNotRevealed()</code> until{' '}
+            <code className='font-mono text-emerald'>sk_org</code> is on chain, so the committee is parked on this
+            application rather than working on it — and there is nothing on chain to collect from before you decide.
           </p>
           <p className='mt-2'>
-            Withholding it is a legitimate choice and costs nothing: partials keep arriving,{' '}
-            <code className='font-mono text-emerald'>combineDecryption</code> reverts{' '}
-            <code className='font-mono text-emerald'>OrganizerShareMissing()</code>, and you can release the share the
-            second a poll closes. The whole proof is a few curve multiplications and a keccak in this tab — no circuit
-            artifacts, no prover.
+            The reveal is one transaction and it is final: from that block on the committee answers every ciphertext
+            of this application — this one, and every later one — and{' '}
+            <code className='font-mono text-emerald'>t</code> members inside the decryption window recover the
+            plaintext. Keeping the secret is a legitimate choice and costs nothing: ciphertexts keep landing, nothing
+            decrypts, and you can reveal the second a poll closes. No proof, no prover — the contract checks{' '}
+            <code className='font-mono text-emerald'>sk_org·G = PK_org</code> itself.
           </p>
         </>
       }
@@ -569,56 +699,47 @@ export function ShareStep({ controller }: StepProps) {
           <>
             <Button
               variant='primary'
-              loading={state.busy === 'share'}
-              onClick={() => void controller.actions.release()}
+              loading={state.busy === 'reveal'}
+              onClick={() => void controller.actions.reveal()}
             >
-              Release the share
+              Reveal the secret
             </Button>
-            <Button onClick={controller.actions.withhold}>Withhold for now</Button>
-            <span className='text-[12px] text-ash'>~88k gas</span>
+            <Button onClick={controller.actions.keep}>Keep it for now</Button>
+            <span className='text-[12px] text-ash'>~62k gas</span>
           </>
         )
       }
     >
-      {state.share === 'released' ? (
+      {state.reveal === 'revealed' ? (
         <div className='flex flex-col gap-3'>
-          <Callout tone='ok' title='Share published'>
-            The contract stores only <code className='font-mono'>keccak256(Δ ‖ A1 ‖ A2 ‖ z)</code> and never verifies
-            the DLEQ — the committee’s combine SNARK does, taking the challenge <code className='font-mono'>e</code>{' '}
-            from the transcript the contract recomputed. Anyone may relay a share, and re-submission overwrites until
-            the ciphertext is combined, so a malformed one cannot brick it.
+          <Callout tone='ok' title='Secret revealed'>
+            <code className='font-mono'>sk_org</code> is on chain for good and the committee starts answering from
+            this block: partials first, then the combine. Anyone may relay a reveal — the secret is what
+            authenticates it — and a second call reverts <code className='font-mono'>AlreadyRevealed()</code>.
           </Callout>
-          <TxLine tx={state.txs.share} label='submitOrganizerShare' />
+          <TxLine tx={state.txs.reveal} label='revealOrganizerSecret' />
         </div>
       ) : null}
-      {state.share === 'withheld' ? (
-        <Callout tone='warn' title='Share withheld'>
-          Nothing is broken. Partials will still land and the ciphertext will sit at{' '}
-          <em>threshold met, awaiting share</em> until you change your mind.
+      {state.reveal === 'kept' ? (
+        <Callout tone='warn' title='Secret kept'>
+          Nothing is broken. The ciphertext sits at <em>awaiting reveal</em> — the contract refuses every partial and
+          combine of this application — until you change your mind.
           <div className='mt-3'>
-            <Button size='sm' variant='ghost' loading={state.busy === 'share'} onClick={() => void controller.actions.release()}>
-              Release it now
+            <Button size='sm' variant='ghost' loading={state.busy === 'reveal'} onClick={() => void controller.actions.reveal()}>
+              Reveal it now
             </Button>
           </div>
         </Callout>
       ) : null}
-      {state.advanced && transcripts.share ? (
+      {state.advanced ? (
         <Transcript
-          title='organizer share transcript'
-          note='e = keccak256(DOMAIN_ORGANIZER_SHARE_V1 ‖ eid ‖ aid ‖ uint256(ctIdx) ‖ PK_org ‖ C1 ‖ Δ ‖ A1 ‖ A2) mod q, z = w + e·sk_org mod q. All coordinates are the on-chain RTE words.'
+          title='reveal transcript'
+          note='Two calldata words and no proof: the scalar itself, which the contract multiplies by G and compares to the PK_org it stored at registration.'
         >
           <Words
-            items={[
-              ...point('Δ', transcripts.share.delta),
-              ...point('A1', transcripts.share.a1),
-              ...point('A2', transcripts.share.a2),
-              { label: 'e', value: transcripts.share.e },
-              { label: 'z', value: transcripts.share.z },
-            ]}
+            items={[...(secret ? [{ label: 'sk_org', value: secret }] : []), ...point('PK_org', organizerKey)]}
+            columns={1}
           />
-          <p className='mt-3 text-[11px] text-ash'>
-            Local DLEQ check: {transcripts.share.valid ? 'verifies against PK_org.' : 'DOES NOT VERIFY.'}
-          </p>
         </Transcript>
       ) : null}
     </StepPanel>
@@ -641,18 +762,24 @@ export function WatchStep({ controller, chain }: StepProps) {
       </StepPanel>
     )
   }
-  const { partials, threshold, committeeSize, share, combined } = decryption
+  const { partials, threshold, committeeSize, reveal, combined } = decryption
   return (
     <StepPanel
       step='watch'
       intro={
         <>
-          Each selected node publishes <code className='font-mono text-emerald'>δ_i = d_i·C1</code> with a Groth16 proof
-          of its own DLEQ. Only the first <code className='font-mono text-emerald'>t</code> members of a seed-derived
-          rotation answer, so the wave column below is{' '}
-          <code className='font-mono text-emerald'>⌊(partial block − ciphertext block) / stagger⌋</code>. Once{' '}
-          <code className='font-mono text-emerald'>t</code> partials <em>and</em> the organizer share are on chain, one
-          node combines them and lands the plaintext.
+          Each selected node publishes <code className='font-mono text-emerald'>δ_i = e_{'{j,i}'}·C1</code> — its
+          share <code className='font-mono text-emerald'>e_{'{j,i}'}</code> of this application’s pool key{' '}
+          <code className='font-mono text-emerald'>P_j</code> — with a Groth16 proof of its DLEQ and a Merkle proof
+          of the share. Only the first <code className='font-mono text-emerald'>t</code> members of a seed-derived
+          rotation answer, so the wave column below (counted from 0) is{' '}
+          <code className='font-mono text-emerald'>⌊(partial block − opened block) / stagger⌋</code>, where the
+          ciphertext opened{' '}
+          {state.mode === 'automatic'
+            ? 'the block it landed'
+            : 'at the reveal — the contract refuses every partial before it'}
+          . Once <code className='font-mono text-emerald'>t</code> partials are on chain, one node combines them
+          and lands the plaintext.
         </>
       }
     >
@@ -671,9 +798,17 @@ export function WatchStep({ controller, chain }: StepProps) {
             text={`${partials.length} of ${threshold}`}
           />
           <StatusTile
-            label='organizer share'
-            ok={share.present}
-            text={share.present ? `block ${share.block ?? '—'}` : state.share === 'withheld' ? 'withheld' : 'pending'}
+            label='organizer secret'
+            ok={reveal.done}
+            text={
+              !reveal.required
+                ? 'not needed'
+                : reveal.done
+                  ? `revealed · block ${reveal.block ?? '—'}`
+                  : state.reveal === 'kept'
+                    ? 'kept · partials refused'
+                    : 'pending · partials refused'
+            }
           />
           <StatusTile
             label='combined'
@@ -715,13 +850,22 @@ export function WatchStep({ controller, chain }: StepProps) {
               </tbody>
             </table>
           </div>
+        ) : reveal.required && !reveal.done ? (
+          <EmptyState
+            compact
+            title='Awaiting reveal — partials refused'
+            description='The contract rejects every partial decryption and combine of an organizer-locked application until sk_org is on chain (OrganizerSecretNotRevealed). Reveal the secret and the committee starts answering.'
+          />
         ) : (
           <EmptyState compact title='No partials yet' description='The committee has not answered this ciphertext.' />
         )}
 
         <div className='flex flex-col gap-2'>
-          {share.present && share.tx ? (
-            <TxLine tx={{ hash: share.tx, block: share.block, gasUsed: null, simulated }} label='organizer share' />
+          {reveal.done && reveal.tx ? (
+            <TxLine
+              tx={{ hash: reveal.tx, block: reveal.block, gasUsed: null, simulated }}
+              label='revealOrganizerSecret'
+            />
           ) : null}
           {combined.done && combined.tx ? (
             <TxLine

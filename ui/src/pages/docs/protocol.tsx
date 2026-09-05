@@ -11,8 +11,8 @@ const SECTIONS: DocsSection[] = [
   { id: 'overview', title: 'Overview' },
   { id: 'lifecycle', title: 'Epoch lifecycle' },
   { id: 'lottery', title: 'Committee lottery' },
-  { id: 'keygen', title: 'Contribution and finalization' },
-  { id: 'applications', title: 'Applications and organizer keys' },
+  { id: 'keygen', title: 'Contribution, finalization and pool keys' },
+  { id: 'applications', title: 'Applications, modes and windows' },
   { id: 'decryption', title: 'Threshold decryption' },
   { id: 'security', title: 'What holds, and what does not' },
   { id: 'deployment', title: 'This deployment' },
@@ -24,14 +24,15 @@ export function DocsProtocolPage() {
     <DocsLayout
       label='Docs'
       title='Protocol'
-      description='Non-interactive distributed key generation on an EVM chain: how an epoch is born, how its committee is drawn, how applications get their own key, and what it takes to open a single ciphertext.'
+      description='Non-interactive distributed key generation on an EVM chain: how an epoch is born, how its committee is drawn, how each application gets a key of its own out of the epoch’s pool, and what it takes to open a single ciphertext.'
       sections={SECTIONS}
     >
       <Section id='overview' title='Overview'>
         <P>
-          A committee of independent operators jointly generates an <Em>ElGamal</Em> public key on <Em>BabyJubJub</Em>,
-          a SNARK-friendly elliptic curve over the BN254 scalar field. The matching private key is never assembled
-          anywhere: ciphertexts are opened by combining partial decryptions, and ElGamal&rsquo;s additive homomorphism
+          A committee of independent operators jointly generates a <Em>pool</Em> of <Em>ElGamal</Em> public keys on{' '}
+          <Em>BabyJubJub</Em>, a SNARK-friendly elliptic curve over the BN254 scalar field — one key per application
+          that registers against the epoch. No matching private key is ever assembled anywhere: ciphertexts are opened
+          by combining partial decryptions, and ElGamal&rsquo;s additive homomorphism
           lets ciphertexts be aggregated <Em>before</Em> anything is decrypted — so the result of a vote can be revealed
           while the individual ballots stay sealed.
         </P>
@@ -48,7 +49,7 @@ export function DocsProtocolPage() {
         <Sub>Three contracts</Sub>
         <P>
           <C>DKGRegistry</C> holds operator identities and liveness. <C>DKGManager</C> owns the epoch state machine,
-          ciphertexts and decryption. <C>DKGAppManager</C> owns per-application registration and organizer shares. The
+          ciphertexts and decryption. <C>DKGAppManager</C> owns per-application registration and the organizer reveal. The
           split exists only to keep each contract under EIP-170 — logically the last two share one storage — and the
           registry and app manager are resolved from the manager on chain, so only one address ever needs configuring.
         </P>
@@ -56,22 +57,24 @@ export function DocsProtocolPage() {
 
       <Section id='lifecycle' title='Epoch lifecycle'>
         <P>
-          An <Em>epoch</Em> is one DKG run. It produces a single collective public key <C>PK_ep</C> shared by <C>n</C>{' '}
-          committee members, any <C>t</C> of which can decrypt. Epochs are scheduled on a fixed block cadence and split
-          into a short <Em>preparation</Em> and a long <Em>service</Em> window.
+          An <Em>epoch</Em> is one DKG run. It deals a pool of <C>MaxK = 8</C> keys <C>P_0 … P_7</C>, each shared by
+          the same <C>n</C> committee members, any <C>t</C> of which can decrypt under it. Epochs are scheduled on a
+          fixed block cadence and split into a short <Em>preparation</Em> and a long <Em>service</Em> window; the next
+          one may also open early once the pool is down to its last key.
         </P>
         <Code caption='epoch windows'>{`  startBlock                                                          endBlock
   │ ── Preparation (small, fixed) ──►  ◄──────── Service ───────────► │
   │ CommitteeSelection │ KeyAssembly │ gap │        Live              │
   ├────────────────────┼─────────────┼─────┼──────────────────────────┤
-  │ claimSlot          │submitContrib│     │ registerApplication /    │
-  │ (lottery)          │  (Groth16)  │     │ submitCiphertext /       │
+  │ claimSlot          │submitContrib│     │ activatePoolKey (×8) /   │
+  │ (lottery)          │  (Groth16)  │     │ registerApplication /    │
+  │                    │             │     │ submitCiphertext /       │
   │                    │             │     │ submitPartialDecryption /│
-  │                    │             │     │ submitOrganizerShare /   │
+  │                    │             │     │ revealOrganizerSecret /  │
   │                    │             │     │ combineDecryption        │
   └────────────────────┴─────────────┴─────┴──────────────────────────┘
                                       ▲
-                            finalizeEpoch (Groth16)
+                            finalizeEpoch (no proof)
                             flips KeyAssembly → Live`}</Code>
         <P>
           Each preparation window is an <Em>absolute</Em> block count, not a fraction of the epoch: the lottery is one
@@ -99,6 +102,7 @@ export function DocsProtocolPage() {
             { label: 'FINALIZE_GAP_BLOCKS', value: '5', mono: true, hint: 'cooldown before finalizeEpoch' },
             { label: 'SEED_DELAY_BLOCKS', value: '1', mono: true, hint: 'seed = blockhash(startBlock + this)' },
             { label: 'MaxN', value: '32', mono: true, hint: 'compile-time committee cap, mirrors the circuits' },
+            { label: 'MaxK', value: '8', mono: true, hint: 'pool keys dealt per epoch, one per application' },
             { label: 'INACTIVITY_WINDOW', value: '50,400', mono: true, hint: '≈7 days — heartbeat window before reap' },
           ]}
         />
@@ -131,61 +135,94 @@ export function DocsProtocolPage() {
         </P>
       </Section>
 
-      <Section id='keygen' title='Contribution and finalization'>
+      <Section id='keygen' title='Contribution, finalization and pool keys'>
         <Steps
           items={[
             <>
-              Each committee member publishes a Feldman verifiable secret sharing (VSS) contribution: polynomial
-              commitments plus shares encrypted to the other members&rsquo; registry keys, with a Groth16 proof that the
-              two are consistent. One transaction, verified on chain at submission.
+              Each committee member publishes one Feldman verifiable secret sharing (VSS) contribution dealing{' '}
+              <C>MaxK</C> polynomials at once: <C>MaxK</C> sets of commitments plus, per recipient, <C>MaxK</C> shares
+              encrypted to that member&rsquo;s registry key under one shared ECDH secret, with a Groth16 proof that
+              commitments and shares are consistent. One transaction, verified on chain at submission.
             </>,
             <>
-              The contract accumulates accepted contributions into the collective key{' '}
-              <C>PK_ep = Σ a&#95;&#123;i,0&#125;·G</C> — the sum of every contributor&rsquo;s zeroth commitment — and
-              records each member&rsquo;s share commitment <C>D_i</C>.
+              Once at least <C>minValidContributions</C> are in and the finalize gap has passed, anyone calls{' '}
+              <C>finalizeEpoch</C> — <Em>no proof</Em>. It freezes the accepted contributor set, flips the epoch to{' '}
+              <C>Live</C> and emits <C>EpochLive(eid, contributionCount)</C>. No key exists yet.
             </>,
             <>
-              Once at least <C>minValidContributions</C> are in and the finalize gap has passed, any member calls{' '}
-              <C>finalizeEpoch</C> with a Groth16 proof over the aggregate. The epoch flips to <C>Live</C> and{' '}
-              <C>PK_ep</C> becomes readable on chain.
+              Each pool key is then <Em>activated</Em> separately: <C>activatePoolKey(eid, j, …)</C> carries a Groth16
+              proof that <C>P_j = Σ A&#95;&#123;i,j,0&#125;</C> is the sum of the accepted contributors&rsquo; zeroth
+              commitments for key <C>j</C>, and stores <C>P_j</C> together with a Merkle root of every member&rsquo;s
+              share commitment <C>D&#95;&#123;j,i&#125;</C>. Permissionless, any order, one proof per key; nodes keep
+              a couple of keys activated ahead of demand.
             </>,
           ]}
         />
         <P>
-          The private key <C>sk_ep</C> is never assembled — not by the contract, not by the finalizer, not by any single
-          member. It only ever exists as <C>n</C> Shamir shares <C>d_i</C>, of which <C>t</C> suffice to act.
+          No private key is ever assembled — not by the contract, not by the finalizer, not by any single member. Each{' '}
+          <C>P_j</C> only ever exists as <C>n</C> Shamir shares <C>e&#95;&#123;j,i&#125;</C>, of which <C>t</C> suffice
+          to act, and a member proves its partial against the Merkle root rather than against per-member storage.
         </P>
       </Section>
 
-      <Section id='applications' title='Applications and organizer keys'>
+      <Section id='applications' title='Applications, modes and windows'>
         <P>
-          A Live epoch hosts many independent encryption contexts — one per <Em>application</Em>, named by a 32-byte{' '}
-          <C>aid</C> chosen by whoever registers it. Because <C>aid</C> is a public input of every decryption proof it
-          must be non-zero and below the BN254 scalar modulus: clear the top three bits of a random or hashed id.
+          A Live epoch hosts up to <C>MaxK</C> independent encryption contexts — one per <Em>application</Em>, named
+          by a 32-byte <C>aid</C> chosen by whoever registers it. Because <C>aid</C> is a public input of every
+          decryption proof it must be non-zero and below the BN254 scalar modulus: clear the top three bits of a random
+          or hashed id.
         </P>
         <P>
-          There is exactly one registration path, and it is not optional. <C>registerApplication</C> publishes{' '}
-          <C>PK_org = sk_org·G</C> together with a Schnorr proof of possession of <C>sk_org</C> (domain{' '}
-          <C>davinci-dkg:organizer-register:v1</C>), verified on chain. The application key is then:
+          There is exactly one registration path, and it is not optional. <C>registerApplication</C> claims the
+          epoch&rsquo;s next unused <Em>activated</Em> pool key <C>P_j</C> (<C>PoolExhausted()</C> when none is left,{' '}
+          <C>PoolKeyNotActive()</C> when the next one is not proven yet) and records <C>poolIndex = j</C>. The
+          application key is then:
         </P>
-        <Code caption='application key'>{`PK_aid = PK_ep + PK_org`}</Code>
+        <Code caption='application key'>{`PK_aid = P_j            // automatic
+PK_aid = P_j + PK_org   // organizer-locked`}</Code>
         <P>
-          so opening a ciphertext needs <Em>both</Em> the committee threshold and the organizer. The committee alone
-          only ever recovers <C>sk_ep·C1</C>. A zero <C>policy.authorizedSubmitter</C> resolves to the registering
-          address. Submission is never open, and every ciphertext belongs to a registered application.
+          Whether an organizer key sits on top of the pool key is the application&rsquo;s <Em>mode</Em>, fixed at
+          registration:
+        </P>
+        <Bullets
+          items={[
+            <>
+              <Em>Organizer-locked</Em> (the default). The registration carries <C>PK_org = sk_org·G</C> and a Schnorr
+              proof of possession of <C>sk_org</C> (domain <C>davinci-dkg:organizer-register:v1</C>), verified on
+              chain, and nothing else about the secret. The committee cannot combine anything until the organizer
+              calls <C>revealOrganizerSecret</C> — once, permissionlessly relayable, checked as{' '}
+              <C>sk_org·G = PK_org</C>; from that block on it combines by itself. The organizer does nothing per
+              ciphertext.
+            </>,
+            <>
+              <Em>Automatic.</Em> No organizer key at all: <C>organizerPK</C> is stored as the identity <C>(0, 1)</C>{' '}
+              and the combine proof runs with a zero secret. <C>t</C> partials inside the decryption window are all a
+              plaintext takes, and confidentiality rests on the committee threshold only.
+            </>,
+          ]}
+        />
+        <P>
+          The rest of the policy is fixed at registration too. <Em>Submission</Em> is open to anyone (
+          <C>openSubmission</C>), to an allow-list of at most 32 addresses (<C>submitters</C>), or — when both are empty
+          — to the registrant only; a block window and a ciphertext cap apply on top. The <Em>decryption window</Em>{' '}
+          <C>decryptNotBefore</C> → <C>decryptNotAfter</C> (unix seconds, 0 = unbounded on that side) gates partials
+          and combines in both modes: before it opens they revert <C>DecryptionNotOpen()</C>, after it closes{' '}
+          <C>DecryptionClosed()</C>, and the close, once set, must lie in the future at registration. A contradictory
+          policy reverts <C>InvalidPolicy()</C>. Every ciphertext belongs to a registered application.
         </P>
         <Note tone='warn'>
-          Losing <C>sk_org</C> makes the application <Em>permanently undecryptable</Em>. It is never transmitted and
-          nothing on chain can reconstruct it. Conversely, the organizer can decrypt any ciphertext of its own
-          application by combining its <C>Δ</C> with the committee&rsquo;s published partials: within an application the
-          organizer is trusted and accountable; across applications, secrecy rests on the decisional
-          Diffie&ndash;Hellman (DDH) assumption over the organizer keys.
+          Losing the <C>sk_org</C> of an organizer-locked application before the reveal makes it{' '}
+          <Em>permanently undecryptable</Em>. It is never transmitted and nothing on chain can reconstruct it.
+          Conversely, the organizer can decrypt any ciphertext of its own application from <C>t</C> published partials
+          and its own secret, and the reveal is irreversible: once <C>sk_org</C> is on chain every ciphertext under the{' '}
+          <C>aid</C> — past and future — is open to the committee threshold.
         </Note>
         <P>
-          This is what replaces a proof of knowledge of the encryption randomness. A ciphertext copied out of one
-          application and decrypted under another yields <C>sk_ep·C1</C>, useless without the target application&rsquo;s{' '}
-          <C>sk_org·C1</C> — so <C>submitCiphertext</C> needs no proof, which is in turn what makes homomorphic
-          aggregation possible: whoever submits an aggregated tally cannot know its randomness.
+          The pool is what replaces a proof of knowledge of the encryption randomness. A ciphertext copied out of one
+          application into another is decrypted under a different <C>P_j</C> and yields nothing useful — so{' '}
+          <C>submitCiphertext</C> needs no proof, which is in turn what makes homomorphic aggregation possible: whoever
+          submits an aggregated tally cannot know its randomness. The organizer key no longer carries that burden, which
+          is why it may be absent or revealed.
         </P>
       </Section>
 
@@ -193,38 +230,38 @@ export function DocsProtocolPage() {
         <Steps
           items={[
             <>
-              The authorised submitter publishes <C>(C1, C2)</C> with <C>submitCiphertext</C>. The contract checks the
+              A permitted submitter publishes <C>(C1, C2)</C> with <C>submitCiphertext</C>. The contract checks the
               points are canonical, on-curve and non-identity, assigns the next index for that <C>aid</C>, and emits{' '}
               <C>CiphertextSubmitted</C>. It deliberately skips the prime-order subgroup check (~2M gas); every
               committee node performs it off chain before computing anything, and that off-chain check is load-bearing —
               a cofactor <C>C1</C> would leak <C>d_i mod h</C> from a node that skipped it.
             </>,
             <>
-              Each selected node publishes its partial <C>δ_i = d_i·C1</C> with a Groth16 proof of a
-              Chaum&ndash;Pedersen discrete-logarithm equality (DLEQ) binding <C>δ_i</C> to its share commitment{' '}
-              <C>D_i</C> and to <C>C1</C>; the DLEQ transcript is hashed in-circuit with Poseidon. Nodes stagger by
-              slot, so partials arrive in <Em>waves</Em> and only the first <C>t</C> members of a seed-derived rotation
-              actually spend gas.
+              Each selected node publishes its partial <C>δ_i = e&#95;&#123;j,i&#125;·C1</C> — its share of{' '}
+              <Em>this application&rsquo;s</Em> pool key — with a Groth16 proof of a Chaum&ndash;Pedersen
+              discrete-logarithm equality (DLEQ) binding <C>δ_i</C> to its share commitment <C>D&#95;&#123;j,i&#125;</C>{' '}
+              and to <C>C1</C>, plus a Merkle path (<C>MERKLE_DEPTH = 5</C> siblings) proving that commitment sits at
+              leaf <C>i − 1</C> of the key&rsquo;s root. The DLEQ transcript is hashed in-circuit with Poseidon. Nodes
+              stagger by slot, so partials arrive in <Em>waves</Em> and only the first <C>t</C> members of a
+              seed-derived rotation actually spend gas.
             </>,
             <>
-              The organizer publishes <C>Δ = sk_org·C1</C> with a Chaum&ndash;Pedersen DLEQ whose challenge is a{' '}
-              <Em>keccak</Em> rather than a Poseidon — cheap enough for a browser-only organizer, and recomputed by the
-              contract from calldata. The contract stores only <C>keccak256(Δ ‖ A1 ‖ A2 ‖ z)</C> and{' '}
-              <Em>never verifies the DLEQ itself</Em>.
+              For an organizer-locked application the organizer reveals <C>sk_org</C> once with{' '}
+              <C>revealOrganizerSecret</C> — two calldata words and no proof; the contract checks{' '}
+              <C>sk_org·G = PK_org</C> and stores the scalar. An automatic application has nothing to reveal.
             </>,
             <>
-              Once <C>t</C> partials <Em>and</Em> an organizer share are on chain, anyone calls <C>combineDecryption</C>
-              . Its Groth16 proof attests three things at once: that <C>Σ λ_k · δ_k</C> Lagrange-interpolates correctly,
-              that the organizer&rsquo;s DLEQ verifies against the registered <C>PK_org</C> and the challenge <C>e</C>{' '}
-              the contract pinned, and that <C>m·G + Σ λ_k · δ_k + Δ = C2</C>. The recovered scalar <C>m</C> lands on
-              chain, readable via <C>getPlaintext</C>.
+              Once <C>t</C> partials are on chain and the application is unlocked, anyone calls{' '}
+              <C>combineDecryption</C>. Its Groth16 proof attests three things at once: that <C>Σ λ_k · δ_k</C>{' '}
+              Lagrange-interpolates correctly, that it knows the organizer secret behind the registered <C>PK_org</C>{' '}
+              (zero for an automatic application), and that <C>m·G + Σ λ_k · δ_k + sk_org·C1 = C2</C>. The recovered
+              scalar <C>m</C> lands on chain, readable via <C>getPlaintext</C>.
             </>,
           ]}
         />
         <P>
-          A malformed organizer share cannot brick a ciphertext: re-submission overwrites the stored hash until the
-          plaintext lands, and nodes simply skip a share whose DLEQ does not verify and re-check on the next tick.
-          Anyone may relay a share — it is self-authenticating.
+          Every one of these steps is gated by the application&rsquo;s decryption window: a partial or a combine outside
+          it reverts, so a closed window is a hard stop even for a revealed or automatic application.
         </P>
         <Sub>Plaintext range</Sub>
         <P>
@@ -240,24 +277,26 @@ export function DocsProtocolPage() {
         <Bullets
           items={[
             <>
-              <Em>No trusted dealer.</Em> The collective key is generated jointly; corrupting fewer than <C>t</C>{' '}
-              operators reveals nothing about <C>sk_ep</C>.
+              <Em>No trusted dealer.</Em> Every pool key is generated jointly; corrupting fewer than <C>t</C> operators
+              reveals nothing about any of them.
             </>,
             <>
               <Em>Non-interactive.</Em> Every step is one self-contained transaction. Invalid contributions are rejected
               at submission, not disputed afterwards.
             </>,
             <>
-              <Em>Verified on chain.</Em> Contribution, finalization, partial decryption and combination are each gated
-              by a Groth16 verifier. Correctness is enforced by the EVM.
+              <Em>Verified on chain.</Em> Contribution, pool-key activation, partial decryption and combination are
+              each gated by a Groth16 verifier; finalization needs none because it proves nothing. Correctness is
+              enforced by the EVM.
             </>,
             <>
               <Em>Permissionless committee.</Em> Anyone can register and be drawn by the lottery; the selection is a
               keccak anyone can replay.
             </>,
             <>
-              <Em>Per-application isolation.</Em> One committee serves many applications, and a ciphertext moved between
-              them decrypts to nothing useful.
+              <Em>Per-application isolation.</Em> One committee serves up to <C>MaxK</C> applications per epoch, each
+              under its own key, and a ciphertext moved between them decrypts to nothing useful — with or without an
+              organizer key.
             </>,
           ]}
         />
@@ -265,18 +304,19 @@ export function DocsProtocolPage() {
         <Bullets
           items={[
             <>
-              <Em>The organizer is a single point of failure for its own application.</Em> Lose <C>sk_org</C> and every
-              ciphertext under that <C>aid</C> is undecryptable forever; keep it and you can open any of them the moment{' '}
-              <C>t</C> partials exist, without asking anyone.
+              <Em>The organizer is a single point of failure for its own application.</Em> Lose <C>sk_org</C> before
+              the reveal and every ciphertext under that <C>aid</C> is undecryptable forever; keep it and you can open
+              any of them the moment <C>t</C> partials exist, without asking anyone. And the reveal cannot be undone.
             </>,
             <>
               <Em>A colluding threshold breaks confidentiality.</Em> <C>t</C> operators plus the organizer recover the
-              plaintext of anything. The lottery makes the set unpredictable, not incorruptible.
+              plaintext of anything — and for an automatic or a revealed application <C>t</C> operators alone do. The
+              lottery makes the set unpredictable, not incorruptible; the decryption window bounds the exposure in time.
             </>,
             <>
               <Em>No proof of knowledge on ciphertexts.</Em> Anyone authorised may submit arbitrary <C>(C1, C2)</C>.
-              Cross-application replay is neutralised by the organizer key, but a malformed ciphertext inside its own
-              application is the submitter&rsquo;s problem.
+              Cross-application replay is neutralised by the per-application pool keys, but a malformed ciphertext
+              inside its own application is the submitter&rsquo;s problem.
             </>,
             <>
               <Em>The subgroup check is off chain.</Em> The contract does not perform it; a node that skips it leaks
@@ -285,7 +325,8 @@ export function DocsProtocolPage() {
             <>
               <Em>Liveness is not guaranteed.</Em> A committee that fails to fill or to reach{' '}
               <C>minValidContributions</C> produces a dead epoch that anyone may abort; a committee that stops answering
-              leaves ciphertexts undecrypted until a later epoch is used.
+              leaves ciphertexts undecrypted until a later epoch is used. And an epoch serves at most <C>MaxK</C>{' '}
+              applications — past that, registrations wait for the next one.
             </>,
             <>
               <Em>Plaintexts above the BSGS cap are lost.</Em> Not detectable at submission time — the ciphertext is

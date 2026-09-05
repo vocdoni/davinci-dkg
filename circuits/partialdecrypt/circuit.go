@@ -53,9 +53,9 @@ func (c *PartialDecryptCircuit) Define(api frontend.API) error {
 	api.AssertIsLessOrEqual(c.Secret, ccommon.SubgroupOrderMinusOne())
 	api.AssertIsLessOrEqual(c.Response, ccommon.SubgroupOrderMinusOne())
 	ccommon.AssertPointEqual(api, ccommon.FixedBaseMul(api, c.Secret), publicKey)
-	ccommon.AssertPointEqual(api, curve.ScalarMul(base, c.Secret), delta)
+	ccommon.AssertPointEqual(api, ccommon.ScalarMulVar(api, base, c.Secret), delta)
 	ccommon.AssertPointEqual(api, ccommon.FixedBaseMul(api, c.Nonce), a1)
-	ccommon.AssertPointEqual(api, curve.ScalarMul(base, c.Nonce), a2)
+	ccommon.AssertPointEqual(api, ccommon.ScalarMulVar(api, base, c.Nonce), a2)
 
 	// Bind the Fiat-Shamir challenge to the full transcript
 	//   (eid, aid, ctIdx, i, D_i, C_1, δ_i, A_i, B_i)
@@ -86,11 +86,11 @@ func (c *PartialDecryptCircuit) Define(api frontend.API) error {
 	}
 
 	left1 := ccommon.FixedBaseMul(api, c.Response)
-	right1 := curve.Add(a1, curve.ScalarMul(publicKey, challenge))
+	right1 := curve.Add(a1, ccommon.ScalarMulVar(api, publicKey, challenge))
 	ccommon.AssertPointEqual(api, left1, right1)
 
-	left2 := curve.ScalarMul(base, c.Response)
-	right2 := curve.Add(a2, curve.ScalarMul(delta, challenge))
+	left2 := ccommon.ScalarMulVar(api, base, c.Response)
+	right2 := curve.Add(a2, ccommon.ScalarMulVar(api, delta, challenge))
 	ccommon.AssertPointEqual(api, left2, right2)
 	return nil
 }

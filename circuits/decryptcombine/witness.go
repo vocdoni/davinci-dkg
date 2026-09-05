@@ -4,13 +4,12 @@ import (
 	"fmt"
 	"math/big"
 
-	ethcrypto "github.com/ethereum/go-ethereum/crypto"
 	ccommon "github.com/vocdoni/davinci-dkg/circuits/common"
-	"github.com/vocdoni/davinci-dkg/crypto/dleq"
+	"github.com/vocdoni/davinci-dkg/internal/protocol"
 	"github.com/vocdoni/davinci-dkg/types"
 )
 
-var decryptCombineTranscriptDomain = ethcrypto.Keccak256Hash([]byte("davinci-dkg:decrypt-combine:v1"))
+var decryptCombineTranscriptDomain = protocol.DomainDecryptCombineTranscriptV1
 
 // PublicInputs is the native representation of the decrypt-combine public
 // inputs plus the private words the contract re-checks through the
@@ -19,7 +18,6 @@ type PublicInputs struct {
 	RoundHash            *big.Int // semantically: eid
 	Aid                  *big.Int
 	CtIdx                *big.Int
-	DeltaOrg             types.CurvePoint
 	Threshold            *big.Int
 	ShareCount           *big.Int
 	CombineHash          *big.Int
@@ -29,10 +27,6 @@ type PublicInputs struct {
 	CiphertextC1         types.CurvePoint
 	CiphertextC2         types.CurvePoint
 	OrganizerPK          types.CurvePoint
-	OrganizerA1          types.CurvePoint
-	OrganizerA2          types.CurvePoint
-	OrganizerZ           *big.Int
-	OrganizerE           *big.Int
 	ParticipantIndexes   []*big.Int
 	PartialDecryptions   []types.CurvePoint
 }
@@ -53,21 +47,6 @@ func BuildWitness(a Assignment) (*DecryptCombineCircuit, *PublicInputs, error) {
 	if a.CtIdx != nil {
 		ctIdx.Set(a.CtIdx)
 	}
-	organizerZ := new(big.Int).Set(a.OrganizerProof.Response)
-	// `e` is derived here, never taken from the caller: the contract
-	// recomputes exactly this keccak over the calldata and pins the
-	// transcript word to it, so a divergent `e` would make the combine
-	// revert rather than produce a wrong plaintext.
-	organizerE := dleq.OrganizerShareChallenge(
-		epochIDBytes(a.RoundHash),
-		aidBytes(aid),
-		uint16(ctIdx.Uint64()),
-		a.OrganizerPK,
-		a.CiphertextC1,
-		a.DeltaOrg,
-		a.OrganizerProof.A1,
-		a.OrganizerProof.A2,
-	)
 
 	participantIndexes := ccommon.Uint16sToBigInts(a.ParticipantIndexes)
 	participantIndexes, err := ccommon.PadBigInts(participantIndexes, MaxShares)
@@ -92,8 +71,6 @@ func BuildWitness(a Assignment) (*DecryptCombineCircuit, *PublicInputs, error) {
 		a.RoundHash, // eid
 		aid,
 		ctIdx,
-		a.DeltaOrg.X,
-		a.DeltaOrg.Y,
 		threshold,
 		shareCount,
 		a.CiphertextC1.X,
@@ -102,12 +79,6 @@ func BuildWitness(a Assignment) (*DecryptCombineCircuit, *PublicInputs, error) {
 		a.CiphertextC2.Y,
 		a.OrganizerPK.X,
 		a.OrganizerPK.Y,
-		a.OrganizerProof.A1.X,
-		a.OrganizerProof.A1.Y,
-		a.OrganizerProof.A2.X,
-		a.OrganizerProof.A2.Y,
-		organizerZ,
-		organizerE,
 	}
 	for i := range len(a.ParticipantIndexes) {
 		hashInputs = append(
@@ -126,9 +97,7 @@ func BuildWitness(a Assignment) (*DecryptCombineCircuit, *PublicInputs, error) {
 	}
 	plaintextHash := new(big.Int).Set(a.Plaintext)
 	transcriptValues := transcriptWords(
-		a.CiphertextC1, a.CiphertextC2,
-		a.OrganizerPK, a.OrganizerProof.A1, a.OrganizerProof.A2,
-		organizerZ, organizerE,
+		a.CiphertextC1, a.CiphertextC2, a.OrganizerPK,
 		participantIndexes, paddedPartialDecryptions,
 	)
 	anchor, err := ccommon.ChallengeAnchor(transcriptValues, combineHash, plaintextHash)
@@ -161,7 +130,6 @@ func BuildWitness(a Assignment) (*DecryptCombineCircuit, *PublicInputs, error) {
 		RoundHash:            new(big.Int).Set(a.RoundHash),
 		Aid:                  new(big.Int).Set(aid),
 		CtIdx:                new(big.Int).Set(ctIdx),
-		DeltaOrg:             ccommon.CircuitPoint(a.DeltaOrg),
 		Threshold:            threshold,
 		ShareCount:           shareCount,
 		CombineHash:          combineHash,
@@ -172,10 +140,7 @@ func BuildWitness(a Assignment) (*DecryptCombineCircuit, *PublicInputs, error) {
 		CiphertextC1:         ccommon.CircuitPoint(a.CiphertextC1),
 		CiphertextC2:         ccommon.CircuitPoint(a.CiphertextC2),
 		OrganizerPK:          ccommon.CircuitPoint(a.OrganizerPK),
-		OrganizerA1:          ccommon.CircuitPoint(a.OrganizerProof.A1),
-		OrganizerA2:          ccommon.CircuitPoint(a.OrganizerProof.A2),
-		OrganizerZ:           new(big.Int).Set(organizerZ),
-		OrganizerE:           new(big.Int).Set(organizerE),
+		OrganizerSecret:      new(big.Int).Set(a.OrganizerSecret),
 	}
 	for i := range MaxShares {
 		witness.ParticipantIndexes[i] = participantIndexes[i]
@@ -187,7 +152,6 @@ func BuildWitness(a Assignment) (*DecryptCombineCircuit, *PublicInputs, error) {
 		RoundHash:            new(big.Int).Set(a.RoundHash),
 		Aid:                  new(big.Int).Set(aid),
 		CtIdx:                new(big.Int).Set(ctIdx),
-		DeltaOrg:             a.DeltaOrg,
 		Threshold:            new(big.Int).Set(threshold),
 		ShareCount:           new(big.Int).Set(shareCount),
 		CombineHash:          new(big.Int).Set(combineHash),
@@ -197,10 +161,6 @@ func BuildWitness(a Assignment) (*DecryptCombineCircuit, *PublicInputs, error) {
 		CiphertextC1:         a.CiphertextC1,
 		CiphertextC2:         a.CiphertextC2,
 		OrganizerPK:          a.OrganizerPK,
-		OrganizerA1:          a.OrganizerProof.A1,
-		OrganizerA2:          a.OrganizerProof.A2,
-		OrganizerZ:           new(big.Int).Set(organizerZ),
-		OrganizerE:           new(big.Int).Set(organizerE),
 		ParticipantIndexes:   participantIndexes,
 		PartialDecryptions:   paddedPartialDecryptions,
 	}
@@ -213,7 +173,6 @@ func (p PublicInputs) PublicWitness() *DecryptCombineCircuit {
 		RoundHash:            p.RoundHash,
 		Aid:                  p.Aid,
 		CtIdx:                p.CtIdx,
-		DeltaOrg:             ccommon.CircuitPoint(p.DeltaOrg),
 		Threshold:            p.Threshold,
 		ShareCount:           p.ShareCount,
 		CombineHash:          p.CombineHash,
@@ -223,14 +182,12 @@ func (p PublicInputs) PublicWitness() *DecryptCombineCircuit {
 	}
 }
 
-// Scalars returns the 11 ordered public inputs the on-chain verifier reads.
+// Scalars returns the 9 ordered public inputs the on-chain verifier reads.
 func (p PublicInputs) Scalars() []*big.Int {
 	return []*big.Int{
 		p.RoundHash,
 		p.Aid,
 		p.CtIdx,
-		p.DeltaOrg.X,
-		p.DeltaOrg.Y,
 		p.Threshold,
 		p.ShareCount,
 		p.CombineHash,
@@ -241,63 +198,38 @@ func (p PublicInputs) Scalars() []*big.Int {
 }
 
 // TranscriptScalars returns the `TranscriptWords` calldata transcript the
-// contract re-hashes against the stored ciphertext, the application's
-// organizer key and the stored organizer share before folding it with ρ.
+// contract re-hashes against the stored ciphertext and the application's
+// organizer key before folding it with ρ.
 func (p PublicInputs) TranscriptScalars() []*big.Int {
 	return transcriptWords(
-		p.CiphertextC1, p.CiphertextC2,
-		p.OrganizerPK, p.OrganizerA1, p.OrganizerA2,
-		p.OrganizerZ, p.OrganizerE,
+		p.CiphertextC1, p.CiphertextC2, p.OrganizerPK,
 		p.ParticipantIndexes, p.PartialDecryptions,
 	)
+}
+
+// BRLCCommitment compresses the decrypt-combine transcript into one scalar
+// commitment under the given challenge, the way the contract does.
+func (p PublicInputs) BRLCCommitment(challenge *big.Int) (*big.Int, error) {
+	return ccommon.BRLCNative(challenge, p.TranscriptScalars()...)
 }
 
 // transcriptWords lays out the calldata transcript in the one canonical
 // order shared by the circuit, the witness builder and the contract:
 //
-//	[0..3]              C1.x C1.y C2.x C2.y
-//	[4..5]              PK_org.x PK_org.y
-//	[6..7]              A1.x A1.y
-//	[8..9]              A2.x A2.y
-//	[10]                z
-//	[11]                e
-//	[12 .. 12+MaxShares)          participant indexes (0 in inactive slots)
-//	[12+MaxShares .. 12+3·MaxShares)  partials as (x, y) pairs ((0,1) inactive)
+//	[0..3]                          C1.x C1.y C2.x C2.y
+//	[4..5]                          PK_org.x PK_org.y
+//	[6 .. 6+MaxShares)              participant indexes (0 in inactive slots)
+//	[6+MaxShares .. 6+3·MaxShares)  partials as (x, y) pairs ((0,1) inactive)
 func transcriptWords(
-	c1, c2, pkOrg, a1, a2 types.CurvePoint,
-	z, e *big.Int,
+	c1, c2, pkOrg types.CurvePoint,
 	indexes []*big.Int,
 	partials []types.CurvePoint,
 ) []*big.Int {
 	values := make([]*big.Int, 0, TranscriptWords)
-	values = append(
-		values,
-		c1.X, c1.Y, c2.X, c2.Y,
-		pkOrg.X, pkOrg.Y,
-		a1.X, a1.Y,
-		a2.X, a2.Y,
-		z,
-		e,
-	)
+	values = append(values, c1.X, c1.Y, c2.X, c2.Y, pkOrg.X, pkOrg.Y)
 	values = append(values, indexes...)
 	for i := range partials {
 		values = append(values, partials[i].X, partials[i].Y)
 	}
 	return values
-}
-
-// epochIDBytes renders the epoch id as the 12 bytes the keccak transcripts
-// use. Assignment.Validate has already bounded it to 96 bits.
-func epochIDBytes(roundHash *big.Int) [12]byte {
-	var out [12]byte
-	roundHash.FillBytes(out[:])
-	return out
-}
-
-// aidBytes renders the application id as the 32 bytes the keccak
-// transcripts use. Assignment.Validate has already bounded it to 256 bits.
-func aidBytes(aid *big.Int) [32]byte {
-	var out [32]byte
-	aid.FillBytes(out[:])
-	return out
 }

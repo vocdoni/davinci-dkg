@@ -11,6 +11,22 @@ import (
 	"github.com/vocdoni/davinci-dkg/types"
 )
 
+// gasProfile is one full pass over every user-facing transaction of the
+// protocol. These are the numbers published in BENCHMARKS.md.
+type gasProfile struct {
+	createEpoch        uint64
+	claimSlot          uint64
+	submitContribution uint64
+	finalizeEpoch      uint64
+	activatePoolKey    uint64
+	registerLocked     uint64
+	registerAutomatic  uint64
+	revealSecret       uint64
+	submitCiphertext   uint64
+	partialDecrypt     uint64
+	combine            uint64
+}
+
 func TestGasProfiles(t *testing.T) {
 	if !helpers.IsIntegrationEnabled() {
 		t.Skip("integration tests disabled")
@@ -36,194 +52,130 @@ func TestGasProfiles(t *testing.T) {
 		LiveNotBeforeBlock:              head + 51,
 	}
 
-	epochID, createGas := createEpochForGasProfile(t, ctx, policy)
-	// At committee size 1 this claimSlot call pays every one-time cost the
-	// lottery can incur (seed resolve + committee snapshot + lottery check),
-	// so the number is higher than the per-node amortised claimSlot cost in
-	// BENCHMARKS.md — don't compare them directly.
-	claimSlotGas := claimSlotForGasProfile(t, ctx, epochID, policy)
-	contributionGas := submitContributionForGasProfile(t, ctx, epochID)
-	finalizeGas := finalizeForGasProfile(t, ctx, epochID)
-	partialDecryptGas, combineGas := decryptGasProfile(t, ctx, epochID)
+	epochID, profile := singleNodeGasProfile(t, ctx, policy)
 
 	t.Logf(
-		"gas profile create=%d claimSlot=%d contribution=%d finalize=%d partial_decrypt=%d combine=%d",
-		createGas,
-		claimSlotGas,
-		contributionGas,
-		finalizeGas,
-		partialDecryptGas,
-		combineGas,
+		"gas profile epoch=%s create=%d claimSlot=%d contribution=%d finalize=%d activatePoolKey=%d "+
+			"registerLocked=%d registerAutomatic=%d reveal=%d ciphertext=%d partial_decrypt=%d combine=%d",
+		helpers.RoundIDToString(epochID),
+		profile.createEpoch, profile.claimSlot, profile.submitContribution, profile.finalizeEpoch,
+		profile.activatePoolKey, profile.registerLocked, profile.registerAutomatic, profile.revealSecret,
+		profile.submitCiphertext, profile.partialDecrypt, profile.combine,
 	)
 
 	// Generous ceilings — this is a benchmark, not a regression gate. BENCHMARKS.md
 	// is the authoritative reference; these assertions only catch gross regressions
 	// (e.g. an accidental O(N²) loop). Keep them loose so they tolerate normal
 	// solc / contract tweaks without wasting CI cycles on a known-benchmark file.
-	c.Assert(createGas < uint64(300_000), qt.IsTrue)
-	c.Assert(claimSlotGas < uint64(250_000), qt.IsTrue)
-	c.Assert(contributionGas < uint64(650_000), qt.IsTrue)
-	c.Assert(finalizeGas < uint64(1_200_000), qt.IsTrue)
-	c.Assert(partialDecryptGas < uint64(500_000), qt.IsTrue)
-	c.Assert(combineGas < uint64(500_000), qt.IsTrue)
+	c.Assert(profile.createEpoch < 300_000, qt.IsTrue)
+	// At committee size 1 this claimSlot call pays every one-time cost the
+	// lottery can incur (seed resolve + committee snapshot + lottery check),
+	// so the number is higher than the per-node amortised claimSlot cost in
+	// BENCHMARKS.md — don't compare them directly.
+	c.Assert(profile.claimSlot < 250_000, qt.IsTrue)
+	c.Assert(profile.submitContribution < 3_000_000, qt.IsTrue)
+	c.Assert(profile.finalizeEpoch < 150_000, qt.IsTrue)
+	c.Assert(profile.activatePoolKey < 1_200_000, qt.IsTrue)
+	c.Assert(profile.registerLocked < 700_000, qt.IsTrue)
+	c.Assert(profile.registerAutomatic < 400_000, qt.IsTrue)
+	c.Assert(profile.revealSecret < 300_000, qt.IsTrue)
+	c.Assert(profile.submitCiphertext < 250_000, qt.IsTrue)
+	c.Assert(profile.partialDecrypt < 600_000, qt.IsTrue)
+	c.Assert(profile.combine < 500_000, qt.IsTrue)
 }
 
-func createEpochForGasProfile(t *testing.T, ctx context.Context, policy types.EpochPolicy) ([12]byte, uint64) {
+// singleNodeGasProfile drives one committee-of-one epoch through every
+// transaction and returns their gas usage.
+func singleNodeGasProfile(t *testing.T, ctx context.Context, policy types.EpochPolicy) ([12]byte, gasProfile) {
 	t.Helper()
 	c := qt.New(t)
+	self := selfActor()
+	var profile gasProfile
 
-	prefix, err := services.Manager.EPOCHPREFIX(services.CallOpts(ctx))
-	c.Assert(err, qt.IsNil)
-	currentNonce, err := services.Manager.EpochNonce(services.CallOpts(ctx))
-	c.Assert(err, qt.IsNil)
-
-	auth, err := services.TxManager.NewTransactOpts(ctx)
-	c.Assert(err, qt.IsNil)
-	tx, err := services.Manager.CreateEpoch(
-		auth,
-		policy.Threshold,
-		policy.CommitteeSize,
-		policy.MinValidContributions,
-		policy.LotteryAlphaBps,
-	)
-	c.Assert(err, qt.IsNil)
-	c.Assert(services.TxManager.WaitTxByHash(tx.Hash(), helpers.DefaultTxTimeout), qt.IsNil)
-	receipt, err := services.Contracts.Client().TransactionReceipt(ctx, tx.Hash())
-	c.Assert(err, qt.IsNil)
-
-	return helpers.ComputeRoundID(prefix, currentNonce+1), receipt.GasUsed
-}
-
-// claimSlotForGasProfile advances past the seed block and measures the gas for
-// a single ClaimSlot call. At committee size 1 the only claimer pays every
-// one-time cost: seed resolve (blockhash lookup), lottery check, committee
-// snapshot. The BENCHMARKS.md averaged figure is lower because later claimers
-// share those costs — do not compare this number directly.
-func claimSlotForGasProfile(t *testing.T, ctx context.Context, epochID [12]byte, policy types.EpochPolicy) uint64 {
-	t.Helper()
-	c := qt.New(t)
+	epochID, createGas := createRoundMeasured(t, ctx, policy)
+	profile.createEpoch = createGas
 
 	// Advance past the seed block so the lottery blockhash is available.
 	c.Assert(helpers.MineBlocks(ctx, services, helpers.DefaultSeedDelay+1), qt.IsNil)
-
-	auth, err := services.TxManager.NewTransactOpts(ctx)
+	claimGas, err := helpers.ClaimSlotMeasured(ctx, services, self, epochID)
 	c.Assert(err, qt.IsNil)
-	tx, err := services.Manager.ClaimSlot(auth, epochID)
+	profile.claimSlot = claimGas
+
+	contributions := [][][]*big.Int{helpers.DealPoolCoefficients([]*big.Int{big.NewInt(7)})}
+	submission, err := helpers.BuildContributionSubmission(ctx, services, epochID, 1, 1, 1, contributions[0], []uint16{1})
 	c.Assert(err, qt.IsNil)
-	c.Assert(services.TxManager.WaitTxByHash(tx.Hash(), helpers.DefaultTxTimeout), qt.IsNil)
-	receipt, err := services.Contracts.Client().TransactionReceipt(ctx, tx.Hash())
-	c.Assert(err, qt.IsNil)
-
-	return receipt.GasUsed
-}
-
-func submitContributionForGasProfile(t *testing.T, ctx context.Context, epochID [12]byte) uint64 {
-	t.Helper()
-	c := qt.New(t)
-
-	submission, err := helpers.BuildContributionSubmission(ctx, services, epochID, 1, 1, 1, []*big.Int{big.NewInt(7)}, []uint16{1})
-	c.Assert(err, qt.IsNil)
-
-	auth, err := services.TxManager.NewTransactOpts(ctx)
-	c.Assert(err, qt.IsNil)
-	tx, err := services.Manager.SubmitContribution(
-		auth,
-		epochID,
-		1,
-		submission.CommitmentsHash,
-		submission.EncryptedSharesHash, submission.Transcript,
-		submission.Proof,
-		submission.Input,
-	)
-	c.Assert(err, qt.IsNil)
-	c.Assert(services.TxManager.WaitTxByHash(tx.Hash(), helpers.DefaultTxTimeout), qt.IsNil)
-	receipt, err := services.Contracts.Client().TransactionReceipt(ctx, tx.Hash())
-	c.Assert(err, qt.IsNil)
-
-	return receipt.GasUsed
-}
-
-func finalizeForGasProfile(t *testing.T, ctx context.Context, epochID [12]byte) uint64 {
-	t.Helper()
-	c := qt.New(t)
-
-	output, err := helpers.BuildFinalizeEpochOutput(ctx, epochID, 1, 1, []uint16{1}, [][]*big.Int{{big.NewInt(7)}})
+	profile.submitContribution, err = helpers.SubmitContributionMeasured(ctx, services, self, epochID, 1, submission)
 	c.Assert(err, qt.IsNil)
 
 	c.Assert(helpers.WaitForFinalizeGate(ctx, services, epochID), qt.IsNil)
-
-	auth, err := services.TxManager.NewTransactOpts(ctx)
+	profile.finalizeEpoch, err = helpers.FinalizeEpochMeasured(ctx, services, self, epochID)
 	c.Assert(err, qt.IsNil)
-	tx, err := services.Manager.FinalizeEpoch(
-		auth,
-		epochID,
-		output.AggregateCommitmentsHash,
-		output.CollectivePublicKeyHash,
-		output.ShareCommitmentHash,
-		output.Transcript,
-		output.Proof,
-		output.Input,
+
+	round := &helpers.FinalizedRoundResult{
+		EpochID:            epochID,
+		Threshold:          1,
+		CommitteeSize:      1,
+		ParticipantIndexes: []uint16{1},
+		Contributions:      contributions,
+		Activations:        map[uint8]*helpers.PoolKeyActivation{},
+	}
+	activation, err := helpers.BuildPoolKeyActivation(ctx, epochID, 1, 1, []uint16{1}, contributions, 0)
+	c.Assert(err, qt.IsNil)
+	profile.activatePoolKey, err = helpers.ActivatePoolKeyMeasured(ctx, services, self, epochID, activation)
+	c.Assert(err, qt.IsNil)
+	round.Activations[0] = activation
+
+	// Registration in both modes needs two activated keys.
+	second, err := helpers.ActivateRoundPoolKey(ctx, services, round, 1)
+	c.Assert(err, qt.IsNil)
+
+	lockedAid, skOrg := randomAid(c), randomOrganizerSecret(c)
+	profile.registerLocked, err = helpers.RegisterApplicationMeasured(
+		ctx, services, self, services.AppManager, epochID, lockedAid, skOrg, golangtypes.DKGTypesAppPolicy{},
 	)
 	c.Assert(err, qt.IsNil)
-	c.Assert(services.TxManager.WaitTxByHash(tx.Hash(), helpers.DefaultTxTimeout), qt.IsNil)
-	receipt, err := services.Contracts.Client().TransactionReceipt(ctx, tx.Hash())
+
+	autoAid := randomAid(c)
+	profile.registerAutomatic, err = helpers.RegisterApplicationMeasured(
+		ctx, services, self, services.AppManager, epochID, autoAid, nil,
+		golangtypes.DKGTypesAppPolicy{Mode: uint8(types.AppModeAutomatic)},
+	)
 	c.Assert(err, qt.IsNil)
 
-	return receipt.GasUsed
-}
+	profile.revealSecret, err = helpers.RevealOrganizerSecretMeasured(
+		ctx, services, self, services.AppManager, epochID, lockedAid, skOrg,
+	)
+	c.Assert(err, qt.IsNil)
 
-// decryptGasProfile registers an application, submits one ciphertext and
-// drives the partial decryption + organizer share + combine for it, returning
-// the partial-decrypt and combine gas.
-//
-// The three calls have to happen in this order: the ciphertext binds both
-// proofs, and combineDecryption reverts with OrganizerShareMissing until the
-// organizer has published Δ = sk_org·C1.
-func decryptGasProfile(t *testing.T, ctx context.Context, epochID [12]byte) (partialGas, combineGas uint64) {
-	t.Helper()
-	c := qt.New(t)
-
-	aid := randomAid(c)
-	skOrg := randomOrganizerSecret(c)
-	self := selfActor()
-	c.Assert(helpers.RegisterApplication(
-		ctx, self, services.AppManager, epochID, aid, skOrg, golangtypes.DKGTypesAppPolicy{},
-	), qt.IsNil)
-
+	// The decryption pass runs on the automatic application, which claimed
+	// the second pool key.
+	share := poolShare(c, round, second.KeyIndex, 1)
 	const ciphertextBase = 9
 	partial, err := helpers.BuildPartialDecryptionSubmission(
-		ctx, epochID, aid, 1, 1, big.NewInt(ciphertextBase), big.NewInt(7), big.NewInt(5),
+		ctx, epochID, autoAid, 1, 1, big.NewInt(ciphertextBase), share, big.NewInt(5), second.Shares,
 	)
 	c.Assert(err, qt.IsNil)
-
 	output, err := helpers.BuildDecryptCombineOutput(
-		ctx, epochID, aid, 1 /* ciphertextIndex */, 1,
-		big.NewInt(ciphertextBase), skOrg,
+		ctx, epochID, autoAid, 1, 1, big.NewInt(ciphertextBase), nil,
 		[]uint16{1}, []types.CurvePoint{partial.Delta}, big.NewInt(3),
 	)
 	c.Assert(err, qt.IsNil)
 
-	assignedIdx, err := helpers.SubmitCiphertextAs(ctx, self, epochID, aid, output.CiphertextC1, output.CiphertextC2)
-	c.Assert(err, qt.IsNil)
-	c.Assert(assignedIdx, qt.Equals, uint16(1))
-
-	partial.C2 = output.CiphertextC2
-	partialGas, err = helpers.SubmitPartialDecryptionMeasured(ctx, services, self, epochID, aid, 1, assignedIdx, partial)
-	c.Assert(err, qt.IsNil)
-
-	c.Assert(helpers.PostOrganizerShare(ctx, self, services.AppManager, epochID, aid, assignedIdx, output), qt.IsNil)
-
-	auth, err := services.TxManager.NewTransactOpts(ctx)
-	c.Assert(err, qt.IsNil)
-	tx, err := services.Manager.CombineDecryption(
-		auth, epochID, aid, assignedIdx,
-		output.CombineHash, output.Plaintext,
-		output.Transcript, output.Proof, output.Input,
+	assignedIdx, ciphertextGas, err := helpers.SubmitCiphertextMeasured(
+		ctx, self, epochID, autoAid, output.CiphertextC1, output.CiphertextC2,
 	)
 	c.Assert(err, qt.IsNil)
-	c.Assert(services.TxManager.WaitTxByHash(tx.Hash(), helpers.DefaultTxTimeout), qt.IsNil)
-	receipt, err := services.Contracts.Client().TransactionReceipt(ctx, tx.Hash())
+	c.Assert(assignedIdx, qt.Equals, uint16(1))
+	profile.submitCiphertext = ciphertextGas
+
+	partial.C2 = output.CiphertextC2
+	profile.partialDecrypt, err = helpers.SubmitPartialDecryptionMeasured(
+		ctx, services, self, epochID, autoAid, 1, assignedIdx, partial,
+	)
 	c.Assert(err, qt.IsNil)
 
-	return partialGas, receipt.GasUsed
+	profile.combine, err = helpers.CombineDecryptionMeasured(ctx, services, self, epochID, autoAid, assignedIdx, output)
+	c.Assert(err, qt.IsNil)
+
+	return epochID, profile
 }

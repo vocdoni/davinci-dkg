@@ -54,13 +54,16 @@ func HashFieldElements(api frontend.API, inputs ...frontend.Variable) (frontend.
 	return circuitposeidon.MultiHash(api, inputs...)
 }
 
-// ShareMaskHash computes the raw hashed-ElGamal masking scalar before subgroup-order reduction.
+// ShareMaskHash computes the raw hashed-ElGamal masking scalar before
+// subgroup-order reduction. keyIndex separates the MaxK shares one
+// contributor sends the same recipient under one ECDH secret; it mirrors
+// crypto/shareenc.shareMask.
 func ShareMaskHash(
 	api frontend.API,
-	roundHash, contributorIndex, recipientIndex, sharedX, sharedY frontend.Variable,
+	roundHash, contributorIndex, recipientIndex, sharedX, sharedY, keyIndex frontend.Variable,
 ) (frontend.Variable, error) {
 	packedIndexes := api.Add(api.Mul(contributorIndex, recipientIndexShift), recipientIndex)
-	meta, err := HashFieldElements(api, ShareEncryptionDomain(), roundHash, packedIndexes)
+	meta, err := HashFieldElements(api, ShareEncryptionDomain(), roundHash, packedIndexes, keyIndex)
 	if err != nil {
 		return 0, err
 	}

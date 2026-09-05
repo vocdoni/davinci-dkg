@@ -7,7 +7,7 @@
 // "—" instead of rendering NaN.
 
 import type { NetworkStats } from '~indexer/selectors'
-import type { EpochEntity } from '~indexer/types'
+import { MAX_COMMITTEE, POOL_SIZE, type EpochEntity } from '~indexer/types'
 import { blocksToDuration } from '~lib/format'
 
 export interface Countdown {
@@ -65,7 +65,12 @@ export function phaseCountdown(
     case 'key-assembly':
       return countdownTo('assembly closes', epoch.policy?.keyAssemblyDeadlineBlock, head)
     case 'live':
-      return countdownTo('epoch ends', finite(epochDurationBlocks) ? epoch.startBlock + epochDurationBlocks : null, head)
+      // The epoch stays Live on chain forever; what ends is its service window.
+      return countdownTo(
+        'service window',
+        finite(epochDurationBlocks) ? epoch.startBlock + epochDurationBlocks : null,
+        head
+      )
     default:
       return null
   }
@@ -108,12 +113,17 @@ export function elapsedSince(
 }
 
 /**
- * Words in the finalize transcript the BRLC challenge is taken over:
- * `N` participant indexes + `2·N²` contribution-commitment coordinates +
- * `2·N` aggregate-commitment coordinates + `2·N` share-commitment coordinates
- * = `2·N² + 5·N`. Each word is a 32-byte field element.
+ * Words in the `activatePoolKey` transcript the BRLC challenge is taken over:
+ * `MaxN` participant indexes + `MaxN` contribution hashes + `2·MaxN`
+ * aggregate-commitment coordinates + `2·MaxN` share-commitment coordinates
+ * = `6·MaxN`, fixed by the circuit rather than by the committee size. Each
+ * word is a 32-byte field element.
  */
-export function transcriptWords(committeeSize: number): number {
-  if (!finite(committeeSize) || committeeSize <= 0) return 0
-  return 2 * committeeSize * committeeSize + 5 * committeeSize
-}
+export const POOLKEY_TRANSCRIPT_WORDS = 6 * MAX_COMMITTEE
+
+/**
+ * Words in a contribution transcript: `2·MaxK·MaxN` commitment coordinates,
+ * `MaxN` recipient indexes, `2·MaxN` recipient keys, `2·MaxN` ephemerals and
+ * `MaxK·MaxN` masked shares = `3·MaxK·MaxN + 5·MaxN`.
+ */
+export const CONTRIBUTION_TRANSCRIPT_WORDS = 3 * POOL_SIZE * MAX_COMMITTEE + 5 * MAX_COMMITTEE

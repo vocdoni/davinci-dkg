@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { Address, BlockCell, DataTable, EmptyState, Hash, Panel, ProgressBar, TxCell, type AnyColumnDef } from '~kit'
+import { Address, BlockCell, DataTable, EmptyState, Panel, ProgressBar, TxCell, type AnyColumnDef } from '~kit'
 import type { CommitteeRow, EpochDetail } from '~indexer/selectors'
 import { cn } from '~lib/cn'
 import { paths } from '~routes/paths'
@@ -13,8 +13,8 @@ const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
 /**
  * Every committee member, in slot order. Slots are 0-based and the protocol's
  * participant index is `slot + 1` — both columns are shown, because every
- * on-chain call (`contributorIndex`, `participantIndex`,
- * `getShareCommitmentHash`) uses the 1-based one.
+ * on-chain call (`contributorIndex`, `participantIndex`, the Merkle leaf of a
+ * partial's share proof) uses the 1-based one.
  */
 export function CommitteePanel({ detail }: { detail: EpochDetail }) {
   const { committee, row, epoch } = detail
@@ -97,17 +97,6 @@ export function CommitteePanel({ detail }: { detail: EpochDetail }) {
         cell: ({ row: r }) =>
           r.original.contributionTx ? (
             <TxCell hash={r.original.contributionTx} />
-          ) : (
-            <span className='text-ash'>—</span>
-          ),
-      },
-      {
-        id: 'share',
-        header: 'D_i',
-        meta: { width: '140px', headerTooltip: 'Share commitment hash read from getShareCommitmentHash(index)' },
-        cell: ({ row: r }) =>
-          r.original.shareCommitmentHash ? (
-            <Hash value={r.original.shareCommitmentHash} chars={5} copy={false} />
           ) : (
             <span className='text-ash'>—</span>
           ),

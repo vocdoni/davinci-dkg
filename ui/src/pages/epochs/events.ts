@@ -10,8 +10,9 @@ import { shortHash } from '~lib/format'
 export type EventTone = 'ok' | 'danger' | 'warn' | 'neutral'
 
 /**
- * Emerald marks the three events that mean "a protocol milestone landed";
- * red the two failures. Everything else is routine and stays neutral.
+ * Emerald marks the events that mean "a protocol milestone landed"; red the
+ * two failures; amber the reveal, which changes who can decrypt. Everything
+ * else is routine and stays neutral.
  */
 export const EVENT_TONE: Record<IndexedEventName, EventTone> = {
   NodeRegistered: 'neutral',
@@ -26,12 +27,14 @@ export const EVENT_TONE: Record<IndexedEventName, EventTone> = {
   CommitteeFilled: 'ok',
   ContributionSubmitted: 'neutral',
   EpochLive: 'ok',
+  PoolKeyActivated: 'ok',
+  PoolKeyClaimed: 'neutral',
   CiphertextSubmitted: 'neutral',
   PartialDecryptionSubmitted: 'neutral',
   DecryptionCombined: 'ok',
   EpochAborted: 'danger',
   ApplicationRegistered: 'neutral',
-  OrganizerShareSubmitted: 'warn',
+  OrganizerSecretRevealed: 'warn',
 }
 
 export const EVENT_TONE_CLASS: Record<EventTone, string> = {
@@ -71,7 +74,11 @@ export function eventSummary(event: IndexedEvent): string {
     case 'ContributionSubmitted':
       return `participant index ${event.data.contributorIndex}`
     case 'EpochLive':
-      return `PK_ep ${shortHash(event.data.collectivePublicKeyHash, 8, 6)}`
+      return `${event.data.contributionCount} contributions frozen · pool opens`
+    case 'PoolKeyActivated':
+      return `key ${event.data.keyIndex} · P (${shortHash(bigintHex(event.data.key.x), 6, 4)}, …)`
+    case 'PoolKeyClaimed':
+      return `key ${event.data.keyIndex} claimed`
     case 'CiphertextSubmitted':
       return `ciphertext ${event.data.ciphertextIndex}`
     case 'PartialDecryptionSubmitted':
@@ -81,9 +88,11 @@ export function eventSummary(event: IndexedEvent): string {
     case 'EpochAborted':
       return 'committee never filled'
     case 'ApplicationRegistered':
-      return `PK_org (${shortHash(bigintHex(event.data.organizerPK.x), 6, 4)}, …)`
-    case 'OrganizerShareSubmitted':
-      return `ciphertext ${event.data.ciphertextIndex} · organizer share`
+      return event.data.mode === 'automatic'
+        ? `automatic · pool key ${event.data.poolIndex}`
+        : `organizer-locked · pool key ${event.data.poolIndex} · PK_org (${shortHash(bigintHex(event.data.organizerPK.x), 6, 4)}, …)`
+    case 'OrganizerSecretRevealed':
+      return 'sk_org revealed · the committee combines on its own'
   }
 }
 

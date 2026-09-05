@@ -2,7 +2,8 @@ name: Fleet Battery
 
 # Brings up the multi-node testnet (Anvil + deployer + 4 real nodes) and runs
 # the load / adversarial battery against it with small parameters. Self-hosted:
-# it needs Docker, the Groth16 setup and about fifteen minutes of wall clock.
+# it needs Docker, the Groth16 setup (the 3.0M-constraint contribution circuit
+# alone takes ~10 min) and up to an hour of wall clock.
 on:
   push:
     branches: [main]
@@ -19,7 +20,8 @@ jobs:
     concurrency:
       group: self-hosted-integration
       cancel-in-progress: false
-    timeout-minutes: 60
+    # ~12 min circuit setup + node image build + the 40 min test budget below.
+    timeout-minutes: 100
     env:
       # Isolate this stack from any testnet already running on the host:
       # its own compose project name and its own host ports.
@@ -69,17 +71,22 @@ jobs:
         run: make circuits-compile circuits-update-hashes solidity-build ARTIFACTS_DIR="$DAVINCI_ARTIFACTS_DIR"
       - name: Start the testnet
         working-directory: testnet
+        # The battery override makes the nodes activate the whole MAX_K pool
+        # of every epoch (DAVINCI_DKG_ACTIVATE_AHEAD=8): the swarm registers
+        # its organizers in one burst and a registration only claims an
+        # activated key. See tests/battery/compose.battery.yml.
         run: |
           DAVINCI_ARTIFACTS_HOST_DIR="$DAVINCI_ARTIFACTS_DIR" \
-            docker compose up -d --build --scale dkg-node=4
+            docker compose -f docker-compose.yml -f ../tests/battery/compose.battery.yml \
+            up -d --build --scale dkg-node=4
           for _ in $(seq 1 100); do
             curl -fsS "http://127.0.0.1:$DEPLOYER_PORT/addresses.env" > "$DAVINCI_DKG_TEST_ADDRESSES" && break
             sleep 3
           done
           cat "$DAVINCI_DKG_TEST_ADDRESSES"
-      - name: Organizer swarm and share adversary
+      - name: Organizer swarm and reveal adversary
         run: |
-          go test ./tests/battery -run 'TestOrganizerSwarm|TestShareAdversary' \
+          go test ./tests/battery -run 'TestOrganizerSwarm|TestRevealAdversary' \
             -v -count=1 -timeout 40m
       - name: Battery report
         if: always()

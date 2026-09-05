@@ -38,7 +38,7 @@ describe('networkStats', () => {
       committeeSizeInForce: 64,
       applications: 12,
       ciphertexts: 96,
-      ciphertextsDecrypted: 68,
+      ciphertextsDecrypted: 86,
     })
     // 7 full committees plus the aborted epoch's partial one.
     expect(stats.claims).toBe(7 * 64 + 40)
@@ -62,7 +62,7 @@ describe('epochRows', () => {
     expect(live.claimProgress).toBe(1)
     expect(live.contributionProgress).toBeGreaterThan(0.6)
     expect(live.finalizer).toBeTruthy()
-    expect(live.finalizationGas).toBe(1_112_337)
+    expect(live.finalizationGas).toBe(91_204)
     expect(live.ciphertexts).toBe(16)
   })
 
@@ -106,7 +106,6 @@ describe('epochDetail', () => {
     for (const row of contributed) {
       expect(row.contributionBlock).toBeGreaterThan(row.claimBlock!)
       expect(row.commitmentsHash).toMatch(/^0x[0-9a-f]{64}$/)
-      expect(row.shareCommitmentHash).toMatch(/^0x[0-9a-f]{64}$/)
     }
     expect(detail.committee.every((row) => row.operator !== undefined)).toBe(true)
     expect(detail.contributions).toHaveLength(detail.epoch.contributions.length)
@@ -120,8 +119,28 @@ describe('epochDetail', () => {
     expect(detail.windows.endBlock).toBe(detail.epoch.startBlock + 300)
     expect(detail.applications).toHaveLength(2)
     expect(detail.applications[0].ciphertexts).toBe(8)
-    expect(detail.finalization?.gasUsed).toBe(1_112_337)
-    expect(detail.collectivePublicKey).not.toBeNull()
+    expect(detail.finalization?.gasUsed).toBe(91_204)
+    expect(detail.finalization?.contributionCount).toBe(detail.epoch.contributions.length)
+    // The pool: eight slots, four activated (two claimed, two ahead), four inactive.
+    expect(detail.pool).toHaveLength(8)
+    expect(detail.poolActivated).toBe(4)
+    expect(detail.poolClaimed).toBe(2)
+    expect(detail.poolNext).toBe(2)
+    expect(detail.pool.map((slot) => slot.state)).toEqual([
+      'claimed',
+      'claimed',
+      'activated',
+      'activated',
+      'inactive',
+      'inactive',
+      'inactive',
+      'inactive',
+    ])
+    expect(detail.pool[0].claimedBy).toBe(detail.applications[0].aid)
+    expect(detail.pool[0].activatedBy).toMatch(/^0x[0-9a-f]{40}$/)
+    expect(detail.pool[0].activatedGas).toBe(1_112_337)
+    expect(detail.pool[2].key).not.toBeNull()
+    expect(detail.pool[4].key).toBeNull()
     expect(detail.events.length).toBeGreaterThan(64)
     expect(detail.events.every((event) => event.epoch === detail.epoch.id)).toBe(true)
   })
@@ -137,7 +156,8 @@ describe('epochDetail', () => {
     expect(assembling.epoch.status).toBe('key-assembly')
     expect(assembling.committee).toHaveLength(64)
     expect(assembling.contributions.length).toBeLessThan(40)
-    expect(assembling.collectivePublicKey).toBeNull()
+    expect(assembling.poolActivated).toBe(0)
+    expect(assembling.pool.every((slot) => slot.state === 'inactive')).toBe(true)
   })
 
   it('returns null for an unknown epoch', () => {
@@ -164,7 +184,7 @@ describe('operators', () => {
     const totalContributions = rows.reduce((sum, row) => sum + row.contributions, 0)
     expect(totalContributions).toBe(networkStats(store).contributions)
     expect(rows.reduce((sum, row) => sum + row.finalizations, 0)).toBe(6)
-    expect(rows.reduce((sum, row) => sum + row.combines, 0)).toBe(68)
+    expect(rows.reduce((sum, row) => sum + row.combines, 0)).toBe(86)
   })
 
   it('shows participation as contributions/claims, and "—" without claims', () => {
@@ -209,10 +229,33 @@ describe('applications', () => {
     for (const row of rows) {
       expect(row.ciphertexts).toBe(8)
       expect(row.decrypted).toBeLessThanOrEqual(row.ciphertexts)
-      expect(row.sharesPublished).toBe(6)
       expect(row.maxCiphertexts).toBe(8)
-      expect(row.authorizedSubmitter).toMatch(/^0x[0-9a-f]{40}$/)
+      // Each application holds one activated pool key.
+      expect(row.poolIndex).toBe(row.mode === 'automatic' ? 1 : 0)
+      expect(row.poolKey).not.toBeNull()
+      expect(store.epochs[row.epoch].poolKeys[row.poolIndex!].claimedBy).toBe(row.aid)
+      if (row.mode === 'automatic') {
+        // No organizer key: the identity, open submission, a deadline, unlocked from the start.
+        expect(row.organizerPK).toEqual({ x: 0n, y: 1n })
+        expect(row.organizerSecret).toBeNull()
+        expect(row.unlocked).toBe(true)
+        expect(row.openSubmission).toBe(true)
+        expect(row.submitters).toEqual([])
+        expect(row.decryptNotBefore).toBe(0)
+        expect(row.decryptNotAfter).toBeGreaterThan(0)
+      } else {
+        expect(row.openSubmission).toBe(false)
+        expect(row.submitters).toHaveLength(1)
+        expect(row.submitters?.[0]).toMatch(/^0x[0-9a-f]{40}$/)
+        expect(row.decryptNotBefore).toBeGreaterThan(0)
+        expect(row.unlocked).toBe(row.organizerSecret != null)
+        if (row.organizerSecret != null) expect(row.revealBlock).toBeGreaterThan(row.createdBlock)
+      }
     }
+    // The fixture registers one application of each mode per live epoch, and
+    // every organizer but the newest Live epoch's has revealed its secret.
+    expect(rows.filter((row) => row.mode === 'automatic')).toHaveLength(6)
+    expect(rows.filter((row) => row.mode === 'organizer-locked' && !row.unlocked)).toHaveLength(1)
     expect(rows[0].createdBlock).toBeGreaterThanOrEqual(rows[rows.length - 1].createdBlock)
   })
 
@@ -221,7 +264,8 @@ describe('applications', () => {
     const detail = applicationDetail(store, epoch, aid)!
     expect(detail.ciphertexts).toHaveLength(8)
     expect(detail.summary.total).toBe(8)
-    expect(detail.summary.withShare).toBe(6)
+    expect(detail.summary.combined).toBe(8)
+    expect(detail.summary.awaitingReveal).toBe(0)
 
     const combined = detail.ciphertexts.find((row) => row.state === 'combined')!
     expect(combined.combined.plaintext).toBeGreaterThan(0n)
@@ -229,13 +273,20 @@ describe('applications', () => {
     expect(combined.combined.by).toMatch(/^0x[0-9a-f]{40}$/)
     expect(combined.partialCount).toBeGreaterThanOrEqual(combined.threshold)
 
-    // Every fourth ciphertext has no organizer share and cannot combine.
-    const stuck = detail.ciphertexts.filter((row) => !row.share.present)
-    expect(stuck).toHaveLength(2)
-    for (const row of stuck) {
-      expect(row.state).toBe('awaiting-share')
-      expect(row.combined.done).toBe(false)
-    }
+    // The newest Live epoch's organizer has not revealed: the contract refuses
+    // partials and combines until then, so its ciphertexts have nothing and
+    // sit at "awaiting reveal"; the automatic sibling shows "ready".
+    const newestLive = meta.epochIds.filter((id) => store.epochs[id].status === 'live').at(-1)!
+    const [lockedKey, autoKey] = store.epochs[newestLive].applications
+    const locked = applicationDetail(store, newestLive, store.applications[lockedKey].aid)!
+    expect(locked.application.mode).toBe('organizer-locked')
+    expect(locked.summary.awaitingReveal).toBe(8)
+    expect(locked.summary.thresholdMet).toBe(0)
+    expect(locked.ciphertexts.every((row) => row.state === 'awaiting-reveal' && !row.combined.done)).toBe(true)
+    expect(locked.ciphertexts.every((row) => row.partialCount === 0)).toBe(true)
+    const auto = applicationDetail(store, newestLive, store.applications[autoKey].aid)!
+    expect(auto.ciphertexts.filter((row) => row.state === 'ready')).toHaveLength(2)
+    expect(auto.summary.combined).toBe(6)
     // Partials carry the wave they landed in and their 0-based slot.
     expect(new Set(combined.partials.map((partial) => partial.wave))).toEqual(new Set([0]))
     for (const partial of combined.partials) {

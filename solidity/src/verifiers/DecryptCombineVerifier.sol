@@ -5,13 +5,13 @@ import {IZKVerifier} from "../interfaces/IZKVerifier.sol";
 import {Verifier as BaseDecryptCombineVerifier} from "./decryptcombine_vkey.sol";
 
 /// @title DecryptCombineVerifier
-/// @notice Combine verifier wrapper. The 11-word public-input vector is
-///         eid, aid, ctIdx, DeltaOrg.X, DeltaOrg.Y, threshold, shareCount,
-///         combineHash, plaintext, challenge, transcriptCommitment; the
-///         organizer's DLEQ words travel in the BRLC-bound transcript.
+/// @notice Combine verifier wrapper. The 9-word public-input vector is
+///         eid, aid, ctIdx, threshold, shareCount, combineHash, plaintext,
+///         challenge, transcriptCommitment; the ciphertext, the organizer key
+///         and the partials travel in the BRLC-bound transcript.
 contract DecryptCombineVerifier is BaseDecryptCombineVerifier, IZKVerifier {
     bytes32 internal constant PROVING_KEY_HASH =
-        hex"23b50690255b6580e58c4f76addf9359f378856e884fec3bd3cc1e2c2960ecb3";
+        hex"d70de162a56ac4801077f857f9491015916bb238db7fb9b0cfe5061eceae5305";
 
     error InvalidProofEncoding();
 
@@ -21,8 +21,7 @@ contract DecryptCombineVerifier is BaseDecryptCombineVerifier, IZKVerifier {
 
     function verifyProof(bytes calldata proof, bytes calldata input) external view {
         if (proof.length != 32 * 8) revert InvalidProofEncoding();
-        uint256[8] memory decodedProof = abi.decode(proof, (uint256[8]));
-        uint256[11] memory decodedInput = abi.decode(input, (uint256[11]));
-        this.verifyProof(decodedProof, decodedInput);
+        uint256[9] memory decodedInput = abi.decode(input, (uint256[9]));
+        this.verifyProof(proof, decodedInput);
     }
 }

@@ -10,9 +10,7 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
-	"github.com/vocdoni/davinci-dkg/crypto/dleq"
 	"github.com/vocdoni/davinci-dkg/crypto/schnorr"
-	golangtypes "github.com/vocdoni/davinci-dkg/solidity/golang-types"
 	"github.com/vocdoni/davinci-dkg/tests/helpers"
 	"github.com/vocdoni/davinci-dkg/types"
 	"github.com/vocdoni/davinci-dkg/web3"
@@ -318,10 +316,13 @@ func contributionPhase(
 ) *ownContribution {
 	t.Helper()
 	th, n := ep.View.Policy.Threshold, ep.View.Policy.CommitteeSize
-	coeffs, err := randomScalars(int(th))
+	base, err := randomScalars(int(th))
 	if err != nil {
 		t.Fatal(err)
 	}
+	// One contribution deals the epoch's whole pool: MaxK polynomials under
+	// one ephemeral per recipient.
+	coeffs := helpers.DealPoolCoefficients(base)
 	recipients := make([]uint16, n)
 	for i := range recipients {
 		recipients[i] = uint16(i + 1)
@@ -347,10 +348,9 @@ func contributionPhase(
 	_, err = contribute(member, myIdx, sub.Proof)
 	expectRevert(t, "contribution/duplicate", err, "AlreadyContributed")
 
-	dummy := common.HexToHash("0x01")
 	head, _ := f.head(ctx)
 	_, err = f.send(ctx, member, func(auth *bind.TransactOpts) (*ethtypes.Transaction, error) {
-		return f.Services.Manager.FinalizeEpoch(auth, ep.ID, dummy, dummy, dummy, []byte{1}, []byte{1}, []byte{1})
+		return f.Services.Manager.FinalizeEpoch(auth, ep.ID)
 	})
 	expectRevert(t, fmt.Sprintf("finalize/before-gate(head=%d,gate=%d)", head, ep.View.Policy.LiveNotBeforeBlock),
 		err, "InvalidPhase", "AlreadyLive")
@@ -361,7 +361,10 @@ func contributionPhase(
 	return &ownContribution{Index: myIdx, Coefficients: coeffs}
 }
 
-// decryptionPhase acts as a genuine committee member of the Live epoch.
+// decryptionPhase acts as a genuine committee member of the Live epoch: it
+// registers an automatic application, recovers its own share of that
+// application's pool key from the contributions' calldata, and posts a
+// partial with the Merkle path against the key's share root.
 func decryptionPhase(
 	ctx context.Context, t *testing.T, f *Fleet, ep joinedEpoch, member, organizer *actor,
 	myIdx uint16, own *ownContribution, combineWait uint64,
@@ -379,64 +382,71 @@ func decryptionPhase(
 	if err != nil {
 		t.Fatal(err)
 	}
-	share, accepted, err := recoverPrivateShare(ctx, f, ep.ID, myIdx, committee, secret, own, scanFrom(ep.View))
+
+	app, out, err := f.registerApplication(ctx, organizer, ep.ID, automaticPolicy())
+	if !expectOK(t, "app/register", "registerApplication", out, err, "") {
+		return
+	}
+
+	share, accepted, err := recoverPrivateShare(
+		ctx, f, ep.ID, myIdx, app.PoolIndex, committee, secret, own, scanFrom(ep.View),
+	)
 	if err != nil {
 		t.Fatalf("recover private share: %v", err)
 	}
-	match, err := shareCommitmentMatches(ctx, f, ep.ID, myIdx, share)
+	match, err := shareCommitmentMatches(ctx, f, ep.ID, app.PoolIndex, myIdx, share, scanFrom(ep.View))
 	if err != nil {
 		t.Fatal(err)
 	}
 	record(t, Result{
 		Step: "share/recovered-from-calldata", Kind: "measure", Pass: match,
-		Notes: fmt.Sprintf("accepted contributions=%d, d_i·G matches the finalized share commitment=%v", accepted, match),
+		Notes: fmt.Sprintf("accepted contributions=%d, d_i·G matches the activation's share commitment=%v", accepted, match),
 	})
 	if !match {
-		t.Fatalf("recovered share does not match the share commitment pinned by finalize")
+		t.Fatalf("recovered share does not match the share commitment the activation published")
+	}
+	tree, err := poolShareTree(ctx, f, ep.ID, app.PoolIndex, scanFrom(ep.View))
+	if err != nil {
+		t.Fatalf("rebuild share tree: %v", err)
 	}
 
-	app, out, err := f.registerApplication(ctx, organizer, ep.ID, golangtypes.DKGTypesAppPolicy{})
-	if !expectOK(t, "app/register", "registerApplication", out, err, "") {
-		return
-	}
 	s := submitSlots(ctx, t, f, app, 1, "app")[0]
 	nonce, err := randomScalar()
 	if err != nil {
 		t.Fatal(err)
 	}
-	partial, err := helpers.BuildPartialDecryptionSubmissionFromBase(ctx, ep.ID, app.Aid, s.Idx, myIdx, s.C1, s.C2, share, nonce)
+	partial, err := helpers.BuildPartialDecryptionSubmissionFromBase(
+		ctx, ep.ID, app.Aid, s.Idx, myIdx, s.C1, s.C2, share, nonce, tree,
+	)
 	if err != nil {
 		t.Fatalf("build partial decryption: %v", err)
 	}
-	submitPartial := func(proof []byte) (txOutcome, error) {
+	submitPartial := func(proof []byte, path [][32]byte) (txOutcome, error) {
 		return f.send(ctx, member, func(auth *bind.TransactOpts) (*ethtypes.Transaction, error) {
 			return f.Services.Manager.SubmitPartialDecryption(auth, ep.ID, app.Aid, myIdx, s.Idx,
-				s.C1.X, s.C1.Y, s.C2.X, s.C2.Y, partial.DeltaHash, proof, partial.Input)
+				s.C1.X, s.C1.Y, s.C2.X, s.C2.Y, partial.DeltaHash, proof, partial.Input, path)
 		})
 	}
-	_, err = submitPartial(partial.Proof[:len(partial.Proof)-32])
+	_, err = submitPartial(partial.Proof[:len(partial.Proof)-32], partial.ShareProof)
 	expectRevert(t, "partial/broken-proof", err, "InvalidProofEncoding", "ProofInvalid", "InvalidProofInput")
-	out, err = submitPartial(partial.Proof)
+	_, err = submitPartial(partial.Proof, make([][32]byte, len(partial.ShareProof)))
+	expectRevert(t, "partial/broken-share-path", err, "InvalidProofInput", "InvalidShareProof")
+	out, err = submitPartial(partial.Proof, partial.ShareProof)
 	expectOK(t, "partial/member", "submitPartialDecryption", out, err, fmt.Sprintf("index=%d", myIdx))
-	_, err = submitPartial(partial.Proof)
+	_, err = submitPartial(partial.Proof, partial.ShareProof)
 	expectRevert(t, "partial/duplicate", err, "AlreadyPartiallyDecrypted")
 
-	delta, proof, sh, err := f.releaseShare(ctx, app, s.Idx, s.C1, s.C2)
-	if !expectOK(t, "app/share", "submitOrganizerShare", sh, err, "") {
-		return
-	}
 	ev := assertCombines(ctx, t, f, ep.View, app, s, s.SubmitBlock, combineWait, "app/combine-by-nodes")
 	if ev == nil {
 		return
 	}
-	combineAfterNodes(ctx, t, f, ep, app, s, member, delta, proof)
+	combineAfterNodes(ctx, t, f, ep, app, s, member)
 }
 
 // combineAfterNodes builds a genuine combine proof from the partials on
 // chain and submits it after the nodes' combine landed: AlreadyCombined.
 func combineAfterNodes(
 	ctx context.Context, t *testing.T, f *Fleet, ep joinedEpoch, app *application, s slot, member *actor,
-	delta types.CurvePoint, proof dleq.Proof,
 ) {
 	t.Helper()
 	th := ep.View.Policy.Threshold
@@ -454,7 +464,7 @@ func combineAfterNodes(
 		deltas[i] = partials[i].Delta
 	}
 	combine, err := helpers.BuildDecryptCombineOutputFromCiphertext(ctx, ep.ID, app.Aid, s.Idx, th,
-		s.C1, s.C2, app.PKOrg, delta, proof, idxs, deltas, s.Plaintext)
+		s.C1, s.C2, app.PKOrg, app.SkOrg, idxs, deltas, s.Plaintext)
 	if err != nil {
 		t.Fatalf("build combine: %v", err)
 	}
@@ -467,60 +477,4 @@ func combineAfterNodes(
 		Step: "combine/proof-built", Kind: "measure", Pass: true,
 		Notes: fmt.Sprintf("genuine combine proof over %d on-chain partials built by the member", th),
 	})
-}
-
-// TestLazyMember registers an operator that claims a slot and never
-// contributes: the epoch must still finalize (minValidContributions < n)
-// and a ciphertext must still decrypt without its share.
-func TestLazyMember(t *testing.T) {
-	f := requireFleet(t)
-	ctx, cancel := testContext(t)
-	defer cancel()
-	combineWait := envUint64("BATTERY_COMBINE_WAIT_BLOCKS", 240)
-
-	lazy, err := f.newActor(ctx, "lazy-member")
-	if err != nil {
-		t.Fatal(err)
-	}
-	organizer, err := f.newActor(ctx, "lazy-organizer")
-	if err != nil {
-		t.Fatal(err)
-	}
-	nonce, _ := enrollOperators(ctx, t, f, []*actor{lazy})
-	ep := waitNewEpoch(ctx, t, f, nonce)
-	out, err := claimAtSeed(ctx, t, f, lazy, ep)
-	if !expectOK(t, "claim", "claimSlot", out, err, "the lazy member will never contribute") {
-		t.FailNow()
-	}
-	claimBlock := out.Block
-
-	liveView, err := f.waitStatus(ctx, ep.ID, statusLive)
-	if err != nil {
-		t.Fatal(err)
-	}
-	committee, err := f.committee(ctx, ep.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	rec, err := f.Services.Manager.GetContribution(f.callOpts(ctx), ep.ID, lazy.Address())
-	if err != nil {
-		t.Fatal(err)
-	}
-	pass := !rec.Accepted && liveView.ContributionCount >= liveView.Policy.MinValidContributions
-	record(t, Result{
-		Step: "epoch-live-without-lazy", Kind: "measure", Pass: pass,
-		Block: liveView.Policy.LiveNotBeforeBlock, LatencyBlocks: int64(liveView.Policy.LiveNotBeforeBlock) - int64(claimBlock),
-		Notes: fmt.Sprintf("memberIndex=%d contributions=%d/%d mMin=%d lazyAccepted=%v",
-			memberIndex(committee, lazy.Address()), liveView.ContributionCount, liveView.Policy.CommitteeSize,
-			liveView.Policy.MinValidContributions, rec.Accepted),
-	})
-	if !pass {
-		t.Errorf("epoch did not go Live as expected with a lazy member")
-	}
-
-	app, out, err := f.registerApplication(ctx, organizer, ep.ID, golangtypes.DKGTypesAppPolicy{})
-	if !expectOK(t, "app/register", "registerApplication", out, err, "") {
-		return
-	}
-	honestRoundTrip(ctx, t, f, liveView, app, combineWait, "app")
 }

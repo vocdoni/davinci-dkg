@@ -7,14 +7,14 @@ import { CommitteePanel } from './epoch/CommitteePanel'
 import { DecryptionMatrix } from './epoch/DecryptionMatrix'
 import { EpochHeader } from './epoch/EpochHeader'
 import { EventLogPanel } from './epoch/EventLogPanel'
-import { KeyPanel } from './epoch/KeyPanel'
+import { PoolPanel } from './epoch/PoolPanel'
 import { LotteryPanel } from './epoch/LotteryPanel'
 import { RawPanel } from './epoch/RawPanel'
 
 /**
  * Everything the chain knows about one epoch, in lifecycle order: the windows,
- * the lottery that picked the committee, the committee itself, the key it
- * produced, the applications it serves and every decryption in flight.
+ * the lottery that picked the committee, the committee itself, the pool of
+ * keys it dealt, the applications it serves and every decryption in flight.
  */
 export function EpochPage() {
   const { id = '' } = useParams()
@@ -37,7 +37,7 @@ export function EpochPage() {
       />
       <LotteryPanel detail={detail} />
       <CommitteePanel detail={detail} />
-      <KeyPanel detail={detail} />
+      <PoolPanel detail={detail} />
       <ApplicationsPanel applications={detail.applications} />
       <DecryptionMatrix matrix={matrix} applications={detail.applications} />
       <EventLogPanel events={detail.events} />

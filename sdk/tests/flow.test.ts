@@ -6,10 +6,11 @@
 // is skipped gracefully.
 //
 // What is tested:
-//   • DKGClient reads a Finalized epoch correctly
+//   • DKGClient reads a Live epoch correctly
 //   • getEpochLiveEvents returns the expected event
-//   • waitForEpochPhase resolves immediately for an already-finalized epoch
-//   • getContribution / getShareCommitmentHash return accepted records
+//   • waitForEpochPhase resolves immediately for an already-Live epoch
+//   • getContribution returns the accepted record
+//   • getPoolStatus / getPoolKey / getPoolShareRoot expose the activated pool key
 //   • ElGamal encrypt/decrypt roundtrip using a synthetic key pair
 //   • buildEpochId / parseEpochId roundtrip on the fixture epoch ID
 
@@ -26,6 +27,7 @@ import {
   parseEpochId,
   buildEpochId,
 } from '../src/index.js';
+import { fromRTEtoTE } from '../src/crypto/babyjub-form.js';
 import { makePublicClient } from './helpers/accounts.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -42,7 +44,10 @@ function useHarness() {
 
 interface FixtureResult {
   epochId: `0x${string}`;
-  collectivePublicKeyHash: `0x${string}`;
+  share: string;
+  /** P_0 in the contract's RTE form, decimal coordinates. */
+  poolKey: { x: string; y: string };
+  activatedKeys: number;
 }
 
 async function runGoFixture(rpcUrl: string, addressesFile: string): Promise<FixtureResult | null> {
@@ -126,7 +131,7 @@ describe('Full DKG flow (via Go fixture)', () => {
       managerAddress,
     });
 
-    console.log('[flow-test] Running Go fixture to create a finalized epoch…');
+    console.log('[flow-test] Running Go fixture to create a Live epoch…');
     fixture = await runGoFixture(rpcUrl, addressesFile);
 
     if (fixture) {
@@ -134,7 +139,7 @@ describe('Full DKG flow (via Go fixture)', () => {
     }
   });
 
-  it('fixture epoch is in Finalized status', async () => {
+  it('fixture epoch is in Live status', async () => {
     const { enabled } = useHarness();
     if (!enabled || !fixture) return;
 
@@ -143,7 +148,7 @@ describe('Full DKG flow (via Go fixture)', () => {
     expect(epoch.policy.threshold).toBe(1);
   });
 
-  it('waitForEpochPhase resolves immediately for an already-finalized epoch', async () => {
+  it('waitForEpochPhase resolves immediately for an already-Live epoch', async () => {
     const { enabled } = useHarness();
     if (!enabled || !fixture) return;
 
@@ -160,10 +165,11 @@ describe('Full DKG flow (via Go fixture)', () => {
     const events = await client.getEpochLiveEvents(fixture.epochId);
     expect(events.length).toBeGreaterThan(0);
 
+    // finalizeEpoch is proof-less now: the event only freezes the accepted
+    // contributor set (one participant here).
     const ev = events[0];
-    expect(ev.collectivePublicKeyHash).toBe(fixture.collectivePublicKeyHash);
-    expect(ev.aggregateCommitmentsHash).toMatch(/^0x[0-9a-f]{64}$/i);
-    expect(ev.shareCommitmentHash).toMatch(/^0x[0-9a-f]{64}$/i);
+    expect(ev.epochId.toLowerCase()).toBe(fixture.epochId.toLowerCase());
+    expect(ev.contributionCount).toBe(1);
   });
 
   it('selectedParticipants returns one participant', async () => {
@@ -185,12 +191,33 @@ describe('Full DKG flow (via Go fixture)', () => {
     expect(contrib.commitmentsHash).toMatch(/^0x[0-9a-f]{64}$/i);
   });
 
-  it('getShareCommitmentHash returns a non-zero hash for participant 1', async () => {
+  it('pool key 0 is activated and matches the fixture', async () => {
     const { enabled } = useHarness();
     if (!enabled || !fixture) return;
 
-    const h = await client.getShareCommitmentHash(fixture.epochId, 1);
-    expect(h).not.toBe('0x' + '0'.repeat(64));
+    const status = await client.getPoolStatus(fixture.epochId);
+    expect(status.nextIndex).toBe(0);
+    expect(status.activated & 1).toBe(1);
+
+    // The fixture reports P_0 in RTE; the client hands out TE.
+    const p0 = await client.getPoolKey(fixture.epochId, 0);
+    expect(p0).toEqual(fromRTEtoTE(BigInt(fixture.poolKey.x), BigInt(fixture.poolKey.y)));
+
+    // The Merkle root of the members' share commitments under key 0 backs
+    // every submitPartialDecryption path.
+    const root = await client.getPoolShareRoot(fixture.epochId, 0);
+    expect(root).not.toBe('0x' + '0'.repeat(64));
+
+    const activated = await client.getPoolKeyActivatedEvents(fixture.epochId);
+    expect(activated.map((e) => e.keyIndex)).toContain(0);
+  });
+
+  it('getPoolKey reverts for a key that is not activated', async () => {
+    const { enabled } = useHarness();
+    if (!enabled || !fixture) return;
+
+    // MAX_K = 8; the fixture activates only the keys it was asked for.
+    await expect(client.getPoolKey(fixture.epochId, 7)).rejects.toThrow();
   });
 
   it('parseEpochId on fixture epoch ID roundtrips through buildEpochId', async () => {
@@ -207,8 +234,8 @@ describe('Full DKG flow (via Go fixture)', () => {
     if (!enabled || !fixture) return;
 
     // Test the cryptographic primitive with a locally-generated key pair.
-    // In the full protocol, the collective public key is fetched via
-    // client.getCollectivePublicKey(epochId).
+    // In the full protocol, the application key is fetched via
+    // client.getApplicationKey(epochId, aid).
     const eg = await buildElGamal();
     const { privKey, pubKey } = eg.generateKeyPair();
 

@@ -12,7 +12,7 @@ type ContractAddresses struct {
 	Manager                common.Address
 	AppManager             common.Address
 	ContributionVerifier   common.Address
-	FinalizeVerifier       common.Address
+	PoolKeyVerifier        common.Address
 	PartialDecryptVerifier common.Address
 	DecryptCombineVerifier common.Address
 }
@@ -27,8 +27,8 @@ func (c ContractAddresses) Validate() error {
 	if c.ContributionVerifier == (common.Address{}) {
 		return fmt.Errorf("contribution verifier address is required")
 	}
-	if c.FinalizeVerifier == (common.Address{}) {
-		return fmt.Errorf("finalize verifier address is required")
+	if c.PoolKeyVerifier == (common.Address{}) {
+		return fmt.Errorf("pool key verifier address is required")
 	}
 	if c.PartialDecryptVerifier == (common.Address{}) {
 		return fmt.Errorf("partial decrypt verifier address is required")

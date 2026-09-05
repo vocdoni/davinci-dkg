@@ -29,17 +29,27 @@ concurrency:
 jobs:
   job_go_test_circuits:
     name: Circuit Tests
-    # Self-hosted for Groth16 trusted-setup performance; falls back to hosted if unavailable.
-    runs-on: ubuntu-latest
+    # Self-hosted: the contribution circuit is 3.0M constraints (MaxN=32,
+    # MaxK=8). Its Groth16 setup alone takes ~10 min and its test package
+    # ~20 min on our boxes with a proving key around a gigabyte; a
+    # GitHub-hosted runner (4 vCPU, 16 GB) is 5–10× slower and would blow
+    # the 2 h per-package go timeout, if not its RAM.
+    runs-on: [self-hosted]
+    timeout-minutes: 150
     env:
       LOG_LEVEL: debug
 
     steps:
+      # Some self-hosted runners export no HOME (z5 runs as root under
+      # systemd); go and the ~/.davinci/artifacts cache below need one.
+      - name: Give the run a home
+        run: mkdir -p "$RUNNER_TEMP/home" && echo "HOME=$RUNNER_TEMP/home" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
 
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+          cache: false # self-hosted: the box keeps its own build cache
 
       - name: Restore circuit artifact cache
         uses: actions/cache@v4
@@ -49,13 +59,10 @@ jobs:
           restore-keys: circuits-
 
       - name: Run all circuit tests (prove + verify)
+        # Includes Test*ArtifactsMatchCompiledCircuit in every circuit
+        # package, which checks the hashes pinned in
+        # config/circuit_artifacts.go against the compiled circuits.
         run: |
           go test -v ./circuits/... \
             -failfast \
             -timeout=2h
-
-      - name: Verify artifact hashes match compiled circuits
-        run: |
-          go test -v ./config/... \
-            -run TestCircuitArtifactsMatch \
-            -timeout=1h

@@ -97,21 +97,28 @@ export function ActivityLog({ entries }: { entries: LogEntry[] }) {
   )
 }
 
-/** The left rail: eight steps, their state, and back-navigation. */
+/**
+ * The left rail: eight steps, their state, and back-navigation. A step is
+ * clickable once the walkthrough has reached it (`furthest`); a skipped step —
+ * the reveal of an automatic application — is labelled as such and opens its
+ * explanation once it has been passed.
+ */
 export function StepRail({
   status,
   active,
+  furthest,
   onSelect,
 }: {
   status: (step: StepId) => StepStatus
   active: StepId
+  furthest: StepId
   onSelect: (step: StepId) => void
 }) {
   return (
     <ol className='m-0 flex list-none flex-col gap-1 p-0'>
       {STEPS.map((step, i) => {
         const state = status(step)
-        const reachable = state !== 'todo'
+        const reachable = state !== 'todo' && STEPS.indexOf(step) <= STEPS.indexOf(furthest)
         return (
           <li key={step}>
             <button
@@ -133,12 +140,19 @@ export function StepRail({
                     ? 'border-emerald bg-emerald/15 text-emerald'
                     : step === active
                       ? 'border-emerald text-emerald'
-                      : 'border-charcoal text-ash'
+                      : state === 'skipped'
+                        ? 'border-dashed border-charcoal text-ash'
+                        : 'border-charcoal text-ash'
                 )}
               >
-                {state === 'done' ? '✓' : i + 1}
+                {state === 'done' ? '✓' : state === 'skipped' ? '–' : i + 1}
               </span>
-              <span className='min-w-0 truncate text-[13px]'>{STEP_TITLES[step]}</span>
+              <span className={cn('min-w-0 truncate text-[13px]', state === 'skipped' && 'text-ash')}>
+                {STEP_TITLES[step]}
+              </span>
+              {state === 'skipped' ? (
+                <span className='ml-auto shrink-0 text-[10px] uppercase tracking-[0.1em] text-ash'>skipped</span>
+              ) : null}
             </button>
           </li>
         )

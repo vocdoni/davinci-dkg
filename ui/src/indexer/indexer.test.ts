@@ -54,18 +54,8 @@ function fakeChain() {
         commitmentsHash: ('0x' + '11'.repeat(32)) as Hex,
         encryptedSharesHash: ('0x' + '22'.repeat(32)) as Hex,
       }),
-      log(
-        'EpochLive',
-        140,
-        0,
-        {
-          epochId: EPOCH,
-          aggregateCommitmentsHash: ('0x' + '33'.repeat(32)) as Hex,
-          collectivePublicKeyHash: ('0x' + '44'.repeat(32)) as Hex,
-          shareCommitmentHash: ('0x' + '55'.repeat(32)) as Hex,
-        },
-        FINALIZE_TX,
-      ),
+      log('EpochLive', 140, 0, { epochId: EPOCH, contributionCount: 1 }, FINALIZE_TX),
+      log('PoolKeyActivated', 141, 0, { epochId: EPOCH, keyIndex: 0, x: 12n, y: 34n }),
     ] as FakeLog[],
     ranges: [] as Array<[number, number]>,
     multicalls: 0,
@@ -115,10 +105,8 @@ function fakeChain() {
         }
       case 'selectedParticipants':
         return [ALICE, BOB]
-      case 'getCollectivePublicKey':
-        return { x: 12n, y: 34n }
-      case 'getShareCommitmentHash':
-        return `0x${String(call.args?.[1] ?? 0).padStart(64, '0')}` as Hex
+      case 'getPoolStatus':
+        return [0, 1]
       case 'getNode':
         return {
           operator: call.args?.[0],
@@ -191,7 +179,7 @@ describe('Indexer', () => {
     expect(status.scanning).toBe(false)
     expect(status.progress).toBe(1)
     expect(status.lastBlock).toBe(250)
-    expect(status.eventCount).toBe(8)
+    expect(status.eventCount).toBe(9)
 
     // Chunked: 151 blocks at a chunk of 100 (the floor scanRange enforces).
     expect(state.ranges[0]).toEqual([100, 199])
@@ -208,8 +196,10 @@ describe('Indexer', () => {
     expect(epoch.status).toBe('live')
     expect(epoch.policy?.threshold).toBe(2)
     expect(epoch.committee).toEqual([ALICE, BOB])
-    expect(epoch.collectivePublicKey).not.toBeNull()
-    expect(epoch.shareCommitmentHashes).toHaveLength(2)
+    expect(epoch.finalization?.contributionCount).toBe(1)
+    expect(epoch.poolKeys[0].key).not.toBeNull()
+    expect(epoch.poolKeys[0].activatedBlock).toBe(141)
+    expect(epoch.poolKeys[1].key).toBeNull()
     expect(epoch.finalization?.by).toBe(BOB)
     expect(store.txMeta[FINALIZE_TX].gasUsed).toBe(1_112_337)
     expect(store.operators[ALICE].registeredAtBlock).toBe(101)
@@ -337,10 +327,8 @@ describe('Indexer', () => {
             return 50_400n
           case 'selectedParticipants':
             return [ALICE, BOB]
-          case 'getCollectivePublicKey':
-            return { x: 0n, y: 1n }
-          case 'getShareCommitmentHash':
-            return ('0x' + '00'.repeat(32)) as Hex
+          case 'getPoolStatus':
+            return [0, 0]
           case 'getNode':
             return { pubX: 1n, pubY: 2n, status: 1, lastActiveBlock: 130n, registeredAtBlock: 101n }
           case 'getEpoch':

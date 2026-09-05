@@ -1,6 +1,7 @@
 package common
 
 import (
+	"fmt"
 	"math/big"
 
 	ecc_tweds "github.com/consensys/gnark-crypto/ecc/twistededwards"
@@ -10,6 +11,7 @@ import (
 	"github.com/vocdoni/gnark-crypto-primitives/elgamal"
 	circuitposeidon "github.com/vocdoni/gnark-crypto-primitives/hash/native/bn254/poseidon"
 
+	"github.com/vocdoni/davinci-dkg/crypto/group"
 	"github.com/vocdoni/davinci-dkg/crypto/hash"
 	"github.com/vocdoni/davinci-dkg/types"
 )
@@ -90,6 +92,33 @@ func AssertPointOnCurve(api frontend.API, point twistededwards.Point) error {
 	}
 	curve.AssertIsOnCurve(point)
 	return nil
+}
+
+// ScalarMulVar multiplies a variable point by a full-width scalar with a
+// plain double-and-add over the scalar's 254 bits: no hints, no
+// decomposition trick, no commitments. gnark's hinted fake-GLV ScalarMul was
+// unsound on cofactor curves before v0.15.0 (ePrint 2026/1776) and its fixed
+// version commits, which changes the Solidity verifier and adds a pairing per
+// proof; this gadget is the boring alternative for every secret or
+// prover-chosen scalar that multiplies a variable-base point. ToBinary pins
+// the canonical binary expansion, the unified twisted-Edwards formulas are
+// complete, so the result is exactly [s]·P for any scalar s < 2^254.
+func ScalarMulVar(api frontend.API, point twistededwards.Point, scalar frontend.Variable) twistededwards.Point {
+	curve, err := twistededwards.NewEdCurve(api, ecc_tweds.BN254)
+	if err != nil {
+		panic(err)
+	}
+	bits := api.ToBinary(scalar, 254)
+	acc := IdentityPoint()
+	for i := len(bits) - 1; i >= 0; i-- {
+		acc = curve.Double(acc)
+		sum := curve.Add(acc, point)
+		acc = twistededwards.Point{
+			X: api.Select(bits[i], sum.X, acc.X),
+			Y: api.Select(bits[i], sum.Y, acc.Y),
+		}
+	}
+	return acc
 }
 
 // ScalarMulSmallScalar computes `scalar · point` for a scalar that the
@@ -247,4 +276,54 @@ func HashPointTupleNative(state *big.Int, points ...types.CurvePoint) (*big.Int,
 		}
 	}
 	return current, nil
+}
+
+// IdentityCurvePoint is the twisted-Edwards identity (0, 1) in native form:
+// the value every masked-out point slot carries in a witness or transcript.
+func IdentityCurvePoint() types.CurvePoint {
+	return types.CurvePoint{X: big.NewInt(0), Y: big.NewInt(1)}
+}
+
+// PadPoints right-pads a native point vector with the identity until it
+// reaches size, the point analogue of PadBigInts.
+func PadPoints(points []types.CurvePoint, size int) ([]types.CurvePoint, error) {
+	if len(points) > size {
+		return nil, fmt.Errorf("got %d points, max is %d", len(points), size)
+	}
+	out := make([]types.CurvePoint, size)
+	for i := range size {
+		if i < len(points) && points[i].X != nil && points[i].Y != nil {
+			out[i] = types.CurvePoint{X: new(big.Int).Set(points[i].X), Y: new(big.Int).Set(points[i].Y)}
+			continue
+		}
+		out[i] = IdentityCurvePoint()
+	}
+	return out, nil
+}
+
+// CommitmentPolynomialValueNative mirrors CommitmentPolynomialValue for
+// witness builders: Σ_m x^m · commitments[m] over the BabyJubJub prime-order
+// subgroup. Identity slots contribute nothing, so callers pass the same
+// masked vector the circuit uses. Powers are reduced modulo the subgroup
+// order, which is a no-op at the current bounds (x ≤ MaxN, m < MaxN).
+func CommitmentPolynomialValueNative(commitments []types.CurvePoint, x *big.Int) (types.CurvePoint, error) {
+	if x == nil {
+		return types.CurvePoint{}, fmt.Errorf("x is required")
+	}
+	modulus := group.ScalarField()
+	acc := group.NewPoint()
+	acc.SetZero()
+	power := big.NewInt(1)
+	for m, commitment := range commitments {
+		point, err := group.Decode(commitment)
+		if err != nil {
+			return types.CurvePoint{}, fmt.Errorf("decode commitment %d: %w", m, err)
+		}
+		term := group.NewPoint()
+		term.ScalarMult(point, power)
+		acc.Add(acc, term)
+		power.Mul(power, x)
+		power.Mod(power, modulus)
+	}
+	return group.Encode(acc), nil
 }

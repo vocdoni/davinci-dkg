@@ -6,10 +6,12 @@ import {
   demoCombineAt,
   demoParticipant,
   demoPartialsAt,
+  demoPoolKey,
+  demoPoolSecret,
   demoRecoverPlaintext,
   DEMO_DLOG_LIMIT,
   demoRegister,
-  demoReleaseShare,
+  demoRevealSecret,
   demoSubmitCiphertext,
   demoTxHash,
   initialDemoChain,
@@ -72,10 +74,28 @@ describe('sending transactions', () => {
     expect(first.tx.gasUsed).toBeGreaterThan(second.tx.gasUsed)
   })
 
-  it('records the share on the state it returns', () => {
+  it('records the reveal on the state it returns, once', () => {
     const state = demoSubmitCiphertext(demoRegister(initialDemoChain(1), AID).state, AID).state
-    const released = demoReleaseShare(state, AID, 1)
-    expect(released.state.share).toEqual(released.tx)
+    const revealed = demoRevealSecret(state, AID)
+    expect(revealed.state.reveal).toEqual(revealed.tx)
+    expect(() => demoRevealSecret(revealed.state, AID)).toThrow('AlreadyRevealed()')
+  })
+
+  it('remembers the mode and the pool key the application was registered with', () => {
+    expect(demoRegister(initialDemoChain(1), AID).state.mode).toBe('organizer-locked')
+    expect(demoRegister(initialDemoChain(1), AID).state.poolIndex).toBe(0)
+    const automatic = demoRegister(initialDemoChain(1), AID, 'automatic', 3).state
+    expect(automatic.mode).toBe('automatic')
+    expect(automatic.poolIndex).toBe(3)
+  })
+})
+
+describe('pool keys', () => {
+  it('are real curve points, distinct per epoch and per index', () => {
+    const key = demoPoolKey(EPOCH, 0)
+    expect(key).toEqual(mulPointEscalar(Base8, demoPoolSecret(EPOCH, 0)))
+    expect(demoPoolKey(EPOCH, 1)).not.toEqual(key)
+    expect(demoPoolKey('0x0102030405060708090a0b0d', 0)).not.toEqual(key)
   })
 })
 
@@ -134,19 +154,22 @@ describe('partials', () => {
 describe('combine', () => {
   const full = () => demoPartialsAt(100, 200, params())
 
-  it('never lands while the organizer withholds the share', () => {
+  it('never lands while the organizer keeps the secret', () => {
     expect(demoCombineAt(full(), null, 500, params())).toBeNull()
   })
 
-  it('never lands below the threshold, share or no share', () => {
+  it('never lands below the threshold, unlocked or not', () => {
+    expect(demoCombineAt(demoPartialsAt(100, 101, params()), 0, 500, params())).toBeNull()
     expect(demoCombineAt(demoPartialsAt(100, 101, params()), 102, 500, params())).toBeNull()
   })
 
-  it('lands one block after the later of the two halves', () => {
-    // The t-th partial lands at block 103; a share released later is the blocker.
+  it('lands one block after the later of the threshold and the reveal', () => {
+    // The t-th partial lands at block 103; a secret revealed later is the blocker.
     expect(demoCombineAt(full(), 110, 500, params())?.block).toBe(111)
     // …and vice versa. Late responders past t do not hold it up.
     expect(demoCombineAt(full(), 101, 500, params())?.block).toBe(104)
+    // An automatic application is unlocked from block 0.
+    expect(demoCombineAt(full(), 0, 500, params())?.block).toBe(104)
   })
 
   it('is invisible until the head reaches it', () => {
@@ -166,6 +189,12 @@ describe('plaintext recovery', () => {
 
   it('recovers what was encrypted under sk_aid', async () => {
     expect(await roundTrip(4_242n, 987_654_321n % subOrder)).toBe(4_242n)
+  })
+
+  it('recovers what was encrypted under a pool key plus an organizer key', async () => {
+    const skOrg = 424_242n
+    const skAid = (demoPoolSecret(EPOCH, 2) + skOrg) % subOrder
+    expect(await roundTrip(99n, skAid)).toBe(99n)
   })
 
   it('recovers zero', async () => {

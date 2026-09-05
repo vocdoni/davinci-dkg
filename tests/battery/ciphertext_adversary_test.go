@@ -12,6 +12,12 @@ import (
 	"github.com/vocdoni/davinci-dkg/web3"
 )
 
+// ciphertextAdversaryKeys is how many pool keys the scenario claims in its
+// epoch: application A, the three policy probes (cap, future window, past
+// window), the honest neighbour every poison is measured against, and
+// application B of the cross-application copy.
+const ciphertextAdversaryKeys = 6
+
 // TestCiphertextAdversary attacks submitCiphertext and the nodes' ciphertext
 // validation: policy reverts (submitter, aid, cap, window), malformed points,
 // then the three ciphertexts the contract accepts by design but the nodes
@@ -27,7 +33,7 @@ func TestCiphertextAdversary(t *testing.T) {
 	combineWait := envUint64("BATTERY_COMBINE_WAIT_BLOCKS", 240)
 	observe := envUint64("BATTERY_POISON_OBSERVE_BLOCKS", 45)
 
-	epochID, epoch, err := f.waitLiveEpoch(ctx, t, envUint64("BATTERY_MIN_SERVICE_BLOCKS", 90))
+	epochID, epoch, err := f.waitLiveEpoch(ctx, t, envUint64("BATTERY_MIN_SERVICE_BLOCKS", 90), ciphertextAdversaryKeys)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,8 +49,17 @@ func TestCiphertextAdversary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	appA, out, err := f.registerApplication(ctx, orgA, epochID, golangtypes.DKGTypesAppPolicy{})
+	appA, out, err := f.registerApplication(ctx, orgA, epochID, automaticPolicy())
 	if !expectOK(t, "register-a", "registerApplication", out, err, "") {
+		t.FailNow()
+	}
+	// Neighbour probes live in a fresh application: an undecryptable
+	// ciphertext taints its own application for the epoch (the nodes stop
+	// serving it by design), so the same aid cannot measure fleet latency.
+	// One neighbour serves every poison — it only ever sees honest
+	// ciphertexts, and each registration costs one of the epoch's pool keys.
+	neighbour, out, err := f.registerApplication(ctx, orgA, epochID, automaticPolicy())
+	if !expectOK(t, "register-neighbour", "registerApplication", out, err, "") {
 		t.FailNow()
 	}
 
@@ -58,7 +73,7 @@ func TestCiphertextAdversary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dosProbe(ctx, t, f, epoch, appA, "torsion", torsionC1, torsionC2, combineWait, observe, false)
+	dosProbe(ctx, t, f, epoch, appA, neighbour, "torsion", torsionC1, torsionC2, combineWait, observe, false)
 
 	// Undecryptable C2: valid partials, valid share, dlog out of range.
 	c1, _, err := appA.encrypt(big.NewInt(13))
@@ -69,14 +84,16 @@ func TestCiphertextAdversary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dosProbe(ctx, t, f, epoch, appA, "random-c2", c1, randomC2, combineWait, observe, true)
+	dosProbe(ctx, t, f, epoch, appA, neighbour, "random-c2", c1, randomC2, combineWait, observe, true)
 
-	// Verbatim copy of A's baseline into B: m·G + (sk_orgA − sk_orgB)·C1.
-	appB, out, err := f.registerApplication(ctx, orgB, epochID, golangtypes.DKGTypesAppPolicy{})
+	// Verbatim copy of A's baseline into B. A and B hold different pool
+	// keys, so B's partials decrypt it to m·G + r·(P_A − P_B): garbage that
+	// never combines.
+	appB, out, err := f.registerApplication(ctx, orgB, epochID, automaticPolicy())
 	if !expectOK(t, "cross-app/register-b", "registerApplication", out, err, "") {
 		return
 	}
-	dosProbe(ctx, t, f, epoch, appB, "cross-app", baseline.C1, baseline.C2, combineWait, observe, true)
+	dosProbe(ctx, t, f, epoch, appB, neighbour, "cross-app", baseline.C1, baseline.C2, combineWait, observe, true)
 }
 
 // ciphertextPolicyReverts covers the DKGAppManager policy gate.
@@ -96,7 +113,7 @@ func ciphertextPolicyReverts(ctx context.Context, t *testing.T, f *Fleet, epochI
 	_, _, err = f.submitCiphertext(ctx, appA.Organizer, epochID, unknown, c1, c2)
 	expectRevert(t, "policy/unregistered-aid", err, "InvalidApplication")
 
-	capped, out, err := f.registerApplication(ctx, appA.Organizer, epochID, golangtypes.DKGTypesAppPolicy{MaxCiphertexts: 1})
+	capped, out, err := f.registerApplication(ctx, appA.Organizer, epochID, automaticPolicyWith(golangtypes.DKGTypesAppPolicy{MaxCiphertexts: 1}))
 	if expectOK(t, "policy/register-capped", "registerApplication", out, err, "maxCiphertexts=1") {
 		_, out, err := f.submitCiphertext(ctx, capped.Organizer, epochID, capped.Aid, c1, c2)
 		expectOK(t, "policy/capped-first", "submitCiphertext", out, err, "")
@@ -108,13 +125,13 @@ func ciphertextPolicyReverts(ctx context.Context, t *testing.T, f *Fleet, epochI
 	if err != nil {
 		t.Fatal(err)
 	}
-	futurePolicy := golangtypes.DKGTypesAppPolicy{NotBeforeBlock: head + 100_000}
+	futurePolicy := automaticPolicyWith(golangtypes.DKGTypesAppPolicy{NotBeforeBlock: head + 100_000})
 	future, out, err := f.registerApplication(ctx, appA.Organizer, epochID, futurePolicy)
 	if expectOK(t, "policy/register-future-window", "registerApplication", out, err, "") {
 		_, _, err = f.submitCiphertext(ctx, future.Organizer, epochID, future.Aid, c1, c2)
 		expectRevert(t, "policy/window-not-yet-open", err, "DecryptionNotYetAllowed")
 	}
-	past, out, err := f.registerApplication(ctx, appA.Organizer, epochID, golangtypes.DKGTypesAppPolicy{NotAfterBlock: 1})
+	past, out, err := f.registerApplication(ctx, appA.Organizer, epochID, automaticPolicyWith(golangtypes.DKGTypesAppPolicy{NotAfterBlock: 1}))
 	if expectOK(t, "policy/register-past-window", "registerApplication", out, err, "") {
 		_, _, err = f.submitCiphertext(ctx, past.Organizer, epochID, past.Aid, c1, c2)
 		expectRevert(t, "policy/window-expired", err, "DecryptionExpired")
@@ -155,16 +172,15 @@ func torsionCiphertext(app *application) (types.CurvePoint, types.CurvePoint, er
 	return mixed, c2, err
 }
 
-// honestRoundTrip submits one honest ciphertext, releases its share and
-// waits for the fleet to combine it. Returns the slot (with its combine
-// event attached through the report).
+// honestRoundTrip submits one honest ciphertext and waits for the fleet to
+// combine it. The application is automatic, so there is nothing for the
+// organizer to release. Returns the slot (with its combine event attached
+// through the report).
 func honestRoundTrip(
 	ctx context.Context, t *testing.T, f *Fleet, epoch web3.EpochView, app *application, wait uint64, step string,
 ) slot {
 	t.Helper()
 	s := submitSlots(ctx, t, f, app, 1, step)[0]
-	_, _, out, err := f.releaseShare(ctx, app, s.Idx, s.C1, s.C2)
-	expectOK(t, step+"/share", "submitOrganizerShare", out, err, "")
 	ev := assertCombines(ctx, t, f, epoch, app, s, s.SubmitBlock, wait, step+"/combine")
 	if ev != nil {
 		s.combine = ev
@@ -174,37 +190,22 @@ func honestRoundTrip(
 
 // dosProbe is the before → poison → after → late sequence shared by the
 // three poisons: an honest ciphertext right before (latency reference), the
-// poison (plus its organizer share when the prover accepts C1), an honest
-// ciphertext right after, then — once the combiners have had `observe`
-// blocks to burn on the poison — one more honest ciphertext. The poison's
-// own partial / combine status is reported early and late.
+// poison, an honest ciphertext right after in the untainted `neighbour`
+// application, then — once the combiners have had `observe` blocks to burn
+// on the poison — one more honest ciphertext. The poison's own partial /
+// combine status is reported early and late.
 func dosProbe(
-	ctx context.Context, t *testing.T, f *Fleet, epoch web3.EpochView, app *application,
+	ctx context.Context, t *testing.T, f *Fleet, epoch web3.EpochView, app, neighbour *application,
 	name string, c1, c2 types.CurvePoint, wait, observe uint64, partialsExpected bool,
 ) {
 	t.Helper()
 	before := honestRoundTrip(ctx, t, f, epoch, app, wait, name+"/before")
-	// Neighbour probes live in a fresh application: an undecryptable
-	// ciphertext taints its own application for the epoch (the nodes stop
-	// serving it by design), so the same aid cannot measure fleet latency.
-	neighbour, out, err := f.registerApplication(ctx, app.Organizer, app.Epoch, golangtypes.DKGTypesAppPolicy{})
-	if !expectOK(t, name+"/neighbour/register", "registerApplication", out, err, "") {
-		return
-	}
 
 	idx, out, err := f.submitCiphertext(ctx, app.Organizer, app.Epoch, app.Aid, c1, c2)
 	if !expectOK(t, name+"/poison/submit", "submitCiphertext", out, err, "accepted by the contract by design") {
 		return
 	}
 	poison := slot{Idx: idx, C1: c1, C2: c2, SubmitBlock: out.Block}
-	if _, _, sh, err := f.releaseShare(ctx, app, idx, c1, c2); err != nil {
-		record(t, Result{
-			Step: name + "/poison/share", Kind: "measure", Pass: true,
-			Notes: "organizer-side DLEQ prover refuses this C1: " + err.Error(),
-		})
-	} else {
-		record(t, sh.result(name+"/poison/share", "submitOrganizerShare", "valid DLEQ posted for the poison"))
-	}
 
 	after := honestRoundTrip(ctx, t, f, epoch, neighbour, wait, name+"/after")
 	latencyDelta(t, name+"/latency-after", before, after)
@@ -222,8 +223,6 @@ func dosProbe(
 		// combine (tainted); a combine means the nodes had not failed the
 		// search yet. Reported, not judged.
 		s := submitSlots(ctx, t, f, app, 1, name+"/tainted")[0]
-		_, _, out, err := f.releaseShare(ctx, app, s.Idx, s.C1, s.C2)
-		expectOK(t, name+"/tainted/share", "submitOrganizerShare", out, err, "")
 		taintWait := envUint64("BATTERY_NO_COMBINE_WAIT_BLOCKS", 40)
 		if _, err := f.waitBlock(ctx, s.SubmitBlock+taintWait); err != nil {
 			t.Fatal(err)

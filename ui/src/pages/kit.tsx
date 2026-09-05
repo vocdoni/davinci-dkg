@@ -230,8 +230,8 @@ export function KitPage() {
           <Callout tone='info' title='Info'>
             The indexer is still scanning: 62% of the history is loaded.
           </Callout>
-          <Callout tone='warn' title='Withheld share'>
-            The organizer has not released their share; these ciphertexts cannot be combined.
+          <Callout tone='warn' title='Secret not revealed'>
+            The organizer has not revealed its secret; these ciphertexts cannot be combined.
           </Callout>
           <Callout tone='ok' title='Finalized'>
             The collective key is on chain and the epoch is live.
@@ -280,7 +280,7 @@ export function KitPage() {
             checked={toggle}
             onChange={setToggle}
             label='Advanced transcripts'
-            hint='Print PoP, DLEQ words, e and z.'
+            hint='Print the PoP and reveal transcripts.'
           />
         </div>
       </Section>
@@ -343,7 +343,7 @@ export function KitPage() {
               meta='11 898 210'
               right={<TxCell hash={SAMPLE_TX} />}
             />
-            <TimelineRow tone='warn' title='OrganizerShareWithheld' meta='11 901 004' description='aid 0x2c2c…2c2c' />
+            <TimelineRow tone='warn' title='OrganizerSecretRevealed' meta='11 901 004' description='aid 0x2c2c…2c2c' />
             <TimelineRow tone='muted' last title='CiphertextCombined (pending)' meta='—' />
           </Timeline>
         </div>
@@ -370,23 +370,22 @@ export function KitPage() {
           <Dialog
             open={dialogOpen}
             onOpenChange={setDialogOpen}
-            title='Release organizer share'
-            description='The share is computed in the browser from sk_org; the secret never leaves this tab.'
+            title='Reveal organizer secret'
+            description='The secret is checked against PK_org in this tab before it is sent; afterwards the committee decrypts alone.'
             footer={
               <>
                 <Button variant='secondary' onClick={() => setDialogOpen(false)}>
                   Cancel
                 </Button>
                 <Button variant='primary' onClick={() => setDialogOpen(false)}>
-                  Release
+                  Reveal
                 </Button>
               </>
             }
           >
             <div className='space-y-4'>
-              <Input label='Ciphertext index' type='number' defaultValue={0} />
               <Input label='Organizer secret' placeholder='0x…' mono />
-              <Callout tone='warn'>Releasing a share makes this ciphertext decryptable by the committee.</Callout>
+              <Callout tone='warn'>Revealing the secret makes every ciphertext of this application decryptable by the committee.</Callout>
             </div>
           </Dialog>
         </div>
@@ -544,14 +543,14 @@ export function KitPage() {
               <div className='font-mono text-[10px]'>
                 <div className='text-ghost'>{matrix.rows[cell.row]}</div>
                 <div className='text-ash'>
-                  ciphertext {cell.col} · wave {cell.wave + 1} · block {cell.block.toLocaleString()}
+                  ciphertext {cell.col} · wave {cell.wave} · block {cell.block.toLocaleString()}
                 </div>
               </div>
             ),
           }))}
           cellSize={12}
           legend={Array.from({ length: matrix.waves }, (_, w) => ({
-            label: `wave ${w + 1}`,
+            label: `wave ${w}`,
             color: waveColor(w, matrix.waves),
           })).concat([{ label: 'no partial', color: CHART_COLORS.onyx }])}
         />

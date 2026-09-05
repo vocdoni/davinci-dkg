@@ -17,10 +17,10 @@ import (
 	ccommon "github.com/vocdoni/davinci-dkg/circuits/common"
 	"github.com/vocdoni/davinci-dkg/circuits/contribution"
 	"github.com/vocdoni/davinci-dkg/circuits/decryptcombine"
-	"github.com/vocdoni/davinci-dkg/circuits/finalize"
 	"github.com/vocdoni/davinci-dkg/circuits/partialdecrypt"
-	"github.com/vocdoni/davinci-dkg/crypto/dleq"
+	"github.com/vocdoni/davinci-dkg/circuits/poolkey"
 	"github.com/vocdoni/davinci-dkg/crypto/group"
+	"github.com/vocdoni/davinci-dkg/internal/protocol"
 	"github.com/vocdoni/davinci-dkg/types"
 )
 
@@ -33,15 +33,27 @@ type ContributionSubmission struct {
 	RoundHash           *big.Int
 }
 
-type FinalizeEpochOutput struct {
-	Proof                    []byte
-	Input                    []byte
-	Transcript               []byte
-	AggregateCommitmentsHash [32]byte
-	CollectivePublicKeyHash  [32]byte
-	ShareCommitmentHash      [32]byte
-	RoundHash                *big.Int
-	ShareCommitments         []types.CurvePoint
+// PoolKeyActivation is everything `activatePoolKey` needs for one key, plus
+// the share commitments the callers turn into Merkle paths for the partial
+// decryptions submitted against that key.
+//
+// ParticipantIndexes lists the accepted contributors (the transcript's
+// active rows). ShareCommitments is member-indexed: entry i is D_{i+1} for
+// every committee member i < committeeSize, contributing or not, because a
+// member that only claimed a slot still received a share of every accepted
+// polynomial. Shares is the Merkle tree over exactly those leaves, the root
+// the contract stores.
+type PoolKeyActivation struct {
+	KeyIndex           uint8
+	Proof              []byte
+	Input              []byte
+	Transcript         []byte
+	TranscriptDigest   [32]byte
+	RoundHash          *big.Int
+	PoolKey            types.CurvePoint
+	ParticipantIndexes []uint16
+	ShareCommitments   []types.CurvePoint
+	Shares             ShareTree
 }
 
 type PartialDecryptionSubmission struct {
@@ -50,6 +62,9 @@ type PartialDecryptionSubmission struct {
 	DeltaHash [32]byte
 	Delta     types.CurvePoint
 	RoundHash *big.Int
+	// ShareProof is the MerkleDepth-long sibling path proving the member's
+	// share commitment against the pool key's root.
+	ShareProof [][32]byte
 	// C1, C2 are the on-chain ciphertext coords the proof binds to,
 	// captured here so SubmitPartialDecryption callers can pass them
 	// straight through. Set by
@@ -66,21 +81,19 @@ type DecryptCombineOutput struct {
 	Plaintext    *big.Int
 	CiphertextC1 types.CurvePoint
 	CiphertextC2 types.CurvePoint
-	// DeltaOrg and OrganizerProof are the exact organizer-share words the
-	// transcript commits to. `submitOrganizerShare` must post these same
-	// words before `combineDecryption`, or the contract's share-hash check
-	// fails.
-	DeltaOrg       types.CurvePoint
-	OrganizerProof dleq.Proof
+	// OrganizerPK is the key the contract checks the transcript's w[4..5]
+	// against: sk_org·G for an organizer-locked application, the identity
+	// (0, 1) for an automatic one.
+	OrganizerPK types.CurvePoint
 }
 
 var (
 	contributionRuntimeOnce   sync.Once
 	contributionRuntime       *circuits.CircuitRuntime
 	contributionRuntimeErr    error
-	finalizeRuntimeOnce       sync.Once
-	finalizeRuntime           *circuits.CircuitRuntime
-	finalizeRuntimeErr        error
+	poolKeyRuntimeOnce        sync.Once
+	poolKeyRuntime            *circuits.CircuitRuntime
+	poolKeyRuntimeErr         error
 	partialDecryptRuntimeOnce sync.Once
 	partialDecryptRuntime     *circuits.CircuitRuntime
 	partialDecryptRuntimeErr  error
@@ -89,6 +102,9 @@ var (
 	decryptCombineRuntimeErr  error
 )
 
+// BuildContributionSubmission proves one contribution. `coefficients` holds
+// the MaxK polynomials the contributor deals, key-major: use
+// DealPoolCoefficients to expand a single fixture polynomial into a full set.
 func BuildContributionSubmission(
 	ctx context.Context,
 	services *TestServices,
@@ -96,7 +112,7 @@ func BuildContributionSubmission(
 	threshold uint16,
 	committeeSize uint16,
 	contributorIndex uint16,
-	coefficients []*big.Int,
+	coefficients [][]*big.Int,
 	recipientIndexes []uint16,
 ) (*ContributionSubmission, error) {
 	roundHash := RoundScalar(epochID)
@@ -186,34 +202,116 @@ func contributionRecipients(
 	return keys, nonces, nil
 }
 
-func BuildFinalizeEpochOutput(
+// BuildPoolKeyActivation proves `activatePoolKey` for one key of the epoch's
+// pool. `contributions` is indexed by accepted contributor (aligned with
+// participantIndexes), then pool key, then coefficient.
+func BuildPoolKeyActivation(
 	ctx context.Context,
 	epochID [12]byte,
 	threshold uint16,
 	committeeSize uint16,
 	participantIndexes []uint16,
-	contributionCoefficients [][]*big.Int,
-) (*FinalizeEpochOutput, error) {
-	roundHash := RoundScalar(epochID)
-	assignment := finalize.Assignment{
-		RoundHash:                roundHash,
-		Threshold:                threshold,
-		CommitteeSize:            committeeSize,
-		ParticipantIndexes:       participantIndexes,
-		ContributionCoefficients: contributionCoefficients,
+	contributions [][][]*big.Int,
+	keyIndex uint8,
+) (*PoolKeyActivation, error) {
+	return buildPoolKeyActivation(
+		ctx, epochID, threshold, committeeSize, participantIndexes, contributions, keyIndex, nil,
+	)
+}
+
+// BuildPoolKeyActivationWithNonCanonicalWord is BuildPoolKeyActivation with
+// transcript word `wordIndex` published in calldata as `w + p` (p the BN254
+// scalar field), which the BRLC commitment cannot tell from `w`. The proof is
+// otherwise honest for that calldata: the Fiat–Shamir challenge is derived
+// from the non-canonical bytes exactly as the contract derives it, and the
+// circuit's transcript commitment over the reduced words equals the
+// contract's over the raw ones. Only BRLC's canonical-word check stands
+// between such a transcript and storage — the contract reads the pool key
+// and the share commitments straight from calldata — so it must revert
+// `TranscriptWordNotInField`. Test-only by construction.
+func BuildPoolKeyActivationWithNonCanonicalWord(
+	ctx context.Context,
+	epochID [12]byte,
+	threshold uint16,
+	committeeSize uint16,
+	participantIndexes []uint16,
+	contributions [][][]*big.Int,
+	keyIndex uint8,
+	wordIndex int,
+) (*PoolKeyActivation, error) {
+	if wordIndex < 0 || wordIndex >= poolkey.TranscriptWords {
+		return nil, fmt.Errorf("transcript word %d out of range [0, %d)", wordIndex, poolkey.TranscriptWords)
 	}
-	witness, publicInputs, err := finalize.BuildWitness(assignment)
+	lift := func(words []*big.Int) {
+		words[wordIndex] = new(big.Int).Add(words[wordIndex], gnec.BN254.ScalarField())
+	}
+	return buildPoolKeyActivation(
+		ctx, epochID, threshold, committeeSize, participantIndexes, contributions, keyIndex, lift,
+	)
+}
+
+// buildPoolKeyActivation builds the witness, optionally rewrites the calldata
+// transcript words (re-deriving the challenge and the commitment the way the
+// contract will), proves, and lays out the member-indexed share tree.
+func buildPoolKeyActivation(
+	ctx context.Context,
+	epochID [12]byte,
+	threshold uint16,
+	committeeSize uint16,
+	participantIndexes []uint16,
+	contributions [][][]*big.Int,
+	keyIndex uint8,
+	rewrite func(words []*big.Int),
+) (*PoolKeyActivation, error) {
+	roundHash := RoundScalar(epochID)
+	commitments, err := commitmentSets(contributions)
 	if err != nil {
 		return nil, err
 	}
+	assignment := poolkey.Assignment{
+		RoundHash:          roundHash,
+		Threshold:          threshold,
+		CommitteeSize:      committeeSize,
+		KeyIndex:           keyIndex,
+		ParticipantIndexes: participantIndexes,
+		Commitments:        commitments,
+	}
+	witness, publicInputs, err := poolkey.BuildWitness(assignment)
+	if err != nil {
+		return nil, err
+	}
+	transcriptScalars, err := publicInputs.TranscriptScalars()
+	if err != nil {
+		return nil, fmt.Errorf("pool key transcript scalars: %w", err)
+	}
+	if rewrite != nil {
+		rewrite(transcriptScalars)
+		// The contract anchors ρ on keccak(digest ‖ keccak(calldata)), so a
+		// different calldata encoding means a different challenge — and a
+		// different (but still consistent) commitment in the witness.
+		anchor, anchorErr := ccommon.ChallengeAnchor(transcriptScalars, publicInputs.TranscriptDigest)
+		if anchorErr != nil {
+			return nil, fmt.Errorf("pool key challenge anchor: %w", anchorErr)
+		}
+		challenge, challengeErr := ccommon.DeriveChallengeNative(roundHash, protocol.DomainPoolKeyTranscriptV1, anchor)
+		if challengeErr != nil {
+			return nil, fmt.Errorf("pool key challenge: %w", challengeErr)
+		}
+		commitment, commitErr := publicInputs.BRLCCommitment(challenge)
+		if commitErr != nil {
+			return nil, fmt.Errorf("pool key transcript commitment: %w", commitErr)
+		}
+		witness.Challenge, witness.TranscriptCommitment = challenge, commitment
+		publicInputs.Challenge, publicInputs.TranscriptCommitment = challenge, commitment
+	}
 
-	runtime, err := loadFinalizeRuntime(ctx)
+	runtime, err := loadPoolKeyRuntime(ctx)
 	if err != nil {
 		return nil, err
 	}
 	proof, err := runtime.ProveAndVerify(witness)
 	if err != nil {
-		return nil, fmt.Errorf("prove finalize: %w", err)
+		return nil, fmt.Errorf("prove pool key activation: %w", err)
 	}
 	proofBytes, err := marshalSolidityProof(proof)
 	if err != nil {
@@ -223,27 +321,58 @@ func BuildFinalizeEpochOutput(
 	if err != nil {
 		return nil, err
 	}
-	transcriptBytes, err := encodeSolidityWords(publicInputs.TranscriptScalars()...)
+	transcriptBytes, err := encodeSolidityWords(transcriptScalars...)
 	if err != nil {
 		return nil, err
 	}
 
-	return &FinalizeEpochOutput{
-		Proof:                    proofBytes,
-		Input:                    inputBytes,
-		Transcript:               transcriptBytes,
-		AggregateCommitmentsHash: common.BigToHash(publicInputs.AggregateHash),
-		CollectivePublicKeyHash:  common.BigToHash(publicInputs.CollectivePublicKey),
-		ShareCommitmentHash:      common.BigToHash(publicInputs.ShareCommitmentHash),
-		RoundHash:                new(big.Int).Set(roundHash),
-		ShareCommitments:         publicInputs.ShareCommitments,
+	// Leaves for the whole committee, members 1..n, exactly as the contract
+	// rebuilds the tree from the transcript's share rows.
+	members := publicInputs.ShareCommitments[:committeeSize]
+	tree, err := CommitteeShareTree(members)
+	if err != nil {
+		return nil, err
+	}
+
+	return &PoolKeyActivation{
+		KeyIndex:           keyIndex,
+		Proof:              proofBytes,
+		Input:              inputBytes,
+		Transcript:         transcriptBytes,
+		TranscriptDigest:   common.BigToHash(publicInputs.TranscriptDigest),
+		RoundHash:          new(big.Int).Set(roundHash),
+		PoolKey:            publicInputs.PoolKey,
+		ParticipantIndexes: participantIndexes,
+		ShareCommitments:   members,
+		Shares:             tree,
 	}, nil
+}
+
+// commitmentSets turns coefficient scalars into the commitment points the
+// activation circuit consumes: A_{c,j,m} = a_{c,j,m}·G.
+func commitmentSets(contributions [][][]*big.Int) ([][][]types.CurvePoint, error) {
+	sets := make([][][]types.CurvePoint, len(contributions))
+	for c, keys := range contributions {
+		sets[c] = make([][]types.CurvePoint, len(keys))
+		for j, coefficients := range keys {
+			sets[c][j] = make([]types.CurvePoint, len(coefficients))
+			for m, coefficient := range coefficients {
+				if coefficient == nil {
+					return nil, fmt.Errorf("contributor %d key %d coefficient %d is nil", c, j, m)
+				}
+				sets[c][j][m] = ScalarBasePoint(coefficient)
+			}
+		}
+	}
+	return sets, nil
 }
 
 // BuildPartialDecryptionSubmission builds a partial decryption over
 // C1 = base·G. `aid` and `ciphertextIndex` are bound into the Fiat-Shamir
 // transcript so the on-chain checks (publicInputs[1]==aid,
-// publicInputs[2]==ctIdx) succeed.
+// publicInputs[2]==ctIdx) succeed. `share` is the member's share of the
+// application's pool key and `tree` the key's share-commitment tree, from
+// which the returned ShareProof is derived.
 //
 // C2 is left as the identity: it is not a proof input, it only travels to
 // `submitPartialDecryption` as calldata, and callers that need the real one
@@ -255,15 +384,16 @@ func BuildPartialDecryptionSubmission(
 	ciphertextIndex uint16,
 	participantIndex uint16,
 	base *big.Int,
-	secret *big.Int,
+	share *big.Int,
 	nonce *big.Int,
+	tree ShareTree,
 ) (*PartialDecryptionSubmission, error) {
 	basePoint := group.Generator()
 	basePoint.ScalarBaseMult(base)
 	identityC2 := types.CurvePoint{X: big.NewInt(0), Y: big.NewInt(1)}
 	return BuildPartialDecryptionSubmissionFromBase(
 		ctx, epochID, aid, ciphertextIndex, participantIndex,
-		group.Encode(basePoint), identityC2, secret, nonce,
+		group.Encode(basePoint), identityC2, share, nonce, tree,
 	)
 }
 
@@ -283,8 +413,9 @@ func BuildPartialDecryptionSubmissionFromBase(
 	participantIndex uint16,
 	base types.CurvePoint,
 	c2 types.CurvePoint,
-	secret *big.Int,
+	share *big.Int,
 	nonce *big.Int,
+	tree ShareTree,
 ) (*PartialDecryptionSubmission, error) {
 	roundHash := RoundScalar(epochID)
 	assignment := partialdecrypt.Assignment{
@@ -293,10 +424,14 @@ func BuildPartialDecryptionSubmissionFromBase(
 		CtIdx:            new(big.Int).SetUint64(uint64(ciphertextIndex)),
 		ParticipantIndex: participantIndex,
 		Base:             base,
-		Secret:           secret,
+		Secret:           share,
 		Nonce:            nonce,
 	}
 	witness, publicInputs, err := partialdecrypt.BuildWitness(assignment)
+	if err != nil {
+		return nil, err
+	}
+	shareProof, err := tree.Proof(participantIndex)
 	if err != nil {
 		return nil, err
 	}
@@ -326,19 +461,20 @@ func BuildPartialDecryptionSubmissionFromBase(
 			common.LeftPadBytes(publicInputs.Delta.X.Bytes(), 32),
 			common.LeftPadBytes(publicInputs.Delta.Y.Bytes(), 32),
 		),
-		Delta:     publicInputs.Delta,
-		RoundHash: new(big.Int).Set(roundHash),
-		C1:        base,
-		C2:        c2,
+		Delta:      publicInputs.Delta,
+		RoundHash:  new(big.Int).Set(roundHash),
+		ShareProof: shareProof,
+		C1:         base,
+		C2:         c2,
 	}, nil
 }
 
 // BuildDecryptCombineOutput builds a combine proof for a synthetic ciphertext
-// with C1 = base·G. It derives the organizer share Δ = skOrg·C1 itself and
+// with C1 = base·G. It derives the organizer term Δ = sk_org·C1 itself and
 // sets C2 = m·G + Σ λ_k δ_k + Δ so the circuit's plaintext equation holds.
 //
-// The caller must post the returned DeltaOrg/OrganizerProof via
-// submitOrganizerShare before calling combineDecryption.
+// `organizerSecret` is the revealed sk_org of an organizer-locked
+// application, or 0 (paired with the identity PK) for an automatic one.
 func BuildDecryptCombineOutput(
 	ctx context.Context,
 	epochID [12]byte,
@@ -346,7 +482,7 @@ func BuildDecryptCombineOutput(
 	ciphertextIndex uint16,
 	threshold uint16,
 	base *big.Int,
-	skOrg *big.Int,
+	organizerSecret *big.Int,
 	participantIndexes []uint16,
 	partialDecryptions []types.CurvePoint,
 	plaintext *big.Int,
@@ -355,23 +491,51 @@ func BuildDecryptCombineOutput(
 	c1Point.ScalarBaseMult(base)
 	c1 := group.Encode(c1Point)
 
-	deltaOrg, organizerProof, err := dleq.ProveOrganizerShare(epochID, aid, ciphertextIndex, skOrg, c1)
+	deltaOrg, err := OrganizerTerm(organizerSecret, c1)
 	if err != nil {
-		return nil, fmt.Errorf("prove organizer share: %w", err)
+		return nil, err
 	}
-
 	c2, err := combineCiphertextC2(participantIndexes, partialDecryptions, deltaOrg, plaintext)
 	if err != nil {
 		return nil, err
 	}
 
 	return BuildDecryptCombineOutputFromCiphertext(ctx, epochID, aid, ciphertextIndex, threshold,
-		c1, c2, ScalarBasePoint(skOrg), deltaOrg, organizerProof,
+		c1, c2, OrganizerKey(organizerSecret), organizerSecret,
 		participantIndexes, partialDecryptions, plaintext)
 }
 
+// OrganizerKey is PK_org = sk_org·G, or the identity (0, 1) when there is no
+// organizer half — the key an automatic registration stores.
+func OrganizerKey(organizerSecret *big.Int) types.CurvePoint {
+	if organizerSecret == nil || organizerSecret.Sign() == 0 {
+		return IdentityPoint()
+	}
+	return ScalarBasePoint(organizerSecret)
+}
+
+// OrganizerTerm is Δ = sk_org·C1, the point the combine adds back on top of
+// the interpolated partials. It is the identity for an automatic application.
+func OrganizerTerm(organizerSecret *big.Int, c1 types.CurvePoint) (types.CurvePoint, error) {
+	if organizerSecret == nil || organizerSecret.Sign() == 0 {
+		return IdentityPoint(), nil
+	}
+	base, err := group.Decode(c1)
+	if err != nil {
+		return types.CurvePoint{}, fmt.Errorf("decode C1: %w", err)
+	}
+	delta := group.NewPoint()
+	delta.ScalarMult(base, organizerSecret)
+	return group.Encode(delta), nil
+}
+
+// IdentityPoint is the twisted-Edwards identity (0, 1).
+func IdentityPoint() types.CurvePoint {
+	return types.CurvePoint{X: big.NewInt(0), Y: big.NewInt(1)}
+}
+
 // combineCiphertextC2 reconstructs C2 = m·G + Σ λ_k δ_k + Δ_org, the value a
-// real encryption under PK_aid = PK_ep + PK_org would have produced.
+// real encryption under PK_aid = P_j + PK_org would have produced.
 func combineCiphertextC2(
 	participantIndexes []uint16,
 	partialDecryptions []types.CurvePoint,
@@ -392,7 +556,7 @@ func combineCiphertextC2(
 	}
 	deltaNative, err := group.Decode(deltaOrg)
 	if err != nil {
-		return types.CurvePoint{}, fmt.Errorf("decode organizer share: %w", err)
+		return types.CurvePoint{}, fmt.Errorf("decode organizer term: %w", err)
 	}
 	c2Point := group.NewPoint()
 	c2Point.Set(messagePoint)
@@ -402,10 +566,9 @@ func combineCiphertextC2(
 }
 
 // BuildDecryptCombineOutputFromCiphertext is the variant used when the caller
-// already has C1, C2 and the organizer share that was (or will be) posted on
-// chain. The witness bindings here MUST match the contract's
-// submitOrganizerShare / combineDecryption checks: the circuit recomputes the
-// DLEQ challenge `e` from exactly these words and the contract pins it.
+// already has C1 and C2. The circuit proves knowledge of sk_org with
+// PK_org = sk_org·G and Δ = sk_org·C1; the contract only checks that the
+// transcript's PK_org words equal the application's registered key.
 func BuildDecryptCombineOutputFromCiphertext(
 	ctx context.Context,
 	epochID [12]byte,
@@ -415,19 +578,21 @@ func BuildDecryptCombineOutputFromCiphertext(
 	ciphertextC1 types.CurvePoint,
 	ciphertextC2 types.CurvePoint,
 	organizerPK types.CurvePoint,
-	deltaOrg types.CurvePoint,
-	organizerProof dleq.Proof,
+	organizerSecret *big.Int,
 	participantIndexes []uint16,
 	partialDecryptions []types.CurvePoint,
 	plaintext *big.Int,
 ) (*DecryptCombineOutput, error) {
+	secret := big.NewInt(0)
+	if organizerSecret != nil {
+		secret = new(big.Int).Set(organizerSecret)
+	}
 	assignment := decryptcombine.Assignment{
 		RoundHash:          RoundScalar(epochID),
 		Aid:                new(big.Int).SetBytes(aid[:]),
 		CtIdx:              new(big.Int).SetUint64(uint64(ciphertextIndex)),
-		DeltaOrg:           deltaOrg,
 		OrganizerPK:        organizerPK,
-		OrganizerProof:     organizerProof,
+		OrganizerSecret:    secret,
 		Threshold:          threshold,
 		CiphertextC1:       ciphertextC1,
 		CiphertextC2:       ciphertextC2,
@@ -462,15 +627,14 @@ func BuildDecryptCombineOutputFromCiphertext(
 	}
 
 	return &DecryptCombineOutput{
-		Proof:          proofBytes,
-		Input:          inputBytes,
-		Transcript:     transcriptBytes,
-		CombineHash:    common.BigToHash(publicInputs.CombineHash),
-		Plaintext:      new(big.Int).Set(plaintext),
-		CiphertextC1:   ciphertextC1,
-		CiphertextC2:   ciphertextC2,
-		DeltaOrg:       deltaOrg,
-		OrganizerProof: organizerProof,
+		Proof:        proofBytes,
+		Input:        inputBytes,
+		Transcript:   transcriptBytes,
+		CombineHash:  common.BigToHash(publicInputs.CombineHash),
+		Plaintext:    new(big.Int).Set(plaintext),
+		CiphertextC1: ciphertextC1,
+		CiphertextC2: ciphertextC2,
+		OrganizerPK:  organizerPK,
 	}, nil
 }
 
@@ -491,14 +655,14 @@ func loadContributionRuntime(ctx context.Context) (*circuits.CircuitRuntime, err
 	return contributionRuntime, contributionRuntimeErr
 }
 
-func loadFinalizeRuntime(ctx context.Context) (*circuits.CircuitRuntime, error) {
+func loadPoolKeyRuntime(ctx context.Context) (*circuits.CircuitRuntime, error) {
 	if err := ensureArtifactsBaseDir(); err != nil {
 		return nil, err
 	}
-	finalizeRuntimeOnce.Do(func() {
-		finalizeRuntime, finalizeRuntimeErr = finalize.Artifacts.LoadOrSetupForCircuit(ctx, &finalize.FinalizeCircuit{})
+	poolKeyRuntimeOnce.Do(func() {
+		poolKeyRuntime, poolKeyRuntimeErr = poolkey.Artifacts.LoadOrSetupForCircuit(ctx, &poolkey.PoolKeyCircuit{})
 	})
-	return finalizeRuntime, finalizeRuntimeErr
+	return poolKeyRuntime, poolKeyRuntimeErr
 }
 
 func loadPartialDecryptRuntime(ctx context.Context) (*circuits.CircuitRuntime, error) {
@@ -568,7 +732,7 @@ func witnessVectorBigInts(vector any) ([]*big.Int, error) {
 		return nil, fmt.Errorf("unexpected witness vector type %T", vector)
 	}
 	values := make([]*big.Int, rv.Len())
-	for i := 0; i < rv.Len(); i++ {
+	for i := range rv.Len() {
 		method := rv.Index(i).Addr().MethodByName("BigInt")
 		if !method.IsValid() {
 			return nil, fmt.Errorf("witness element %d does not expose BigInt", i)

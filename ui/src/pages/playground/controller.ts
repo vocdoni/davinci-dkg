@@ -9,6 +9,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'r
 import { useSearchParams } from 'react-router-dom'
 import type { Address, Hex } from 'viem'
 import type { BabyJubPoint, ElGamalCiphertext } from '@vocdoni/davinci-dkg-sdk'
+import type { AppModeName } from '~indexer/types'
 import {
   clearOrganizerSecret,
   loadOrganizerSecret,
@@ -29,7 +30,6 @@ import {
 } from './machine'
 import { clearSession, loadSession, saveSession } from './session'
 import {
-  applicationPublicKey,
   ciphertextWords,
   deserialiseCiphertext,
   encryptValue,
@@ -39,13 +39,10 @@ import {
   randomOrganizerSecret,
   registrationProof,
   serialiseCiphertext,
-  shareProof,
   type RegistrationProof,
-  type ShareProof,
 } from './organizer'
-import type { DecryptionView, PlaygroundChain } from './types'
-
-const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000' as Address
+import { validateWindow } from './window'
+import type { ApplicationKeys, DecryptionView, PlaygroundChain } from './types'
 
 export interface EpochOption {
   id: string
@@ -53,14 +50,15 @@ export interface EpochOption {
   threshold: number
   committeeSize: number
   liveSinceBlock: number | null
-  /** `PK_ep`, for the "which key am I encrypting under" column. */
-  key: { x: bigint; y: bigint } | null
+  /** How far the pool has been dealt, for the "is there a key for me" column. */
+  poolActivated: number
+  poolClaimed: number
 }
 
 /** The exact words each write signed, for the "advanced" panels. */
 export interface Transcripts {
+  /** Null in automatic mode, which sends no Schnorr proof. */
   registration: RegistrationProof | null
-  share: ShareProof | null
 }
 
 export interface PlaygroundController {
@@ -77,10 +75,12 @@ export interface PlaygroundController {
   decryption: DecryptionView | null
   words: Array<{ label: string; value: bigint }>
   transcripts: Transcripts
-  /** `PK_org = sk_org·G`, TE form. */
+  /** `PK_org = sk_org·G`, TE form; null for an automatic application. */
   organizerKey: BabyJubPoint | null
-  /** `PK_aid = PK_ep + PK_org`, TE form; null until an epoch key is known. */
-  applicationKeyPoint: BabyJubPoint | null
+  /** The pool key and `PK_aid` of the registered application; null until read. */
+  keys: ApplicationKeys | null
+  /** Why `keys` could not be read, when it could not. */
+  keysError: string | null
   actions: {
     connect: () => void
     selectEpoch: (id: string) => void
@@ -89,14 +89,16 @@ export interface PlaygroundController {
     rollIdentity: () => void
     useSecret: (input: string) => string | null
     acknowledgeSecret: () => void
+    setMode: (mode: AppModeName) => void
     setCap: (cap: number) => void
     setSubmitter: (submitter: string) => void
+    setWindow: (notBefore: string, notAfter: string) => void
     setValue: (value: string) => void
     register: () => Promise<void>
     encrypt: () => Promise<void>
     submit: () => Promise<void>
-    release: () => Promise<void>
-    withhold: () => void
+    reveal: () => Promise<void>
+    keep: () => void
     goto: (step: StepId) => void
     toggleAdvanced: () => void
     reset: () => void
@@ -108,8 +110,12 @@ export function usePlaygroundController(chain: PlaygroundChain, epochs: EpochOpt
   const [state, dispatch] = useReducer(reducer, undefined, initialState)
   const [secret, setSecret] = useState<bigint | null>(null)
   const [secretFresh, setSecretFresh] = useState(false)
-  const [transcripts, setTranscripts] = useState<Transcripts>({ registration: null, share: null })
+  const [transcripts, setTranscripts] = useState<Transcripts>({ registration: null })
+  const [keys, setKeys] = useState<ApplicationKeys | null>(null)
+  const [keysError, setKeysError] = useState<string | null>(null)
   const hydrated = useRef(false)
+  /** `epoch:aid:index` of the combine already written to the log. */
+  const loggedCombine = useRef<string | null>(null)
 
   const log = useCallback(
     (entry: Omit<LogEntry, 'id' | 'block'> & { block?: number | null }) => {
@@ -225,7 +231,9 @@ export function usePlaygroundController(chain: PlaygroundChain, epochs: EpochOpt
     setSecretFresh(true)
     dispatch({ type: 'set-aid', aid })
     // Persisted immediately, not after the transaction: a crash between the
-    // two would otherwise strand an application nobody can ever decrypt.
+    // two would otherwise strand an application nobody can ever decrypt. An
+    // automatic application never uses it, but keeping one per pair is what
+    // lets a deep link resume either mode.
     if (epochId) saveOrganizerSecret(epochId as Hex, aid, sk)
   }, [epochId, state.aid, state.pinned])
 
@@ -263,34 +271,89 @@ export function usePlaygroundController(chain: PlaygroundChain, epochs: EpochOpt
   )
 
   const register = useCallback(async () => {
-    if (!epochId || !state.aid || !secret) return
+    if (!epochId || !state.aid) return
+    const automatic = state.mode === 'automatic'
+    if (!automatic && !secret) return
+    const window = validateWindow(state.decryptNotBefore, state.decryptNotAfter)
+    if ('error' in window) {
+      dispatch({ type: 'error', message: window.error })
+      return
+    }
     dispatch({ type: 'busy', slot: 'register' })
     try {
       // The witness is drawn here, not inside the writer, so the transcript
-      // the "advanced" panel prints is the one the transaction carries.
-      const proof = registrationProof(secret, epochId as Hex, state.aid as Hex)
-      setTranscripts((t) => ({ ...t, registration: proof }))
-      const tx = await chain.register({
+      // the "advanced" panel prints is the one the transaction carries. An
+      // automatic registration carries no key and no proof at all.
+      const proof = automatic || !secret ? null : registrationProof(secret, epochId as Hex, state.aid as Hex)
+      setTranscripts({ registration: proof })
+      const submitter = state.submitter.trim()
+      const { tx, poolIndex } = await chain.register({
         aid: state.aid as Hex,
-        skOrg: secret,
-        authorizedSubmitter: (state.submitter.trim() || ZERO_ADDRESS) as Address,
+        skOrg: automatic ? null : secret,
+        mode: state.mode,
+        submitters: submitter ? [submitter as Address] : [],
         maxCiphertexts: state.cap,
-        nonce: proof.nonce,
+        decryptNotBefore: window.notBefore,
+        decryptNotAfter: window.notAfter,
+        nonce: proof?.nonce ?? 0n,
       })
-      dispatch({ type: 'registered', aid: state.aid, tx })
+      dispatch({ type: 'registered', aid: state.aid, tx, poolIndex })
       log({
         step: 'register',
         tone: 'ok',
         tx: tx.hash,
-        message: `Registered application ${state.aid} on epoch ${epochId}`,
+        message: automatic
+          ? `Registered automatic application ${state.aid} on epoch ${epochId} — pool key ${poolIndex}, no organizer key`
+          : `Registered application ${state.aid} on epoch ${epochId} — pool key ${poolIndex}`,
       })
     } catch (err) {
       fail('register', err)
     }
-  }, [chain, epochId, state.aid, state.submitter, state.cap, secret, log, fail])
+  }, [
+    chain,
+    epochId,
+    state.aid,
+    state.mode,
+    state.submitter,
+    state.cap,
+    state.decryptNotBefore,
+    state.decryptNotAfter,
+    secret,
+    log,
+    fail,
+  ])
+
+  // ── the application key, read back once the application exists ──────────
+  // `getApplicationKey` on a live chain, the simulator's key on the demo one.
+  // Re-read whenever the target changes; a failed read is retried on the next
+  // head block rather than logged on every tick.
+  const applicationKeys = chain.applicationKeys
+  useEffect(() => {
+    if (!state.registered || !state.aid) {
+      setKeys(null)
+      setKeysError(null)
+      return
+    }
+    if (keys) return
+    let cancelled = false
+    applicationKeys(state.aid as Hex)
+      .then((read) => {
+        if (cancelled) return
+        setKeys(read)
+        setKeysError(null)
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return
+        setKeysError(err instanceof Error ? err.message.split('\n')[0] : String(err))
+      })
+    return () => {
+      cancelled = true
+    }
+    // `chain.headBlock` is a deliberate retry trigger.
+  }, [applicationKeys, state.registered, state.aid, keys, chain.headBlock])
 
   const encrypt = useCallback(async () => {
-    if (!secret || !chain.epochKey) return
+    if (!state.aid || !state.registered) return
     const parsed = parsePlaintext(state.value)
     if ('error' in parsed) {
       dispatch({ type: 'error', message: parsed.error })
@@ -298,13 +361,22 @@ export function usePlaygroundController(chain: PlaygroundChain, epochs: EpochOpt
     }
     dispatch({ type: 'error', message: null })
     try {
-      const ct = await encryptValue(parsed.value, chain.epochKey, organizerPublicKey(secret))
+      const read = keys ?? (await applicationKeys(state.aid as Hex))
+      if (!keys) setKeys(read)
+      const ct = await encryptValue(parsed.value, read.key)
       dispatch({ type: 'encrypted', ciphertext: serialiseCiphertext(ct) })
-      log({ step: 'encrypt', tone: 'ok', message: `Encrypted ${parsed.value} under PK_aid = PK_ep + PK_org` })
+      log({
+        step: 'encrypt',
+        tone: 'ok',
+        message:
+          state.mode === 'automatic'
+            ? `Encrypted ${parsed.value} under PK_aid = P_${read.poolIndex}`
+            : `Encrypted ${parsed.value} under PK_aid = P_${read.poolIndex} + PK_org`,
+      })
     } catch (err) {
       fail('encrypt', err)
     }
-  }, [chain.epochKey, secret, state.value, log, fail])
+  }, [applicationKeys, keys, state.aid, state.registered, state.mode, state.value, log, fail])
 
   const ciphertext = useMemo(
     () => (state.ciphertext ? deserialiseCiphertext(state.ciphertext) : null),
@@ -328,32 +400,29 @@ export function usePlaygroundController(chain: PlaygroundChain, epochs: EpochOpt
     }
   }, [chain, ciphertext, state.aid, log, fail])
 
-  const release = useCallback(async () => {
-    if (!state.aid || !ciphertext || state.ciphertextIndex == null || !secret) return
-    dispatch({ type: 'busy', slot: 'share' })
+  const reveal = useCallback(async () => {
+    if (!state.aid || !secret) return
+    dispatch({ type: 'busy', slot: 'reveal' })
     try {
-      const proof = shareProof(epochId as Hex, state.aid as Hex, state.ciphertextIndex, secret, ciphertext)
-      setTranscripts((t) => ({ ...t, share: proof }))
-      const tx = await chain.releaseShare({
-        aid: state.aid as Hex,
-        ciphertext,
-        ciphertextIndex: state.ciphertextIndex,
-        skOrg: secret,
-        nonce: proof.nonce,
+      const tx = await chain.revealSecret({ aid: state.aid as Hex, skOrg: secret })
+      dispatch({ type: 'secret-revealed', tx })
+      log({
+        step: 'reveal',
+        tone: 'ok',
+        tx: tx.hash,
+        message: 'Organizer secret revealed — the committee starts answering and combines on its own from here',
       })
-      dispatch({ type: 'share-released', tx })
-      log({ step: 'share', tone: 'ok', tx: tx.hash, message: 'Organizer share Δ = sk_org·C1 published' })
     } catch (err) {
-      fail('share', err)
+      fail('reveal', err)
     }
-  }, [chain, ciphertext, epochId, state.aid, state.ciphertextIndex, secret, log, fail])
+  }, [chain, state.aid, secret, log, fail])
 
-  const withhold = useCallback(() => {
-    dispatch({ type: 'share-withheld' })
+  const keep = useCallback(() => {
+    dispatch({ type: 'secret-kept' })
     log({
-      step: 'share',
+      step: 'reveal',
       tone: 'warn',
-      message: 'Share withheld — the committee will still post partials, but nothing can be combined',
+      message: 'Secret kept — the contract refuses partials and combines for this application until the reveal',
     })
   }, [log])
 
@@ -364,7 +433,10 @@ export function usePlaygroundController(chain: PlaygroundChain, epochs: EpochOpt
     }
     setSecret(null)
     setSecretFresh(false)
-    setTranscripts({ registration: null, share: null })
+    setTranscripts({ registration: null })
+    setKeys(null)
+    setKeysError(null)
+    loggedCombine.current = null
     dispatch({ type: 'reset' })
     log({ step: 'connect', tone: 'info', message: 'Walkthrough reset' })
   }, [epochId, state.aid, log])
@@ -372,11 +444,37 @@ export function usePlaygroundController(chain: PlaygroundChain, epochs: EpochOpt
   // ── derived ──────────────────────────────────────────────────────────────
   const decryption = chain.decryption(state.ciphertextIndex)
   const facts: ChainFacts = { combined: decryption?.combined.done ?? false }
+
+  // The combine is the one event of the walkthrough nobody in this tab sends,
+  // so it goes into the log when the chain (or the simulator) shows it — once
+  // per ciphertext, keyed so a resumed session does not repeat it.
+  const combinedDone = decryption?.combined.done ?? false
+  const combinedTx = decryption?.combined.tx ?? null
+  const combinedBlock = decryption?.combined.block ?? null
+  const combinedPlaintext = decryption?.combined.plaintext?.toString() ?? null
+  const partialCount = decryption?.partials.length ?? 0
+  useEffect(() => {
+    if (!combinedDone || state.ciphertextIndex == null || !state.aid) return
+    const key = `${epochId}:${state.aid}:${state.ciphertextIndex}`
+    if (loggedCombine.current === key) return
+    loggedCombine.current = key
+    dispatch({
+      type: 'log',
+      entry: {
+        block: combinedBlock,
+        step: 'watch',
+        tone: 'ok',
+        tx: combinedTx ?? undefined,
+        message: `Ciphertext ${state.ciphertextIndex} combined on chain from ${partialCount} partials${
+          combinedPlaintext != null ? ` — plaintext ${combinedPlaintext}` : ''
+        }`,
+      },
+    })
+  }, [combinedDone, combinedTx, combinedBlock, combinedPlaintext, partialCount, epochId, state.aid, state.ciphertextIndex])
   const words = useMemo(() => (ciphertext ? ciphertextWords(ciphertext) : []), [ciphertext])
-  const organizerKey = useMemo(() => (secret ? organizerPublicKey(secret) : null), [secret])
-  const applicationKeyPoint = useMemo(
-    () => (chain.epochKey && organizerKey ? applicationPublicKey(chain.epochKey, organizerKey) : null),
-    [chain.epochKey, organizerKey]
+  const organizerKey = useMemo(
+    () => (secret && state.mode !== 'automatic' ? organizerPublicKey(secret) : null),
+    [secret, state.mode]
   )
 
   return {
@@ -392,7 +490,8 @@ export function usePlaygroundController(chain: PlaygroundChain, epochs: EpochOpt
     words,
     transcripts,
     organizerKey,
-    applicationKeyPoint,
+    keys,
+    keysError,
     actions: {
       connect: chain.wallet.connect,
       selectEpoch: (id: string) => dispatch({ type: 'select-epoch', epochId: id }),
@@ -403,14 +502,16 @@ export function usePlaygroundController(chain: PlaygroundChain, epochs: EpochOpt
       rollIdentity,
       useSecret: useSecretInput,
       acknowledgeSecret: () => setSecretFresh(false),
+      setMode: (mode: AppModeName) => dispatch({ type: 'set-mode', mode }),
       setCap: (cap: number) => dispatch({ type: 'set-cap', cap }),
       setSubmitter: (submitter: string) => dispatch({ type: 'set-submitter', submitter }),
+      setWindow: (notBefore: string, notAfter: string) => dispatch({ type: 'set-window', notBefore, notAfter }),
       setValue: (value: string) => dispatch({ type: 'set-value', value }),
       register,
       encrypt,
       submit,
-      release,
-      withhold,
+      reveal,
+      keep,
       goto: (step: StepId) => dispatch({ type: 'goto', step }),
       toggleAdvanced: () => dispatch({ type: 'toggle-advanced' }),
       reset,

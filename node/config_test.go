@@ -17,6 +17,7 @@ func TestDefaultConfig(t *testing.T) {
 	c.Assert(cfg.Log.Output, qt.Equals, "stdout")
 	c.Assert(cfg.Web3.GasMultiplier, qt.Equals, 1.2)
 	c.Assert(cfg.Web3.Network, qt.Equals, "localhost")
+	c.Assert(cfg.ActivateAhead, qt.Equals, uint8(2))
 }
 
 func TestValidateConfig(t *testing.T) {
@@ -66,6 +67,8 @@ func TestValidateConfigRejectsBadPollIntervalAndEpochPolicy(t *testing.T) {
 		{"min valid above committee", func(c *Config) { fixedPolicy(c); c.EpochPolicy.MinValidContributions = 5 }, ".*min valid contributions.*"},
 		{"alpha below 1.0", func(c *Config) { c.EpochPolicy.LotteryAlphaBps = 9_999 }, ".*alpha.*"},
 		{"adaptive with a threshold", func(c *Config) { c.EpochPolicy.Threshold = 2 }, ".*explicit committee size.*"},
+		{"zero activate ahead", func(c *Config) { c.ActivateAhead = 0 }, ".*activate ahead.*"},
+		{"activate ahead above MaxK", func(c *Config) { c.ActivateAhead = ccommon.MaxK + 1 }, ".*activate ahead.*"},
 	}
 	for _, tc := range cases {
 		c.Run(tc.name, func(c *qt.C) {

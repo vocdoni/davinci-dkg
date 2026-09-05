@@ -44,26 +44,18 @@ describe('describeEvent', () => {
   it('links an application event to the application, not the epoch', () => {
     const described = describeEvent(
       event({
-        name: 'OrganizerShareSubmitted',
+        name: 'OrganizerSecretRevealed',
         block: 20,
         tx: '0xbb' as Hex,
         logIndex: 1,
         epoch: EPOCH,
         aid: AID,
         actor: null,
-        data: {
-          epochId: EPOCH,
-          aid: AID,
-          ciphertextIndex: 3,
-          delta: { x: 1n, y: 2n },
-          a1: { x: 3n, y: 4n },
-          a2: { x: 5n, y: 6n },
-          z: 7n,
-        },
+        data: { epochId: EPOCH, aid: AID, organizerSecret: 7n },
       }),
       nonceOf
     )
-    expect(described.title).toBe('Released the organizer share for ciphertext 3')
+    expect(described.title).toMatch(/^Revealed the organizer secret of application 0x/)
     expect(described.href).toBe(`/applications/${EPOCH}/${AID}`)
   })
 

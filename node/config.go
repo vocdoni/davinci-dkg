@@ -30,6 +30,13 @@ type Config struct {
 	AutoCreateEpochs bool          `mapstructure:"auto-create-epochs"`
 	AutoCreateJitter time.Duration `mapstructure:"auto-create-jitter"`
 
+	// ActivateAhead is how many activated-but-unclaimed pool keys the node
+	// keeps available in the newest epoch. Registration claims the next
+	// activated key, so a spare or two absorbs a burst of registrations
+	// without anyone waiting for a proof; running out is also what makes
+	// the node propose the next epoch early.
+	ActivateAhead uint8 `mapstructure:"activate-ahead"`
+
 	// DecryptLookbackBlocks is how far behind the chain head a freshly
 	// started node scans for CiphertextSubmitted events it may still have
 	// to serve. Ciphertexts older than this are ignored on restart.
@@ -117,6 +124,7 @@ func defaultConfig() *Config {
 		PollInterval:     5 * time.Second,
 		AutoCreateEpochs: true,
 		AutoCreateJitter: 12 * time.Second,
+		ActivateAhead:    2,
 		// ~7 days at 12 s blocks; matches the registry's default INACTIVITY_WINDOW.
 		DecryptLookbackBlocks: 50_400,
 		// Committee size 0 means "derive from the registry" (see adaptivePolicy).
@@ -150,6 +158,7 @@ func loadConfigFromArgs(args []string) (*Config, error) {
 	fs.Duration("poll-interval", cfg.PollInterval, "chain polling interval")
 	fs.Bool("auto-create-epochs", cfg.AutoCreateEpochs, "race other nodes to fire createEpoch once nextEpochStartBlock() is reached (default true; disable to participate only)")
 	fs.Duration("auto-create-jitter", cfg.AutoCreateJitter, "max random delay before firing the auto-create transaction (spreads contention)")
+	fs.Uint8("activate-ahead", cfg.ActivateAhead, "how many activated-but-unclaimed pool keys to keep available in the newest epoch")
 	fs.Uint64("decrypt-lookback-blocks", cfg.DecryptLookbackBlocks, "on startup, scan this many blocks behind head for ciphertexts still awaiting decryption")
 	fs.Uint16("epoch-policy.threshold", cfg.EpochPolicy.Threshold, "Shamir threshold t when this node proposes an epoch")
 	fs.Uint16("epoch-policy.committee-size", cfg.EpochPolicy.CommitteeSize, "committee size n when this node proposes an epoch (0 = derive from the registry)")
@@ -185,6 +194,12 @@ func validateConfig(cfg *Config) error {
 	}
 	if cfg.PollInterval <= 0 {
 		return fmt.Errorf("poll interval must be greater than 0, got %s", cfg.PollInterval)
+	}
+	if cfg.ActivateAhead < 1 {
+		return fmt.Errorf("activate ahead must be at least 1")
+	}
+	if cfg.ActivateAhead > ccommon.MaxK {
+		return fmt.Errorf("activate ahead %d exceeds the pool size MaxK=%d", cfg.ActivateAhead, ccommon.MaxK)
 	}
 	if err := cfg.EpochPolicy.validate(); err != nil {
 		return fmt.Errorf("epoch policy: %w", err)

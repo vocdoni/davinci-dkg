@@ -14,16 +14,17 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
 	qt "github.com/frankban/quicktest"
-	ccommon "github.com/vocdoni/davinci-dkg/circuits/common"
+	"github.com/vocdoni/davinci-dkg/circuits/contribution"
+	"github.com/vocdoni/davinci-dkg/circuits/poolkey"
 	gtypes "github.com/vocdoni/davinci-dkg/solidity/golang-types"
 )
 
 // validSubmitContributionCalldata packs a well-formed submitContribution call
-// whose transcript is the 8·MaxN-word layout the contract expects.
+// whose transcript is the (3·MaxK+5)·MaxN-word layout the contract expects.
 func validSubmitContributionCalldata(t *testing.T) (calldata, transcript []byte) {
 	t.Helper()
-	words := make([]*big.Int, 0, 8*ccommon.MaxN)
-	for i := 0; i < 8*ccommon.MaxN; i++ {
+	words := make([]*big.Int, 0, contribution.TranscriptWords)
+	for i := 0; i < contribution.TranscriptWords; i++ {
 		words = append(words, big.NewInt(int64(1000+i)))
 	}
 	transcript, err := encodeWords(words...)
@@ -240,4 +241,71 @@ func TestContributionCalldataScansLogsInBoundedChunks(t *testing.T) {
 	_, err = ContributionCalldata(context.Background(), chain, m, epochID, common.HexToAddress("0x5678"), seedBlock-1)
 	c.Assert(err, qt.ErrorMatches, "no ContributionSubmitted event.*")
 	c.Assert(chain.ranges[len(chain.ranges)-1][1], qt.Equals, head)
+}
+
+// validActivatePoolKeyCalldata packs a well-formed activatePoolKey call whose
+// transcript's share region is member-indexed and whose public inputs name
+// a committee of `committeeSize`. Arguments are supplied by ABI name so the
+// fixture follows the contract signature.
+func validActivatePoolKeyCalldata(t *testing.T, committeeSize uint64) []byte {
+	t.Helper()
+	words := make([]*big.Int, 0, poolkey.TranscriptWords)
+	for i := 0; i < poolkey.TranscriptWords; i++ {
+		words = append(words, big.NewInt(int64(5000+i)))
+	}
+	transcript, err := encodeWords(words...)
+	qt.Assert(t, err, qt.IsNil)
+	inputs := make([]*big.Int, poolKeyPublicInputWords)
+	for i := range inputs {
+		inputs[i] = big.NewInt(int64(7000 + i))
+	}
+	inputs[2] = new(big.Int).SetUint64(committeeSize)
+	input, err := encodeWords(inputs...)
+	qt.Assert(t, err, qt.IsNil)
+
+	parsed, err := gtypes.DKGManagerMetaData.GetAbi()
+	qt.Assert(t, err, qt.IsNil)
+	method, ok := parsed.Methods["activatePoolKey"]
+	qt.Assert(t, ok, qt.IsTrue)
+	byName := map[string]any{
+		"epochId":          [12]byte{1},
+		"keyIndex":         uint8(2),
+		"transcriptDigest": [32]byte{3},
+		"transcript":       transcript,
+		"proof":            []byte{0xaa},
+		"input":            input,
+	}
+	args := make([]any, 0, len(method.Inputs))
+	for _, in := range method.Inputs {
+		value, ok := byName[in.Name]
+		qt.Assert(t, ok, qt.IsTrue, qt.Commentf("unexpected activatePoolKey argument %q", in.Name))
+		args = append(args, value)
+	}
+	calldata, err := parsed.Pack("activatePoolKey", args...)
+	qt.Assert(t, err, qt.IsNil)
+	return calldata
+}
+
+// The share region [4N, 6N) is member-indexed: member p's commitment is at
+// slot p−1 whether or not p contributed, and the decoder returns exactly the
+// committee the public inputs name.
+func TestPoolKeyShareCommitmentsAreMemberIndexed(t *testing.T) {
+	c := qt.New(t)
+	const nn = poolkey.MaxParticipants
+
+	idxs, points, err := PoolKeyShareCommitments(validActivatePoolKeyCalldata(t, 5))
+	c.Assert(err, qt.IsNil)
+	c.Assert(idxs, qt.DeepEquals, []uint16{1, 2, 3, 4, 5})
+	c.Assert(points, qt.HasLen, 5)
+	for i, p := range points {
+		c.Assert(p.X.Int64(), qt.Equals, int64(5000+4*nn+2*i))
+		c.Assert(p.Y.Int64(), qt.Equals, int64(5000+4*nn+2*i+1))
+	}
+
+	for _, size := range []uint64{0, nn + 1} {
+		_, _, err = PoolKeyShareCommitments(validActivatePoolKeyCalldata(t, size))
+		c.Assert(err, qt.ErrorMatches, "committee size .* out of range.*", qt.Commentf("size %d", size))
+	}
+	_, _, err = PoolKeyShareCommitments([]byte{1, 2, 3})
+	c.Assert(err, qt.Not(qt.IsNil))
 }

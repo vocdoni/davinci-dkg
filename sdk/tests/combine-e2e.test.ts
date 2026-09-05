@@ -8,10 +8,11 @@
 // consumer hitting the chain.
 //
 // Flow:
-//   1. Go fixture (`--action=create`) → finalized single-participant epoch.
+//   1. Go fixture (`--action=create`) → Live single-participant epoch with pool key 0 activated.
 //   2. SDK registers an application, encrypts a plaintext under PK_aid,
 //      calls writer.submitCiphertext and takes the on-chain-assigned index,
-//      then releases the organizer share.
+//      then reveals the organizer secret — the contract refuses the partial
+//      the fixture posts in step 3 (OrganizerSecretNotRevealed) until it has.
 //   3. Go fixture (`--action=prepare-combine`) → submits the partial
 //      decryption on-chain and emits the combine payload bytes.
 //   4. SDK calls writer.combineDecryption(epochId, aid, idx, …) with those
@@ -29,7 +30,7 @@ import {
   applicationKey,
   encrypt,
   randomOrganizerSecret,
-  type AppPolicy,
+  type AppPolicyInput,
   type BabyJubPoint,
 } from '../src/index.js';
 import { makePublicClient, makeWalletClient } from './helpers/accounts.js';
@@ -48,8 +49,9 @@ function useHarness() {
 
 interface FixtureCreateResult {
   epochId: `0x${string}`;
-  collectivePublicKeyHash: `0x${string}`;
   share: string;
+  poolKey: { x: string; y: string };
+  activatedKeys: number;
 }
 
 interface PrepareCombineResult {
@@ -81,7 +83,6 @@ function lastJsonLine<T>(stdout: string): T | null {
   try { return JSON.parse(line) as T; } catch { return null; }
 }
 
-const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000' as const;
 
 function randomAid(): `0x${string}` {
   const buf = new Uint8Array(32);
@@ -118,32 +119,33 @@ describe('SDK combineDecryption end-to-end (writer drives the on-chain combine)'
     const { enabled, rpcUrl, addressesFile } = useHarness();
     if (!enabled || !fixture) return;
 
-    // 1. Register an application, encrypt under PK_aid, submit; the contract
-    //    assigns the index. Then release the organizer share — combine
-    //    reverts OrganizerShareMissing() without it.
+    // 1. Register an organizer-locked application (it claims pool key 0),
+    //    encrypt under PK_aid = P_0 + PK_org, submit; the contract assigns
+    //    the index. Then reveal sk_org once — the combine proof consumes the
+    //    organizer secret, so the fixture needs it either way, but the
+    //    reveal is the step a real organizer performs.
     const aid = randomAid();
     const skOrg = randomOrganizerSecret();
-    const policy: AppPolicy = {
-      authorizedSubmitter: ZERO_ADDRESS,
-      maxCiphertexts: 0,
-      notBeforeBlock: 0n,
-      notAfterBlock: 0n,
-    };
+    // Organizer-locked, registrant-only: the defaults of every field.
+    const policy: AppPolicyInput = { maxCiphertexts: 0 };
     const regTx = await writer.registerApplication(fixture.epochId, aid, policy, skOrg);
     await writer.publicClient.waitForTransactionReceipt({ hash: regTx });
 
-    const pk = await client.getCollectivePublicKey(fixture.epochId);
     const app = await client.getApplication(fixture.epochId, aid);
-    const pkEp: BabyJubPoint = [pk.x, pk.y];
+    expect(app.poolIndex).toBe(0);
+    const poolKey = await client.getPoolKey(fixture.epochId, app.poolIndex);
+    const pkAid: BabyJubPoint = await client.getApplicationKey(fixture.epochId, aid);
+    expect(pkAid).toEqual(applicationKey(poolKey, app.organizerPK));
     const plaintext = 137n;
-    const ciphertext = await encrypt(plaintext, applicationKey(pkEp, app.organizerPK));
+    const ciphertext = await encrypt(plaintext, pkAid);
     const { ciphertextIndex } = await writer.submitCiphertext(fixture.epochId, aid, ciphertext);
     expect(ciphertextIndex).toBeGreaterThanOrEqual(1);
 
-    const shareTx = await writer.submitOrganizerShare(
-      fixture.epochId, aid, ciphertextIndex, ciphertext, skOrg,
-    );
-    await writer.publicClient.waitForTransactionReceipt({ hash: shareTx });
+    expect(await client.isDecryptionOpen(fixture.epochId, aid)).toBe(false);
+    const revealTx = await writer.revealOrganizerSecret(fixture.epochId, aid, skOrg);
+    await writer.publicClient.waitForTransactionReceipt({ hash: revealTx });
+    expect((await client.getApplication(fixture.epochId, aid)).organizerSecret).toBe(skOrg);
+    expect(await client.isDecryptionOpen(fixture.epochId, aid)).toBe(true);
 
     // 2. Go fixture builds the proof + submits the partial decryption,
     //    then hands back the combine bytes for the SDK to send.

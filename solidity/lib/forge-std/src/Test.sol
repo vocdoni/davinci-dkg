@@ -5,6 +5,7 @@ interface Vm {
     function expectRevert(bytes4 revertData) external;
     function prank(address msgSender) external;
     function roll(uint256 newHeight) external;
+    function warp(uint256 newTimestamp) external;
 }
 
 abstract contract Test {

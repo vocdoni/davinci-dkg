@@ -404,26 +404,6 @@ export class Indexer {
       } catch (err) {
         this.pushError('state', err)
       }
-      // Share commitments are immutable once the epoch is Live: fetch every
-      // missing D_i, for every epoch, in one batch.
-      const missing: Array<{ id: EpochId; committeeSize: number }> = []
-      for (const key of epochIds) {
-        const epoch = this.store.epochs[key]
-        const size = epoch.policy?.committeeSize ?? epoch.committee.length
-        if (!epoch.finalization || size <= 0 || epoch.shareCommitmentHashes.length === size) continue
-        missing.push({ id: epoch.id, committeeSize: size })
-      }
-      if (missing.length > 0) {
-        try {
-          const hashes = await this.reader.readShareCommitments(missing)
-          for (const [id, values] of hashes) {
-            const epoch = this.store.epochs[id]
-            if (epoch) epoch.shareCommitmentHashes = values
-          }
-        } catch (err) {
-          this.pushError('state', err)
-        }
-      }
     }
 
     const operators = [...this.dirtyOperators].filter((key) => this.store.operators[key])

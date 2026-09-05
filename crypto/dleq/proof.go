@@ -1,20 +1,14 @@
-// Package dleq holds the Chaum-Pedersen DLEQ proof bundle and the
-// organizer-share prover/verifier.
+// Package dleq holds the Chaum-Pedersen DLEQ proof bundle used by the
+// committee's partial decryptions.
 //
-// Two transcripts live in this protocol and they must not be confused:
+// The transcript is Poseidon and is derived in-circuit:
+// `circuits/partialdecrypt/witness.go` builds the challenge over the full
+// (eid, aid, ctIdx, i, D_i, C_1, δ_i, A_i, B_i) tuple that the in-circuit
+// verifier expects; the `Proof` struct here is the bundle the witness
+// builder hands to the prover.
 //
-//   - Committee partial decryptions use a Poseidon transcript derived
-//     in-circuit. `circuits/partialdecrypt/witness.go` builds the
-//     challenge over the full
-//     (eid, aid, ctIdx, i, D_i, C_1, δ_i, A_i, B_i) tuple that the
-//     in-circuit verifier expects; the `Proof` struct here is the bundle
-//     the witness builder hands to the prover.
-//
-//   - The organizer share (Δ = sk_org·C_1) uses a keccak transcript so a
-//     browser-only organizer needs nothing but keccak and BabyJubJub
-//     arithmetic. `OrganizerShareChallenge` is the single source of truth
-//     for that encoding, shared by the prover, the verifier, the
-//     decrypt-combine witness builder and the cross-impl vectors.
+// There is no organizer-share DLEQ any more: the combine circuit proves
+// knowledge of sk_org directly (see docs/pool-keys.md, "Combine").
 package dleq
 
 import (

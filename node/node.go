@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"math/big"
+	"math/bits"
 	mrand "math/rand"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -46,12 +48,19 @@ const (
 
 type epochView = web3.EpochView
 
-// savedContrib caches data from the node's own submitted contribution
-// so it can compute the own-polynomial component of d_i offline.
+// savedContrib caches data from the node's own submitted contribution so it
+// can compute the own-polynomial component of d_{j,i} offline. coefficients
+// is indexed by pool key then coefficient: one polynomial per key.
 type savedContrib struct {
-	coefficients     []*big.Int
+	coefficients     [][]*big.Int
 	recipientIndexes []uint16
 	recipientKeys    []nodetypes.NodeKey
+}
+
+// poolSlot identifies one pool key of one epoch.
+type poolSlot struct {
+	epoch [12]byte
+	key   uint8
 }
 
 // Node participates in every DKG epoch it can find on chain.
@@ -64,26 +73,40 @@ type Node struct {
 	appManager *gtypes.DKGAppManager
 	registry   *gtypes.DKGRegistry
 	txm        *txmanager.Manager
+	runtimes   circuitRuntimes // the four pinned circuits, loaded once in New
 
 	// per-epoch local state (key generation lifecycle)
 	signaled      map[[12]byte]bool
 	contributed   map[[12]byte]bool
-	finalized     map[[12]byte]bool // tracks epochs we've already attempted to auto-finalize
-	terminal      map[[12]byte]bool // epochs whose key-generation lifecycle needs no more work
-	privateShares map[[12]byte]*big.Int
+	finalized     map[[12]byte]bool     // tracks epochs we've already attempted to auto-finalize
+	terminal      map[[12]byte]bool     // epochs whose key-generation lifecycle needs no more work
+	privateShares map[poolSlot]*big.Int // d_{j,i}, one per pool key we needed
 	ownContribs   map[[12]byte]*savedContrib
 	selectedCache map[[12]byte][]common.Address
+	// liveEpochs are the Live epochs (by nonce) this process has seen whose
+	// pool still has unclaimed, unactivated keys. Registrations may target
+	// any Live epoch, so its reserve has to be kept up even once it is no
+	// longer among the newest two; the set is bounded by
+	// maxTrackedLiveEpochs (oldest dropped) and by epochs turning terminal.
+	liveEpochs map[[12]byte]uint64
+
+	// activateAnchor is the head at which this node first saw a pool key as
+	// due for activation; the stagger rotation counts from there. Epochs go
+	// Live long before most keys are needed, so there is no chain-wide
+	// anchor to share (unlike the finalize window).
+	activateAnchor map[poolSlot]uint64
+	activateAhead  uint8
 
 	// decryption service state (see decrypt.go)
 	lookback    uint64
 	lastCtScan  uint64
 	ctSeq       uint64
 	pending     map[ctKey]*ciphertext
-	parked      map[ctKey]*ciphertext // waiting for an organizer share; woken by the event scan
+	parked      map[ctKey]*parkedSlot // waiting for the organizer's reveal or the decryption window
 	partialDone map[ctKey]bool
-	served      map[ctKey]uint64   // finished slots → discovery block, until out of the re-scan window
-	badShares   map[ctKey][32]byte // last organizer share that failed to verify, to warn once
-	taintedApps map[appKey]bool    // applications that produced an undecryptable ciphertext
+	served      map[ctKey]uint64 // finished slots → discovery block, until out of the re-scan window
+	shareProofs map[poolSlot][][32]byte
+	taints      map[taintKey]bool // applications (or submitters) that produced an undecryptable ciphertext
 	backoff     map[ctKey]*serviceBackoff
 	inflight    map[ctKey]inflightTx     // sent but unmined partial/combine per slot
 	combineJobs map[ctKey]*combineResult // running (nil) or finished combine jobs, guarded by jobsMu
@@ -97,6 +120,10 @@ type Node struct {
 	// against; we skip re-scheduling for the same threshold so a single
 	// jitter-delayed goroutine fires per cadence window.
 	autoCreateNextStart uint64
+	// autoCreateEarlyPool is the (epoch, poolNext) the most recent
+	// pool-drain-triggered attempt was fired against, so one attempt is made
+	// per registration that eats into the reserve.
+	autoCreateEarlyPool poolSlot
 }
 
 // New constructs a Node from the daemon config.
@@ -140,34 +167,45 @@ func New(cfg *Config) (*Node, error) {
 	if d := os.Getenv("DAVINCI_DKG_ARTIFACTS_DIR"); d != "" {
 		circuits.BaseDir = d
 	}
+	// Every proof this node will ever make needs the pinned release
+	// artifacts; a missing file or a hash mismatch is fatal now rather than
+	// at the first deadline.
+	runtimes, err := loadRuntimes()
+	if err != nil {
+		return nil, fmt.Errorf("load circuit artifacts from %s: %w", circuits.BaseDir, err)
+	}
 
 	n := &Node{
-		address:       txm.Address(),
-		bjjSecret:     bjjSecret,
-		contracts:     c,
-		manager:       manager,
-		appManager:    appManager,
-		registry:      registry,
-		txm:           txm,
-		signaled:      make(map[[12]byte]bool),
-		contributed:   make(map[[12]byte]bool),
-		finalized:     make(map[[12]byte]bool),
-		terminal:      make(map[[12]byte]bool),
-		privateShares: make(map[[12]byte]*big.Int),
-		ownContribs:   make(map[[12]byte]*savedContrib),
-		selectedCache: make(map[[12]byte][]common.Address),
-		lookback:      cfg.DecryptLookbackBlocks,
-		pending:       make(map[ctKey]*ciphertext),
-		parked:        make(map[ctKey]*ciphertext),
-		partialDone:   make(map[ctKey]bool),
-		served:        make(map[ctKey]uint64),
-		badShares:     make(map[ctKey][32]byte),
-		taintedApps:   make(map[appKey]bool),
-		taintFile:     taintPath(cfg.Datadir),
-		backoff:       make(map[ctKey]*serviceBackoff),
-		inflight:      make(map[ctKey]inflightTx),
-		combineJobs:   make(map[ctKey]*combineResult),
-		combineSem:    make(chan struct{}, 1),
+		address:        txm.Address(),
+		bjjSecret:      bjjSecret,
+		contracts:      c,
+		manager:        manager,
+		appManager:     appManager,
+		registry:       registry,
+		txm:            txm,
+		runtimes:       runtimes,
+		signaled:       make(map[[12]byte]bool),
+		contributed:    make(map[[12]byte]bool),
+		finalized:      make(map[[12]byte]bool),
+		terminal:       make(map[[12]byte]bool),
+		privateShares:  make(map[poolSlot]*big.Int),
+		ownContribs:    make(map[[12]byte]*savedContrib),
+		selectedCache:  make(map[[12]byte][]common.Address),
+		liveEpochs:     make(map[[12]byte]uint64),
+		activateAnchor: make(map[poolSlot]uint64),
+		activateAhead:  max(cfg.ActivateAhead, 1),
+		lookback:       cfg.DecryptLookbackBlocks,
+		pending:        make(map[ctKey]*ciphertext),
+		parked:         make(map[ctKey]*parkedSlot),
+		partialDone:    make(map[ctKey]bool),
+		served:         make(map[ctKey]uint64),
+		shareProofs:    make(map[poolSlot][][32]byte),
+		taints:         make(map[taintKey]bool),
+		taintFile:      taintPath(cfg.Datadir),
+		backoff:        make(map[ctKey]*serviceBackoff),
+		inflight:       make(map[ctKey]inflightTx),
+		combineJobs:    make(map[ctKey]*combineResult),
+		combineSem:     make(chan struct{}, 1),
 	}
 	n.loadTaints()
 	return n, nil
@@ -215,7 +253,8 @@ func (n *Node) LogStartupSnapshot(ctx context.Context, cfg *Config) {
 		"registry", n.contracts.Addresses.Registry,
 		"manager", cfg.ManagerAddr)
 	log.Infow("config: participation",
-		"pollInterval", cfg.PollInterval)
+		"pollInterval", cfg.PollInterval,
+		"activateAhead", cfg.ActivateAhead)
 
 	// ── on-chain state ───────────────────────────────────────────────────
 	callOpts := &bind.CallOpts{Context: ctx}
@@ -574,13 +613,24 @@ func (n *Node) maybeScheduleAutoCreate(ctx context.Context, cfg *Config) {
 		log.Warnw("auto-create: read block number failed", "err", err)
 		return
 	}
+	early := false
 	if currentBlock < next {
-		return // not due yet
+		// Not due by the cadence, but the newest epoch's pool may be nearly
+		// claimed out: applications can only register against an activated,
+		// unclaimed key, so the next epoch has to exist before the last one
+		// goes. The contract allows createEpoch early in exactly that case.
+		slot, low := n.poolRunningLow(ctx)
+		if !low || n.autoCreateEarlyPool == slot {
+			return
+		}
+		n.autoCreateEarlyPool = slot
+		early = true
+	} else {
+		if n.autoCreateNextStart == next {
+			return // already scheduled / fired for this window
+		}
+		n.autoCreateNextStart = next
 	}
-	if n.autoCreateNextStart == next {
-		return // already scheduled / fired for this window
-	}
-	n.autoCreateNextStart = next
 
 	jitter := time.Duration(0)
 	if cfg.AutoCreateJitter > 0 {
@@ -590,6 +640,7 @@ func (n *Node) maybeScheduleAutoCreate(ctx context.Context, cfg *Config) {
 		"auto-create: scheduling createEpoch attempt",
 		"nextStart", next,
 		"currentBlock", currentBlock,
+		"early", early,
 		"jitter", jitter,
 	)
 	go func() {
@@ -610,6 +661,12 @@ func (n *Node) maybeScheduleAutoCreate(ctx context.Context, cfg *Config) {
 			return
 		}
 		if err := n.fireCreateEpoch(ctx, cfg); err != nil {
+			if early {
+				// The pool-drain trigger races the cadence: a revert here
+				// just means "not yet", and the cadence path will retry.
+				log.Debugw("auto-create: early attempt refused", "err", decodeContractError(err))
+				return
+			}
 			log.Warnw("auto-create: createEpoch failed (likely lost race)", "err", err)
 			return
 		}
@@ -660,6 +717,29 @@ func (n *Node) adaptivePolicy(ctx context.Context, alphaBps uint16) (EpochPolicy
 	}, nil
 }
 
+// poolRunningLow reports whether the newest epoch has fewer than
+// ActivateAhead unclaimed pool keys left, and the (epoch, poolNext) pair that
+// observation was made against so the early trigger fires once per drain.
+// A non-Live epoch reads back as an untouched pool, which is never low.
+func (n *Node) poolRunningLow(ctx context.Context) (poolSlot, bool) {
+	callOpts := &bind.CallOpts{Context: ctx}
+	nonce, err := n.manager.EpochNonce(callOpts)
+	if err != nil || nonce == 0 {
+		return poolSlot{}, false
+	}
+	prefix, err := n.manager.EPOCHPREFIX(callOpts)
+	if err != nil {
+		return poolSlot{}, false
+	}
+	epochID := web3.EpochID(prefix, nonce)
+	status, err := n.manager.GetPoolStatus(callOpts, epochID)
+	if err != nil {
+		return poolSlot{}, false
+	}
+	unclaimed := ccommon.MaxK - int(status.NextIndex)
+	return poolSlot{epoch: epochID, key: status.NextIndex}, unclaimed < int(n.activateAhead)
+}
+
 func (n *Node) fireCreateEpoch(ctx context.Context, cfg *Config) error {
 	auth, err := n.txm.NewTransactOpts(ctx)
 	if err != nil {
@@ -692,8 +772,14 @@ func (n *Node) fireCreateEpoch(ctx context.Context, cfg *Config) error {
 	return nil
 }
 
-// tick runs one poll cycle: key-generation lifecycle for the newest epochs,
-// then decryption service for every pending ciphertext.
+// maxTrackedLiveEpochs bounds liveEpochs: each tracked epoch costs a few RPC
+// reads per tick, and an epoch whose pool nobody claims from any more is
+// better served by the fresh ones than by a node polling it forever.
+const maxTrackedLiveEpochs = 6
+
+// tick runs one poll cycle: key-generation lifecycle for the newest epochs
+// (plus any older Live epoch whose pool still needs activations), then
+// decryption service for every pending ciphertext.
 //
 // Only the two most recent epochs can still be in CommitteeSelection /
 // KeyAssembly (a new epoch cannot start until EPOCH_DURATION_BLOCKS after
@@ -711,15 +797,7 @@ func (n *Node) tick(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("epoch prefix: %w", err)
 	}
-	first := uint64(1)
-	if epochNonce > 1 {
-		first = epochNonce - 1
-	}
-	for i := first; i <= epochNonce; i++ {
-		epochID := web3.EpochID(prefix, i)
-		if n.terminal[epochID] {
-			continue // key generation finished (or failed); nothing left to do
-		}
+	for _, epochID := range n.epochsToVisit(prefix, epochNonce) {
 		if err := n.participate(ctx, epochID); err != nil {
 			log.Warnw("participate failed", "epoch", roundHex(epochID), "err", decodeContractError(err))
 		}
@@ -729,6 +807,59 @@ func (n *Node) tick(ctx context.Context) error {
 	}
 	n.serviceCiphertexts(ctx)
 	return nil
+}
+
+// epochsToVisit is the newest two epochs plus every tracked Live epoch, minus
+// the terminal ones, oldest first.
+func (n *Node) epochsToVisit(prefix uint32, epochNonce uint64) [][12]byte {
+	byNonce := make(map[uint64][12]byte, len(n.liveEpochs)+2)
+	for id, nonce := range n.liveEpochs {
+		byNonce[nonce] = id
+	}
+	first := uint64(1)
+	if epochNonce > 1 {
+		first = epochNonce - 1
+	}
+	for i := first; i <= epochNonce; i++ {
+		byNonce[i] = web3.EpochID(prefix, i)
+	}
+	nonces := make([]uint64, 0, len(byNonce))
+	for nonce := range byNonce {
+		nonces = append(nonces, nonce)
+	}
+	slices.Sort(nonces)
+	out := make([][12]byte, 0, len(nonces))
+	for _, nonce := range nonces {
+		if id := byNonce[nonce]; !n.terminal[id] {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// trackLive remembers a Live epoch that still needs activations so later
+// ticks keep visiting it, dropping the oldest tracked epoch past the bound.
+func (n *Node) trackLive(epochID [12]byte, nonce uint64) {
+	if _, ok := n.liveEpochs[epochID]; ok {
+		return
+	}
+	for len(n.liveEpochs) >= maxTrackedLiveEpochs {
+		var oldest [12]byte
+		oldestNonce := ^uint64(0)
+		for id, nonce := range n.liveEpochs {
+			if nonce < oldestNonce {
+				oldest, oldestNonce = id, nonce
+			}
+		}
+		delete(n.liveEpochs, oldest)
+	}
+	n.liveEpochs[epochID] = nonce
+}
+
+// finish marks an epoch's key-generation lifecycle as needing no more work.
+func (n *Node) finish(epochID [12]byte) {
+	n.terminal[epochID] = true
+	delete(n.liveEpochs, epochID)
 }
 
 func (n *Node) participate(ctx context.Context, epochID [12]byte) error {
@@ -765,18 +896,27 @@ func (n *Node) participate(ctx context.Context, epochID [12]byte) error {
 		}
 		return nil
 
-	case epochLive: // key is live; ciphertexts are served by the decryption scanner
-		n.terminal[epochID] = true
-		return nil
+	case epochLive: // the pool is being activated; ciphertexts are served by the decryption scanner
+		selected, err := n.selected(ctx, epochID)
+		if err != nil {
+			return err
+		}
+		idx := myIndex(selected, n.address)
+		if idx == 0 {
+			n.finish(epochID)
+			return nil // not selected for this epoch
+		}
+		n.trackLive(epochID, epoch.Nonce)
+		return n.tryActivatePoolKeys(ctx, epochID, idx, epoch, selected)
 
 	case epochAborted:
 		log.Warnw("epoch aborted — no further participation possible",
 			"epoch", roundHex(epochID))
-		n.terminal[epochID] = true
+		n.finish(epochID)
 		return nil
 
 	case epochCompleted:
-		n.terminal[epochID] = true
+		n.finish(epochID)
 		return nil
 
 	default:
@@ -941,11 +1081,16 @@ func (n *Node) doContribution(
 	committeeSize := epoch.Policy.CommitteeSize
 
 	roundHash := roundScalar(epochID)
-	// f_i(x) = Σ a_k x^k with uniform coefficients in the BabyJubJub scalar
-	// field; a_0 is this node's additive share of sk_ep.
-	coeffs, err := randomScalars(int(threshold))
-	if err != nil {
-		return err
+	// One polynomial per pool key: f_{j,i}(x) = Σ a_{j,k} x^k with uniform
+	// coefficients in the BabyJubJub scalar field; a_{j,0} is this node's
+	// additive share of P_j. Every epoch deals all MaxK of them.
+	coeffs := make([][]*big.Int, ccommon.MaxK)
+	for j := range coeffs {
+		keyCoeffs, err := randomScalars(int(threshold))
+		if err != nil {
+			return err
+		}
+		coeffs[j] = keyCoeffs
 	}
 
 	recipientIdxs := make([]uint16, committeeSize)
@@ -991,11 +1136,7 @@ func (n *Node) doContribution(
 	if err != nil {
 		return fmt.Errorf("build contribution witness: %w", err)
 	}
-	runtime, err := contribution.Artifacts.LoadPinned(ctx, &contribution.ContributionCircuit{})
-	if err != nil {
-		return fmt.Errorf("load contribution circuit: %w", err)
-	}
-	proof, err := runtime.ProveAndVerify(witness)
+	proof, err := n.runtimes.contribution.ProveAndVerify(witness)
 	if err != nil {
 		return fmt.Errorf("prove contribution: %w", err)
 	}
@@ -1146,10 +1287,7 @@ func (n *Node) tryAutoFinalize(
 		"finalizeNotBefore", epoch.Policy.LiveNotBeforeBlock,
 	)
 
-	committeeSizePolicy := epoch.Policy.CommitteeSize
-	t := epoch.Policy.Threshold
-
-	res, err := finalizer.BuildAndSubmit(ctx, n.contracts, n.manager, n.txm, epochID, t, committeeSizePolicy, selected)
+	gasUsed, err := finalizer.FinalizeEpoch(ctx, n.contracts, n.manager, n.txm, epochID)
 	if err != nil {
 		// Only a lost race is final: AlreadyLive from the contract, or the
 		// epoch having left KeyAssembly. Anything else (a bad proof, a
@@ -1168,12 +1306,81 @@ func (n *Node) tryAutoFinalize(
 	}
 	n.finalized[epochID] = true
 	log.Infow("auto-finalize: epoch finalized by us",
-		"epoch", roundHex(epochID), "gas", res.GasUsed)
+		"epoch", roundHex(epochID), "gas", gasUsed)
 	return nil
 }
 
-// buildPrivateShare computes d_i = Σ_j f_j(i) over every accepted
-// contribution by:
+// tryActivatePoolKeys keeps the epoch's pool stocked while it is Live: key 0
+// as soon as the epoch goes Live, then enough keys ahead of the claimed ones
+// that a registration never waits for a proof. Committee members take turns
+// in a seed-derived rotation like auto-finalize; activation is permissionless
+// so a race loser only pays a revert.
+//
+// The rotation is anchored on the head at which this node first saw the key
+// as due rather than on a chain-wide block: epochs stay Live indefinitely and
+// keys past the first are needed whenever registrations drain the pool, so
+// there is no shared anchor to count from.
+func (n *Node) tryActivatePoolKeys(
+	ctx context.Context,
+	epochID [12]byte,
+	myIdx uint16,
+	epoch epochView,
+	selected []common.Address,
+) error {
+	status, err := n.manager.GetPoolStatus(&bind.CallOpts{Context: ctx}, epochID)
+	if err != nil {
+		return fmt.Errorf("pool status: %w", err)
+	}
+	next, ok := nextKeyToActivate(status.NextIndex, status.Activated, n.activateAhead)
+	if !ok {
+		if int(status.NextIndex) >= ccommon.MaxK || bits.OnesCount8(status.Activated) >= ccommon.MaxK {
+			n.finish(epochID) // the whole pool is claimed or up; ciphertexts are the scanner's job
+		}
+		return nil
+	}
+	keyIndex := next
+	slot := poolSlot{epoch: epochID, key: keyIndex}
+
+	head, err := n.contracts.Client().BlockNumber(ctx)
+	if err != nil {
+		return fmt.Errorf("read head: %w", err)
+	}
+	anchor, seen := n.activateAnchor[slot]
+	if !seen {
+		anchor = head
+		n.activateAnchor[slot] = anchor
+	}
+	mySlot := staggerSlot(epoch.Seed, uint64(keyIndex), myIdx, uint16(len(selected)))
+	if head < anchor+mySlot*staggerBlocks {
+		return nil // not our turn yet
+	}
+
+	n.critical.Add(1)
+	defer n.critical.Add(-1)
+	log.Infow("pool key activation: my turn",
+		"epoch", roundHex(epochID), "key", keyIndex, "myIdx", myIdx, "mySlot", mySlot, "head", head)
+
+	res, err := finalizer.ProveAndSubmitActivation(
+		ctx, n.contracts, n.manager, n.txm, n.runtimes.poolKey, epochID,
+		epoch.Policy.Threshold, epoch.Policy.CommitteeSize, selected, keyIndex,
+	)
+	if err != nil {
+		reason := decodeContractError(err)
+		if strings.Contains(reason, "PoolKeyAlreadyActive") {
+			log.Infow("pool key activation: another node beat us", "epoch", roundHex(epochID), "key", keyIndex)
+			delete(n.activateAnchor, slot)
+			return nil
+		}
+		return fmt.Errorf("activate pool key %d (will retry next tick): %s", keyIndex, reason)
+	}
+	delete(n.activateAnchor, slot)
+	log.Infow("pool key activated",
+		"epoch", roundHex(epochID), "key", keyIndex, "x", res.PoolKey.X, "gas", res.GasUsed)
+	return nil
+}
+
+// buildPrivateShare computes d_{j,i} = Σ_c f_{c,j}(i) for one pool key over
+// every accepted contribution by:
 //   - Own contribution (in-memory cache): evaluate own polynomial directly
 //   - Own contribution (after restart, cache lost): fall back to calldata recovery
 //   - Other contributions: scan on-chain txs for calldata and decrypt
@@ -1189,12 +1396,14 @@ func (n *Node) tryAutoFinalize(
 func (n *Node) buildPrivateShare(
 	ctx context.Context,
 	epochID [12]byte,
+	keyIndex uint8,
 	myIdx uint16,
 	selected []common.Address,
 	epoch epochView,
 	callOpts *bind.CallOpts,
 ) (*big.Int, error) {
-	if s, ok := n.privateShares[epochID]; ok {
+	slot := poolSlot{epoch: epochID, key: keyIndex}
+	if s, ok := n.privateShares[slot]; ok {
 		return s, nil
 	}
 	roundHash := roundScalar(epochID)
@@ -1213,12 +1422,12 @@ func (n *Node) buildPrivateShare(
 		}
 		expected++
 		if addr == n.address {
-			if share, ok := n.ownShare(epochID, myIdx); ok {
+			if share, ok := n.ownShare(epochID, keyIndex, myIdx); ok {
 				shares = append(shares, share)
 				continue
 			}
 		}
-		share, err := n.recoverShareFrom(ctx, epochID, addr, contribIdx, roundHash, myIdx, fromBlock)
+		share, err := n.recoverShareFrom(ctx, epochID, addr, contribIdx, keyIndex, roundHash, myIdx, fromBlock)
 		if err != nil {
 			return nil, fmt.Errorf("recover share from %s (idx %d): %w", addr.Hex(), contribIdx, err)
 		}
@@ -1228,22 +1437,23 @@ func (n *Node) buildPrivateShare(
 	if err != nil {
 		return nil, err
 	}
-	log.Infow("private share built", "epoch", roundHex(epochID), "contributions", expected, "myIdx", myIdx)
-	n.privateShares[epochID] = total
+	log.Infow("private share built",
+		"epoch", roundHex(epochID), "key", keyIndex, "contributions", expected, "myIdx", myIdx)
+	n.privateShares[slot] = total
 	return total, nil
 }
 
-// ownShare evaluates this node's own polynomial at myIdx from the in-memory
-// contribution cache. ok=false means the caller must recover the share
-// from calldata like any other contribution.
-func (n *Node) ownShare(epochID [12]byte, myIdx uint16) (*big.Int, bool) {
+// ownShare evaluates this node's own polynomial for pool key `keyIndex` at
+// myIdx from the in-memory contribution cache. ok=false means the caller must
+// recover the share from calldata like any other contribution.
+func (n *Node) ownShare(epochID [12]byte, keyIndex uint8, myIdx uint16) (*big.Int, bool) {
 	sc := n.ownContribs[epochID]
-	if sc == nil {
+	if sc == nil || int(keyIndex) >= len(sc.coefficients) {
 		log.Infow("own contribution cache missing (node restarted?), recovering from calldata",
 			"epoch", roundHex(epochID))
 		return nil, false
 	}
-	share, err := ccommon.EvaluatePolynomialNative(sc.coefficients, big.NewInt(int64(myIdx)))
+	share, err := ccommon.EvaluatePolynomialNative(sc.coefficients[keyIndex], big.NewInt(int64(myIdx)))
 	if err != nil {
 		log.Warnw("own polynomial evaluation failed, falling back to calldata",
 			"epoch", roundHex(epochID), "err", err)
@@ -1252,7 +1462,7 @@ func (n *Node) ownShare(epochID [12]byte, myIdx uint16) (*big.Int, bool) {
 	return share, true
 }
 
-// sumRecoveredShares folds the recovered f_j(i) values into d_i modulo the
+// sumRecoveredShares folds the recovered f_{c,j}(i) values into d_{j,i} modulo the
 // group order. It refuses anything short of the full set of `expected`
 // accepted contributions: the sum is only a valid share when complete.
 func sumRecoveredShares(shares []*big.Int, expected int) (*big.Int, error) {
@@ -1277,12 +1487,13 @@ func sumRecoveredShares(shares []*big.Int, expected int) (*big.Int, error) {
 
 // recoverShareFrom fetches the submitContribution tx calldata for `contributor`
 // (located through the ContributionSubmitted event log) and decrypts the
-// share slot destined for myIdx.
+// share slot destined for myIdx under pool key `keyIndex`.
 func (n *Node) recoverShareFrom(
 	ctx context.Context,
 	epochID [12]byte,
 	contributor common.Address,
 	contribIdx uint16,
+	keyIndex uint8,
 	roundHash *big.Int,
 	myIdx uint16,
 	fromBlock uint64,
@@ -1295,39 +1506,57 @@ func (n *Node) recoverShareFrom(
 	if err != nil {
 		return nil, fmt.Errorf("decode contribution transcript: %w", err)
 	}
+	if int(keyIndex) >= len(masked) {
+		return nil, fmt.Errorf("pool key %d is outside the transcript", keyIndex)
+	}
 	for slot, ridx := range recipIdxs {
-		if ridx != myIdx || slot >= len(eph) || slot >= len(masked) {
+		if ridx != myIdx || slot >= len(eph) || slot >= len(masked[keyIndex]) {
 			continue
 		}
 		ct := shareenc.Ciphertext{
 			Ephemeral:   nodetypes.CurvePoint{X: eph[slot][0], Y: eph[slot][1]},
-			MaskedShare: masked[slot],
+			MaskedShare: masked[keyIndex][slot],
 		}
-		return shareenc.DecryptShareRoundHash(roundHash, contribIdx, myIdx, ct, n.bjjSecret)
+		return shareenc.DecryptShareRoundHash(roundHash, contribIdx, myIdx, keyIndex, ct, n.bjjSecret)
 	}
 	return nil, fmt.Errorf("no share slot for index %d in contribution of %s", myIdx, contributor.Hex())
 }
 
 // decodeContributionTranscript extracts (ephemerals, maskedShares,
-// recipientIndexes) from raw submitContribution calldata. Transcript layout
-// (N = circuits/common.MaxN words each 32 bytes):
+// recipientIndexes) from raw submitContribution calldata. maskedShares is
+// indexed by pool key then recipient slot. Transcript layout (N =
+// circuits/common.MaxN, K = circuits/common.MaxK, words of 32 bytes):
 //
-//	[0..2N)  commitmentPoints   [2N..3N) recipientIndexes
-//	[3N..5N) recipientPubKeys   [5N..7N) ephemerals   [7N..8N) maskedShares
-func decodeContributionTranscript(data []byte) (ephemerals [][2]*big.Int, maskedShares []*big.Int, recipientIndexes []uint16, err error) {
+//	[0, 2KN)        commitments, key-major     [2KN, 2KN+N)     recipientIndexes
+//	[2KN+N, 2KN+3N) recipientPubKeys           [2KN+3N, 2KN+5N) ephemerals
+//	[2KN+5N, 3KN+5N) maskedShares, key-major
+func decodeContributionTranscript(
+	data []byte,
+) (ephemerals [][2]*big.Int, maskedShares [][]*big.Int, recipientIndexes []uint16, err error) {
 	transcript, err := finalizer.ContributionTranscript(data)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	const N = ccommon.MaxN
+	const (
+		nn      = ccommon.MaxN
+		kk      = ccommon.MaxK
+		idxOff  = 2 * kk * nn
+		ephOff  = idxOff + 3*nn
+		maskOff = idxOff + 5*nn
+	)
 	word := func(i int) *big.Int { return new(big.Int).SetBytes(transcript[i*32 : (i+1)*32]) }
-	ridxs := make([]uint16, N)
-	ephs := make([][2]*big.Int, N)
-	masked := make([]*big.Int, N)
-	for i := range N {
-		ridxs[i] = uint16(word(2*N + i).Uint64())
-		ephs[i] = [2]*big.Int{word(5*N + 2*i), word(5*N + 2*i + 1)}
-		masked[i] = word(7*N + i)
+	ridxs := make([]uint16, nn)
+	ephs := make([][2]*big.Int, nn)
+	for i := range nn {
+		ridxs[i] = uint16(word(idxOff + i).Uint64())
+		ephs[i] = [2]*big.Int{word(ephOff + 2*i), word(ephOff + 2*i + 1)}
+	}
+	masked := make([][]*big.Int, kk)
+	for j := range kk {
+		masked[j] = make([]*big.Int, nn)
+		for i := range nn {
+			masked[j][i] = word(maskOff + j*nn + i)
+		}
 	}
 	return ephs, masked, ridxs, nil
 }
@@ -1348,6 +1577,22 @@ func roundScalar(id [12]byte) *big.Int {
 }
 
 func roundHex(id [12]byte) string { return fmt.Sprintf("%x", id) }
+
+// nextKeyToActivate picks the pool key to activate, if any. The reserve is
+// the run of *contiguous* activated keys from nextIndex: registration claims
+// keys in order and reverts PoolKeyNotActive on the first gap, so an
+// activated key past a gap is no reserve at all (which a popcount would
+// count). Every key in [nextIndex, min(MaxK, nextIndex+ahead)) must be set;
+// the first unset one at or after nextIndex is the key to activate.
+func nextKeyToActivate(nextIndex, activated, ahead uint8) (uint8, bool) {
+	want := min(ccommon.MaxK, int(nextIndex)+int(ahead))
+	for j := int(nextIndex); j < want; j++ {
+		if activated&(1<<j) == 0 {
+			return uint8(j), true
+		}
+	}
+	return 0, false
+}
 
 // staggerSlot returns myIdx's position in the epoch's rotation: a
 // permutation of [0, committeeSize) whose start is derived from the lottery

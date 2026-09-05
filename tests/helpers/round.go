@@ -27,17 +27,10 @@ func ComputeRoundID(prefix uint32, nonce uint64) [12]byte {
 	return epochID
 }
 
+// CreateEpoch creates an epoch once the cadence allows it, mining up to
+// nextEpochStartBlock first.
 func CreateEpoch(ctx context.Context, services *TestServices, policy types.EpochPolicy) ([12]byte, error) {
 	var zero [12]byte
-
-	prefix, err := services.Manager.EPOCHPREFIX(services.CallOpts(ctx))
-	if err != nil {
-		return zero, fmt.Errorf("get epoch prefix: %w", err)
-	}
-	currentNonce, err := services.Manager.EpochNonce(services.CallOpts(ctx))
-	if err != nil {
-		return zero, fmt.Errorf("get epoch nonce: %w", err)
-	}
 
 	// Honor the on-chain cadence guard: createEpoch reverts unless
 	// block.number >= nextEpochStartBlock(). Tests run sequentially against a
@@ -56,6 +49,24 @@ func CreateEpoch(ctx context.Context, services *TestServices, policy types.Epoch
 		if err := MineBlocks(ctx, services, nextStart-head); err != nil {
 			return zero, fmt.Errorf("mine to next epoch start: %w", err)
 		}
+	}
+	return CreateEpochNow(ctx, services, policy)
+}
+
+// CreateEpochNow calls createEpoch at the current block, without honoring
+// the cadence: the contract decides. Before nextEpochStartBlock it only
+// succeeds when the newest epoch is Live with at most one unclaimed key or
+// Aborted, which is exactly what the early-creation tests probe.
+func CreateEpochNow(ctx context.Context, services *TestServices, policy types.EpochPolicy) ([12]byte, error) {
+	var zero [12]byte
+
+	prefix, err := services.Manager.EPOCHPREFIX(services.CallOpts(ctx))
+	if err != nil {
+		return zero, fmt.Errorf("get epoch prefix: %w", err)
+	}
+	currentNonce, err := services.Manager.EpochNonce(services.CallOpts(ctx))
+	if err != nil {
+		return zero, fmt.Errorf("get epoch nonce: %w", err)
 	}
 
 	auth, err := services.TxManager.NewTransactOpts(ctx)

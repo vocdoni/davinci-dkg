@@ -1,14 +1,14 @@
 .PHONY: help \
         circuits-compile circuits-update-hashes circuits circuits-release \
         solidity-build solidity-bind solidity-deploy \
-        testnet-up testnet-run testnet-down testnet-logs battery \
+        testnet-up testnet-run testnet-down testnet-logs battery battery-testnet-up \
         ui-install ui-build ui-dev ui-clean ui-test ui-config \
         build test test-integration
 
 # Default node count and threshold for testnet
 DKG_NODE_COUNT        ?= 3
 DKG_THRESHOLD         ?= 2
-BATTERY_RUN           ?= TestOrganizerSwarm|TestShareAdversary
+BATTERY_RUN           ?= TestOrganizerSwarm|TestRevealAdversary
 DKG_DISCLOSURE_ALLOWED ?= false
 
 # Circuit artifact cache directory (mirrors DAVINCI_DKG_ARTIFACTS_DIR default)
@@ -42,7 +42,7 @@ help: ## Show this help message
 	@echo ""
 	@echo "Circuit Update Pipeline:"
 	@echo "  circuits              Full pipeline: compile → update hashes → Solidity build → Go bind"
-	@echo "  circuits-compile      Compile all 6 circuits; write artifacts + Solidity verifier files"
+	@echo "  circuits-compile      Compile all 4 circuits; write artifacts + Solidity verifier files"
 	@echo "                        ARTIFACTS_DIR (default: ~/.davinci/artifacts)"
 	@echo "  circuits-release      Compile + upload to CDN + update hashes + Solidity rebuild"
 	@echo "                        Requires: S3_ACCESS_KEY=<key> S3_SECRET_KEY=<secret>"
@@ -71,6 +71,9 @@ help: ## Show this help message
 	@echo "                                         reveal-share disclosure phase"
 	@echo "  testnet-logs    Tail logs of the dkg-node containers"
 	@echo "  testnet-down    Stop the testnet and wipe Docker volumes"
+	@echo "  battery-testnet-up  Start the testnet tuned for tests/battery: the nodes"
+	@echo "                  activate the whole MAX_K pool of every epoch"
+	@echo "  battery         Run the battery against a running testnet (BATTERY_RUN)"
 	@echo ""
 	@echo "UI Commands:"
 	@echo "  ui-install       Install UI dependencies (pnpm install)"
@@ -184,6 +187,18 @@ testnet-run: ## (Deprecated alias) Wait for the running dkg-node fleet to auto-c
 	@echo "Bring the fleet up with 'make testnet-up' and tail logs with"
 	@echo "'make testnet-logs' to watch the schedule."
 
+# tests/battery/compose.battery.yml layers DAVINCI_DKG_ACTIVATE_AHEAD=8 on the
+# nodes: every epoch deals MAX_K = 8 pool keys, a registration claims the next
+# *activated* one, and the swarm registers up to MAX_K organizers at once, so
+# the fleet has to activate the whole pool instead of the default two ahead.
+BATTERY_COMPOSE := -f docker-compose.yml -f ../tests/battery/compose.battery.yml
+
+battery-testnet-up: ## Start the testnet tuned for the battery (see tests/battery/README.md)
+	@echo "Starting battery testnet with $(DKG_NODE_COUNT) nodes (DAVINCI_DKG_ACTIVATE_AHEAD=8)..."
+	@cd testnet && \
+	DKG_NODE_COUNT=$(DKG_NODE_COUNT) DKG_THRESHOLD=$(DKG_THRESHOLD) \
+	docker compose $(BATTERY_COMPOSE) up -d --scale dkg-node=$(DKG_NODE_COUNT) --build
+
 battery: ## Run the load / adversarial battery against a running testnet (see tests/battery/README.md)
 	DAVINCI_DKG_BATTERY=1 \
 	DAVINCI_DKG_TEST_RPC_URL=$${DAVINCI_DKG_TEST_RPC_URL:-http://127.0.0.1:8545} \
@@ -254,7 +269,9 @@ build: ## Build all Go binaries
 
 test: ## Run fast unit tests
 	@echo "Running unit tests..."
-	go test -v $$(go list ./... | grep -v github.com/vocdoni/davinci-dkg/tests) -timeout=30m -failfast
+	@# -timeout is per package: circuits/contribution (3.0M constraints, ~10 min
+	@# Groth16 setup) needs about 20 min on its own.
+	go test -v $$(go list ./... | grep -v github.com/vocdoni/davinci-dkg/tests) -timeout=120m -failfast
 
 test-integration: ## Run heavy integration tests
 	@echo "Running integration tests..."

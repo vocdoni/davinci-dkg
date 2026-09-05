@@ -8,9 +8,10 @@
 //
 // Files emitted:
 //
-//	tests/vectors/protocol.json    domain digests + the organizer-share vector
+//	tests/vectors/protocol.json    domain digests (Schnorr / DLEQ transcripts and
+//	                               the three BRLC transcript domains) + field constants
 //	tests/vectors/schnorr.json     operator + organizer Schnorr proofs
-//	tests/vectors/dleq.json        Chaum-Pedersen DLEQ challenges + responses
+//	tests/vectors/dleq.json        committee partial-decryption DLEQ challenges + responses
 //
 // Determinism: every vector uses fixed inputs and either deterministic
 // witnesses or the chosen ones below. Re-running this command on a clean
@@ -31,12 +32,10 @@ import (
 	ethcrypto "github.com/ethereum/go-ethereum/crypto"
 	"github.com/iden3/go-iden3-crypto/poseidon"
 
-	"github.com/vocdoni/davinci-dkg/crypto/dleq"
 	"github.com/vocdoni/davinci-dkg/crypto/group"
 	"github.com/vocdoni/davinci-dkg/crypto/hash"
 	"github.com/vocdoni/davinci-dkg/crypto/schnorr"
 	"github.com/vocdoni/davinci-dkg/internal/protocol"
-	"github.com/vocdoni/davinci-dkg/types"
 )
 
 var bn254Q, _ = new(big.Int).SetString(
@@ -59,11 +58,10 @@ func main() {
 // ─── protocol.json ──────────────────────────────────────────────────────────
 
 type protocolFile struct {
-	Description    string                       `json:"description"`
-	Domains        map[string]protocolDomainRow `json:"domains"`
-	BN254Q         string                       `json:"bn254Q"`
-	SubgroupL      string                       `json:"subgroupOrderL"`
-	OrganizerShare organizerShareVector         `json:"organizerShare"`
+	Description string                       `json:"description"`
+	Domains     map[string]protocolDomainRow `json:"domains"`
+	BN254Q      string                       `json:"bn254Q"`
+	SubgroupL   string                       `json:"subgroupOrderL"`
 }
 
 type protocolDomainRow struct {
@@ -72,41 +70,27 @@ type protocolDomainRow struct {
 	BN254Reduced string `json:"bn254Reduced"`
 }
 
-// organizerShareVector pins the keccak encoding of the organizer's
-// Chaum-Pedersen share (spec §3) for the SDK and the Foundry suite. The
-// scalars are fixed small integers so the whole row is reproducible.
-type organizerShareVector struct {
-	Description string `json:"description"`
-	Label       string `json:"label"`
-	Domain      string `json:"domain"` // keccak256(DOMAIN_ORGANIZER_SHARE_V1), hex
-	EpochID     string `json:"epochId"`
-	AID         string `json:"aid"`
-	CtIdx       uint16 `json:"ctIdx"`
-	SkOrg       string `json:"skOrg"`
-	W           string `json:"w"` // DLEQ nonce
-	K           string `json:"k"` // C1 = k·G
-	PKOrgX      string `json:"pkOrgX"`
-	PKOrgY      string `json:"pkOrgY"`
-	C1X         string `json:"c1x"`
-	C1Y         string `json:"c1y"`
-	DeltaX      string `json:"deltaX"`
-	DeltaY      string `json:"deltaY"`
-	A1X         string `json:"a1x"`
-	A1Y         string `json:"a1y"`
-	A2X         string `json:"a2x"`
-	A2Y         string `json:"a2y"`
-	E           string `json:"e"`
-	Z           string `json:"z"`
-}
-
 func buildProtocol() protocolFile {
 	return protocolFile{
-		Description: "Cross-impl protocol constants. Domain digests are bound into the Schnorr / DLEQ / organizer-share transcripts.",
+		Description: "Cross-impl protocol constants. Domain digests are bound into the Schnorr registration transcripts; " +
+			"the *TranscriptV1 rows are the BRLC domains every proof-carrying call binds into its challenge " +
+			"(keccak(eid || domain || anchor) mod p).",
 		Domains: map[string]protocolDomainRow{
 			"OperatorRegisterV1":  domainRow(protocol.DomainOperatorRegisterV1Str, protocol.DomainOperatorRegisterV1),
 			"OrganizerRegisterV1": domainRow(protocol.DomainOrganizerRegisterV1Str, protocol.DomainOrganizerRegisterV1),
-			"DLEQV1":              domainRow(protocol.DomainDLEQV1Str, protocol.DomainDLEQV1),
-			"OrganizerShareV1":    domainRow(protocol.DomainOrganizerShareV1Str, protocol.DomainOrganizerShareV1),
+			// BRLC transcript domains: submitContribution, activatePoolKey
+			// and combineDecryption each derive their Fiat-Shamir challenge
+			// under one of these. The pool-key row replaces the former
+			// davinci-dkg:finalize:v1.
+			"ContributionTranscriptV1": domainRow(
+				protocol.DomainContributionTranscriptV1Str, protocol.DomainContributionTranscriptV1,
+			),
+			"PoolKeyTranscriptV1": domainRow(
+				protocol.DomainPoolKeyTranscriptV1Str, protocol.DomainPoolKeyTranscriptV1,
+			),
+			"DecryptCombineTranscriptV1": domainRow(
+				protocol.DomainDecryptCombineTranscriptV1Str, protocol.DomainDecryptCombineTranscriptV1,
+			),
 			// PartialDecrypt domain is consumed by the in-circuit DLEQ
 			// transcript via SetBytes (no keccak); included here so the SDK
 			// can re-derive it without hardcoding the modular reduction.
@@ -116,86 +100,8 @@ func buildProtocol() protocolFile {
 				BN254Reduced: hash.DomainValue(hash.DomainPartialDecrypt).String(),
 			},
 		},
-		BN254Q:         bn254Q.String(),
-		SubgroupL:      group.ScalarField().String(),
-		OrganizerShare: buildOrganizerShare(),
-	}
-}
-
-// buildOrganizerShare reproduces spec §3 with fixed scalars:
-//
-//	e = keccak256(domain ‖ eid ‖ aid ‖ uint256(ctIdx) ‖ PK_org ‖ C1 ‖ Δ ‖ A1 ‖ A2) mod q
-//	z = w + e·sk_org mod q
-//
-// The row is cross-checked against crypto/dleq so the vectors can never
-// drift from the code path the node and the combine witness builder use.
-func buildOrganizerShare() organizerShareVector {
-	const (
-		label  = "basic"
-		eidHex = "0x000000000000000000000077"
-		ctIdx  = uint16(3)
-	)
-	aidHex := "0x" + hexN(31, 0x00) + "07"
-	skOrg := big.NewInt(1234567890)
-	w := big.NewInt(7777777)
-	k := big.NewInt(999999)
-
-	var eid [12]byte
-	copy(eid[:], mustHexBytes(eidHex))
-	var aid [32]byte
-	copy(aid[:], mustHexBytes(aidHex))
-
-	order := group.ScalarField()
-	encode := func(scalar *big.Int, base types.CurvePoint) types.CurvePoint {
-		point := group.NewPoint()
-		if base.X == nil {
-			point.ScalarBaseMult(scalar)
-			return group.Encode(point)
-		}
-		decoded, err := group.Decode(base)
-		if err != nil {
-			fail("organizer share: decode base: %v", err)
-		}
-		point.ScalarMult(decoded, scalar)
-		return group.Encode(point)
-	}
-
-	pkOrg := encode(skOrg, types.CurvePoint{})
-	c1 := encode(k, types.CurvePoint{})
-	delta := encode(skOrg, c1)
-	a1 := encode(w, types.CurvePoint{})
-	a2 := encode(w, c1)
-
-	e := dleq.OrganizerShareChallenge(eid, aid, ctIdx, pkOrg, c1, delta, a1, a2)
-	z := new(big.Int).Mod(new(big.Int).Add(w, new(big.Int).Mul(e, skOrg)), order)
-
-	proof := dleq.Proof{A1: a1, A2: a2, Response: z}
-	if !dleq.VerifyOrganizerShare(eid, aid, ctIdx, pkOrg, c1, delta, proof) {
-		fail("organizer share vector does not verify against crypto/dleq")
-	}
-
-	return organizerShareVector{
-		Description: "Organizer share DLEQ. e = keccak256(abi.encodePacked(domain, eid, aid, uint256(ctIdx), pkOrg.x, pkOrg.y, c1.x, c1.y, delta.x, delta.y, a1.x, a1.y, a2.x, a2.y)) % L; z = w + e*skOrg % L. Verification: z*G == A1 + e*PK_org and z*C1 == A2 + e*delta.",
-		Label:       label,
-		Domain:      protocol.DomainOrganizerShareV1.Hex(),
-		EpochID:     eidHex,
-		AID:         aidHex,
-		CtIdx:       ctIdx,
-		SkOrg:       skOrg.String(),
-		W:           w.String(),
-		K:           k.String(),
-		PKOrgX:      pkOrg.X.String(),
-		PKOrgY:      pkOrg.Y.String(),
-		C1X:         c1.X.String(),
-		C1Y:         c1.Y.String(),
-		DeltaX:      delta.X.String(),
-		DeltaY:      delta.Y.String(),
-		A1X:         a1.X.String(),
-		A1Y:         a1.Y.String(),
-		A2X:         a2.X.String(),
-		A2Y:         a2.Y.String(),
-		E:           e.String(),
-		Z:           z.String(),
+		BN254Q:    bn254Q.String(),
+		SubgroupL: group.ScalarField().String(),
 	}
 }
 

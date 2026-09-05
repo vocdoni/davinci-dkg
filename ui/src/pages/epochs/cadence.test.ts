@@ -8,7 +8,8 @@ import {
   formatCountdown,
   nextEpochCountdown,
   phaseCountdown,
-  transcriptWords,
+  CONTRIBUTION_TRANSCRIPT_WORDS,
+  POOLKEY_TRANSCRIPT_WORDS,
 } from './cadence'
 
 const policy: EpochPolicy = {
@@ -42,8 +43,8 @@ function epoch(status: EpochPhaseName, overrides: Partial<EpochEntity> = {}): Ep
     slots: [],
     contributions: [],
     finalization: null,
-    collectivePublicKey: null,
-    shareCommitmentHashes: [],
+    poolKeys: [],
+    poolNext: 0,
     applications: [],
     counts: { claims: 0, contributions: 0, ciphertexts: 0, partials: 0, combines: 0, applications: 0 },
     events: [],
@@ -172,10 +173,9 @@ describe('formatting helpers', () => {
   })
 })
 
-describe('transcriptWords', () => {
-  it('is 2·n² + 5·n', () => {
-    expect(transcriptWords(64)).toBe(2 * 64 * 64 + 5 * 64)
-    expect(transcriptWords(1)).toBe(7)
-    expect(transcriptWords(0)).toBe(0)
+describe('transcript sizes', () => {
+  it('follow the circuit bounds MaxN = 32 and MaxK = 8', () => {
+    expect(POOLKEY_TRANSCRIPT_WORDS).toBe(6 * 32)
+    expect(CONTRIBUTION_TRANSCRIPT_WORDS).toBe(3 * 8 * 32 + 5 * 32)
   })
 })

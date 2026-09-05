@@ -1,9 +1,12 @@
 // SDK application-lifecycle end-to-end test.
 //
 // Validates the per-application surface against a live chain:
-// registerApplication (organizer-only, with a Schnorr proof of possession of
-// sk_org) and getApplication. Without this, an ABI mismatch in writer.ts would
-// only surface in a downstream consumer hitting the chain.
+// registerApplication in both modes (organizer-locked with a Schnorr proof of
+// possession of sk_org, revealed later via revealOrganizerSecret; automatic
+// with no organizer key at all — the contract always stores the fixed
+// identity and a zero secret) and getApplication. Without this, an ABI
+// mismatch in writer.ts would only surface in a downstream consumer hitting
+// the chain.
 //
 // The proof of possession is built entirely in TS via `proveOrganizer` from
 // sdk/src/schnorr.ts; this is the load-bearing cross-impl assertion — the
@@ -16,11 +19,13 @@ import { spawn } from 'node:child_process';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  AppMode,
   DKGClient,
   DKGWriter,
+  normalizeAppPolicy,
   proveOrganizer,
   randomOrganizerSecret,
-  type AppPolicy,
+  type AppPolicyInput,
   randomAid,
 } from '../src/index.js';
 import { makePublicClient, makeWalletClient } from './helpers/accounts.js';
@@ -63,8 +68,6 @@ function lastJsonLine<T>(stdout: string): T | null {
 }
 
 
-const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000' as const;
-
 describe('SDK application lifecycle end-to-end (live chain)', () => {
   let client:  DKGClient;
   let writer:  DKGWriter;
@@ -81,7 +84,7 @@ describe('SDK application lifecycle end-to-end (live chain)', () => {
       managerAddress,
     });
 
-    const out = await runGoFixture(['--rpc-url', rpcUrl, '--addresses-file', addressesFile, '--action=create']);
+    const out = await runGoFixture(['--rpc-url', rpcUrl, '--addresses-file', addressesFile, '--action=create', '--keys=3']);
     if (out.status !== 0) {
       console.warn('[application-e2e] fixture create failed — skipping. stderr:', out.stderr.slice(0, 500));
       return;
@@ -95,23 +98,22 @@ describe('SDK application lifecycle end-to-end (live chain)', () => {
 
     const aid = randomAid();
     const skOrg = randomOrganizerSecret();
-    const policy: AppPolicy = {
-      authorizedSubmitter: ZERO_ADDRESS,
-      maxCiphertexts:      0,
-      notBeforeBlock:      0n,
-      notAfterBlock:       0n,
-    };
+    // Every field optional: the defaults are organizer-locked, registrant-only.
+    const policy: AppPolicyInput = { maxCiphertexts: 0 };
 
     const tx = await writer.registerApplication(fixture.epochId, aid, policy, skOrg);
     await writer.publicClient.waitForTransactionReceipt({ hash: tx });
 
     const app = await client.getApplication(fixture.epochId, aid);
     expect(app.exists).toBe(true);
+    expect(app.policy.mode).toBe(AppMode.OrganizerLocked);
     expect(app.policy.maxCiphertexts).toBe(0);
-    // The zero submitter resolves on chain to the registering address.
-    expect(app.policy.authorizedSubmitter.toLowerCase()).toBe(
-      writer.walletClient.account!.address.toLowerCase(),
-    );
+    // An empty list means "the registering address only"; nothing is resolved.
+    expect(app.policy.submitters).toEqual([]);
+    expect(app.policy.openSubmission).toBe(false);
+    expect(app.policy.decryptNotAfter).toBe(0n);
+    // Organizer-locked: nothing about sk_org is on chain.
+    expect(app.organizerSecret).toBe(0n);
 
     // The stored PK_org must be sk_org·G. proveOrganizer returns RTE coords
     // (the on-chain transcript form); client.getApplication converts the
@@ -123,6 +125,39 @@ describe('SDK application lifecycle end-to-end (live chain)', () => {
     expect(app.organizerPK[1]).toBe(pkOrgY_TE);
   }, 900_000);
 
+  it('an automatic application has no organizer key and skips the Schnorr proof', async () => {
+    const { enabled } = useHarness();
+    if (!enabled || !fixture) return;
+
+    const aid = randomAid();
+    const submitter = writer.walletClient.account!.address;
+    const deadline = BigInt(Math.floor(Date.now() / 1000) + 24 * 3600);
+    // Automatic mode takes no organizer secret at all — pass none.
+    const tx = await writer.registerApplication(
+      fixture.epochId,
+      aid,
+      { mode: AppMode.Automatic, submitters: [submitter], maxCiphertexts: 4, decryptNotAfter: deadline },
+    );
+    await writer.publicClient.waitForTransactionReceipt({ hash: tx });
+
+    const app = await client.getApplication(fixture.epochId, aid);
+    expect(app.exists).toBe(true);
+    expect(app.policy.mode).toBe(AppMode.Automatic);
+    expect(app.policy.submitters.map((a) => a.toLowerCase())).toEqual([submitter.toLowerCase()]);
+    expect(app.policy.maxCiphertexts).toBe(4);
+    expect(app.policy.decryptNotAfter).toBe(deadline);
+    // No organizer key at all: the contract stores the fixed identity and a
+    // zero secret, unconditionally.
+    expect(app.organizerSecret).toBe(0n);
+    expect(app.organizerPK).toEqual([0n, 1n]);
+    expect(await client.getOrganizerPK(fixture.epochId, aid)).toEqual(app.organizerPK);
+    expect(await client.isDecryptionOpen(fixture.epochId, aid)).toBe(true);
+
+    const events = await client.getApplicationRegisteredEvents({ epochId: fixture.epochId });
+    const mine = events.find((e) => e.aid.toLowerCase() === aid.toLowerCase());
+    expect(mine?.mode).toBe(AppMode.Automatic);
+  }, 900_000);
+
   it('a tampered Schnorr response is rejected on-chain', async () => {
     const { enabled } = useHarness();
     if (!enabled || !fixture) return;
@@ -130,11 +165,6 @@ describe('SDK application lifecycle end-to-end (live chain)', () => {
     const aid = randomAid();
     const sk = 1234567890123456789n;
     const { pkOrgX, pkOrgY, proof } = proveOrganizer(sk, fixture.epochId, aid);
-
-    const policy: AppPolicy = {
-      authorizedSubmitter: ZERO_ADDRESS, maxCiphertexts: 0,
-      notBeforeBlock: 0n, notAfterBlock: 0n,
-    };
 
     // Flip one bit of `z` and confirm the on-chain verifier reverts. The
     // writer builds the proof itself, so go through the raw ABI here.
@@ -144,12 +174,31 @@ describe('SDK application lifecycle end-to-end (live chain)', () => {
         abi: (await import('../src/abi.js')).dkgAppManagerAbi,
         functionName: 'registerApplication',
         args: [
-          fixture.epochId, aid, policy,
+          fixture.epochId, aid, normalizeAppPolicy(),
           pkOrgX, pkOrgY, proof.ax, proof.ay, proof.z + 1n,
         ],
         account: writer.walletClient.account!.address,
       }),
     ).rejects.toThrow();
+  }, 900_000);
+
+  it('revealOrganizerSecret publishes sk_org once for a locked application', async () => {
+    const { enabled } = useHarness();
+    if (!enabled || !fixture) return;
+
+    const aid = randomAid();
+    const skOrg = randomOrganizerSecret();
+    const policy: AppPolicyInput = { maxCiphertexts: 0 };
+    const regTx = await writer.registerApplication(fixture.epochId, aid, policy, skOrg);
+    await writer.publicClient.waitForTransactionReceipt({ hash: regTx });
+    expect((await client.getApplication(fixture.epochId, aid)).organizerSecret).toBe(0n);
+
+    const revealTx = await writer.revealOrganizerSecret(fixture.epochId, aid, skOrg);
+    await writer.publicClient.waitForTransactionReceipt({ hash: revealTx });
+    expect((await client.getApplication(fixture.epochId, aid)).organizerSecret).toBe(skOrg);
+
+    // AlreadyRevealed() on a second call.
+    await expect(writer.revealOrganizerSecret(fixture.epochId, aid, skOrg)).rejects.toThrow();
   }, 900_000);
 
   it('getApplication returns exists=false for an unregistered aid', async () => {

@@ -104,34 +104,36 @@ export const dkgManagerAbi = [
   },
   {
     type: 'function',
-    name: 'getCollectivePublicKey',
-    stateMutability: 'view',
+    name: 'finalizeEpoch',
+    stateMutability: 'nonpayable',
     inputs: [{ name: 'epochId', type: 'bytes12' }],
-    outputs: [
-      {
-        name: '',
-        type: 'tuple',
-        components: [
-          { name: 'x', type: 'uint256' },
-          { name: 'y', type: 'uint256' },
-        ],
-      },
-    ],
+    outputs: [],
   },
   {
     type: 'function',
-    name: 'finalizeEpoch',
+    name: 'activatePoolKey',
     stateMutability: 'nonpayable',
     inputs: [
       { name: 'epochId', type: 'bytes12' },
-      { name: 'aggregateCommitmentsHash', type: 'bytes32' },
-      { name: 'collectivePublicKeyHash', type: 'bytes32' },
-      { name: 'shareCommitmentHash', type: 'bytes32' },
+      { name: 'keyIndex', type: 'uint8' },
+      // Poseidon digest of the masked transcript words (public input 5); the
+      // BRLC challenge is anchored on keccak(transcriptDigest ‖ keccak(transcript)).
+      { name: 'transcriptDigest', type: 'bytes32' },
       { name: 'transcript', type: 'bytes' },
       { name: 'proof', type: 'bytes' },
       { name: 'input', type: 'bytes' },
     ],
     outputs: [],
+  },
+  {
+    type: 'function',
+    name: 'claimPoolKey',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'epochId', type: 'bytes12' },
+      { name: 'aid', type: 'bytes32' },
+    ],
+    outputs: [{ name: 'keyIndex', type: 'uint8' }],
   },
   {
     type: 'function',
@@ -149,6 +151,9 @@ export const dkgManagerAbi = [
       { name: 'deltaHash', type: 'bytes32' },
       { name: 'proof', type: 'bytes' },
       { name: 'input', type: 'bytes' },
+      // Merkle proof (bottom-up siblings, MERKLE_DEPTH=5) that this
+      // participant's share commitment is in poolShareRoots[epochId][poolIndex].
+      { name: 'shareProof', type: 'bytes32[]' },
     ],
     outputs: [],
   },
@@ -274,7 +279,6 @@ export const dkgManagerAbi = [
           { name: 'contributorIndex', type: 'uint16' },
           { name: 'commitmentsHash', type: 'bytes32' },
           { name: 'encryptedSharesHash', type: 'bytes32' },
-          { name: 'commitmentVectorDigest', type: 'bytes32' },
           { name: 'accepted', type: 'bool' },
         ],
       },
@@ -358,16 +362,6 @@ export const dkgManagerAbi = [
   },
   {
     type: 'function',
-    name: 'getShareCommitmentHash',
-    stateMutability: 'view',
-    inputs: [
-      { name: 'epochId', type: 'bytes12' },
-      { name: 'participantIndex', type: 'uint16' },
-    ],
-    outputs: [{ name: '', type: 'bytes32' }],
-  },
-  {
-    type: 'function',
     name: 'getContributionVerifierVKeyHash',
     stateMutability: 'view',
     inputs: [],
@@ -382,7 +376,7 @@ export const dkgManagerAbi = [
   },
   {
     type: 'function',
-    name: 'getFinalizeVerifierVKeyHash',
+    name: 'getPoolKeyVerifierVKeyHash',
     stateMutability: 'view',
     inputs: [],
     outputs: [{ name: '', type: 'bytes32' }],
@@ -393,6 +387,49 @@ export const dkgManagerAbi = [
     stateMutability: 'view',
     inputs: [],
     outputs: [{ name: '', type: 'bytes32' }],
+  },
+  {
+    type: 'function',
+    name: 'getPoolKey',
+    stateMutability: 'view',
+    inputs: [
+      { name: 'epochId', type: 'bytes12' },
+      { name: 'keyIndex', type: 'uint8' },
+    ],
+    outputs: [
+      { name: '', type: 'uint256' },
+      { name: '', type: 'uint256' },
+    ],
+  },
+  {
+    type: 'function',
+    name: 'getPoolStatus',
+    stateMutability: 'view',
+    inputs: [{ name: 'epochId', type: 'bytes12' }],
+    outputs: [
+      { name: 'nextIndex', type: 'uint8' },
+      { name: 'activated', type: 'uint8' },
+    ],
+  },
+  {
+    type: 'function',
+    name: 'getPoolShareRoot',
+    stateMutability: 'view',
+    inputs: [
+      { name: 'epochId', type: 'bytes12' },
+      { name: 'keyIndex', type: 'uint8' },
+    ],
+    outputs: [{ name: '', type: 'bytes32' }],
+  },
+  {
+    type: 'function',
+    name: 'getAppPoolIndex',
+    stateMutability: 'view',
+    inputs: [
+      { name: 'epochId', type: 'bytes12' },
+      { name: 'aid', type: 'bytes32' },
+    ],
+    outputs: [{ name: '', type: 'uint8' }],
   },
 
   // ── events ────────────────────────────────────────────────────────────────
@@ -445,9 +482,26 @@ export const dkgManagerAbi = [
     name: 'EpochLive',
     inputs: [
       { name: 'epochId', type: 'bytes12', indexed: true },
-      { name: 'aggregateCommitmentsHash', type: 'bytes32', indexed: false },
-      { name: 'collectivePublicKeyHash', type: 'bytes32', indexed: false },
-      { name: 'shareCommitmentHash', type: 'bytes32', indexed: false },
+      { name: 'contributionCount', type: 'uint16', indexed: false },
+    ],
+  },
+  {
+    type: 'event',
+    name: 'PoolKeyActivated',
+    inputs: [
+      { name: 'epochId', type: 'bytes12', indexed: true },
+      { name: 'keyIndex', type: 'uint8', indexed: true },
+      { name: 'x', type: 'uint256', indexed: false },
+      { name: 'y', type: 'uint256', indexed: false },
+    ],
+  },
+  {
+    type: 'event',
+    name: 'PoolKeyClaimed',
+    inputs: [
+      { name: 'epochId', type: 'bytes12', indexed: true },
+      { name: 'aid', type: 'bytes32', indexed: true },
+      { name: 'keyIndex', type: 'uint8', indexed: false },
     ],
   },
   {
@@ -524,17 +578,28 @@ export const dkgManagerAbi = [
   { type: 'error', name: 'InvalidCombinedDecryption', inputs: [] },
   { type: 'error', name: 'InsufficientPartialDecryptions', inputs: [] },
   { type: 'error', name: 'InvalidProofInput', inputs: [] },
-  { type: 'error', name: 'NotOwner', inputs: [] },
-  { type: 'error', name: 'InvalidDecryptionPolicy', inputs: [] },
-  { type: 'error', name: 'DecryptionNotYetAllowed', inputs: [] },
-  { type: 'error', name: 'DecryptionExpired', inputs: [] },
   { type: 'error', name: 'DecryptionLimitReached', inputs: [] },
   { type: 'error', name: 'CiphertextAlreadySubmitted', inputs: [] },
   { type: 'error', name: 'CiphertextNotSubmitted', inputs: [] },
   { type: 'error', name: 'InvalidCiphertext', inputs: [] },
-  { type: 'error', name: 'OrganizerShareMissing', inputs: [] },
   { type: 'error', name: 'AppManagerAlreadySet', inputs: [] },
   { type: 'error', name: 'AppManagerNotSet', inputs: [] },
+  { type: 'error', name: 'PoolExhausted', inputs: [] },
+  { type: 'error', name: 'PoolKeyAlreadyActive', inputs: [] },
+  { type: 'error', name: 'PoolKeyNotActive', inputs: [] },
+  // BRLC: a transcript word >= the BN254 scalar field on any proof-carrying
+  // call (submitContribution, activatePoolKey, combineDecryption).
+  { type: 'error', name: 'TranscriptWordNotInField', inputs: [] },
+  // Raised by DKGAppManager and bubbled through submitCiphertext,
+  // submitPartialDecryption and combineDecryption; listed here so viem
+  // decodes them on manager calls.
+  { type: 'error', name: 'InvalidApplication', inputs: [] },
+  { type: 'error', name: 'NotOwner', inputs: [] },
+  { type: 'error', name: 'DecryptionNotYetAllowed', inputs: [] },
+  { type: 'error', name: 'DecryptionExpired', inputs: [] },
+  { type: 'error', name: 'DecryptionNotOpen', inputs: [] },
+  { type: 'error', name: 'DecryptionClosed', inputs: [] },
+  { type: 'error', name: 'OrganizerSecretNotRevealed', inputs: [] },
 ] as const;
 
 export const dkgRegistryAbi = [
@@ -730,39 +795,35 @@ export const dkgAppManagerAbi = [
         name: 'policy',
         type: 'tuple',
         components: [
-          { name: 'authorizedSubmitter', type: 'address' },
+          // DKGTypes.AppMode: 0 = OrganizerLocked, 1 = Automatic.
+          { name: 'mode', type: 'uint8' },
+          { name: 'openSubmission', type: 'bool' },
+          { name: 'submitters', type: 'address[]' },
           { name: 'maxCiphertexts', type: 'uint16' },
           { name: 'notBeforeBlock', type: 'uint64' },
           { name: 'notAfterBlock', type: 'uint64' },
+          { name: 'decryptNotBefore', type: 'uint64' },
+          { name: 'decryptNotAfter', type: 'uint64' },
         ],
       },
+      // Automatic mode ignores these and stores the fixed identity (0, 1)
+      // with a zero Schnorr proof.
       { name: 'pkOrgX', type: 'uint256' },
       { name: 'pkOrgY', type: 'uint256' },
-      { name: 'ax', type: 'uint256' },
-      { name: 'ay', type: 'uint256' },
-      { name: 'z', type: 'uint256' },
+      { name: 'schnorrAx', type: 'uint256' },
+      { name: 'schnorrAy', type: 'uint256' },
+      { name: 'schnorrZ', type: 'uint256' },
     ],
     outputs: [],
   },
   {
     type: 'function',
-    name: 'submitOrganizerShare',
+    name: 'revealOrganizerSecret',
     stateMutability: 'nonpayable',
     inputs: [
       { name: 'epochId', type: 'bytes12' },
       { name: 'aid', type: 'bytes32' },
-      { name: 'ctIdx', type: 'uint16' },
-      { name: 'c1x', type: 'uint256' },
-      { name: 'c1y', type: 'uint256' },
-      { name: 'c2x', type: 'uint256' },
-      { name: 'c2y', type: 'uint256' },
-      { name: 'deltaX', type: 'uint256' },
-      { name: 'deltaY', type: 'uint256' },
-      { name: 'a1x', type: 'uint256' },
-      { name: 'a1y', type: 'uint256' },
-      { name: 'a2x', type: 'uint256' },
-      { name: 'a2y', type: 'uint256' },
-      { name: 'z', type: 'uint256' },
+      { name: 'organizerSecret', type: 'uint256' },
     ],
     outputs: [],
   },
@@ -790,14 +851,20 @@ export const dkgAppManagerAbi = [
               { name: 'y', type: 'uint256' },
             ],
           },
+          { name: 'organizerSecret', type: 'uint256' },
+          { name: 'poolIndex', type: 'uint8' },
           {
             name: 'policy',
             type: 'tuple',
             components: [
-              { name: 'authorizedSubmitter', type: 'address' },
+              { name: 'mode', type: 'uint8' },
+              { name: 'openSubmission', type: 'bool' },
+              { name: 'submitters', type: 'address[]' },
               { name: 'maxCiphertexts', type: 'uint16' },
               { name: 'notBeforeBlock', type: 'uint64' },
               { name: 'notAfterBlock', type: 'uint64' },
+              { name: 'decryptNotBefore', type: 'uint64' },
+              { name: 'decryptNotAfter', type: 'uint64' },
             ],
           },
           { name: 'createdAtBlock', type: 'uint64' },
@@ -808,14 +875,42 @@ export const dkgAppManagerAbi = [
   },
   {
     type: 'function',
-    name: 'getOrganizerShareHash',
+    name: 'getOrganizerPK',
     stateMutability: 'view',
     inputs: [
       { name: 'epochId', type: 'bytes12' },
       { name: 'aid', type: 'bytes32' },
-      { name: 'ctIdx', type: 'uint16' },
     ],
-    outputs: [{ name: '', type: 'bytes32' }],
+    outputs: [
+      { name: '', type: 'uint256' },
+      { name: '', type: 'uint256' },
+    ],
+  },
+  // Reverts DecryptionNotOpen() before decryptNotBefore, DecryptionClosed()
+  // past decryptNotAfter, OrganizerSecretNotRevealed() for an OrganizerLocked
+  // application whose organizer has not revealed yet, and InvalidApplication()
+  // for an unknown aid; returns nothing otherwise.
+  {
+    type: 'function',
+    name: 'requireDecryptionOpen',
+    stateMutability: 'view',
+    inputs: [
+      { name: 'epochId', type: 'bytes12' },
+      { name: 'aid', type: 'bytes32' },
+    ],
+    outputs: [],
+  },
+  {
+    type: 'function',
+    name: 'requireCanSubmitCiphertext',
+    stateMutability: 'view',
+    inputs: [
+      { name: 'epochId', type: 'bytes12' },
+      { name: 'aid', type: 'bytes32' },
+      { name: 'ciphertextIndex', type: 'uint16' },
+      { name: 'sender', type: 'address' },
+    ],
+    outputs: [],
   },
   {
     type: 'function',
@@ -842,22 +937,17 @@ export const dkgAppManagerAbi = [
       { name: 'creator', type: 'address', indexed: true },
       { name: 'organizerPKx', type: 'uint256', indexed: false },
       { name: 'organizerPKy', type: 'uint256', indexed: false },
+      { name: 'mode', type: 'uint8', indexed: false },
+      { name: 'poolIndex', type: 'uint8', indexed: false },
     ],
   },
   {
     type: 'event',
-    name: 'OrganizerShareSubmitted',
+    name: 'OrganizerSecretRevealed',
     inputs: [
       { name: 'epochId', type: 'bytes12', indexed: true },
       { name: 'aid', type: 'bytes32', indexed: true },
-      { name: 'ctIdx', type: 'uint16', indexed: true },
-      { name: 'deltaX', type: 'uint256', indexed: false },
-      { name: 'deltaY', type: 'uint256', indexed: false },
-      { name: 'a1x', type: 'uint256', indexed: false },
-      { name: 'a1y', type: 'uint256', indexed: false },
-      { name: 'a2x', type: 'uint256', indexed: false },
-      { name: 'a2y', type: 'uint256', indexed: false },
-      { name: 'z', type: 'uint256', indexed: false },
+      { name: 'organizerSecret', type: 'uint256', indexed: false },
     ],
   },
 
@@ -868,16 +958,29 @@ export const dkgAppManagerAbi = [
   { type: 'error', name: 'InvalidEpoch', inputs: [] },
   { type: 'error', name: 'InvalidPhase', inputs: [] },
   { type: 'error', name: 'InvalidAddress', inputs: [] },
-  { type: 'error', name: 'InvalidCiphertext', inputs: [] },
-  { type: 'error', name: 'CiphertextNotSubmitted', inputs: [] },
-  { type: 'error', name: 'AlreadyPartiallyDecrypted', inputs: [] },
-  { type: 'error', name: 'InvalidProofInput', inputs: [] },
   { type: 'error', name: 'NotOwner', inputs: [] },
   { type: 'error', name: 'DecryptionNotYetAllowed', inputs: [] },
   { type: 'error', name: 'DecryptionExpired', inputs: [] },
   { type: 'error', name: 'DecryptionLimitReached', inputs: [] },
-  { type: 'error', name: 'InsufficientPartialDecryptions', inputs: [] },
-  { type: 'error', name: 'OrganizerShareMissing', inputs: [] },
+  // requireDecryptionOpen: before policy.decryptNotBefore.
+  { type: 'error', name: 'DecryptionNotOpen', inputs: [] },
+  // Past policy.decryptNotAfter: submitCiphertext, submitPartialDecryption
+  // and combineDecryption all revert with it (the manager bubbles it up).
+  { type: 'error', name: 'DecryptionClosed', inputs: [] },
+  // requireDecryptionOpen: OrganizerLocked application whose organizerSecret
+  // is still 0 — no partial and no combine exists on chain before the reveal.
+  { type: 'error', name: 'OrganizerSecretNotRevealed', inputs: [] },
+  // revealOrganizerSecret: sk·G != organizerPK (OrganizerLocked only —
+  // Automatic applications have no organizer secret to reveal).
+  { type: 'error', name: 'InvalidOrganizerSecret', inputs: [] },
+  { type: 'error', name: 'AlreadyRevealed', inputs: [] },
+  // registerApplication: no unclaimed pool key left this epoch.
+  { type: 'error', name: 'PoolExhausted', inputs: [] },
+  // registerApplication: the next unclaimed pool key hasn't been activated yet.
+  { type: 'error', name: 'PoolKeyNotActive', inputs: [] },
+  // Contradictory policy: open submission with a list, a zero address in the
+  // list, more than 32 submitters, or a deadline not in the future.
+  { type: 'error', name: 'InvalidPolicy', inputs: [] },
   { type: 'error', name: 'IsIdentity', inputs: [] },
   { type: 'error', name: 'NotCanonical', inputs: [] },
   { type: 'error', name: 'NotOnCurve', inputs: [] },

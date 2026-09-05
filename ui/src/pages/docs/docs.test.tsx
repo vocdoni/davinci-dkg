@@ -34,7 +34,8 @@ describe('docs/protocol', () => {
       'Overview',
       'Epoch lifecycle',
       'Committee lottery',
-      'Applications and organizer keys',
+      'Contribution, finalization and pool keys',
+      'Applications, modes and windows',
       'Threshold decryption',
       'What holds, and what does not',
     ]) {
@@ -44,9 +45,11 @@ describe('docs/protocol', () => {
 
   it('states the organizer model accurately', () => {
     renderWithProviders(<DocsProtocolPage />, { config: CONFIG })
-    expect(screen.getByText(/PK_aid = PK_ep \+ PK_org/)).toBeInTheDocument()
-    expect(screen.getByText(/never verifies the DLEQ itself/i)).toBeInTheDocument()
+    expect(screen.getByText(/PK_aid = P_j \+ PK_org/)).toBeInTheDocument()
+    expect(screen.getByText(/finalizeEpoch \(no proof\)/)).toBeInTheDocument()
+    expect(screen.getAllByText(/revealOrganizerSecret/).length).toBeGreaterThan(0)
     expect(screen.getByText(/permanently undecryptable/i)).toBeInTheDocument()
+    expect(screen.queryByText(/organizer share/i)).not.toBeInTheDocument()
   })
 
   it('takes the deployment from the runtime config, not from a constant', () => {
@@ -89,13 +92,15 @@ describe('docs/sdk', () => {
       'Registering an application',
       'Encrypting a value',
       'Submitting a ciphertext',
-      'Releasing the organizer share',
+      'Revealing the organizer secret',
       'Reading the plaintext',
     ]) {
       expect(screen.getByRole('heading', { name: title, level: 2 })).toBeInTheDocument()
     }
     expect(screen.getByText(/randomOrganizerSecret\(\)/)).toBeInTheDocument()
-    expect(screen.getByText(/submitOrganizerShare\(epochId, aid, ciphertextIndex, ciphertext, skOrg\)/)).toBeInTheDocument()
+    expect(screen.getByText(/revealOrganizerSecret\(epochId, aid, skOrg\)/)).toBeInTheDocument()
+    expect(screen.getByText(/dkg.getApplicationKey\(epochId, aid\)/)).toBeInTheDocument()
+    expect(screen.queryByText(/submitOrganizerShare/)).not.toBeInTheDocument()
   })
 
   it('uses the configured manager address in the client snippet', () => {

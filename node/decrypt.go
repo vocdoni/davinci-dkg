@@ -16,8 +16,8 @@ import (
 	ccommon "github.com/vocdoni/davinci-dkg/circuits/common"
 	"github.com/vocdoni/davinci-dkg/circuits/decryptcombine"
 	"github.com/vocdoni/davinci-dkg/circuits/partialdecrypt"
-	"github.com/vocdoni/davinci-dkg/crypto/dleq"
 	"github.com/vocdoni/davinci-dkg/crypto/group"
+	"github.com/vocdoni/davinci-dkg/finalizer"
 	"github.com/vocdoni/davinci-dkg/log"
 	nodetypes "github.com/vocdoni/davinci-dkg/types"
 )
@@ -51,9 +51,29 @@ func (k ctKey) String() string {
 
 // ciphertext is a decoded CiphertextSubmitted event payload.
 type ciphertext struct {
-	c1, c2 nodetypes.CurvePoint
-	block  uint64 // block the event was emitted in
-	seq    uint64 // discovery order, used to evict the oldest entry
+	c1, c2    nodetypes.CurvePoint
+	submitter common.Address
+	block     uint64 // block the event was emitted in
+	seq       uint64 // discovery order, used to evict the oldest entry
+	// wakeBlock is the block at which a parked slot became serviceable again
+	// (the reveal's block, or the head at which the decryption window was
+	// seen open). Partial waves and the combine rotation count from it, not
+	// from the ciphertext's own block, so a slot that waited weeks does not
+	// have every member post and combine at once.
+	wakeBlock uint64
+}
+
+// anchor is the block the slot's stagger schedules count from.
+func (ct *ciphertext) anchor() uint64 { return max(ct.block, ct.wakeBlock) }
+
+// parkedSlot is a ciphertext taken out of the per-tick service loop until
+// something it waits for happens: the organizer's reveal (wakeAt == 0, woken
+// by the OrganizerSecretRevealed event) or the decryption window opening
+// (wakeAt = decryptNotBefore, unix seconds, re-checked against the head time
+// once per tick without any RPC call).
+type parkedSlot struct {
+	ct     *ciphertext
+	wakeAt uint64
 }
 
 // serviceBackoff skips a failing ciphertext for 1, 2, 4 … ticks (capped at
@@ -104,35 +124,10 @@ func (n *Node) scanCiphertexts(ctx context.Context) error {
 	from := scanStart(n.lastCtScan, head, n.lookback)
 	for start := from; start <= head; start += logRangeBlocks {
 		end := min(start+logRangeBlocks-1, head)
-		it, err := n.manager.FilterCiphertextSubmitted(&bind.FilterOpts{Context: ctx, Start: start, End: &end}, nil, nil, nil)
-		if err != nil {
-			return fmt.Errorf("filter CiphertextSubmitted [%d,%d]: %w", start, end, err)
+		if err := n.discoverCiphertexts(ctx, nil, nil, start, end); err != nil {
+			return err
 		}
-		for it.Next() {
-			ev := it.Event
-			key := ctKey{ev.EpochId, ev.Aid, ev.CiphertextIndex}
-			if _, seen := n.pending[key]; seen {
-				continue
-			}
-			if _, parked := n.parked[key]; parked {
-				continue
-			}
-			if _, done := n.served[key]; done {
-				continue
-			}
-			n.trackCiphertext(key, &ciphertext{
-				c1:    nodetypes.CurvePoint{X: new(big.Int).Set(ev.C1x), Y: new(big.Int).Set(ev.C1y)},
-				c2:    nodetypes.CurvePoint{X: new(big.Int).Set(ev.C2x), Y: new(big.Int).Set(ev.C2y)},
-				block: ev.Raw.BlockNumber,
-			})
-			log.Infow("ciphertext discovered", "ct", key.String(), "block", ev.Raw.BlockNumber)
-		}
-		err = it.Error()
-		_ = it.Close()
-		if err != nil {
-			return fmt.Errorf("iterate CiphertextSubmitted: %w", err)
-		}
-		if err := n.wakeParked(ctx, start, end); err != nil {
+		if err := n.wakeParked(ctx, start, end, head); err != nil {
 			return err
 		}
 		n.lastCtScan = end
@@ -142,6 +137,41 @@ func (n *Node) scanCiphertexts(ctx context.Context) error {
 		if block < from {
 			delete(n.served, key)
 		}
+	}
+	return nil
+}
+
+// discoverCiphertexts pulls the CiphertextSubmitted events of [start, end]
+// (optionally narrowed to one epoch / application) into the pending set,
+// skipping slots the node already tracks or has finished.
+func (n *Node) discoverCiphertexts(ctx context.Context, epochs [][12]byte, aids [][32]byte, start, end uint64) error {
+	it, err := n.manager.FilterCiphertextSubmitted(&bind.FilterOpts{Context: ctx, Start: start, End: &end}, epochs, aids, nil)
+	if err != nil {
+		return fmt.Errorf("filter CiphertextSubmitted [%d,%d]: %w", start, end, err)
+	}
+	defer func() { _ = it.Close() }()
+	for it.Next() {
+		ev := it.Event
+		key := ctKey{ev.EpochId, ev.Aid, ev.CiphertextIndex}
+		if _, seen := n.pending[key]; seen {
+			continue
+		}
+		if _, parked := n.parked[key]; parked {
+			continue
+		}
+		if _, done := n.served[key]; done {
+			continue
+		}
+		n.trackCiphertext(key, &ciphertext{
+			c1:        nodetypes.CurvePoint{X: new(big.Int).Set(ev.C1x), Y: new(big.Int).Set(ev.C1y)},
+			c2:        nodetypes.CurvePoint{X: new(big.Int).Set(ev.C2x), Y: new(big.Int).Set(ev.C2y)},
+			submitter: ev.Submitter,
+			block:     ev.Raw.BlockNumber,
+		})
+		log.Infow("ciphertext discovered", "ct", key.String(), "block", ev.Raw.BlockNumber)
+	}
+	if err := it.Error(); err != nil {
+		return fmt.Errorf("iterate CiphertextSubmitted: %w", err)
 	}
 	return nil
 }
@@ -170,12 +200,13 @@ func (n *Node) trackCiphertext(key ctKey, ct *ciphertext) {
 	n.pending[key] = ct
 }
 
-// forget drops every piece of per-slot state.
-// park moves a slot that only waits for an organizer share out of the
-// per-tick service loop. Epochs stay Live on chain indefinitely, so without
-// this every withheld share would cost every node a few RPC scans per tick
-// forever; a parked slot costs nothing until OrganizerShareSubmitted wakes it.
-func (n *Node) park(key ctKey) {
+// park moves a slot that cannot be served yet out of the per-tick service
+// loop: a locked application whose organizer has not revealed (wakeAt == 0)
+// or a decryption window that has not opened (wakeAt = decryptNotBefore).
+// Epochs stay Live on chain indefinitely, so without this every withheld
+// secret would cost every node a few RPC scans per tick forever; a parked
+// slot costs nothing until the reveal event or the head time wakes it.
+func (n *Node) park(key ctKey, wakeAt uint64) {
 	ct, ok := n.pending[key]
 	if !ok {
 		return
@@ -185,43 +216,117 @@ func (n *Node) park(key ctKey) {
 	if len(n.parked) >= maxParkedCiphertexts {
 		var oldest ctKey
 		oldestSeq := ^uint64(0)
-		for k, c := range n.parked {
-			if c.seq < oldestSeq {
-				oldest, oldestSeq = k, c.seq
+		for k, p := range n.parked {
+			if p.ct.seq < oldestSeq {
+				oldest, oldestSeq = k, p.ct.seq
 			}
 		}
 		delete(n.parked, oldest)
 	}
-	n.parked[key] = ct
-	log.Infow("parked until the organizer posts a share", "ct", key.String(), "parked", len(n.parked))
+	n.parked[key] = &parkedSlot{ct: ct, wakeAt: wakeAt}
+	if wakeAt == 0 {
+		log.Infow("parked until the organizer reveals its secret", "ct", key.String(), "parked", len(n.parked))
+	} else {
+		log.Infow("parked until the decryption window opens", "ct", key.String(), "notBefore", wakeAt, "parked", len(n.parked))
+	}
 }
 
-// wakeParked returns to the pending set every parked slot that received an
-// organizer share in [start, end].
-func (n *Node) wakeParked(ctx context.Context, start, end uint64) error {
+// wake returns a parked slot to the pending set, anchoring its stagger
+// schedules on wakeBlock.
+func (n *Node) wake(key ctKey, p *parkedSlot, wakeBlock uint64) {
+	delete(n.parked, key)
+	p.ct.wakeBlock = wakeBlock
+	n.pending[key] = p.ct
+}
+
+// wakeParked returns to the pending set every parked slot of an application
+// whose organizer revealed its secret in [start, end], and rescans that
+// application's ciphertexts from its registration block: the reveal is
+// per-application and happens once, and ciphertexts submitted while the
+// application was locked may be older than the lookback window of a node
+// that restarted meanwhile.
+func (n *Node) wakeParked(ctx context.Context, start, end, head uint64) error {
 	if len(n.parked) == 0 {
 		return nil
 	}
-	it, err := n.appManager.FilterOrganizerShareSubmitted(&bind.FilterOpts{Context: ctx, Start: start, End: &end}, nil, nil, nil)
+	it, err := n.appManager.FilterOrganizerSecretRevealed(&bind.FilterOpts{Context: ctx, Start: start, End: &end}, nil, nil)
 	if err != nil {
-		return fmt.Errorf("filter OrganizerShareSubmitted [%d,%d]: %w", start, end, err)
+		return fmt.Errorf("filter OrganizerSecretRevealed [%d,%d]: %w", start, end, err)
 	}
 	defer func() { _ = it.Close() }()
 	for it.Next() {
 		ev := it.Event
-		key := ctKey{ev.EpochId, ev.Aid, ev.CiphertextIndex}
-		if ct, ok := n.parked[key]; ok {
-			delete(n.parked, key)
-			n.pending[key] = ct
-			log.Infow("organizer share seen — resuming the slot", "ct", key.String(), "block", ev.Raw.BlockNumber)
+		woken := 0
+		for key, p := range n.parked {
+			if key.epoch != ev.EpochId || key.aid != ev.Aid {
+				continue
+			}
+			n.wake(key, p, ev.Raw.BlockNumber)
+			woken++
+			log.Infow("organizer secret revealed — resuming the slot", "ct", key.String(), "block", ev.Raw.BlockNumber)
+		}
+		if woken == 0 {
+			continue
+		}
+		if err := n.rescanApplication(ctx, ev.EpochId, ev.Aid, ev.Raw.BlockNumber, head); err != nil {
+			// The woken slots are already pending; the rescan only adds
+			// older siblings and the next reveal-free tick cannot redo it,
+			// so log rather than fail the whole scan.
+			log.Warnw("rescan of the revealed application failed", "aid", fmt.Sprintf("%x", ev.Aid[:4]), "err", err)
 		}
 	}
 	if err := it.Error(); err != nil {
-		return fmt.Errorf("iterate OrganizerShareSubmitted: %w", err)
+		return fmt.Errorf("iterate OrganizerSecretRevealed: %w", err)
 	}
 	return nil
 }
 
+// rescanApplication pulls every ciphertext of (epoch, aid) since the
+// application's registration block into the pending set, anchored on
+// wakeBlock, so nothing submitted while the slot was parked is missed.
+func (n *Node) rescanApplication(ctx context.Context, epochID [12]byte, aid [32]byte, wakeBlock, head uint64) error {
+	rec, err := n.appManager.GetApplication(&bind.CallOpts{Context: ctx}, epochID, aid)
+	if err != nil {
+		return fmt.Errorf("get application: %w", err)
+	}
+	seqBefore := n.ctSeq
+	for start := rec.CreatedAtBlock; start <= head; start += logRangeBlocks {
+		end := min(start+logRangeBlocks-1, head)
+		if err := n.discoverCiphertexts(ctx, [][12]byte{epochID}, [][32]byte{aid}, start, end); err != nil {
+			return err
+		}
+	}
+	for _, ct := range n.pending {
+		if ct.seq > seqBefore {
+			ct.wakeBlock = wakeBlock
+		}
+	}
+	return nil
+}
+
+// wakeDue returns to the pending set every slot whose decryption window has
+// opened by the head time. No RPC call is involved: the tick's head is all it
+// reads.
+func (n *Node) wakeDue(head, headTime uint64) {
+	for key, p := range n.parked {
+		if p.wakeAt != 0 && headTime >= p.wakeAt {
+			n.wake(key, p, head)
+			log.Infow("decryption window open — resuming the slot", "ct", key.String(), "notBefore", p.wakeAt)
+		}
+	}
+}
+
+// timeParked reports whether any parked slot waits on the decryption window.
+func (n *Node) timeParked() bool {
+	for _, p := range n.parked {
+		if p.wakeAt != 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// forget drops every piece of per-slot state.
 func (n *Node) forget(key ctKey) {
 	delete(n.pending, key)
 	delete(n.partialDone, key)
@@ -304,10 +409,24 @@ func (n *Node) settleInflight(ctx context.Context, key ctKey, fl inflightTx) (pe
 // within one tick: one head and one getEpoch per epoch instead of one per
 // slot.
 type tickCache struct {
-	head    uint64
-	headErr error
-	epochs  map[[12]byte]epochView
-	apps    map[appKey]nodetypes.CurvePoint // (epoch, aid) → PK_org
+	head     uint64
+	headTime uint64 // timestamp of head, for decryption deadlines
+	headErr  error
+	epochs   map[[12]byte]epochView
+	apps     map[appKey]appView
+}
+
+// appView is what the decrypt loop needs from an application record: which
+// pool key the application encrypts under, its organizer key and — once the
+// organizer has revealed it, or trivially for an Automatic application — the
+// secret the combine circuit needs.
+type appView struct {
+	poolIndex        uint8
+	pkOrg            nodetypes.CurvePoint
+	secret           *big.Int // nil while an organizer-locked secret is still withheld
+	openSubmission   bool     // anyone may submit: taint per submitter, not per application
+	decryptNotBefore uint64   // unix seconds, 0 = none
+	decryptNotAfter  uint64   // unix seconds, 0 = never
 }
 
 // appKey identifies one application: (epoch, aid).
@@ -317,13 +436,14 @@ type appKey struct {
 }
 
 func (n *Node) newTickCache(ctx context.Context) *tickCache {
-	head, err := n.contracts.Client().BlockNumber(ctx)
-	return &tickCache{
-		head:    head,
-		headErr: err,
-		epochs:  make(map[[12]byte]epochView),
-		apps:    make(map[appKey]nodetypes.CurvePoint),
+	tc := &tickCache{epochs: make(map[[12]byte]epochView), apps: make(map[appKey]appView)}
+	hdr, err := n.contracts.Client().HeaderByNumber(ctx, nil)
+	if err != nil {
+		tc.headErr = err
+		return tc
 	}
+	tc.head, tc.headTime = hdr.Number.Uint64(), hdr.Time
+	return tc
 }
 
 func (n *Node) cachedEpoch(ctx context.Context, tc *tickCache, epochID [12]byte) (epochView, error) {
@@ -342,10 +462,13 @@ func (n *Node) cachedEpoch(ctx context.Context, tc *tickCache, epochID [12]byte)
 // that need no further work. Slots whose last attempt failed are skipped
 // for an exponentially growing number of ticks.
 func (n *Node) serviceCiphertexts(ctx context.Context) {
-	if len(n.pending) == 0 {
+	if len(n.pending) == 0 && !n.timeParked() {
 		return
 	}
 	tc := n.newTickCache(ctx)
+	if tc.headErr == nil {
+		n.wakeDue(tc.head, tc.headTime)
+	}
 	for key, ct := range n.pending {
 		if b := n.backoff[key]; b != nil && !b.due() {
 			continue
@@ -395,29 +518,58 @@ func (n *Node) serviceCiphertext(ctx context.Context, tc *tickCache, key ctKey, 
 	if err != nil {
 		return false, err
 	}
-	if n.taintedApps[appKey{epoch: key.epoch, aid: key.aid}] {
+	if n.tainted(key, ct.submitter) {
 		return true, nil
 	}
 	idx := myIndex(selected, n.address)
 	if idx == 0 {
-		// Only committee members hold a share of sk_ep, and only they take
+		// Only committee members hold a share of the pool key, and only they take
 		// part in the combine rotation; nothing for this node to do.
 		log.Debugw("ciphertext belongs to an epoch this node is not a member of — ignoring", "ct", key.String())
 		return true, nil
+	}
+	app, err := n.application(ctx, tc, key)
+	if err != nil {
+		return false, err
+	}
+	if app.decryptNotBefore != 0 || app.decryptNotAfter != 0 {
+		if tc.headErr != nil {
+			return false, fmt.Errorf("read head: %w", tc.headErr)
+		}
+		if app.decryptNotAfter != 0 && tc.headTime > app.decryptNotAfter {
+			// The contract rejects partials and combines from here on.
+			log.Infow("decryption deadline passed — dropping the slot", "ct", key.String(), "deadline", app.decryptNotAfter)
+			return true, nil
+		}
+		if tc.headTime < app.decryptNotBefore {
+			// The contract refuses partials and combines until the window
+			// opens; wakeDue brings the slot back once the head time passes it.
+			n.park(key, app.decryptNotBefore)
+			return false, nil
+		}
+	}
+	if app.secret == nil {
+		// Organizer-locked and not revealed: the contract refuses every
+		// partial and combine (OrganizerSecretNotRevealed), so nothing is
+		// posted — not even a partial — until the reveal event wakes the slot.
+		n.park(key, 0)
+		return false, nil
 	}
 	if !n.partialDone[key] {
 		// Only t partials are ever needed. The first t members of a
 		// seed-derived rotation respond at once; each later wave of t steps
 		// in staggerBlocks later and only if partials are still missing, so
 		// an honest ciphertext costs t partials rather than n and a hostile
-		// submitter cannot make the whole committee spend.
+		// submitter cannot make the whole committee spend. Waves count from
+		// the slot's anchor: the ciphertext block, or the block it was woken
+		// at if it sat parked (no partial can exist from before that).
 		threshold := uint64(epoch.Policy.Threshold)
 		wave := staggerSlot(epoch.Seed, uint64(key.idx), idx, uint16(len(selected))) / max(threshold, 1)
 		if wave > 0 {
 			if tc.headErr != nil {
 				return false, fmt.Errorf("read head: %w", tc.headErr)
 			}
-			if tc.head < ct.block+wave*staggerBlocks {
+			if tc.head < ct.anchor()+wave*staggerBlocks {
 				return false, nil
 			}
 			// With fewer than t partials the scan sees all of them, so
@@ -428,13 +580,13 @@ func (n *Node) serviceCiphertext(ctx context.Context, tc *tickCache, key ctKey, 
 			}
 			if uint64(len(idxs)) >= threshold {
 				n.partialDone[key] = true
-			} else if !laterWaveDue(tc.head, ct.block, lastBlock, wave) {
+			} else if !laterWaveDue(tc.head, ct.anchor(), lastBlock, wave) {
 				return false, nil
 			}
 		}
 	}
 	if !n.partialDone[key] {
-		toxic, err := n.submitPartial(ctx, key, ct, idx, epoch, selected)
+		toxic, err := n.submitPartial(ctx, key, ct, idx, epoch, selected, app)
 		if err != nil {
 			return false, err
 		}
@@ -445,7 +597,7 @@ func (n *Node) serviceCiphertext(ctx context.Context, tc *tickCache, key ctKey, 
 	if tc.headErr != nil {
 		return false, fmt.Errorf("read head: %w", tc.headErr)
 	}
-	return n.tryCombine(ctx, tc, key, ct, epoch, idx, uint16(len(selected)), tc.head)
+	return n.tryCombine(ctx, key, ct, epoch, app, idx, uint16(len(selected)), tc.head)
 }
 
 // selected caches the committee of a Live epoch (it never changes).
@@ -461,8 +613,10 @@ func (n *Node) selected(ctx context.Context, epochID [12]byte) ([]common.Address
 	return s, nil
 }
 
-// submitPartial posts δ_i = d_i·C1 with its DLEQ proof. Returns toxic=true
-// when the ciphertext is malformed and must never be decrypted.
+// submitPartial posts δ_i = e_{j,i}·C1 — the share of the application's pool
+// key j — with its proof and the Merkle path that pins the share commitment
+// to the root activatePoolKey stored. Returns toxic=true when the ciphertext
+// is malformed and must never be decrypted.
 func (n *Node) submitPartial(
 	ctx context.Context,
 	key ctKey,
@@ -470,6 +624,7 @@ func (n *Node) submitPartial(
 	idx uint16,
 	epoch epochView,
 	selected []common.Address,
+	app appView,
 ) (bool, error) {
 	callOpts := &bind.CallOpts{Context: ctx}
 	if rec, err := n.manager.GetPartialDecryption(callOpts, key.epoch, key.aid, idx, key.idx); err == nil && rec.Accepted {
@@ -478,18 +633,22 @@ func (n *Node) submitPartial(
 	}
 
 	// Refuse small-order / off-curve ciphertexts before touching the share:
-	// δ_i = d_i·C1 for a cofactor point would leak d_i mod 8 on-chain. The
-	// contract deliberately skips the prime-subgroup check (it costs ~2 M
-	// gas), so this is the only place it happens — it is load-bearing, not
-	// belt-and-braces.
+	// δ_i = e_{j,i}·C1 for a cofactor point would leak the share mod 8
+	// on-chain. The contract deliberately skips the prime-subgroup check (it
+	// costs ~0.17 M gas per submission), so this is the only place it
+	// happens — it is load-bearing, not belt-and-braces.
 	if err := group.ValidateCiphertext(ct.c1, ct.c2); err != nil {
 		log.Warnw("rejecting toxic ciphertext — refusing partial decryption", "ct", key.String(), "err", err)
 		return true, nil
 	}
 
-	dShare, err := n.buildPrivateShare(ctx, key.epoch, idx, selected, epoch, callOpts)
+	dShare, err := n.buildPrivateShare(ctx, key.epoch, app.poolIndex, idx, selected, epoch, callOpts)
 	if err != nil {
 		return false, fmt.Errorf("build private share: %w", err)
+	}
+	shareProof, err := n.shareProof(ctx, key.epoch, app.poolIndex, idx, epoch, selected)
+	if err != nil {
+		return false, fmt.Errorf("share inclusion proof: %w", err)
 	}
 	nonce, err := randomScalars(1)
 	if err != nil {
@@ -507,11 +666,7 @@ func (n *Node) submitPartial(
 	if err != nil {
 		return false, fmt.Errorf("build partial decrypt witness: %w", err)
 	}
-	runtime, err := partialdecrypt.Artifacts.LoadPinned(ctx, &partialdecrypt.PartialDecryptCircuit{})
-	if err != nil {
-		return false, fmt.Errorf("load partial decrypt circuit: %w", err)
-	}
-	proof, err := runtime.ProveAndVerify(witness)
+	proof, err := n.runtimes.partialDecrypt.ProveAndVerify(witness)
 	if err != nil {
 		return false, fmt.Errorf("prove partial decrypt: %w", err)
 	}
@@ -533,7 +688,7 @@ func (n *Node) submitPartial(
 		return false, err
 	}
 	tx, err := n.manager.SubmitPartialDecryption(auth, key.epoch, key.aid, idx, key.idx,
-		ct.c1.X, ct.c1.Y, ct.c2.X, ct.c2.Y, dHash, proofBytes, inputBytes)
+		ct.c1.X, ct.c1.Y, ct.c2.X, ct.c2.Y, dHash, proofBytes, inputBytes, shareProof)
 	if err != nil {
 		reason := decodeContractError(err)
 		if strings.Contains(reason, "AlreadyPartiallyDecrypted") {
@@ -595,124 +750,180 @@ func (n *Node) acceptedPartials(
 	return idxs, deltas, readyBlock, nil
 }
 
-// organizerShare is the organizer's Δ = sk_org·C1 for one ciphertext slot,
-// with the Chaum-Pedersen DLEQ that ties it to the application's registered
-// PK_org and the block the share landed in.
-type organizerShare struct {
-	pkOrg nodetypes.CurvePoint
-	delta nodetypes.CurvePoint
-	proof dleq.Proof
-	block uint64
-}
-
-// organizerPK reads (and memoises for the tick) the application's registered
-// organizer key. Only registered applications can own a ciphertext — the
-// contract rejects submitCiphertext for an unknown aid — so a missing record
-// here means the chain is lying or we are looking at the wrong contract.
-func (n *Node) organizerPK(ctx context.Context, tc *tickCache, key ctKey) (nodetypes.CurvePoint, error) {
+// application reads (and memoises for the tick) what the decrypt loop needs
+// from the application record: its pool key, PK_org, the organizer secret
+// once it is knowable and the decryption window. Only registered
+// applications can own a ciphertext — the contract rejects submitCiphertext
+// for an unknown aid — so a missing record here means the chain is lying or
+// we are looking at the wrong contract.
+func (n *Node) application(ctx context.Context, tc *tickCache, key ctKey) (appView, error) {
 	ak := appKey{epoch: key.epoch, aid: key.aid}
-	if pk, ok := tc.apps[ak]; ok {
-		return pk, nil
+	if app, ok := tc.apps[ak]; ok {
+		return app, nil
 	}
 	rec, err := n.appManager.GetApplication(&bind.CallOpts{Context: ctx}, key.epoch, key.aid)
 	if err != nil {
-		return nodetypes.CurvePoint{}, fmt.Errorf("get application: %w", err)
+		return appView{}, fmt.Errorf("get application: %w", err)
 	}
 	if !rec.Exists {
-		return nodetypes.CurvePoint{}, fmt.Errorf("application %x is not registered", key.aid)
+		return appView{}, fmt.Errorf("application %x is not registered", key.aid)
 	}
-	pk := nodetypes.CurvePoint{X: new(big.Int).Set(rec.OrganizerPK.X), Y: new(big.Int).Set(rec.OrganizerPK.Y)}
-	tc.apps[ak] = pk
-	return pk, nil
+	app := appView{
+		poolIndex:        rec.PoolIndex,
+		pkOrg:            nodetypes.CurvePoint{X: new(big.Int).Set(rec.OrganizerPK.X), Y: new(big.Int).Set(rec.OrganizerPK.Y)},
+		openSubmission:   rec.Policy.OpenSubmission,
+		decryptNotBefore: rec.Policy.DecryptNotBefore,
+		decryptNotAfter:  rec.Policy.DecryptNotAfter,
+	}
+	// An automatic application stores the identity key and a zero secret, a
+	// locked one a zero secret until revealOrganizerSecret lands. Either way
+	// the combine needs sk_org with PK_org = sk_org·G, so one scalar
+	// multiplication settles both cases and keeps a lying RPC from making us
+	// burn a proof that can never verify.
+	if rec.Policy.Mode == uint8(nodetypes.AppModeAutomatic) || rec.OrganizerSecret.Sign() != 0 {
+		pk := group.NewPoint()
+		pk.ScalarBaseMult(rec.OrganizerSecret)
+		if enc := group.Encode(pk); enc.X.Cmp(app.pkOrg.X) == 0 && enc.Y.Cmp(app.pkOrg.Y) == 0 {
+			app.secret = new(big.Int).Set(rec.OrganizerSecret)
+		} else {
+			log.Warnw("organizer secret does not match PK_org — waiting for a correct reveal",
+				"aid", fmt.Sprintf("%x", key.aid[:4]))
+		}
+	}
+	tc.apps[ak] = app
+	return app, nil
 }
 
-// latestOrganizerShare reads the newest OrganizerShareSubmitted event for the
-// slot and verifies its DLEQ against the application's registered PK_org.
-//
-// ok=false means "not combinable yet": either nobody has posted a share, or
-// the newest one does not verify. The contract stores the share words without
-// checking them, precisely so a malformed submission cannot brick a
-// ciphertext — the organizer can overwrite it, so we simply retry on the next
-// tick instead of giving up on the slot.
-func (n *Node) latestOrganizerShare(
+// shareProof returns this node's Merkle path into the share-commitment root
+// activatePoolKey stored for (epoch, pool key). The leaves are derived from
+// the accepted contributions' calldata — the same reconstruction the
+// activator proved — and checked against the stored root, so the node never
+// depends on the activation transaction's outer calldata (an activation
+// relayed through a contract carries a different selector and would strand
+// every member). Reading that calldata is only a fast path, taken when it
+// decodes and matches the root. The path is fixed for the life of the epoch,
+// so it is built once per key and cached.
+func (n *Node) shareProof(
 	ctx context.Context,
-	tc *tickCache,
-	key ctKey,
-	c1 nodetypes.CurvePoint,
-	seedBlock, head uint64,
-) (organizerShare, bool, error) {
-	pkOrg, err := n.organizerPK(ctx, tc, key)
-	if err != nil {
-		return organizerShare{}, false, err
+	epochID [12]byte,
+	keyIndex uint8,
+	myIdx uint16,
+	epoch epochView,
+	selected []common.Address,
+) ([][32]byte, error) {
+	slot := poolSlot{epoch: epochID, key: keyIndex}
+	if path, ok := n.shareProofs[slot]; ok {
+		return path, nil
 	}
+	root, err := n.manager.GetPoolShareRoot(&bind.CallOpts{Context: ctx}, epochID, keyIndex)
+	if err != nil {
+		return nil, fmt.Errorf("get pool share root: %w", err)
+	}
+	if root == ([32]byte{}) {
+		return nil, fmt.Errorf("pool key %d is not activated yet", keyIndex)
+	}
+	leaves, err := n.shareLeavesFromCalldata(ctx, epochID, keyIndex, epoch.SeedBlock, root)
+	if err != nil {
+		log.Debugw("share commitments: activation calldata unusable, rebuilding from the contributions",
+			"epoch", roundHex(epochID), "key", keyIndex, "err", err)
+		leaves, err = n.shareLeavesFromContributions(ctx, epochID, keyIndex, epoch, selected, root)
+		if err != nil {
+			return nil, err
+		}
+	}
+	siblings, err := ccommon.MerklePath(leaves, int(myIdx)-1)
+	if err != nil {
+		return nil, fmt.Errorf("merkle path for index %d: %w", myIdx, err)
+	}
+	path := make([][32]byte, len(siblings))
+	copy(path, siblings[:])
+	n.shareProofs[slot] = path
+	return path, nil
+}
 
+// shareLeavesFromCalldata is the fast path: decode the share commitments from
+// the activatePoolKey transaction found through the PoolKeyActivated event.
+// Anything that does not decode as a direct call or does not fold into the
+// stored root is an error, and the caller falls back to the contributions.
+func (n *Node) shareLeavesFromCalldata(
+	ctx context.Context,
+	epochID [12]byte,
+	keyIndex uint8,
+	seedBlock uint64,
+	root [32]byte,
+) ([ccommon.MaxN][32]byte, error) {
 	start := uint64(0)
 	if seedBlock > 0 {
 		start = seedBlock - 1
 	}
-	var share organizerShare
-	found := false
-	for from := start; from <= head; from += logRangeBlocks {
-		end := min(from+logRangeBlocks-1, head)
-		it, err := n.appManager.FilterOrganizerShareSubmitted(
-			&bind.FilterOpts{Context: ctx, Start: from, End: &end},
-			[][12]byte{key.epoch}, [][32]byte{key.aid}, []uint16{key.idx},
-		)
-		if err != nil {
-			return organizerShare{}, false, fmt.Errorf("filter OrganizerShareSubmitted [%d,%d]: %w", from, end, err)
-		}
-		for it.Next() {
-			e := it.Event
-			share = organizerShare{
-				pkOrg: pkOrg,
-				delta: nodetypes.CurvePoint{X: new(big.Int).Set(e.DeltaX), Y: new(big.Int).Set(e.DeltaY)},
-				proof: dleq.Proof{
-					A1:       nodetypes.CurvePoint{X: new(big.Int).Set(e.A1x), Y: new(big.Int).Set(e.A1y)},
-					A2:       nodetypes.CurvePoint{X: new(big.Int).Set(e.A2x), Y: new(big.Int).Set(e.A2y)},
-					Response: new(big.Int).Set(e.Z),
-				},
-				block: e.Raw.BlockNumber,
-			}
-			found = true
-		}
-		err = it.Error()
-		_ = it.Close()
-		if err != nil {
-			return organizerShare{}, false, fmt.Errorf("iterate OrganizerShareSubmitted: %w", err)
-		}
+	data, err := finalizer.ActivationCalldata(ctx, n.contracts.Client(), n.manager, epochID, keyIndex, start)
+	if err != nil {
+		return [ccommon.MaxN][32]byte{}, err
 	}
-	if !found {
-		log.Debugw("combine: waiting for the organizer share", "ct", key.String())
-		return organizerShare{}, false, nil
+	idxs, commitments, err := finalizer.PoolKeyShareCommitments(data)
+	if err != nil {
+		return [ccommon.MaxN][32]byte{}, fmt.Errorf("decode activation transcript: %w", err)
 	}
-	if !dleq.VerifyOrganizerShare(key.epoch, key.aid, key.idx, pkOrg, c1, share.delta, share.proof) {
-		fingerprint := ethcrypto.Keccak256Hash(
-			share.delta.X.Bytes(), share.delta.Y.Bytes(), share.proof.Response.Bytes(),
-		)
-		if n.badShares[key] != fingerprint { // warn once per distinct bad share, not every tick
-			n.badShares[key] = fingerprint
-			log.Warnw("organizer share does not verify — waiting for the organizer to resubmit",
-				"ct", key.String(), "block", share.block)
-		}
-		return organizerShare{}, false, nil
+	return shareLeaves(idxs, commitments, root)
+}
+
+// shareLeavesFromContributions rebuilds D_p for every committee member from
+// the accepted contributions' calldata, exactly as the activation proof did.
+func (n *Node) shareLeavesFromContributions(
+	ctx context.Context,
+	epochID [12]byte,
+	keyIndex uint8,
+	epoch epochView,
+	selected []common.Address,
+	root [32]byte,
+) ([ccommon.MaxN][32]byte, error) {
+	pi, err := finalizer.PoolKeyStatement(ctx, n.contracts, n.manager, epochID,
+		epoch.Policy.Threshold, epoch.Policy.CommitteeSize, selected, keyIndex)
+	if err != nil {
+		return [ccommon.MaxN][32]byte{}, fmt.Errorf("reconstruct pool key %d: %w", keyIndex, err)
 	}
-	delete(n.badShares, key)
-	return share, true, nil
+	size := int(epoch.Policy.CommitteeSize)
+	if len(pi.ShareCommitments) < size {
+		return [ccommon.MaxN][32]byte{}, fmt.Errorf("pool key statement has %d share commitments for a committee of %d",
+			len(pi.ShareCommitments), size)
+	}
+	idxs := make([]uint16, size)
+	for i := range idxs {
+		idxs[i] = uint16(i + 1)
+	}
+	return shareLeaves(idxs, pi.ShareCommitments[:size], root)
+}
+
+// shareLeaves lays the member-indexed commitments out as tree leaves and
+// refuses a set that does not fold into the root the contract stored: a
+// path built from it would only buy a reverted partial.
+func shareLeaves(idxs []uint16, commitments []nodetypes.CurvePoint, root [32]byte) ([ccommon.MaxN][32]byte, error) {
+	leaves, err := ccommon.ShareCommitmentLeaves(idxs, commitments)
+	if err != nil {
+		return leaves, fmt.Errorf("build share commitment leaves: %w", err)
+	}
+	if got := ccommon.MerkleRoot(leaves); got != root {
+		return leaves, fmt.Errorf("share commitments fold into root %x, contract stored %x", got[:4], root[:4])
+	}
+	return leaves, nil
 }
 
 // tryCombine interpolates threshold partials, recovers the plaintext by BSGS
-// and posts the combine proof. A slot becomes combinable only once BOTH
-// `t` partial decryptions and a verifying organizer share are on chain.
+// and posts the combine proof. A slot becomes combinable once `t` partial
+// decryptions are on chain; the organizer secret is already known here
+// (serviceCiphertext parks a locked application's slots until the reveal).
 // Committee members take turns in a seed-derived rotation (like
-// auto-finalize) starting at the block the last of those two landed in, so
-// normally a single member pays for the combine; later slots only step in if
-// the earlier ones did not.
+// auto-finalize) starting at the block the last partial landed in — or the
+// block the slot was woken at, whichever is later, so a slot that waited for
+// the window or the reveal does not have every member combine at once;
+// normally a single member pays for the combine and later slots only step in
+// if the earlier ones did not.
 func (n *Node) tryCombine(
 	ctx context.Context,
-	tc *tickCache,
 	key ctKey,
 	ct *ciphertext,
 	epoch epochView,
+	app appView,
 	myIdx, committeeSize uint16,
 	head uint64,
 ) (bool, error) {
@@ -724,19 +935,12 @@ func (n *Node) tryCombine(
 	if len(idxs) < int(threshold) {
 		return false, nil
 	}
-	share, ready, err := n.latestOrganizerShare(ctx, tc, key, ct.c1, epoch.SeedBlock, head)
-	if err != nil {
-		return false, err
-	}
-	if !ready {
-		n.park(key)
+	if app.secret == nil {
+		n.park(key, 0)
 		return false, nil
 	}
-	// The rotation is anchored on whichever of the two prerequisites landed
-	// last, so an organizer share posted long after the partials does not
-	// make every slot eligible at once.
 	slot := staggerSlot(epoch.Seed, uint64(key.idx), myIdx, committeeSize)
-	if waitUntil := max(readyBlock, share.block) + slot*staggerBlocks; head < waitUntil {
+	if waitUntil := max(readyBlock, ct.wakeBlock) + slot*staggerBlocks; head < waitUntil {
 		log.Debugw("combine: waiting for our slot", "ct", key.String(), "slot", slot, "head", head, "waitUntil", waitUntil)
 		return false, nil
 	}
@@ -751,7 +955,7 @@ func (n *Node) tryCombine(
 		n.jobsMu.Lock()
 		n.combineJobs[key] = nil
 		n.jobsMu.Unlock()
-		go n.runCombineJob(key, ct, idxs, deltas, share, threshold)
+		go n.runCombineJob(key, ct, idxs, deltas, app, threshold)
 		return false, nil
 	}
 	if res == nil {
@@ -761,13 +965,19 @@ func (n *Node) tryCombine(
 	delete(n.combineJobs, key)
 	n.jobsMu.Unlock()
 	if res.taint {
-		// Only the application's authorised submitter can produce its
-		// ciphertexts, so an undecryptable one is the organizer's doing:
-		// serve nothing else of this application in this epoch, which caps
-		// what one registration can make the committee compute.
-		n.taintedApps[appKey{epoch: key.epoch, aid: key.aid}] = true
+		// With a closed submitter set an undecryptable ciphertext is the
+		// registrant's doing: serve nothing else of this application in this
+		// epoch, which caps what one registration can make the committee
+		// compute. With open submission anyone could have sent it, so only
+		// that submitter is cut off — one search per (application, address).
+		tk := taintKey{epoch: key.epoch, aid: key.aid}
+		if app.openSubmission {
+			tk.submitter = ct.submitter
+		}
+		n.taints[tk] = true
 		n.saveTaints()
-		log.Warnw("application tainted: ignoring its remaining ciphertexts for this epoch", "ct", key.String())
+		log.Warnw("tainted: ignoring the remaining ciphertexts for this epoch",
+			"ct", key.String(), "openSubmission", app.openSubmission, "submitter", tk.submitter)
 	}
 	switch {
 	case res.err != nil:
@@ -797,7 +1007,7 @@ func (n *Node) runCombineJob(
 	ct *ciphertext,
 	idxs []uint16,
 	deltas []nodetypes.CurvePoint,
-	share organizerShare,
+	app appView,
 	threshold uint16,
 ) {
 	// One combine at a time per node: the dlog search saturates every core,
@@ -809,7 +1019,7 @@ func (n *Node) runCombineJob(
 		time.Sleep(500 * time.Millisecond)
 	}
 	n.combineSem <- struct{}{}
-	res := n.combine(key, ct, idxs, deltas, share, threshold)
+	res := n.combine(key, ct, idxs, deltas, app, threshold)
 	<-n.combineSem
 	n.jobsMu.Lock()
 	n.combineJobs[key] = res
@@ -821,11 +1031,11 @@ func (n *Node) combine(
 	ct *ciphertext,
 	idxs []uint16,
 	deltas []nodetypes.CurvePoint,
-	share organizerShare,
+	app appView,
 	threshold uint16,
 ) *combineResult {
 	ctx := context.Background()
-	// M·G = C2 − Σ λ_k·δ_k − Δ_org
+	// M·G = C2 − Σ λ_k·δ_k − sk_org·C1
 	combinedEnc, err := ccommon.InterpolatePointsAtZeroNative(ccommon.Uint16sToBigInts(idxs), deltas)
 	if err != nil {
 		return &combineResult{err: fmt.Errorf("interpolate partials: %w", err)}
@@ -838,10 +1048,12 @@ func (n *Node) combine(
 	if err != nil {
 		return &combineResult{err: err}
 	}
-	correction, err := group.Decode(share.delta)
+	c1, err := group.Decode(ct.c1)
 	if err != nil {
-		return &combineResult{err: fmt.Errorf("decode organizer share: %w", err)}
+		return &combineResult{err: err}
 	}
+	correction := group.NewPoint()
+	correction.ScalarMult(c1, app.secret)
 	negCombined := group.NewPoint()
 	negCombined.Neg(combined)
 	negCorrection := group.NewPoint()
@@ -862,9 +1074,8 @@ func (n *Node) combine(
 		RoundHash:          roundScalar(key.epoch),
 		Aid:                new(big.Int).SetBytes(key.aid[:]),
 		CtIdx:              new(big.Int).SetUint64(uint64(key.idx)),
-		DeltaOrg:           share.delta,
-		OrganizerPK:        share.pkOrg,
-		OrganizerProof:     share.proof,
+		OrganizerPK:        app.pkOrg,
+		OrganizerSecret:    app.secret,
 		Threshold:          threshold,
 		CiphertextC1:       ct.c1,
 		CiphertextC2:       ct.c2,
@@ -875,11 +1086,7 @@ func (n *Node) combine(
 	if err != nil {
 		return &combineResult{err: fmt.Errorf("build combine witness: %w", err)}
 	}
-	runtime, err := decryptcombine.Artifacts.LoadPinned(ctx, &decryptcombine.DecryptCombineCircuit{})
-	if err != nil {
-		return &combineResult{err: fmt.Errorf("load combine circuit: %w", err)}
-	}
-	proof, err := runtime.ProveAndVerify(witness)
+	proof, err := n.runtimes.combine.ProveAndVerify(witness)
 	if err != nil {
 		return &combineResult{err: fmt.Errorf("prove combine: %w", err)}
 	}

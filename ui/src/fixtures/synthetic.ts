@@ -8,8 +8,12 @@
 //   8 epochs, committee 64, t = 33, m_min = 40, α = 1.5
 //     · one aborted (committee never filled)
 //     · one still in KeyAssembly (the newest)
-//   2 applications per Live epoch, 8 ciphertexts each
-//   partials in waves of t, some organizer shares withheld, most combined
+//   pool keys activated ahead of demand, 2 applications per Live epoch
+//     (one organizer-locked, one automatic), 8 ciphertexts each
+//   partials in waves of t; every organizer reveals its secret right after
+//     registering except the newest Live epoch's, whose ciphertexts sit at
+//     "awaiting reveal" with no partials at all — the contract refuses them
+//     until the reveal
 //   gas from BENCHMARKS.md, blocks on a 12 s cadence
 
 import { buildEpochId } from '@vocdoni/davinci-dkg-sdk'
@@ -23,18 +27,19 @@ import {
   createEmptyStore,
   statusFromPhase,
 } from '../indexer/reduce'
-import type {
-  Address,
-  Aid,
-  EpochId,
-  EpochPhaseName,
-  EventDataMap,
-  Hex,
-  IndexedEvent,
-  IndexedEventName,
-  IndexerStore,
-  Point,
-  TxMeta,
+import {
+  POOL_SIZE,
+  type Address,
+  type Aid,
+  type EpochId,
+  type EpochPhaseName,
+  type EventDataMap,
+  type Hex,
+  type IndexedEvent,
+  type IndexedEventName,
+  type IndexerStore,
+  type Point,
+  type TxMeta,
 } from '../indexer/types'
 
 export interface FixtureOptions {
@@ -96,26 +101,44 @@ export const DEFAULT_FIXTURE: Required<
   appManagerAddress: '0x5c3e7a9d1b8f0426ea5d9c3b7f102a4d6e8b9c11',
 }
 
-/** Gas figures measured on the Sepolia deployment (see ../BENCHMARKS.md). */
+/**
+ * Gas figures measured on the Sepolia deployment (see ../BENCHMARKS.md). The
+ * proof-less `finalizeEpoch`, `activatePoolKey` and `revealOrganizerSecret`
+ * are estimates until the pool-key deployment is re-measured: activation
+ * costs what the old proof-carrying finalize did.
+ */
 export const GAS = {
   registerKey: 322_112,
   createEpoch: 150_279,
   claimSlotFirst: 175_520,
   claimSlot: 103_725,
   submitContribution: 462_523,
-  finalizeEpoch: 1_112_337,
+  finalizeEpoch: 91_204,
+  activatePoolKey: 1_112_337,
   registerApplication: 407_793,
+  revealOrganizerSecret: 61_870,
   submitCiphertextFirst: 96_001,
   submitCiphertext: 78_901,
   submitPartialDecryption: 381_604,
   submitPartialDecryptionMax: 398_704,
-  submitOrganizerShare: 87_991,
-  submitOrganizerShareOverwrite: 70_879,
   combineDecryption: 430_432,
   reap: 46_500,
   reactivate: 52_100,
   heartbeat: 31_400,
 } as const
+
+/**
+ * Decryption windows (unix seconds) of the fixture's applications, pinned to
+ * fixed instants so a screenshot taken today matches one taken next month:
+ * organizer-locked ones open in 2023 and, on even epochs, closed in 2025;
+ * automatic ones close in 2033.
+ */
+export const FIXTURE_DECRYPT_OPEN = 1_700_000_000
+export const FIXTURE_DECRYPT_CLOSED = 1_750_000_000
+export const FIXTURE_DECRYPT_DEADLINE = 2_000_000_000
+
+/** Pool keys the fixture activates per Live epoch: one per application plus two ahead. */
+export const FIXTURE_ACTIVATE_AHEAD = 2
 
 // ── deterministic bytes ──────────────────────────────────────────────────────
 
@@ -310,6 +333,12 @@ export function buildFixture(options: FixtureOptions = {}): Fixture {
   const committees = new Map<string, Address[]>()
   const abortedNonce = 3
   const keyAssemblyNonce = o.epochs
+  // The newest epoch that goes Live: its organizer keeps its secret and a
+  // couple of its ciphertexts stay ready, so every pipeline state is visible.
+  let newestLiveNonce = 0
+  for (let nonce = 1; nonce <= o.epochs; nonce++) {
+    if (nonce !== abortedNonce && nonce !== keyAssemblyNonce) newestLiveNonce = nonce
+  }
 
   let headBlock = firstEpochStart
 
@@ -423,34 +452,87 @@ export function buildFixture(options: FixtureOptions = {}): Fixture {
 
     const liveBlock = startBlock + o.committeeSelectionBlocks + o.keyAssemblyBlocks + o.finalizeGapBlocks
     const finalizer = claimants[pick(`finalizer:${nonce}`, seed, 0, claimants.length - 1)]
+    // Proof-less: finalize only freezes the contributor set and opens the pool.
     builder.emit(
       'EpochLive',
       liveBlock,
       builder.tx(`finalize:${nonce}`, liveBlock, GAS.finalizeEpoch, finalizer),
-      {
-        epochId,
-        aggregateCommitmentsHash: pseudoHex(`agg:${nonce}`, 32, seed),
-        collectivePublicKeyHash: pseudoHex(`pk:${nonce}`, 32, seed),
-        shareCommitmentHash: pseudoHex(`sc:${nonce}`, 32, seed),
-      },
+      { epochId, contributionCount: contributors.length },
       { epoch: epochId },
     )
     phases[epochId] = 'live'
 
+    // ── pool keys: one per application plus two ahead, one block apart ──────
+    const activated = Math.min(POOL_SIZE, o.applicationsPerEpoch + FIXTURE_ACTIVATE_AHEAD)
+    const activatorOffset = pick(`activator:${nonce}`, seed, 0, claimants.length - 1)
+    for (let j = 0; j < activated; j++) {
+      const block = liveBlock + 1 + j
+      const activator = claimants[(activatorOffset + j) % claimants.length]
+      builder.emit(
+        'PoolKeyActivated',
+        block,
+        builder.tx(`activate:${nonce}:${j}`, block, GAS.activatePoolKey, activator),
+        { epochId, keyIndex: j, key: pseudoPoint(`pool:${nonce}:${j}`, seed) },
+        { epoch: epochId },
+      )
+    }
+
     // ── applications and their ciphertexts ──────────────────────────────────
-    for (let a = 0; a < o.applicationsPerEpoch; a++) {
+    for (let a = 0; a < Math.min(o.applicationsPerEpoch, POOL_SIZE); a++) {
       const aid = pseudoAid(`aid:${nonce}:${a}`, seed)
       const organizer = operators[pick(`organizer:${nonce}:${a}`, seed, 0, o.operators - 1)]
       const submitter = pseudoAddress(`submitter:${nonce}:${a}`, seed)
+      // Odd applications are automatic: no organizer key, anyone may submit,
+      // the committee combines on its own. Even ones are organizer-locked with
+      // a one-address allow-list and a decryption window.
+      const automatic = a % 2 === 1
+      const poolIndex = a
       const registerBlock = liveBlock + 2 + a * 2
       applications.push({ epoch: epochId, aid })
+      const registerTx = builder.tx(`app:${nonce}:${a}`, registerBlock, GAS.registerApplication, organizer)
+      // The manager logs the claim and the app manager the registration, in
+      // the same transaction.
+      builder.emit(
+        'PoolKeyClaimed',
+        registerBlock,
+        registerTx,
+        { epochId, aid, keyIndex: poolIndex },
+        { epoch: epochId, aid },
+      )
       builder.emit(
         'ApplicationRegistered',
         registerBlock,
-        builder.tx(`app:${nonce}:${a}`, registerBlock, GAS.registerApplication, organizer),
-        { epochId, aid, creator: organizer, organizerPK: pseudoPoint(`pkorg:${nonce}:${a}`, seed) },
+        registerTx,
+        {
+          epochId,
+          aid,
+          creator: organizer,
+          organizerPK: automatic ? { x: 0n, y: 1n } : pseudoPoint(`pkorg:${nonce}:${a}`, seed),
+          mode: automatic ? 'automatic' : 'organizer-locked',
+          poolIndex,
+        },
         { epoch: epochId, aid, actor: organizer },
       )
+
+      // The organizer of a locked application reveals sk_org right after
+      // registering — the contract refuses every partial and combine before
+      // the reveal, so nothing else could happen first. The newest Live
+      // epoch's keeps it, so that epoch shows ciphertexts parked at
+      // "awaiting reveal" with no partials.
+      const reveals = !automatic && nonce !== newestLiveNonce
+      const revealBlock = registerBlock + 3
+      if (reveals) {
+        builder.emit(
+          'OrganizerSecretRevealed',
+          revealBlock,
+          builder.tx(`reveal:${nonce}:${a}`, revealBlock, GAS.revealOrganizerSecret, organizer),
+          { epochId, aid, organizerSecret: pseudoBig(`skorg:${epochId}:${aid}`, seed) },
+          { epoch: epochId, aid },
+        )
+      }
+      // Block from which the committee may combine: at once for an automatic
+      // application, after the reveal for a locked one, never if it is kept.
+      const unlockedAt = automatic ? 0 : reveals ? revealBlock : null
 
       for (let c = 0; c < o.ciphertextsPerApplication; c++) {
         const index = c + 1
@@ -471,93 +553,70 @@ export function buildFixture(options: FixtureOptions = {}): Fixture {
           { epoch: epochId, aid, actor: submitter },
         )
 
-        // Wave 0: exactly t members answer within one stagger window.
-        // Wave 1: a few late members on a third of the ciphertexts.
+        // The seed-derived rotation the committee answers in; the combiner is
+        // drawn from it too.
         const rotation = pick(`wave:${nonce}:${a}:${index}`, seed, 0, claimants.length - 1)
-        const responders: number[] = []
-        for (let i = 0; i < o.threshold; i++) responders.push((rotation + i) % claimants.length)
-        const lateCount = index % 3 === 0 ? 5 : 0
-        const late: number[] = []
-        for (let i = 0; i < lateCount; i++) late.push((rotation + o.threshold + i) % claimants.length)
+        // No partial exists before the reveal: the contract refuses them, and
+        // the newest Live epoch's organizer has not revealed.
+        if (unlockedAt != null) {
+          // Wave 0: exactly t members answer within one stagger window.
+          // Wave 1: a few late members on a third of the ciphertexts.
+          const responders: number[] = []
+          for (let i = 0; i < o.threshold; i++) responders.push((rotation + i) % claimants.length)
+          const lateCount = index % 3 === 0 ? 5 : 0
+          const late: number[] = []
+          for (let i = 0; i < lateCount; i++) late.push((rotation + o.threshold + i) % claimants.length)
 
-        responders.forEach((slot, i) => {
-          const block = ctBlock + (i % o.staggerBlocks)
-          const operator = claimants[slot]
-          const gasUsed =
-            GAS.submitPartialDecryption +
-            ((i * 137) % (GAS.submitPartialDecryptionMax - GAS.submitPartialDecryption))
-          builder.emit(
-            'PartialDecryptionSubmitted',
-            block,
-            builder.tx(`partial:${nonce}:${a}:${index}:${slot}`, block, gasUsed, operator),
-            {
-              epochId,
-              aid,
-              participant: operator,
-              participantIndex: slot + 1,
-              ciphertextIndex: index,
-              delta: pseudoPoint(`delta:${nonce}:${a}:${index}:${slot}`, seed),
-            },
-            { epoch: epochId, aid, actor: operator },
-          )
-          lastActive.set(operator, block)
-        })
-        late.forEach((slot, i) => {
-          const block = ctBlock + o.staggerBlocks + (i % o.staggerBlocks)
-          const operator = claimants[slot]
-          builder.emit(
-            'PartialDecryptionSubmitted',
-            block,
-            builder.tx(`partial:${nonce}:${a}:${index}:${slot}`, block, GAS.submitPartialDecryption, operator),
-            {
-              epochId,
-              aid,
-              participant: operator,
-              participantIndex: slot + 1,
-              ciphertextIndex: index,
-              delta: pseudoPoint(`delta:${nonce}:${a}:${index}:${slot}`, seed),
-            },
-            { epoch: epochId, aid, actor: operator },
-          )
-        })
-
-        // The organizer withholds its share for every fourth ciphertext, so
-        // those never combine — the pipeline view has to show that state.
-        const withheld = index % 4 === 0
-        if (!withheld) {
-          const shareBlock = ctBlock + o.staggerBlocks + 1
-          const overwrite = index % 5 === 0
-          const emitShare = (block: number, gas: number, label: string): void => {
+          responders.forEach((slot, i) => {
+            const block = ctBlock + (i % o.staggerBlocks)
+            const operator = claimants[slot]
+            const gasUsed =
+              GAS.submitPartialDecryption +
+              ((i * 137) % (GAS.submitPartialDecryptionMax - GAS.submitPartialDecryption))
             builder.emit(
-              'OrganizerShareSubmitted',
+              'PartialDecryptionSubmitted',
               block,
-              builder.tx(label, block, gas, organizer),
+              builder.tx(`partial:${nonce}:${a}:${index}:${slot}`, block, gasUsed, operator),
               {
                 epochId,
                 aid,
+                participant: operator,
+                participantIndex: slot + 1,
                 ciphertextIndex: index,
-                delta: pseudoPoint(`odelta:${nonce}:${a}:${index}`, seed),
-                a1: pseudoPoint(`a1:${nonce}:${a}:${index}`, seed),
-                a2: pseudoPoint(`a2:${nonce}:${a}:${index}`, seed),
-                z: pseudoBig(`z:${nonce}:${a}:${index}`, seed),
+                delta: pseudoPoint(`delta:${nonce}:${a}:${index}:${slot}`, seed),
               },
-              { epoch: epochId, aid, actor: organizer },
+              { epoch: epochId, aid, actor: operator },
             )
-          }
-          emitShare(shareBlock, GAS.submitOrganizerShare, `share:${nonce}:${a}:${index}`)
-          if (overwrite) {
-            emitShare(
-              shareBlock + 2,
-              GAS.submitOrganizerShareOverwrite,
-              `share2:${nonce}:${a}:${index}`,
+            lastActive.set(operator, block)
+          })
+          late.forEach((slot, i) => {
+            const block = ctBlock + o.staggerBlocks + (i % o.staggerBlocks)
+            const operator = claimants[slot]
+            builder.emit(
+              'PartialDecryptionSubmitted',
+              block,
+              builder.tx(`partial:${nonce}:${a}:${index}:${slot}`, block, GAS.submitPartialDecryption, operator),
+              {
+                epochId,
+                aid,
+                participant: operator,
+                participantIndex: slot + 1,
+                ciphertextIndex: index,
+                delta: pseudoPoint(`delta:${nonce}:${a}:${index}:${slot}`, seed),
+              },
+              { epoch: epochId, aid, actor: operator },
             )
-          }
+          })
+        }
 
+        // The t-th partial lands inside the first stagger window.
+        const thresholdBlock = ctBlock + Math.min(o.threshold - 1, o.staggerBlocks - 1)
+        if (unlockedAt != null) {
           // Most ciphertexts get combined; the newest Live epoch keeps a few
           // in flight so the "ready" state is visible somewhere.
-          const pending = nonce === o.epochs - 1 && index > o.ciphertextsPerApplication - 3
+          const pending = nonce === newestLiveNonce && index > o.ciphertextsPerApplication - 2
           if (!pending) {
-            const combineBlock = shareBlock + 3 + (overwrite ? 2 : 0)
+            const combineBlock = Math.max(thresholdBlock, unlockedAt) + 3
             const combiner = claimants[(rotation + 1) % claimants.length]
             builder.emit(
               'DecryptionCombined',
@@ -607,11 +666,7 @@ export function buildFixture(options: FixtureOptions = {}): Fixture {
           startBlock + o.committeeSelectionBlocks + o.keyAssemblyBlocks + o.finalizeGapBlocks,
       },
       committee,
-      collectivePublicKey: phase === 'live' ? pseudoPoint(`pkep:${e}`, seed) : null,
-      shareCommitmentHashes:
-        phase === 'live'
-          ? Array.from({ length: o.committeeSize }, (_, i) => pseudoHex(`d:${e}:${i}`, 32, seed))
-          : [],
+      poolNext: phase === 'live' ? Math.min(o.applicationsPerEpoch, POOL_SIZE) : 0,
       claimedCount: committee.length,
       contributionCount: epoch.contributions.length,
       stateBlock: headBlock,
@@ -631,13 +686,20 @@ export function buildFixture(options: FixtureOptions = {}): Fixture {
   for (const { epoch, aid } of applications) {
     const app = store.applications[`${epoch}:${aid}`]
     if (!app) continue
+    const automatic = app.mode === 'automatic'
+    const nonce = store.epochs[epoch]?.nonce ?? 0
+    const submitter = (store.ciphertexts[app.ciphertexts[0]]?.submitter ?? app.creator) as Address
     applyApplicationState(store, epoch, aid, {
+      mode: app.mode,
+      poolIndex: app.poolIndex ?? undefined,
       policy: {
-        authorizedSubmitter: (store.ciphertexts[app.ciphertexts[0]]?.submitter ??
-          app.creator) as Address,
+        openSubmission: automatic,
+        submitters: automatic ? [] : [submitter],
         maxCiphertexts: o.ciphertextsPerApplication,
         notBeforeBlock: 0,
         notAfterBlock: 0,
+        decryptNotBefore: automatic ? 0 : FIXTURE_DECRYPT_OPEN,
+        decryptNotAfter: automatic ? FIXTURE_DECRYPT_DEADLINE : nonce % 2 === 0 ? FIXTURE_DECRYPT_CLOSED : 0,
       },
       stateBlock: headBlock,
     })

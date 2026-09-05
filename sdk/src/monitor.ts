@@ -6,7 +6,7 @@ import { sleep } from './utils.js';
 import { fromRTEtoTE } from './crypto/babyjub-form.js';
 
 const DEFAULT_INTERVAL_MS = 2_000;
-/** All-zero bytes32 — the "nothing stored" sentinel for both hashes below. */
+/** All-zero bytes32 — the "nothing stored" sentinel for a ciphertext hash. */
 const ZERO_BYTES32 = ('0x' + '00'.repeat(32)) as `0x${string}`;
 const DEFAULT_TIMEOUT_MS = 120_000;
 
@@ -113,35 +113,26 @@ export function watchNewEpochs(
 export const watchNewRounds = watchNewEpochs;
 
 /**
- * Watch for a epoch being finalized.
- * Calls `onFinalized` once when the EpochLive event fires.
+ * Watch for a epoch being finalized (proof-less `finalizeEpoch`, freezing the
+ * accepted contributor set). Calls `onLive` once when the EpochLive event
+ * fires, with the number of accepted contributions. The epoch's pool keys
+ * are not activated yet at this point — see `waitForPoolKeyActivated`.
  * Returns an unsubscribe function.
  */
 export function watchEpochLive(
   client: DKGClient,
   epochId: `0x${string}`,
-  onFinalized: (collectivePublicKeyHash: `0x${string}`) => void,
+  onLive: (contributionCount: number) => void,
 ): () => void {
   return client.publicClient.watchContractEvent({
     address: client.managerAddress,
-    abi: [
-      {
-        type: 'event',
-        name: 'EpochLive',
-        inputs: [
-          { name: 'epochId', type: 'bytes12', indexed: true },
-          { name: 'aggregateCommitmentsHash', type: 'bytes32', indexed: false },
-          { name: 'collectivePublicKeyHash', type: 'bytes32', indexed: false },
-          { name: 'shareCommitmentHash', type: 'bytes32', indexed: false },
-        ],
-      },
-    ] as const,
+    abi: dkgManagerAbi,
     eventName: 'EpochLive',
     args: { epochId: epochId as any },
     onLogs: (logs) => {
       for (const log of logs) {
-        const { collectivePublicKeyHash } = log.args as any;
-        if (collectivePublicKeyHash) onFinalized(collectivePublicKeyHash as `0x${string}`);
+        const { contributionCount } = log.args as any;
+        if (contributionCount !== undefined) onLive(Number(contributionCount));
       }
     },
   });
@@ -188,7 +179,7 @@ export function watchDecryptionCombined(
  *
  * `c1`/`c2` are converted from on-chain RTE form to TE form for consistency
  * with the rest of this SDK (see `crypto/babyjub-form.ts`), so they can be
- * handed straight to `writer.submitOrganizerShare`.
+ * handed straight to the committee's partial-decryption computation.
  *
  * Returns an unsubscribe function.
  */
@@ -233,11 +224,13 @@ export function watchCiphertextSubmitted(
 /**
  * One-shot snapshot of a ciphertext's decryption pipeline.
  *
- * A ciphertext is only combinable once the committee has posted `threshold`
- * partial decryptions **and** the organizer has released its share; the
- * contract reverts `OrganizerShareMissing()` otherwise. `organizerShare`
- * reports the second condition (`getOrganizerShareHash != 0`) so a UI can
- * tell "waiting for the committee" apart from "waiting for the organizer".
+ * A ciphertext is combinable once the committee has posted `threshold`
+ * partial decryptions and the decryption window is open
+ * (`requireDecryptionOpen`) — there is no separate organizer-share gate in
+ * either mode: an `OrganizerLocked` application's combine proof consumes the
+ * organizer secret directly (see `revealOrganizerSecret`), and an `Automatic`
+ * one uses the identity secret. This snapshot doesn't count partials (no
+ * cheap on-chain counter exists); use `getPartialDecryptionEvents` for that.
  */
 export async function decryptionProgress(
   client: DKGClient,
@@ -246,44 +239,41 @@ export async function decryptionProgress(
   ciphertextIndex: number,
 ): Promise<{
   ciphertext: boolean;
-  organizerShare: boolean;
-  organizerShareHash: `0x${string}`;
   combined: boolean;
   plaintext: bigint;
 }> {
-  const [ctHash, shareHash, record] = await Promise.all([
+  const [ctHash, record] = await Promise.all([
     client.getCiphertextHash(epochId, aid, ciphertextIndex),
-    client.getOrganizerShareHash(epochId, aid, ciphertextIndex),
     client.getCombinedDecryption(epochId, aid, ciphertextIndex),
   ]);
   return {
     ciphertext: ctHash !== ZERO_BYTES32,
-    organizerShare: shareHash !== ZERO_BYTES32,
-    organizerShareHash: shareHash,
     combined: record.completed,
     plaintext: record.plaintext,
   };
 }
 
 /**
- * Poll until the organizer share for a ciphertext is on chain.
+ * Poll until pool key `keyIndex` is activated for the epoch (bit `keyIndex`
+ * set in `client.getPoolStatus(epochId).activated`). Registering an
+ * application under that key (`registerApplication` → `claimPoolKey`)
+ * reverts `PoolKeyNotActive` until then.
  *
  * @throws If the epoch is Aborted or the timeout is exceeded.
  */
-export async function waitForOrganizerShare(
+export async function waitForPoolKeyActivated(
   client: DKGClient,
   epochId: `0x${string}`,
-  aid: `0x${string}`,
-  ciphertextIndex: number,
+  keyIndex: number,
   options?: PollOptions,
-): Promise<`0x${string}`> {
+): Promise<void> {
   const intervalMs = options?.intervalMs ?? DEFAULT_INTERVAL_MS;
   const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {
-    const hash = await client.getOrganizerShareHash(epochId, aid, ciphertextIndex);
-    if (hash !== ZERO_BYTES32) return hash;
+    const { activated } = await client.getPoolStatus(epochId);
+    if ((activated & (1 << keyIndex)) !== 0) return;
 
     const epoch = await client.getEpoch(epochId);
     if (epoch.status === EpochPhase.Aborted) {
@@ -292,7 +282,7 @@ export async function waitForOrganizerShare(
     await sleep(intervalMs);
   }
   throw new Error(
-    `Timeout waiting for the organizer share of ciphertext ${ciphertextIndex} in epoch ${epochId}`,
+    `Timeout waiting for pool key ${keyIndex} to activate in epoch ${epochId}`,
   );
 }
 

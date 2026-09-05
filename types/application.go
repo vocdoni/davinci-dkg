@@ -7,31 +7,52 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 )
 
-// AppPolicy gates submitCiphertext for one application. Mirrors
-// `DKGTypes.AppPolicy`. A zero AuthorizedSubmitter is resolved to the
-// registering address on chain, so the stored value is never zero.
+// AppMode mirrors `DKGTypes.AppMode`: who is needed to decrypt.
+type AppMode uint8
+
+const (
+	// AppModeOrganizerLocked: the organizer keeps sk_org until it calls
+	// revealOrganizerSecret; the committee alone cannot decrypt before that.
+	AppModeOrganizerLocked AppMode = iota
+	// AppModeAutomatic: no organizer key at all (PK_org is the identity),
+	// so the committee decrypts on its own as soon as it holds t partials.
+	AppModeAutomatic
+)
+
+// AppPolicy is the per-application policy fixed at registration. Mirrors
+// `DKGTypes.AppPolicy`. Submission is open to anyone (OpenSubmission), to
+// the Submitters allow-list, or — when both are empty — to the registrant.
 type AppPolicy struct {
-	AuthorizedSubmitter common.Address
-	MaxCiphertexts      uint16 // 0 = unlimited
-	NotBeforeBlock      uint64
-	NotAfterBlock       uint64
+	Mode             AppMode
+	OpenSubmission   bool
+	Submitters       []common.Address // at most 32
+	MaxCiphertexts   uint16           // 0 = unlimited
+	NotBeforeBlock   uint64
+	NotAfterBlock    uint64
+	DecryptNotBefore uint64 // unix seconds; partials and combines revert before it (0 = none)
+	DecryptNotAfter  uint64 // unix seconds; partials and combines revert after it (0 = never)
 }
 
 // Application is the cached on-chain record. Stored locally so workers can
 // route ciphertext events to the right per-application worker without an
 // extra getApplication round-trip per ciphertext.
 //
-// Every application carries an organizer key: the application encryption key
-// is PK_aid = PK_ep + PK_org, so decryption needs both the committee's
-// threshold and the organizer's Δ = sk_org·C1.
+// Every application claims one of the epoch's MaxK pool keys at registration
+// (PoolIndex): the encryption key is PK_aid = P_j for an Automatic
+// application and P_j + PK_org for an organizer-locked one, so a ciphertext
+// copied into another application decrypts under a different key. The
+// organizer of a locked application reveals sk_org once, after which the
+// committee combines on its own.
 type Application struct {
-	EpochID        string
-	AID            [32]byte
-	Creator        common.Address
-	OrganizerPK    CurvePoint
-	Policy         AppPolicy
-	CreatedAtBlock uint64
-	Exists         bool
+	EpochID         string
+	AID             [32]byte
+	Creator         common.Address
+	OrganizerPK     CurvePoint
+	OrganizerSecret *big.Int // sk_org once revealed; nil or zero before that
+	PoolIndex       uint8
+	Policy          AppPolicy
+	CreatedAtBlock  uint64
+	Exists          bool
 }
 
 // Validate checks that the application record is internally coherent.
@@ -45,6 +66,12 @@ func (a Application) Validate() error {
 	if err := a.OrganizerPK.Validate(); err != nil {
 		return fmt.Errorf("organizer public key: %w", err)
 	}
+	// An organizer-locked application must carry a real key; the identity
+	// (0, 1) is what an automatic registration stores.
+	if a.Policy.Mode == AppModeOrganizerLocked &&
+		a.OrganizerPK.X.Sign() == 0 && a.OrganizerPK.Y.Cmp(big.NewInt(1)) == 0 {
+		return fmt.Errorf("organizer-locked application without an organizer key")
+	}
 	return nil
 }
 
@@ -57,18 +84,4 @@ type CiphertextRecord struct {
 	C2              CurvePoint
 	Submitter       common.Address
 	SubmittedAt     uint64
-}
-
-// OrganizerShare is the organizer's Δ = sk_org·C1 for one ciphertext, with
-// the Chaum-Pedersen DLEQ (A1, A2, z) that binds it to the registered
-// PK_org. The contract stores only the keccak of these words; the combine
-// SNARK verifies the DLEQ.
-type OrganizerShare struct {
-	EpochID         string
-	AID             [32]byte
-	CiphertextIndex uint16
-	DeltaOrg        CurvePoint
-	A1              CurvePoint
-	A2              CurvePoint
-	Response        *big.Int
 }

@@ -1,8 +1,12 @@
 name: Publish Circuits
 
 # Triggered manually by adding the 'trigger-upload-circuits' label to a PR.
-# Recompiles all 6 circuits, uploads artifacts to S3, and posts a comment
-# with download instructions.
+# Recompiles all 4 circuits (a fresh Groth16 setup), pins the new hashes in
+# config/circuit_artifacts.go and the verifier wrappers, stages the ccs/pk/vk
+# files as `<sha256>.<ext>` release assets, and posts a comment with download
+# instructions. Nodes fetch artifacts from the GitHub release named by
+# config.DefaultArtifactsRelease, so the staged assets go there
+# (gh release upload) and the pinned config is committed alongside.
 on:
   pull_request:
     types: [labeled]
@@ -25,10 +29,15 @@ jobs:
         github.event.label.name == 'trigger-upload-circuits' &&
         github.event.pull_request.head.repo.full_name == github.event.pull_request.base.repo.full_name
       }}
-    runs-on: ubuntu-latest
+    # Self-hosted: the 3.0M-constraint contribution setup takes ~10 min and
+    # several GB of RAM on our boxes; a GitHub-hosted runner is 5–10× slower.
+    runs-on: [self-hosted]
     timeout-minutes: 120
     env:
       LOG_LEVEL: debug
+      # Keep the compile JSON out of /tmp: the integration and battery jobs
+      # on the same box write /tmp/circuit-artifacts.json too.
+      CIRCUIT_ARTIFACTS_JSON: ${{ runner.temp }}/circuit-artifacts.json
 
     steps:
       - name: Remove PR label
@@ -46,6 +55,11 @@ jobs:
               core.warning(`Failed to remove label: ${err.message}`);
             }
 
+      # Some self-hosted runners export no HOME (z5 runs as root under
+      # systemd); go needs one and ~/.davinci/artifacts lives under it.
+      - name: Give the run a home
+        run: mkdir -p "$RUNNER_TEMP/home" && echo "HOME=$RUNNER_TEMP/home" >> "$GITHUB_ENV"
+
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -55,39 +69,54 @@ jobs:
           go-version-file: go.mod
           cache: false
 
-      - name: Compile circuits and upload to S3
-        env:
-          S3_ACCESS_KEY: ${{ secrets.S3_ACCESS_KEY }}
-          S3_SECRET_KEY: ${{ secrets.S3_SECRET_KEY }}
-        run: |
-          go run ./cmd/circuit-compile/... \
-            --destination ~/.davinci/artifacts \
-            --verifiers-dir solidity/src/verifiers
+      # circuits-compile writes the artifacts to ~/.davinci/artifacts and the
+      # *_vkey.sol verifiers; circuits-update-hashes patches
+      # config/circuit_artifacts.go and PROVING_KEY_HASH in the wrappers, so
+      # the config, verifiers and assets uploaded below come from one setup.
+      - name: Compile circuits and pin the new hashes
+        run: make circuits-compile circuits-update-hashes
+
+      - name: Stage release assets
+        run: python3 scripts/stage-circuit-release.py "$HOME/.davinci/artifacts" "$RUNNER_TEMP/release-assets"
 
       - name: Store circuit artifact config
         uses: actions/upload-artifact@v4
         with:
           name: davinci-dkg-circuits-config
+          if-no-files-found: error
           path: |
             config/circuit_artifacts.go
+            solidity/src/verifiers/ContributionVerifier.sol
+            solidity/src/verifiers/PoolKeyVerifier.sol
+            solidity/src/verifiers/PartialDecryptVerifier.sol
+            solidity/src/verifiers/DecryptCombineVerifier.sol
             solidity/src/verifiers/contribution_vkey.sol
-            solidity/src/verifiers/finalize_vkey.sol
+            solidity/src/verifiers/poolkey_vkey.sol
             solidity/src/verifiers/partialdecrypt_vkey.sol
             solidity/src/verifiers/decryptcombine_vkey.sol
-            solidity/src/verifiers/revealsubmit_vkey.sol
-            solidity/src/verifiers/revealshare_vkey.sol
+
+      - name: Store release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: davinci-dkg-circuits-assets
+          if-no-files-found: error
+          path: ${{ runner.temp }}/release-assets/*
 
       - name: Comment on PR
         uses: actions/github-script@v7
         with:
           script: |
             const runId = context.runId || process.env.GITHUB_RUN_ID || 'UNKNOWN_RUN_ID';
+            const repo = `${context.repo.owner}/${context.repo.repo}`;
             const body =
               `Circuit artifact upload finished.\n\n` +
-              `Download the updated config files:\n\n` +
+              `Download the pinned config + verifiers and the staged release assets:\n\n` +
               `\`\`\`bash\n` +
-              `gh run download ${runId} -R ${context.repo.owner}/${context.repo.repo} -n davinci-dkg-circuits-config\n` +
-              `\`\`\`\n`;
+              `gh run download ${runId} -R ${repo} -n davinci-dkg-circuits-config\n` +
+              `gh run download ${runId} -R ${repo} -n davinci-dkg-circuits-assets -D release-assets\n` +
+              `gh release upload <circuits-vN> release-assets/* -R ${repo}\n` +
+              `\`\`\`\n\n` +
+              `Commit the config and verifiers together with the matching config.DefaultArtifactsRelease.\n`;
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,

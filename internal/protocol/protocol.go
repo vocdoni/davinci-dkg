@@ -25,13 +25,14 @@ import (
 const (
 	DomainOperatorRegisterV1Str  = "davinci-dkg:operator-register:v1"
 	DomainOrganizerRegisterV1Str = "davinci-dkg:organizer-register:v1"
-	DomainDLEQV1Str              = "davinci-dkg:dleq:v1"
-	// DomainOrganizerShareV1Str separates the organizer's Chaum-Pedersen
-	// DLEQ over Δ = sk_org·C1. The challenge is keccak (not Poseidon) so a
-	// browser-only organizer needs nothing but keccak and BabyJubJub
-	// arithmetic; the combine SNARK consumes the challenge as a transcript
-	// word and the contract recomputes it from calldata.
-	DomainOrganizerShareV1Str = "davinci-dkg:organizer-share:v1"
+
+	// BRLC transcript domains: the Fiat–Shamir domain every proof-carrying
+	// call binds into its challenge (`keccak(eid ‖ domain ‖ anchor) mod p`,
+	// see BRLC.sol). One per circuit whose transcript the contract streams:
+	// contribution, pool-key activation and decrypt-combine.
+	DomainContributionTranscriptV1Str   = "davinci-dkg:contribution:v1"
+	DomainPoolKeyTranscriptV1Str        = "davinci-dkg:poolkey:v1"
+	DomainDecryptCombineTranscriptV1Str = "davinci-dkg:decrypt-combine:v1"
 )
 
 // Domain-prefix digests (keccak256 of the strings above). These are the
@@ -44,8 +45,10 @@ const (
 var (
 	DomainOperatorRegisterV1  = crypto.Keccak256Hash([]byte(DomainOperatorRegisterV1Str))
 	DomainOrganizerRegisterV1 = crypto.Keccak256Hash([]byte(DomainOrganizerRegisterV1Str))
-	DomainDLEQV1              = crypto.Keccak256Hash([]byte(DomainDLEQV1Str))
-	DomainOrganizerShareV1    = crypto.Keccak256Hash([]byte(DomainOrganizerShareV1Str))
+
+	DomainContributionTranscriptV1   = crypto.Keccak256Hash([]byte(DomainContributionTranscriptV1Str))
+	DomainPoolKeyTranscriptV1        = crypto.Keccak256Hash([]byte(DomainPoolKeyTranscriptV1Str))
+	DomainDecryptCombineTranscriptV1 = crypto.Keccak256Hash([]byte(DomainDecryptCombineTranscriptV1Str))
 )
 
 // Hash exposes the canonical hash function used to derive the domain

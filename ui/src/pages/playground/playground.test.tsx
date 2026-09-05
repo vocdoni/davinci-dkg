@@ -47,11 +47,75 @@ describe('playground (demo)', () => {
     expect(await screen.findByRole('heading', { name: /submit the ciphertext/i })).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: /submit ciphertext/i }))
-    expect(await screen.findByRole('heading', { name: /release or withhold/i })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /reveal the organizer secret/i })).toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: /release the share/i }))
+    await user.click(screen.getByRole('button', { name: /reveal the secret/i }))
     expect(await screen.findByRole('heading', { name: /watch the decryption/i })).toBeInTheDocument()
     expect(screen.getByText(/partial decryptions/i)).toBeInTheDocument()
+    expect(screen.getByText(/^revealed · block/)).toBeInTheDocument()
+    // The simulated committee only starts answering after the reveal, then the
+    // combine lands and is written to the activity log.
+    await waitFor(() => expect(screen.getByText(/combined on chain from \d+ partials/)).toBeInTheDocument(), {
+      timeout: 15_000,
+    })
+  }, 60_000)
+
+  it('claims a pool key and encrypts under the application key', async () => {
+    const user = userEvent.setup()
+    renderPlayground()
+
+    await user.click(await screen.findByRole('button', { name: /use the demo wallet/i }))
+    // The epoch list says how much of each pool is left.
+    expect((await screen.findAllByText(/\d+ activated free · \d+ claimed · \d+ not activated/)).length).toBeGreaterThan(0)
+    await user.click(await screen.findByRole('button', { name: 'Register an application →' }))
+    await user.click(await screen.findByRole('button', { name: /^register application$/i }))
+    // The fixture's live epochs have two keys claimed, so ours is key 2. The
+    // encrypt step names it next to PK_aid, and the log line records the claim.
+    expect(await screen.findByText(/^Pool key 2 · PK_aid\.x/)).toBeInTheDocument()
+    expect(screen.getByText(/— pool key 2$/)).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /^encrypt$/i }))
+    expect(await screen.findByText(/^Encrypted 42 under PK_aid = P_2 \+ PK_org$/)).toBeInTheDocument()
+  }, 60_000)
+
+  it('skips the reveal step for an automatic application', async () => {
+    const user = userEvent.setup()
+    renderPlayground()
+
+    await user.click(await screen.findByRole('button', { name: /use the demo wallet/i }))
+    await user.click(await screen.findByRole('button', { name: 'Register an application →' }))
+    await screen.findByRole('heading', { name: /register an application/i })
+
+    await user.selectOptions(screen.getByLabelText(/^mode$/i), 'automatic')
+    // No organizer key: the secret block gives way to a note.
+    expect(await screen.findByText('No organizer key')).toBeInTheDocument()
+    expect(screen.queryByText(/copy this now — it is shown once/i)).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /^register application$/i }))
+    expect(await screen.findByRole('heading', { name: /encrypt a value/i })).toBeInTheDocument()
+    expect(screen.getByText(/^Registered automatic application/)).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /^encrypt$/i }))
+    expect(await screen.findByText(/^Encrypted 42 under PK_aid = P_2$/)).toBeInTheDocument()
+    await user.click(await screen.findByRole('button', { name: /submit ciphertext/i }))
+    // Straight to the watch step: there is no secret to reveal or keep, and
+    // the rail says the reveal step was skipped.
+    expect(await screen.findByRole('heading', { name: /watch the decryption/i })).toBeInTheDocument()
+    expect(screen.getByText('not needed')).toBeInTheDocument()
+    expect(screen.getByText('skipped')).toBeInTheDocument()
+  }, 60_000)
+
+  it('refuses a decryption window that is already closed', async () => {
+    const user = userEvent.setup()
+    renderPlayground()
+
+    await user.click(await screen.findByRole('button', { name: /use the demo wallet/i }))
+    await user.click(await screen.findByRole('button', { name: 'Register an application →' }))
+    await screen.findByRole('heading', { name: /register an application/i })
+    await user.type(screen.getByLabelText(/decryption closes/i), '2001-01-01T00:00')
+    await user.click(screen.getByRole('button', { name: /^register application$/i }))
+    expect(await screen.findByText(/decryptNotAfter must be in the future/)).toBeInTheDocument()
+    expect(screen.queryByText(/^Registered application/)).not.toBeInTheDocument()
   }, 60_000)
 
   it('pins the epoch in the URL once an application is registered', async () => {
@@ -98,7 +162,8 @@ describe('playground (demo)', () => {
       value: '77',
       ciphertext: { c1: ['1', '2'], c2: ['3', '4'] },
       ciphertextIndex: 2,
-      share: 'released',
+      reveal: 'revealed',
+      poolIndex: 2,
     })
 
     renderWithProviders(<PlaygroundPage />, {

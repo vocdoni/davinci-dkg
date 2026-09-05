@@ -1,6 +1,6 @@
 # Davinci DKG SDK
 
-TypeScript SDK for the Davinci DKG smart contracts. Covers read/write access to `DKGManager`, `DKGRegistry` and `DKGAppManager`, ElGamal encryption on BabyJubJub under per-application keys, the organizer's decryption share, and helpers for polling epoch status and decryption results.
+TypeScript SDK for the Davinci DKG smart contracts. Covers read/write access to `DKGManager`, `DKGRegistry` and `DKGAppManager`, ElGamal encryption on BabyJubJub under per-application pool keys, pool-key activation and status, the organizer's one-time secret reveal, and helpers for polling epoch status and decryption results.
 
 ## Installation
 
@@ -20,6 +20,7 @@ import { privateKeyToAccount } from 'viem/accounts';
 import {
   DKGClient,
   DKGWriter,
+  AppMode,
   buildElGamal,
   encryptForApplication,
   randomOrganizerSecret,
@@ -73,7 +74,12 @@ const bounds = await client.getEpochBounds();
 const participants = await client.selectedParticipants(epochId);
 const contrib      = await client.getContribution(epochId, participantAddress);
 
-// Decryption state (ciphertexts are keyed by application id; use 0x00…00 for the bare epoch key)
+// Pool keys (MaxK = 8 dealt per epoch; each application claims one at registration)
+const { nextIndex, activated } = await client.getPoolStatus(epochId);
+const poolKey = await client.getPoolKey(epochId, 0);           // reverts PoolKeyNotActive if not yet activated
+const pkAid   = await client.getApplicationKey(epochId, aid);  // P_j (automatic) or P_j + PK_org (locked)
+
+// Decryption state (ciphertexts are keyed by application id; there is no bare epoch-key path)
 const count    = await client.ciphertextCount(epochId, aid);
 const partial  = await client.getPartialDecryption(epochId, aid, participantIndex, ciphertextIndex);
 const combined = await client.getCombinedDecryption(epochId, aid, ciphertextIndex);
@@ -85,7 +91,9 @@ const node = await client.getNode(operatorAddress);
 ## Writing transactions
 
 ```ts
-// Create an epoch. Permissionless once `nextEpochStartBlock()` is reached.
+// Create an epoch. Permissionless once `nextEpochStartBlock()` is reached
+// (or earlier, when the newest epoch is Live with at most one unclaimed
+// pool key, or Aborted).
 // Only the four policy fields are sent; phase deadlines are derived on-chain
 // from EPOCH_DURATION_BLOCKS. The values must satisfy `getEpochBounds()` plus
 // 1 ≤ threshold ≤ minValidContributions ≤ committeeSize ≤ MaxN and
@@ -108,29 +116,40 @@ await writer.registerKey(babyJubPrivateKey);
 // Claim a slot (DKG node role — after the seed block has been mined)
 await writer.claimSlot(epochId);
 
-// Register an application once the epoch is Live. Every application is
-// organizer co-decryption: keep `skOrg`, it is the only decryption capability.
-const skOrg = randomOrganizerSecret();              // store this somewhere safe
+// Register an application once the epoch is Live and has an activated pool
+// key to claim (reverts PoolExhausted / PoolKeyNotActive otherwise; an epoch
+// serves at most 8 applications, the next epoch refills the pool).
+// Organizer-locked (the default) needs a one-time reveal before the
+// committee can combine; automatic has no organizer key at all — read
+// "Applications and the organizer secret" before choosing.
+const skOrg = randomOrganizerSecret();              // store this somewhere safe (locked mode)
 const aid   = '0x…';                                // your bytes32 application id
 await writer.registerApplication(epochId, aid, {
-  authorizedSubmitter: '0x0000000000000000000000000000000000000000', // = you
-  maxCiphertexts:      0,
-  notBeforeBlock:      0n,
-  notAfterBlock:       0n,
+  mode:             AppMode.OrganizerLocked,  // or AppMode.Automatic
+  openSubmission:   false,                    // true: anyone may submitCiphertext
+  submitters:       [],                       // exclusive allow-list (≤ 32); empty and not open = you only
+  maxCiphertexts:   0,                        // 0 = unlimited (256 hard cap)
+  notBeforeBlock:   0n,
+  notAfterBlock:    0n,
+  decryptNotBefore: 0n,                       // unix seconds; 0 = unbounded
+  decryptNotAfter:  0n,
 }, skOrg);
 
-// Encrypt under PK_aid = PK_ep + PK_org and publish. The contract assigns the
-// index (1, 2, … per aid).
-const pk  = await client.getCollectivePublicKey(epochId);
-const app = await client.getApplication(epochId, aid);
-const ciphertext = await encryptForApplication(42n, [pk.x, pk.y], app.organizerPK);
+// Encrypt under PK_aid = P_j (automatic) or P_j + PK_org (locked) and
+// publish. The contract assigns the index (1, 2, … per aid).
+const pkAid = await client.getApplicationKey(epochId, aid);
+const ciphertext = await encryptForApplication(42n, pkAid);
 const { ciphertextIndex } = await writer.submitCiphertext(epochId, aid, ciphertext);
 
-// Release the organizer share so the committee can combine.
-await writer.submitOrganizerShare(epochId, aid, ciphertextIndex, ciphertext, skOrg);
+// Locked mode only, once per application, whenever the organizer is ready:
+// reveal `sk_org` so the committee can combine by itself — for every past
+// and future ciphertext of the application, not just this one. Automatic
+// applications skip this step entirely.
+await writer.revealOrganizerSecret(epochId, aid, skOrg);
 
 // Read the recovered plaintext (nodes combine automatically once threshold
-// partial decryptions and the organizer share are on-chain).
+// partial decryptions are on-chain, the decryption window is open, and —
+// for a locked application — the secret has been revealed).
 const plaintext = await client.getPlaintext(epochId, aid, ciphertextIndex);
 
 // Abort a dead epoch. Permissionless, but only succeeds once the selection
@@ -154,10 +173,10 @@ await waitForEpochPhase(client, epochId, EpochPhase.Live, {
 const record = await waitForDecryption(client, epochId, aid, ciphertextIndex);
 console.log(record.completed); // true
 
-// Where is a ciphertext stuck? `organizerShare` tells "waiting for the
-// committee" apart from "waiting for the organizer".
+// One-shot pipeline snapshot: partials so far, whether the decryption
+// window is open, and whether it has been combined.
 const progress = await decryptionProgress(client, epochId, aid, ciphertextIndex);
-console.log(progress.organizerShare, progress.combined);
+console.log(progress.combined);
 
 // Subscribe to new epochs in real time (returns unsubscribe fn)
 const unsub = watchNewEpochs(client, (epochId, organizer) => {
@@ -165,8 +184,7 @@ const unsub = watchNewEpochs(client, (epochId, organizer) => {
 });
 unsub(); // stop watching
 
-// Subscribe to ciphertexts as they land. `c1`/`c2` come back in TE form, so
-// they can be handed straight to `writer.submitOrganizerShare`.
+// Subscribe to ciphertexts as they land. `c1`/`c2` come back in TE form.
 watchCiphertextSubmitted(client, epochId, ({ aid, ciphertextIndex, c1, c2 }) => {
   console.log('ciphertext', aid, ciphertextIndex, c1, c2);
 });
@@ -209,118 +227,163 @@ import {
   encryptForApplication,
   applicationKey,
   decrypt,
-  waitForCollectivePublicKeyHash,
 } from '@vocdoni/davinci-dkg-sdk';
 
 // Encrypt under a raw key (local use — nothing on chain can open this)
 const ciphertext = await encrypt(42n, someKey);
 
-// Encrypt for on-chain submission: PK_aid = PK_ep + PK_org
-const ct = await encryptForApplication(42n, [pk.x, pk.y], app.organizerPK);
-// …or derive the key yourself
-const pkAid = applicationKey([pk.x, pk.y], app.organizerPK);
-
-// Wait for an epoch to go Live and return the on-chain public key hash
-const hash = await waitForCollectivePublicKeyHash(client, epochId);
+// Encrypt for on-chain submission: PK_aid = P_j (automatic) or P_j + PK_org (locked)
+const pkAid = await client.getApplicationKey(epochId, aid);
+const ct = await encryptForApplication(42n, pkAid);
+// …or, if you already hold the pool key point and the organizer key locally
+const pkAidLocal = applicationKey(poolKeyPoint, app.organizerPK);
 ```
 
 ## Applications and the organizer secret
 
 Ciphertexts are always submitted under a registered application id (`aid`); there is no
-epoch-key path, and an unregistered `aid` reverts. Registration binds an organizer key:
+epoch-key path, and an unregistered `aid` reverts. Registration claims the next activated
+**pool key** `P_j` — one of the `MaxK = 8` keys the epoch's DKG deals alongside the usual
+commitments, one polynomial per key inside the same contribution proofs — and binds it into
+the application's key:
 
 ```
-PK_aid = PK_ep + PK_org        PK_org = sk_org · G
+PK_aid = P_j                    (automatic — no organizer key at all)
+PK_aid = P_j + PK_org           (organizer-locked)   PK_org = sk_org · G
 ```
 
-`writer.registerApplication(epochId, aid, policy, skOrg)` derives `PK_org` from `skOrg` and
-builds the Schnorr proof of possession the contract verifies (domain
-`davinci-dkg:organizer-register:v1`). Only `PK_org` and the proof go on chain.
+Because every application claims a distinct `P_j`, a ciphertext copied out of one application
+and re-submitted under another decrypts under an unrelated key: the result is garbage, not the
+original plaintext. **This closes the cross-application decryption oracle** that existed when
+every application shared one epoch key `PK_ep` — previously, an automatic application's
+published `sk_org` let anyone learn `sk_ep · C1` for a `C1` they never had a right to; that path
+no longer exists.
 
-> **Keep `sk_org`.** It is the application's only decryption capability, it is never
-> transmitted, and the SDK cannot recover it. **If you lose it, every ciphertext ever
-> submitted under that `aid` is permanently undecryptable** — the committee threshold alone
-> cannot open them, by design. Draw it with `randomOrganizerSecret()` and persist it before
-> you register. Conversely, anyone holding it can (together with the committee) open every
-> ciphertext of the application: within an application the organizer is trusted and
-> accountable; the guarantee the DKG adds is *across* applications.
+An application is registered in one of two **modes**, fixed by `policy.mode`:
+
+- `AppMode.OrganizerLocked` (the default). `writer.registerApplication(epochId, aid, policy,
+  skOrg)` derives `PK_org` from `skOrg` and builds the Schnorr proof of possession the contract
+  verifies (domain `davinci-dkg:organizer-register:v1`). Only `PK_org` and the proof go on
+  chain; `skOrg` stays with you until you choose to call
+  `writer.revealOrganizerSecret(epochId, aid, skOrg)` — a **one-time, whole-application** act,
+  not per-ciphertext. Before the reveal, no one — not even `t` colluding committee members —
+  can decrypt any ciphertext of the application, and the contract refuses every partial and
+  combine (`OrganizerSecretNotRevealed()`), so the organizer learns results together with
+  everyone else: it decides *when* the application opens, never *which* ciphertexts. After the
+  reveal the committee combines by itself for every ciphertext, past and future, once the
+  decryption window is open.
+- `AppMode.Automatic`. There is **no organizer key at all**: `registerApplication` ignores the
+  key and Schnorr arguments, and the contract stores the identity point `(0, 1)` as `PK_org`
+  and `0` as `organizerSecret`, so `PK_aid = P_j` directly. The committee alone can decrypt, as
+  soon as `t` partials land and the decryption window is open — there is no reveal step, ever.
+  Confidentiality of such an application is exactly the `t`-of-`n` committee assumption.
+
+> **Keep `sk_org` of an organizer-locked application until you mean to reveal it.** It is the
+> application's only decryption capability before the reveal, it is never transmitted, and the
+> SDK cannot recover it. **If you lose it before revealing, every ciphertext ever submitted
+> under that `aid` is permanently undecryptable** — the committee threshold alone cannot open
+> them, by design. Draw it with `randomOrganizerSecret()` and persist it at registration.
+> Revealing is irreversible and application-wide: once posted, anyone (together with the
+> committee) can open every past and future ciphertext of that application — within an
+> application the organizer is trusted and accountable; the guarantee the DKG adds is *across*
+> applications. Never reuse an organizer secret across two locked applications: revealing it
+> for one opens the other too.
 
 The SDK takes the secret as a plain `bigint` parameter everywhere. It deliberately does not
 derive it from a wallet signature: that would tie the application's decryptability to one
 wallet's exact signing behaviour, which no wallet guarantees across versions.
 
-To open a ciphertext the organizer publishes `Δ = sk_org · C1` with a Chaum-Pedersen DLEQ
-proving the same `sk_org` relates `(G, PK_org)` and `(C1, Δ)`:
-
-```ts
-await writer.submitOrganizerShare(epochId, aid, ciphertextIndex, ciphertext, skOrg);
-```
-
-The challenge is a keccak256 over
-`DOMAIN_ORGANIZER_SHARE_V1 ‖ eid ‖ aid ‖ uint256(ctIdx) ‖ PK_org ‖ C1 ‖ Δ ‖ A1 ‖ A2`, reduced
-mod the BabyJubJub subgroup order, over the on-chain (RTE) words. The contract recomputes it
-and stores only `keccak256(Δ ‖ A1 ‖ A2 ‖ z)`; the DLEQ itself is verified inside the
-committee's combine SNARK. `proveOrganizerShare` / `verifyOrganizerShare` /
-`organizerShareChallenge` are exported so integrators and auditors can build or re-check a
-share offline. Anyone may relay a share, and re-submission overwrites until the ciphertext is
-combined, so a malformed share cannot brick a ciphertext.
+The rest of the policy is fixed at registration too. **Submission**: `openSubmission: true`
+lets anyone call `submitCiphertext`; otherwise `submitters` is an exclusive allow-list of up to
+32 addresses (the registrant is not implicitly on it), and when both are empty only the
+registrant may submit. **Submission window**: `notBeforeBlock` / `notAfterBlock` (blocks, `0n` =
+unbounded) plus `maxCiphertexts`; `submitCiphertext` is gated by that window, the submitter
+policy and `decryptNotAfter` (a ciphertext nobody may ever decrypt is refused), and may land
+before decryption opens. **Decryption window**: `decryptNotBefore` / `decryptNotAfter` (unix
+seconds, `0n` = unbounded) make `submitPartialDecryption` and `combineDecryption` revert
+`DecryptionNotOpen()` before the window opens and `DecryptionClosed()` once it has passed; a
+locked application additionally reverts `OrganizerSecretNotRevealed()` until its organizer has
+revealed. The window bounds what the contract accepts and what honest nodes post — it does not
+bind `t` colluding members, who hold shares regardless (for a locked application they still lack
+`sk_org`), but since nothing is accepted before the window or the reveal there are no on-chain
+partials from before it either. An empty window (`notBefore` after `notAfter` when both are
+set), open submission with a non-empty list, a zero address on the list or more than 32 entries
+revert `InvalidPolicy()`.
 
 There is **no proof of knowledge of the ElGamal randomness**. The submitter of an aggregated
 tally cannot know its randomness, so such a proof is incompatible with homomorphic
-aggregation; cross-application replay is stopped by the organizer key instead — a `C1` copied
-into another application and decrypted there only yields `sk_ep·C1`, useless without that
-application's `sk_org·C1`.
+aggregation; cross-application replay is stopped by the pool key itself now, not by the
+organizer key — a `C1` copied into another application decrypts under that application's own
+`P_j`, an unrelated secret, so the result is meaningless there.
 
 To decrypt a ciphertext:
 
 1. The submitter publishes it with `submitCiphertext(...)` — the contract assigns the next
    index for `(epochId, aid)`, stores `keccak256(c1, c2)` and emits `CiphertextSubmitted`
    carrying the raw coordinates.
-2. DKG nodes watch that event and each call `submitPartialDecryption` on `DKGManager`.
-3. The organizer calls `submitOrganizerShare` on `DKGAppManager`.
-4. Once the threshold is met **and** the share is stored, any DKG node calls
-   `combineDecryption`; it reverts `OrganizerShareMissing()` otherwise, and the proof is bound
-   to the stored ciphertext hash so combine cannot be mounted against a different ciphertext.
+2. For a locked application, the organizer calls `revealOrganizerSecret` once, whenever they
+   choose — automatic applications skip this step entirely. Nothing below happens before it.
+3. DKG nodes watch the event and, once the decryption window is open (and the secret revealed,
+   for a locked application), each call `submitPartialDecryption` on `DKGManager` with a Merkle
+   proof of their share commitment against the claimed pool key's on-chain root. The tree covers
+   every committee member — leaves `keccak256(0x00 ‖ x ‖ y)`, empty leaves
+   `keccak256("davinci-dkg:merkle-empty:v1")`, nodes `keccak256(0x01 ‖ l ‖ r)`, depth 5 — so a
+   member that did not contribute can still post.
+4. Once `t` partials are on chain, the decryption window is open, and — for a locked
+   application — the secret has been revealed, any DKG node calls `combineDecryption`; the
+   proof is bound to the stored ciphertext hash so combine cannot be mounted against a
+   different ciphertext.
 5. `DecryptionCombined` is emitted, `getCombinedDecryption` returns `completed: true`, and
    `getPlaintext(epochId, aid, ciphertextIndex)` returns the recovered plaintext `uint256`.
 
 ## Full DKG flow overview
 
 ```
-[Anyone]    createEpoch(threshold, n, minValid, alphaBps)   ← permissionless, cadence-gated
-               │
+[Anyone]    createEpoch(threshold, n, minValid, alphaBps)   ← permissionless, cadence-gated;
+               │                                               also allowed early when the
+               │                                               newest epoch is Live with ≤ 1
+               │                                               unclaimed key, or Aborted
                ▼  (seed block mined)
 [DKG Node]  claimSlot(epochId)           ← lottery via on-chain blockhash seed; only
                │                            nodes registered before the epoch qualify
                ▼  (committee full)
-[DKG Node]  submitContribution(...)      ← ZK proof of VSS shares; contract
-               │                            adds commitment[0] to collective key
+[DKG Node]  submitContribution(...)      ← ZK proof dealing all MaxK = 8 pool-key
+               │                            polynomials at once
                ▼  (key-assembly deadline + live-not-before block reached)
-[DKG Node]  finalizeEpoch(...)           ← ZK proof aggregating all commitments;
-               │                            nodes auto-call this on a deterministic
-               │                            stagger derived from the lottery seed,
-               │                            so only one node submits per epoch.
-               │                            collectivePublicKeyHash emitted.
+[Anyone]    finalizeEpoch(eid)           ← no proof: just checks phase/block/contribution
+               │                            count and flips the epoch to Live, freezing
+               │                            the accepted contributor set
                ▼  Epoch.status = Live
-[Anyone]    getCollectivePublicKey(epochId) → {x, y}   ← simple contract read
+[Anyone]    activatePoolKey(eid, j, transcriptDigest, ...)  ← one ZK proof per key,
+               │                            permissionless, any order; stores P_j and the
+               │                            committee's share-commitment Merkle root; nodes
+               │                            activate keys ahead of demand (ActivateAhead)
+               ▼
+[Organizer] registerApplication(eid, aid, policy, skOrg)  ← claims the next activated
+               │                                             key j; locked: Schnorr PoP of
+               │                                             sk_org; automatic: no organizer
+               │                                             key at all; PK_aid = P_j (+PK_org)
+               ▼
+[Anyone]    getApplicationKey(eid, aid) → PK_aid     ← simple contract read
                │
                ▼
-[Organizer] registerApplication(eid, aid, policy, skOrg)  ← Schnorr PoP of sk_org
-               │                                             PK_aid = PK_ep + PK_org
-               ▼
-[Anyone]    encryptForApplication(m, PK_ep, PK_org)  ← ElGamal in the browser
+[Anyone]    encryptForApplication(m, PK_aid)         ← ElGamal in the browser
                │
                ▼
 [Submitter] submitCiphertext(epochId, aid, ct)       ← gated by the app's AppPolicy;
                │                                        index assigned on-chain;
                │                                        emits CiphertextSubmitted
                ▼
-[DKG Node]  submitPartialDecryption(...)             ← picked up from the event
-               │
-[Organizer] submitOrganizerShare(...)                ← Δ = sk_org·C1 + DLEQ
-               ▼  (threshold met AND share stored)
-[DKG Node]  combineDecryption(...)                   ← proof bound to stored ct hash and
-               │                                        to the stored organizer share;
+[Organizer] revealOrganizerSecret(eid, aid, sk)      ← locked apps only, once, whenever
+               │                                        the organizer chooses; automatic
+               │                                        apps skip this entirely; no partial
+               │                                        is accepted before it
+               ▼  (decryption window open AND, if locked, revealed)
+[DKG Node]  submitPartialDecryption(..., shareProof) ← picked up from the event;
+               │                                        Merkle path against the pool
+               │                                        key's share-commitment root
+               ▼  (t partials on chain)
+[DKG Node]  combineDecryption(...)                   ← proof bound to the stored ct hash;
                │                                        emits DecryptionCombined(plaintext)
                ▼
 [Anyone]    getPlaintext(epochId, aid, idx)          ← plaintext is on-chain
@@ -329,7 +392,11 @@ To decrypt a ciphertext:
  closed below minValidContributions)  →  [Anyone] abortEpoch(epochId)
 ```
 
-> **Collective public key:** The contract accumulates the key incrementally as contributions are accepted — each contributor's `commitment[0]` point is added on-chain during `submitContribution`. The `(x, y)` coordinates are available at any time via `client.getCollectivePublicKey(epochId)`, a simple view-call that requires no calldata parsing. `EpochLive` emits `collectivePublicKeyHash` (keccak256 of the final key) for integrity verification.
+> **Pool keys:** Each epoch's DKG deals `MaxK = 8` independent keys `P_0…P_7` inside the same
+> contribution proofs used for the committee itself. Each key is activated individually via a
+> small `circuits/poolkey` proof once the epoch is Live, and each application claims exactly one
+> at registration. `client.getPoolStatus(epochId)` reports how many keys are activated and
+> claimed; `client.getPoolKey(epochId, j)` returns one key's `(x, y)`; `client.getApplicationKey(epochId, aid)` returns the application's `PK_aid` directly.
 
 ## API reference
 
@@ -346,10 +413,12 @@ To decrypt a ciphertext:
 | `getPlaintext(epochId, aid, idx)` | Recovered plaintext scalar `uint256` |
 | `getCiphertextHash(epochId, aid, idx)` | `keccak256(c1,c2)` of the submitted ciphertext |
 | `ciphertextCount(epochId, aid)` | Ciphertexts accepted so far under `(epochId, aid)`; indices run 1…count |
-| `getApplication(epochId, aid)` | Cached `Application` record (creator, `PK_org` in TE form, `AppPolicy`) |
-| `getOrganizerShareHash(epochId, aid, idx)` | `keccak256` of the stored organizer share, `0x00…00` if none |
-| `hasOrganizerShare(epochId, aid, idx)` | Whether the organizer share is on chain |
-| `getOrganizerShareEvents(epochId, aid, opts?)` | Historical `OrganizerShareSubmitted` logs (Δ, A1, A2, z) |
+| `getApplication(epochId, aid)` | Cached `Application` record (creator, `PK_org` in TE form — identity for automatic —, `organizerSecret` — `0` until a locked app's organizer reveals it, always `0` for automatic —, `poolIndex`, `AppPolicy`) |
+| `getApplicationKey(epochId, aid)` | The application's `PK_aid` directly: `P_j` (automatic) or `P_j + PK_org` (locked) |
+| `getPoolKey(epochId, j)` | One pool key's `(x, y)`; reverts `PoolKeyNotActive` if key `j` isn't activated yet |
+| `getPoolStatus(epochId)` | `{ nextIndex, activated }` — how many of the epoch's `MaxK` keys are activated and claimed |
+| `getPoolShareRoot(epochId, j)` | Merkle root of key `j`'s per-member share commitments |
+| `getAppPoolIndex(epochId, aid)` | Which pool key index an application claimed |
 | `getAppManagerAddress()` | Resolve the `DKGAppManager` address |
 | `getCiphertextSubmittedEvents(epochId, opts?)` | Historical `CiphertextSubmitted` logs (raw C1/C2 coords) |
 | `getDecryptionCombinedEvents(epochId, opts?)` | Historical `DecryptionCombined` logs (carries `plaintext`) |
@@ -363,7 +432,6 @@ To decrypt a ciphertext:
 | `getEpochDurationBlocks()` / `getNextEpochStartBlock()` / `getLastEpochStartBlock()` | Cadence reads |
 | `getEpochCreatedEvents(opts?)` | Historical EpochCreated logs |
 | `getEpochLiveEvents(epochId)` | Historical EpochLive logs (includes `transactionHash`) |
-| `getCollectivePublicKey(epochId)` | Fetch the collective public key `(x, y)` from the on-chain accumulator (available after the first contribution is accepted) |
 | `getAllEpochEvents(epochId, fromBlock?)` | All DKGManager events for a specific epoch |
 | `getRecentEpochs(limit?)` | Most recent N epochs (default 20) as `EpochEntry[]` |
 | `getRegistryNodes(fromBlock?)` | All registered nodes via NodeRegistered events |
@@ -379,13 +447,14 @@ All `DKGClient` methods plus:
 |--------|-------------|
 | `createEpoch({ threshold, committeeSize, minValidContributions, lotteryAlphaBps })` | Create a new DKG epoch (permissionless, cadence-gated, bounded by `getEpochBounds()`) |
 | `claimSlot(epochId)` | Claim a committee slot |
-| `submitContribution(...)` | Submit VSS contribution + ZK proof |
-| `finalizeEpoch(...)` | Finalize epoch + ZK proof |
+| `submitContribution(...)` | Submit VSS contribution + ZK proof, dealing all `MaxK` pool-key polynomials at once |
+| `finalizeEpoch(epochId)` | Finalize epoch — no proof; only checks phase/block/contribution-count and flips it to Live |
+| `activatePoolKey(epochId, poolIndex, transcriptDigest, transcript, proof, input)` | Activate one pool key with its `circuits/poolkey` ZK proof (8 public inputs; `transcriptDigest` is the proof's Poseidon transcript digest, folded into the Fiat–Shamir anchor); permissionless, any order |
 | `submitCiphertext(epochId, aid, ciphertext)` | Publish a ciphertext; waits for the receipt and returns `{ hash, receipt, ciphertextIndex }` with the on-chain-assigned index |
-| `submitPartialDecryption(...)` | Submit partial decryption + ZK proof |
+| `submitPartialDecryption(...)` | Submit partial decryption + ZK proof, with a Merkle proof of the share commitment against the claimed pool key's root; reverts until the decryption window is open and, for a locked application, the organizer has revealed |
 | `combineDecryption(epochId, aid, idx, combineHash, plaintext, ...)` | Combine partial decryptions + ZK proof; stores plaintext |
-| `registerApplication(epochId, aid, policy, skOrg)` | Register an application; derives `PK_org` and the Schnorr proof of possession |
-| `submitOrganizerShare(epochId, aid, idx, ciphertext, skOrg)` | Release `Δ = sk_org·C1` with its DLEQ |
+| `registerApplication(epochId, aid, policy, skOrg)` | Register an application, claiming the next activated pool key (reverts `PoolExhausted` / `PoolKeyNotActive`); derives `PK_org` and, for `AppMode.OrganizerLocked`, the Schnorr proof of possession; `AppMode.Automatic` sends no organizer material at all |
+| `revealOrganizerSecret(epochId, aid, skOrg)` | Reveal the organizer secret once (locked applications only); from then on the committee combines by itself for every past and future ciphertext of the application |
 | `abortEpoch(epochId)` | Abort a dead epoch (permissionless; reverts unless the epoch can no longer progress) |
 | `registerKey(privateKey)` | Register a DKG node in the registry (derives the key + Schnorr PoK) |
 | `updateKey(privateKey)` | Update node public key |
@@ -404,8 +473,7 @@ All `DKGClient` methods plus:
 | `watchNewEpochs(client, onEpoch, fromBlock?)` | Subscribe to new epochs |
 | `watchEpochLive(client, epochId, onFinalized)` | Subscribe to finalization |
 | `watchCiphertextSubmitted(client, epochId, onCiphertext, opts?)` | Subscribe to ciphertexts (C1/C2 coords in TE form) |
-| `waitForOrganizerShare(client, epochId, aid, idx, opts?)` | Poll until the organizer share is on chain |
-| `decryptionProgress(client, epochId, aid, idx)` | One-shot pipeline snapshot (ciphertext / organizer share / combined) |
+| `decryptionProgress(client, epochId, aid, idx)` | One-shot pipeline snapshot (partials so far, decryption window, combined) |
 | `watchDecryptionCombined(client, epochId, idx, onCombined, opts?)` | Subscribe to decryption |
 | `networkSummary(client)` | Block, node counts, epoch nonce |
 
@@ -416,9 +484,8 @@ Higher-level helpers built on top of the primitives above:
 | Export | Description |
 |--------|-------------|
 | `encrypt(message, pubKey, k?)` | ElGamal encrypt under any BabyJubJub key |
-| `encryptForApplication(message, pkEp, pkOrg, k?)` | ElGamal encrypt under `PK_aid = PK_ep + PK_org` |
+| `encryptForApplication(message, pkAid, k?)` | ElGamal encrypt under an application's `PK_aid` |
 | `decrypt(ciphertext, privKey)` | ElGamal decrypt via BSGS DLOG (values < 2^32) |
-| `waitForCollectivePublicKeyHash(client, epochId, opts?)` | Wait for Live; return on-chain key hash |
 | `waitForCombinedDecryption(client, epochId, aid, idx, opts?)` | Wait for on-chain decryption to complete |
 | `demonstrateEncryptDecryptFlow(client, epochId, aid, pubKey, plaintext, idx)` | End-to-end demo flow |
 
@@ -428,9 +495,8 @@ Higher-level helpers built on top of the primitives above:
 |--------|-------------|
 | `proveOperator` / `verifyOperatorSchnorr` | Operator registration Schnorr proof of possession |
 | `proveOrganizer` / `verifyOrganizerSchnorr` | Organizer registration Schnorr proof of possession |
-| `proveOrganizerShare` / `verifyOrganizerShare` / `organizerShareChallenge` | Organizer decryption share (Δ = sk_org·C1) and its DLEQ |
 | `verifyDleq` / `dleqChallenge` | Committee partial-decryption Chaum-Pedersen check |
-| `applicationKey(pkEp, pkOrg)` | `PK_aid = PK_ep + PK_org` |
+| `applicationKey(poolKey, pkOrg)` | `PK_aid = P_j + PK_org` (pass the identity point for automatic apps) |
 | `randomOrganizerSecret()` | Fresh `sk_org` from the platform CSPRNG |
 
 ### ElGamal interface

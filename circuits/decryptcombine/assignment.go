@@ -5,25 +5,23 @@ import (
 	"math/big"
 
 	ccommon "github.com/vocdoni/davinci-dkg/circuits/common"
-	"github.com/vocdoni/davinci-dkg/crypto/dleq"
 	"github.com/vocdoni/davinci-dkg/types"
 )
 
 // Assignment is the native input model used to build a decrypt-combine
 // witness.
 //
-// The organizer fields are the share the application's organizer posted on
-// chain (`OrganizerShareSubmitted`) plus the PK_org from the application
-// record. The builder recomputes the DLEQ challenge `e` itself with
-// dleq.OrganizerShareChallenge, so callers never pass it: a caller-supplied
-// `e` could silently disagree with what the contract recomputes.
+// OrganizerPK is the key from the on-chain application record and
+// OrganizerSecret its discrete log: the revealed `sk_org` of an
+// organizer-locked application, or 0 paired with the identity key (0, 1)
+// for an automatic one. The circuit — not this struct — enforces
+// PK_org = sk_org·G, so a mismatch fails at proving time.
 type Assignment struct {
 	RoundHash          *big.Int // semantically: eid, ≤ 12 bytes
 	Aid                *big.Int // application identifier, < BN254 scalar field
 	CtIdx              *big.Int // per-application ciphertext index, uint16
-	DeltaOrg           types.CurvePoint
 	OrganizerPK        types.CurvePoint
-	OrganizerProof     dleq.Proof // A1, A2 and z of the organizer's DLEQ
+	OrganizerSecret    *big.Int
 	Threshold          uint16
 	CiphertextC1       types.CurvePoint
 	CiphertextC2       types.CurvePoint
@@ -61,8 +59,8 @@ func (a Assignment) Validate() error {
 	if len(a.ParticipantIndexes) == 0 || len(a.ParticipantIndexes) != len(a.PartialDecryptions) {
 		return fmt.Errorf("participant indexes and partial decryptions must have the same non-zero length")
 	}
-	if len(a.ParticipantIndexes) != int(a.Threshold) {
-		return fmt.Errorf("share count %d does not match threshold %d", len(a.ParticipantIndexes), a.Threshold)
+	if len(a.ParticipantIndexes) < int(a.Threshold) {
+		return fmt.Errorf("share count %d is below the threshold %d", len(a.ParticipantIndexes), a.Threshold)
 	}
 	if len(a.ParticipantIndexes) > MaxShares {
 		return fmt.Errorf("share count %d exceeds max %d", len(a.ParticipantIndexes), MaxShares)
@@ -88,30 +86,19 @@ func (a Assignment) Validate() error {
 	return nil
 }
 
-// validateOrganizer mirrors the in-circuit organizer checks: the four points
-// must be well-formed and z canonical. The DLEQ itself is verified by the
-// circuit (and, before the node ever builds a witness, off chain by
-// dleq.VerifyOrganizerShare).
+// validateOrganizer mirrors the structural half of the in-circuit organizer
+// checks: PK_org must be well-formed and sk_org canonical. The algebraic
+// relation PK_org = sk_org·G is left to the circuit, which is the only
+// place it has to hold.
 func (a Assignment) validateOrganizer() error {
-	for _, point := range []struct {
-		kind  string
-		value types.CurvePoint
-	}{
-		{"organizer share", a.DeltaOrg},
-		{"organizer public key", a.OrganizerPK},
-		{"organizer A1", a.OrganizerProof.A1},
-		{"organizer A2", a.OrganizerProof.A2},
-	} {
-		if err := point.value.Validate(); err != nil {
-			return fmt.Errorf("%s: %w", point.kind, err)
-		}
+	if err := a.OrganizerPK.Validate(); err != nil {
+		return fmt.Errorf("organizer public key: %w", err)
 	}
-	z := a.OrganizerProof.Response
-	if z == nil {
-		return fmt.Errorf("organizer response is required")
+	if a.OrganizerSecret == nil {
+		return fmt.Errorf("organizer secret is required")
 	}
-	if z.Sign() < 0 || z.Cmp(ccommon.SubgroupOrderMinusOne()) > 0 {
-		return fmt.Errorf("organizer response is not canonical: must be in [0, r_bjj-1]")
+	if a.OrganizerSecret.Sign() < 0 || a.OrganizerSecret.Cmp(ccommon.SubgroupOrderMinusOne()) > 0 {
+		return fmt.Errorf("organizer secret is not canonical: must be in [0, r_bjj-1]")
 	}
 	return nil
 }

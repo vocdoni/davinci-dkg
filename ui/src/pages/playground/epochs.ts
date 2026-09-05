@@ -1,14 +1,13 @@
 // Which epochs the walkthrough may run against, straight off the indexer.
 //
 // The epoch step needs three things per Live epoch — the committee's `t of n`,
-// the block it went Live, and its collective key — and one fallback for the
+// the block it went Live, and how much of its pool is left — and one fallback for the
 // case that matters most on a quiet deployment: no epoch is Live at all, in
 // which case the step shows the newest epoch's phase and how far away the next
 // one is instead of an empty list.
 
 import { useMemo } from 'react'
 import { useEpochs, useNetworkStats, useStore } from '~data/hooks'
-import { epochKey } from '~indexer/types'
 import { resolveHeadBlock } from './head-block'
 import type { EpochOption } from './controller'
 import type { EpochStepData } from './steps'
@@ -31,7 +30,8 @@ export function useEpochStepData(): EpochStepInputs {
       threshold: row.threshold,
       committeeSize: row.committeeSize,
       liveSinceBlock: row.liveSinceBlock,
-      key: store.epochs[epochKey(row.id)]?.collectivePublicKey ?? null,
+      poolActivated: row.poolActivated,
+      poolClaimed: row.poolClaimed,
     }))
     const head = newest[0] ?? null
     const headBlock = resolveHeadBlock(store)

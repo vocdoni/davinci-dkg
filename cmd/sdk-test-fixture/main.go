@@ -1,25 +1,51 @@
 // sdk-test-fixture is a small helper binary used by the TypeScript SDK
 // integration tests.  It connects to a running Anvil + deployer testnet,
-// bootstraps the default Anvil node keys, and provides two actions:
+// bootstraps the default Anvil node keys, and provides three actions:
 //
-//	--action=create  (default) creates a finalized single-participant DKG
-//	                 epoch and writes JSON to stdout:
-//	                   {"epochId":"0x…","collectivePublicKeyHash":"0x…","share":"<decimal>"}
-//	                 The `share` is the polynomial share value held by
-//	                 participant 1 (= the only contribution coefficient
-//	                 used by the fixture), which the test passes back to
-//	                 `--action=decrypt` so the helper can drive partial
+//	--action=create  (default) creates a Live single-participant DKG epoch
+//	                 with `--keys` pool keys activated and writes JSON to
+//	                 stdout:
+//	                   {"epochId":"0x…","share":"<decimal>",
+//	                    "shares":["<decimal>",…],
+//	                    "poolKey":{"x":"<decimal>","y":"<decimal>"},
+//	                    "activatedKeys":1}
+//	                 `shares[j]` is the polynomial share value held by
+//	                 participant 1 under pool key j, one entry per activated
+//	                 key; `share` is `shares[0]`. Every key of the pool is
+//	                 dealt from its own polynomial, so the test must pass the
+//	                 share of the key its application claimed back to the
+//	                 decrypt actions for the helper to drive partial
 //	                 decryption + combine over an SDK-submitted ciphertext.
+//	                 `poolKey` is P_0, the committee key an application
+//	                 registered against key 0 encrypts under (plus PK_org
+//	                 when it is organizer-locked).
 //
 //	--action=decrypt drives the threshold-decryption flow for a
 //	                 ciphertext that the SDK already submitted on-chain:
-//	                 builds the partial decryption proof, calls
-//	                 submitPartialDecryption, releases the organizer share
-//	                 and finally combineDecryption.
+//	                 builds the partial decryption proof with its Merkle
+//	                 path against the pool key's share root (member 1's
+//	                 leaf of the committee-wide tree), calls
+//	                 submitPartialDecryption and finally combineDecryption.
 //	                 Required additional flags:
-//	                   --epoch-id, --aid, --ciphertext-index, --share,
-//	                   --org-secret
+//	                   --epoch-id, --aid, --ciphertext-index, --share
+//	                 --org-secret is required for an organizer-locked
+//	                 application and must be omitted (or 0) for an
+//	                 automatic one.
+//	                 For an organizer-locked application this action must
+//	                 run AFTER revealOrganizerSecret: the contract refuses
+//	                 every partial of a sealed application
+//	                 (OrganizerSecretNotRevealed), so there is nothing to
+//	                 combine before the reveal. The SDK tests reveal first;
+//	                 should the application still be sealed, the helper
+//	                 publishes --org-secret itself before building the
+//	                 partial, and it refuses a secret that differs from an
+//	                 already revealed one.
 //	                 Outputs `{"ok":true}` on success.
+//
+//	--action=prepare-combine does the same but stops before the combine and
+//	                 emits the calldata, so the SDK writer issues the
+//	                 combineDecryption transaction itself. Same reveal
+//	                 precondition as `decrypt`.
 //
 // The TypeScript tests use these together to verify the full epoch-trip
 // (encrypt -> submitCiphertext -> partial decrypt -> combine -> getPlaintext)
@@ -46,10 +72,19 @@ import (
 	"github.com/vocdoni/davinci-dkg/tests/helpers"
 )
 
+type point struct {
+	X string `json:"x"`
+	Y string `json:"y"`
+}
+
 type fixtureResult struct {
-	EpochID                 string `json:"epochId"`
-	CollectivePublicKeyHash string `json:"collectivePublicKeyHash"`
-	Share                   string `json:"share"`
+	EpochID string `json:"epochId"`
+	// Share is participant 1's share of pool key 0, i.e. Shares[0].
+	Share string `json:"share"`
+	// Shares[j] is participant 1's share of pool key j, for every activated key.
+	Shares        []string `json:"shares"`
+	PoolKey       point    `json:"poolKey"`
+	ActivatedKeys int      `json:"activatedKeys"`
 }
 
 type decryptResult struct {
@@ -67,10 +102,6 @@ type prepareCombineResult struct {
 	Input       string `json:"input"`      // 0x-hex
 }
 
-// fixtureShare is the polynomial share value held by participant 1 of the
-// fixture epoch. CreateSDKTestFixture uses coefficients=[11] so f(1) = 11.
-const fixtureShare int64 = 11
-
 func main() {
 	var rpcURL string
 	var addressesFile string
@@ -80,13 +111,16 @@ func main() {
 	var ciphertextIndex int
 	var shareDec string
 	var orgSecretHex string
+	var keys int
 
 	flag.StringVar(&rpcURL, "rpc-url", os.Getenv("DAVINCI_DKG_TEST_RPC_URL"),
 		"RPC URL of the Anvil testnet")
 	flag.StringVar(&addressesFile, "addresses-file", os.Getenv("DAVINCI_DKG_TEST_ADDRESSES"),
 		"path to addresses.env file (as served by the deployer container)")
 	flag.StringVar(&action, "action", "create",
-		"action to perform: 'create' (default) or 'decrypt'")
+		"action to perform: 'create' (default), 'decrypt' or 'prepare-combine'")
+	flag.IntVar(&keys, "keys", 1,
+		"(create) how many of the epoch's pool keys to activate")
 	flag.StringVar(&roundIDHex, "epoch-id", "",
 		"(decrypt) epoch id as a 0x-prefixed 12-byte hex string")
 	flag.IntVar(&ciphertextIndex, "ciphertext-index", 0,
@@ -94,9 +128,11 @@ func main() {
 	flag.StringVar(&aidHex, "aid", "",
 		"(decrypt) application id as a 0x-prefixed 32-byte hex string")
 	flag.StringVar(&shareDec, "share", "",
-		"(decrypt) participant 1's polynomial share value, decimal")
+		"(decrypt) participant 1's share of the pool key the application claimed "+
+			"(`shares[poolIndex]` of the create output), decimal")
 	flag.StringVar(&orgSecretHex, "org-secret", "",
-		"(decrypt) organizer secret the application was registered with, hex scalar")
+		"(decrypt) organizer secret of an organizer-locked application, revealed on chain before any partial "+
+			"(the helper reveals it when the application is still sealed); omit for automatic ones")
 	flag.Parse()
 
 	if rpcURL == "" {
@@ -116,7 +152,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
 
 	services, cleanup, err := helpers.NewTestServicesFromExternal(ctx, rpcURL, addressesContent)
@@ -128,80 +164,45 @@ func main() {
 
 	switch action {
 	case "create":
-		result, err := helpers.CreateSDKTestFixture(ctx, services)
+		if keys < 1 {
+			fmt.Fprintln(os.Stderr, "error: --keys must be at least 1")
+			os.Exit(1)
+		}
+		result, err := helpers.CreateSDKTestFixture(ctx, services, keys)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: create fixture: %v\n", err)
 			os.Exit(1)
 		}
-		out := fixtureResult{
-			EpochID:                 fmt.Sprintf("0x%x", result.EpochID),
-			CollectivePublicKeyHash: fmt.Sprintf("0x%x", result.CollectivePublicKeyHash),
-			Share:                   big.NewInt(fixtureShare).String(),
+		poolKey := result.Activation(0).PoolKey
+		shares := make([]string, len(result.Activations))
+		for keyIndex := range shares {
+			share, err := result.ParticipantShare(uint8(keyIndex), 1)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				os.Exit(1)
+			}
+			shares[keyIndex] = share.String()
 		}
-		encoded, err := json.Marshal(out)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: marshal result: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Println(string(encoded))
+		emit(fixtureResult{
+			EpochID:       fmt.Sprintf("0x%x", result.EpochID),
+			Share:         shares[0],
+			Shares:        shares,
+			PoolKey:       point{X: poolKey.X.String(), Y: poolKey.Y.String()},
+			ActivatedKeys: len(result.Activations),
+		})
 
 	case "decrypt":
-		if roundIDHex == "" {
-			fmt.Fprintln(os.Stderr, "error: --epoch-id is required for decrypt")
-			os.Exit(1)
-		}
-		if ciphertextIndex <= 0 || ciphertextIndex > 0xffff {
-			fmt.Fprintln(os.Stderr, "error: --ciphertext-index must be in (0, 65535]")
-			os.Exit(1)
-		}
-		if shareDec == "" {
-			fmt.Fprintln(os.Stderr, "error: --share is required for decrypt")
-			os.Exit(1)
-		}
-		share, ok := new(big.Int).SetString(shareDec, 10)
-		if !ok {
-			fmt.Fprintf(os.Stderr, "error: --share %q is not a valid decimal\n", shareDec)
-			os.Exit(1)
-		}
-		epochID := mustEpochID(roundIDHex)
-		aid := mustAid(aidHex)
-		skOrg := mustOrganizerSecret(orgSecretHex)
-
+		epochID, aid, share, skOrg := decryptArgs(roundIDHex, aidHex, shareDec, orgSecretHex, ciphertextIndex)
 		if err := helpers.CombineSingleParticipantDecryption(
 			ctx, services, epochID, aid, uint16(ciphertextIndex), share, skOrg,
 		); err != nil {
 			fmt.Fprintf(os.Stderr, "error: combine decryption: %v\n", err)
 			os.Exit(1)
 		}
-		encoded, err := json.Marshal(decryptResult{OK: true})
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: marshal result: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Println(string(encoded))
+		emit(decryptResult{OK: true})
 
 	case "prepare-combine":
-		if roundIDHex == "" {
-			fmt.Fprintln(os.Stderr, "error: --epoch-id is required for prepare-combine")
-			os.Exit(1)
-		}
-		if ciphertextIndex <= 0 || ciphertextIndex > 0xffff {
-			fmt.Fprintln(os.Stderr, "error: --ciphertext-index must be in (0, 65535]")
-			os.Exit(1)
-		}
-		if shareDec == "" {
-			fmt.Fprintln(os.Stderr, "error: --share is required for prepare-combine")
-			os.Exit(1)
-		}
-		share, ok := new(big.Int).SetString(shareDec, 10)
-		if !ok {
-			fmt.Fprintf(os.Stderr, "error: --share %q is not a valid decimal\n", shareDec)
-			os.Exit(1)
-		}
-		epochID := mustEpochID(roundIDHex)
-		aid := mustAid(aidHex)
-		skOrg := mustOrganizerSecret(orgSecretHex)
-
+		epochID, aid, share, skOrg := decryptArgs(roundIDHex, aidHex, shareDec, orgSecretHex, ciphertextIndex)
 		payload, err := helpers.PrepareSingleParticipantCombinePayload(
 			ctx, services, epochID, aid, uint16(ciphertextIndex), share, skOrg,
 		)
@@ -209,24 +210,52 @@ func main() {
 			fmt.Fprintf(os.Stderr, "error: prepare combine: %v\n", err)
 			os.Exit(1)
 		}
-		out := prepareCombineResult{
+		emit(prepareCombineResult{
 			CombineHash: "0x" + hex.EncodeToString(payload.CombineHash[:]),
 			Plaintext:   payload.Plaintext.String(),
 			Transcript:  "0x" + hex.EncodeToString(payload.Transcript),
 			Proof:       "0x" + hex.EncodeToString(payload.Proof),
 			Input:       "0x" + hex.EncodeToString(payload.Input),
-		}
-		encoded, err := json.Marshal(out)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: marshal result: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Println(string(encoded))
+		})
 
 	default:
-		fmt.Fprintf(os.Stderr, "error: unknown --action %q (must be 'create' or 'decrypt')\n", action)
+		fmt.Fprintf(os.Stderr, "error: unknown --action %q (create, decrypt or prepare-combine)\n", action)
 		os.Exit(1)
 	}
+}
+
+// emit writes the JSON result to stdout, or exits.
+func emit(value any) {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: marshal result: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println(string(encoded))
+}
+
+// decryptArgs validates and parses the flags both decrypt actions share.
+func decryptArgs(
+	roundIDHex, aidHex, shareDec, orgSecretHex string, ciphertextIndex int,
+) ([12]byte, [32]byte, *big.Int, *big.Int) {
+	if roundIDHex == "" {
+		fmt.Fprintln(os.Stderr, "error: --epoch-id is required")
+		os.Exit(1)
+	}
+	if ciphertextIndex <= 0 || ciphertextIndex > 0xffff {
+		fmt.Fprintln(os.Stderr, "error: --ciphertext-index must be in (0, 65535]")
+		os.Exit(1)
+	}
+	if shareDec == "" {
+		fmt.Fprintln(os.Stderr, "error: --share is required")
+		os.Exit(1)
+	}
+	share, ok := new(big.Int).SetString(shareDec, 10)
+	if !ok {
+		fmt.Fprintf(os.Stderr, "error: --share %q is not a valid decimal\n", shareDec)
+		os.Exit(1)
+	}
+	return mustEpochID(roundIDHex), mustAid(aidHex), share, organizerSecret(orgSecretHex)
 }
 
 // mustEpochID parses a 0x-prefixed 12-byte epoch id or exits.
@@ -259,13 +288,16 @@ func mustAid(value string) [32]byte {
 	return aid
 }
 
-// mustOrganizerSecret parses the organizer scalar the application was
-// registered with, or exits. Without it the ciphertext cannot be decrypted:
-// the committee alone only recovers sk_ep·C1.
-func mustOrganizerSecret(value string) *big.Int {
-	sk, ok := new(big.Int).SetString(strings.TrimPrefix(value, "0x"), 16)
-	if !ok || sk.Sign() <= 0 {
-		fmt.Fprintf(os.Stderr, "error: --org-secret must be a positive hex scalar, got %q\n", value)
+// organizerSecret parses the revealed organizer scalar, or returns 0 for an
+// automatic application (which has no organizer half at all).
+func organizerSecret(value string) *big.Int {
+	trimmed := strings.TrimPrefix(value, "0x")
+	if trimmed == "" {
+		return big.NewInt(0)
+	}
+	sk, ok := new(big.Int).SetString(trimmed, 16)
+	if !ok || sk.Sign() < 0 {
+		fmt.Fprintf(os.Stderr, "error: --org-secret must be a hex scalar, got %q\n", value)
 		os.Exit(1)
 	}
 	return sk

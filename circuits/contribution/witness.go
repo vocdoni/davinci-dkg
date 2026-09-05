@@ -4,19 +4,19 @@ import (
 	"fmt"
 	"math/big"
 
-	"github.com/consensys/gnark/frontend"
-	"github.com/consensys/gnark/std/algebra/native/twistededwards"
-	ethcrypto "github.com/ethereum/go-ethereum/crypto"
 	ccommon "github.com/vocdoni/davinci-dkg/circuits/common"
 	"github.com/vocdoni/davinci-dkg/crypto/group"
 	dkghash "github.com/vocdoni/davinci-dkg/crypto/hash"
 	"github.com/vocdoni/davinci-dkg/crypto/shareenc"
+	"github.com/vocdoni/davinci-dkg/internal/protocol"
 	"github.com/vocdoni/davinci-dkg/types"
 )
 
-var contributionTranscriptDomain = ethcrypto.Keccak256Hash([]byte("davinci-dkg:contribution:v1"))
+var contributionTranscriptDomain = protocol.DomainContributionTranscriptV1
 
 // PublicInputs is the native representation of the public contribution inputs.
+// The per-key vectors (Commitments, Shares, EncryptedShares) are indexed by
+// pool key first and by coefficient / recipient second.
 type PublicInputs struct {
 	RoundHash            *big.Int
 	Threshold            *big.Int
@@ -26,10 +26,10 @@ type PublicInputs struct {
 	ShareHash            *big.Int
 	Challenge            *big.Int
 	TranscriptCommitment *big.Int
-	Commitments          []types.CurvePoint
+	Commitments          [][]types.CurvePoint
 	RecipientKeys        []types.CurvePoint
-	Shares               []*big.Int
-	EncryptedShares      []types.EncryptedShare
+	Shares               [][]*big.Int
+	EncryptedShares      [][]types.EncryptedShare
 	RecipientIndexes     []*big.Int
 }
 
@@ -40,198 +40,154 @@ func BuildWitness(a Assignment) (*ContributionCircuit, *PublicInputs, error) {
 		return nil, nil, err
 	}
 
-	coefficients, err := ccommon.PadBigInts(a.Coefficients, MaxCoefficients)
+	threshold := big.NewInt(int64(a.Threshold))
+	committeeSize := big.NewInt(int64(a.CommitteeSize))
+	contributorIndex := big.NewInt(int64(a.ContributorIndex))
+	subgroupOrder := group.ScalarField()
+
+	recipientIndexes, err := ccommon.PadBigInts(ccommon.Uint16sToBigInts(a.RecipientIndexes), MaxRecipients)
 	if err != nil {
 		return nil, nil, err
 	}
-
-	recipientIndexes := ccommon.Uint16sToBigInts(a.RecipientIndexes)
-	recipientIndexes, err = ccommon.PadBigInts(recipientIndexes, MaxRecipients)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	shares := make([]*big.Int, 0, len(a.RecipientIndexes))
-	for i := range a.CommitteeSize {
-		share, err := ccommon.EvaluatePolynomialNative(a.Coefficients, big.NewInt(int64(a.RecipientIndexes[i])))
-		if err != nil {
-			return nil, nil, fmt.Errorf("evaluate share %d: %w", i, err)
-		}
-		shares = append(shares, share)
-	}
-	shares, err = ccommon.PadBigInts(shares, MaxRecipients)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	commitments := make([]types.CurvePoint, len(a.Coefficients))
-	for i, coefficient := range a.Coefficients {
-		point := group.NewPoint()
-		point.ScalarBaseMult(coefficient)
-		commitments[i] = group.Encode(point)
-	}
-	paddedCommitments, err := ccommon.CircuitPoints(commitments, MaxCoefficients)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	recipientKeys := make([]types.CurvePoint, len(a.RecipientKeys))
-	for i, key := range a.RecipientKeys {
-		recipientKeys[i] = types.CurvePoint{X: key.PubX, Y: key.PubY}
-	}
-	paddedRecipientKeys, err := ccommon.CircuitPoints(recipientKeys, MaxRecipients)
-	if err != nil {
-		return nil, nil, err
-	}
-
 	encryptionNonces, err := ccommon.PadBigInts(a.EncryptionNonces, MaxRecipients)
 	if err != nil {
 		return nil, nil, err
 	}
+	recipientKeys := make([]types.CurvePoint, len(a.RecipientKeys))
+	for i, key := range a.RecipientKeys {
+		recipientKeys[i] = types.CurvePoint{X: key.PubX, Y: key.PubY}
+	}
+	paddedRecipientKeys, err := ccommon.PadPoints(recipientKeys, MaxRecipients)
+	if err != nil {
+		return nil, nil, err
+	}
 
-	encryptedShares := make([]types.EncryptedShare, 0, len(a.RecipientIndexes))
-	shareMasks := make([]*big.Int, 0, len(a.RecipientIndexes))
-	maskQuotients := make([]*big.Int, 0, len(a.RecipientIndexes))
-	maskedShareCarries := make([]*big.Int, 0, len(a.RecipientIndexes))
-	if len(a.RecipientKeys) == len(a.RecipientIndexes) && len(a.EncryptionNonces) == len(a.RecipientIndexes) {
+	// Per pool key: the padded coefficient vector, its Feldman commitments
+	// (identity beyond the threshold) and the share of every recipient.
+	coefficients := make([][]*big.Int, MaxKeys)
+	commitments := make([][]types.CurvePoint, MaxKeys)
+	paddedCommitments := make([][]types.CurvePoint, MaxKeys)
+	shares := newScalarGrid()
+	for j := range MaxKeys {
+		coefficients[j], err = ccommon.PadBigInts(a.Coefficients[j], MaxCoefficients)
+		if err != nil {
+			return nil, nil, fmt.Errorf("pad key %d coefficients: %w", j, err)
+		}
+		commitments[j] = make([]types.CurvePoint, len(a.Coefficients[j]))
+		for m, coefficient := range a.Coefficients[j] {
+			point := group.NewPoint()
+			point.ScalarBaseMult(coefficient)
+			commitments[j][m] = group.Encode(point)
+		}
+		paddedCommitments[j], err = ccommon.PadPoints(commitments[j], MaxCoefficients)
+		if err != nil {
+			return nil, nil, fmt.Errorf("pad key %d commitments: %w", j, err)
+		}
 		for i := range a.RecipientIndexes {
+			share, evalErr := ccommon.EvaluatePolynomialNative(a.Coefficients[j], big.NewInt(int64(a.RecipientIndexes[i])))
+			if evalErr != nil {
+				return nil, nil, fmt.Errorf("evaluate key %d share %d: %w", j, i, evalErr)
+			}
+			shares[j][i] = share
+		}
+	}
+
+	ephemerals, err := ccommon.PadPoints(nil, MaxRecipients)
+	if err != nil {
+		return nil, nil, err
+	}
+	maskedShares := newScalarGrid()
+	shareMasks := newScalarGrid()
+	maskQuotients := newScalarGrid()
+	maskedShareCarries := newScalarGrid()
+	encryptedShares := make([][]types.EncryptedShare, MaxKeys)
+	for j := range MaxKeys {
+		encryptedShares[j] = make([]types.EncryptedShare, 0, len(a.RecipientIndexes))
+	}
+	for i := range a.RecipientIndexes {
+		recipientPoint, decodeErr := group.Decode(paddedRecipientKeys[i])
+		if decodeErr != nil {
+			return nil, nil, fmt.Errorf("decode recipient key %d: %w", i, decodeErr)
+		}
+		// One ECDH secret per recipient, reused by every pool key; the key
+		// index is what keeps the MaxK masks derived from it independent.
+		sharedPoint := group.NewPoint()
+		sharedPoint.ScalarMult(recipientPoint, a.EncryptionNonces[i])
+		shared := group.Encode(sharedPoint)
+		for j := range MaxKeys {
 			ciphertext, encryptErr := shareenc.EncryptShareWithNonceRoundHash(
 				a.RoundHash,
 				a.ContributorIndex,
 				a.RecipientIndexes[i],
-				shares[i],
+				uint8(j),
+				shares[j][i],
 				a.RecipientKeys[i],
 				a.EncryptionNonces[i],
 			)
 			if encryptErr != nil {
-				return nil, nil, fmt.Errorf("encrypt share %d: %w", i, encryptErr)
+				return nil, nil, fmt.Errorf("encrypt key %d share %d: %w", j, i, encryptErr)
 			}
-			shareMask := new(big.Int).Sub(ciphertext.MaskedShare, shares[i])
-			shareMask.Mod(shareMask, group.ScalarField())
-			recipientPoint, decodeErr := group.Decode(types.CurvePoint{X: a.RecipientKeys[i].PubX, Y: a.RecipientKeys[i].PubY})
-			if decodeErr != nil {
-				return nil, nil, fmt.Errorf("decode recipient key %d: %w", i, decodeErr)
-			}
-			sharedPoint := group.NewPoint()
-			sharedPoint.ScalarMult(recipientPoint, a.EncryptionNonces[i])
-			shared := group.Encode(sharedPoint)
-			meta, hashErr := dkghash.HashFieldElements(
-				ccommon.ShareEncryptionDomain(),
-				a.RoundHash,
-				new(big.Int).SetUint64((uint64(a.ContributorIndex)<<16)|uint64(a.RecipientIndexes[i])),
-			)
-			if hashErr != nil {
-				return nil, nil, fmt.Errorf("derive meta %d: %w", i, hashErr)
-			}
-			rawMask, hashErr := dkghash.HashFieldElements(meta, shared.X, shared.Y)
-			if hashErr != nil {
-				return nil, nil, fmt.Errorf("derive raw mask %d: %w", i, hashErr)
+			shareMask := new(big.Int).Sub(ciphertext.MaskedShare, shares[j][i])
+			shareMask.Mod(shareMask, subgroupOrder)
+			rawMask, maskErr := rawShareMask(a.RoundHash, a.ContributorIndex, a.RecipientIndexes[i], uint8(j), shared)
+			if maskErr != nil {
+				return nil, nil, fmt.Errorf("derive key %d raw mask %d: %w", j, i, maskErr)
 			}
 			maskQuotient := new(big.Int).Sub(rawMask, shareMask)
-			maskQuotient.Div(maskQuotient, group.ScalarField())
-			shareSum := new(big.Int).Add(shares[i], shareMask)
-			maskedShareCarry := big.NewInt(0)
-			if shareSum.Cmp(group.ScalarField()) >= 0 {
-				maskedShareCarry.SetInt64(1)
+			maskQuotient.Div(maskQuotient, subgroupOrder)
+			carry := big.NewInt(0)
+			if new(big.Int).Add(shares[j][i], shareMask).Cmp(subgroupOrder) >= 0 {
+				carry.SetInt64(1)
 			}
-			encryptedShares = append(encryptedShares, types.EncryptedShare{
+
+			ephemerals[i] = ciphertext.Ephemeral
+			maskedShares[j][i] = ciphertext.MaskedShare
+			shareMasks[j][i] = shareMask
+			maskQuotients[j][i] = maskQuotient
+			maskedShareCarries[j][i] = carry
+			encryptedShares[j] = append(encryptedShares[j], types.EncryptedShare{
 				Recipient:      a.RecipientKeys[i].Operator,
 				RecipientIndex: a.RecipientIndexes[i],
 				Ephemeral:      ciphertext.Ephemeral,
 				Ciphertext:     ciphertext.MaskedShare,
 			})
-			shareMasks = append(shareMasks, shareMask)
-			maskQuotients = append(maskQuotients, maskQuotient)
-			maskedShareCarries = append(maskedShareCarries, maskedShareCarry)
 		}
 	}
-	ephemerals := make([]types.CurvePoint, len(encryptedShares))
-	maskedShares := make([]*big.Int, len(encryptedShares))
-	for i, encryptedShare := range encryptedShares {
-		ephemerals[i] = encryptedShare.Ephemeral
-		maskedShares[i] = encryptedShare.Ciphertext
-	}
-	paddedEphemerals, err := ccommon.CircuitPoints(ephemerals, MaxRecipients)
-	if err != nil {
-		return nil, nil, err
-	}
-	maskedShares, err = ccommon.PadBigInts(maskedShares, MaxRecipients)
-	if err != nil {
-		return nil, nil, err
-	}
-	shareMasks, err = ccommon.PadBigInts(shareMasks, MaxRecipients)
-	if err != nil {
-		return nil, nil, err
-	}
-	maskQuotients, err = ccommon.PadBigInts(maskQuotients, MaxRecipients)
-	if err != nil {
-		return nil, nil, err
-	}
-	maskedShareCarries, err = ccommon.PadBigInts(maskedShareCarries, MaxRecipients)
-	if err != nil {
-		return nil, nil, err
-	}
 
-	threshold := big.NewInt(int64(a.Threshold))
-	committeeSize := big.NewInt(int64(a.CommitteeSize))
-	contributorIndex := big.NewInt(int64(a.ContributorIndex))
-
-	commitmentInputs := []*big.Int{a.RoundHash, contributorIndex, threshold}
-	for _, commitment := range paddedCommitments {
-		commitmentInputs = append(
-			commitmentInputs,
-			ephemeralCoordinate([]twistededwards.Point{commitment}, 0, true),
-			ephemeralCoordinate([]twistededwards.Point{commitment}, 0, false),
-		)
+	keyDigests := make([]*big.Int, MaxKeys)
+	for j := range MaxKeys {
+		keyDigests[j], err = ccommon.CommitmentKeyDigestNative(paddedCommitments[j])
+		if err != nil {
+			return nil, nil, fmt.Errorf("digest key %d commitments: %w", j, err)
+		}
 	}
-	commitmentHash, err := ccommon.MultiHashNative(commitmentInputs...)
+	commitmentHash, err := ccommon.CommitmentsHashNative(a.RoundHash, contributorIndex, threshold, keyDigests)
 	if err != nil {
 		return nil, nil, fmt.Errorf("hash commitment inputs: %w", err)
 	}
 
-	shareInputs := []*big.Int{a.RoundHash, contributorIndex, committeeSize}
+	rowDigests := make([]*big.Int, MaxRecipients)
 	for i := range MaxRecipients {
-		rowDigest, err := ccommon.MultiHashNative(
+		rowShares := make([]*big.Int, MaxKeys)
+		for j := range MaxKeys {
+			rowShares[j] = maskedShares[j][i]
+		}
+		rowDigests[i], err = ccommon.EncryptedShareRowDigestNative(
 			recipientIndexes[i],
-			ephemeralCoordinate(paddedRecipientKeys, i, true),
-			ephemeralCoordinate(paddedRecipientKeys, i, false),
-			ephemeralCoordinate(paddedEphemerals, i, true),
-			ephemeralCoordinate(paddedEphemerals, i, false),
-			maskedShares[i],
+			paddedRecipientKeys[i],
+			ephemerals[i],
+			rowShares,
 		)
 		if err != nil {
 			return nil, nil, fmt.Errorf("share row %d digest: %w", i, err)
 		}
-		shareInputs = append(shareInputs, rowDigest)
 	}
-	shareHash, err := ccommon.MultiHashNative(shareInputs...)
+	shareHash, err := ccommon.EncryptedSharesHashNative(a.RoundHash, contributorIndex, committeeSize, rowDigests)
 	if err != nil {
 		return nil, nil, fmt.Errorf("hash share inputs: %w", err)
 	}
-	transcriptValues := make([]*big.Int, 0, 8*ccommon.MaxN)
-	for i := range MaxCoefficients {
-		transcriptValues = append(
-			transcriptValues,
-			ephemeralCoordinate(paddedCommitments, i, true),
-			ephemeralCoordinate(paddedCommitments, i, false),
-		)
-	}
-	transcriptValues = append(transcriptValues, recipientIndexes...)
-	for i := range MaxRecipients {
-		transcriptValues = append(
-			transcriptValues,
-			ephemeralCoordinate(paddedRecipientKeys, i, true),
-			ephemeralCoordinate(paddedRecipientKeys, i, false),
-		)
-	}
-	for i := range MaxRecipients {
-		transcriptValues = append(
-			transcriptValues,
-			ephemeralCoordinate(paddedEphemerals, i, true),
-			ephemeralCoordinate(paddedEphemerals, i, false),
-		)
-	}
-	transcriptValues = append(transcriptValues, maskedShares...)
+
+	transcriptValues := transcriptWords(paddedCommitments, recipientIndexes, paddedRecipientKeys, ephemerals, maskedShares)
 	anchor, err := ccommon.ChallengeAnchor(transcriptValues, commitmentHash, shareHash)
 	if err != nil {
 		return nil, nil, fmt.Errorf("hash contribution challenge anchor: %w", err)
@@ -254,23 +210,31 @@ func BuildWitness(a Assignment) (*ContributionCircuit, *PublicInputs, error) {
 		ShareHash:            shareHash,
 		Challenge:            challenge,
 		TranscriptCommitment: transcriptCommitment,
-		MaskedShares:         toWitnessScalars(maskedShares),
-	}
-	for i := range MaxCoefficients {
-		witness.Coefficients[i] = coefficients[i]
-		witness.Commitments[i] = paddedCommitments[i]
 	}
 	for i := range MaxRecipients {
-		witness.RecipientPubKeys[i] = paddedRecipientKeys[i]
-		witness.Ephemerals[i] = paddedEphemerals[i]
+		witness.RecipientPubKeys[i] = ccommon.CircuitPoint(paddedRecipientKeys[i])
+		witness.Ephemerals[i] = ccommon.CircuitPoint(ephemerals[i])
 		witness.EncryptionNonces[i] = encryptionNonces[i]
 		witness.RecipientIndexes[i] = recipientIndexes[i]
-		witness.Shares[i] = shares[i]
-		witness.MaskQuotients[i] = maskQuotients[i]
-		witness.ShareMasks[i] = shareMasks[i]
-		witness.MaskedShareCarries[i] = maskedShareCarries[i]
+	}
+	for j := range MaxKeys {
+		for m := range MaxCoefficients {
+			witness.Coefficients[j][m] = coefficients[j][m]
+			witness.Commitments[j][m] = ccommon.CircuitPoint(paddedCommitments[j][m])
+		}
+		for i := range MaxRecipients {
+			witness.Shares[j][i] = shares[j][i]
+			witness.MaskedShares[j][i] = maskedShares[j][i]
+			witness.MaskQuotients[j][i] = maskQuotients[j][i]
+			witness.ShareMasks[j][i] = shareMasks[j][i]
+			witness.MaskedShareCarries[j][i] = maskedShareCarries[j][i]
+		}
 	}
 
+	publicShares := make([][]*big.Int, MaxKeys)
+	for j := range MaxKeys {
+		publicShares[j] = shares[j][:len(a.RecipientIndexes)]
+	}
 	publicInputs := &PublicInputs{
 		RoundHash:            new(big.Int).Set(a.RoundHash),
 		Threshold:            new(big.Int).Set(threshold),
@@ -282,7 +246,7 @@ func BuildWitness(a Assignment) (*ContributionCircuit, *PublicInputs, error) {
 		TranscriptCommitment: new(big.Int).Set(transcriptCommitment),
 		Commitments:          commitments,
 		RecipientKeys:        recipientKeys,
-		Shares:               shares[:len(a.RecipientIndexes)],
+		Shares:               publicShares,
 		EncryptedShares:      encryptedShares,
 		RecipientIndexes:     recipientIndexes,
 	}
@@ -306,7 +270,7 @@ func (p PublicInputs) PublicWitness() *ContributionCircuit {
 // Scalars returns the ordered public scalars used by the verifier.
 // Order must match the circuit field declaration order.
 func (p PublicInputs) Scalars() []*big.Int {
-	scalars := []*big.Int{
+	return []*big.Int{
 		p.RoundHash,
 		p.Threshold,
 		p.CommitteeSize,
@@ -316,51 +280,58 @@ func (p PublicInputs) Scalars() []*big.Int {
 		p.Challenge,
 		p.TranscriptCommitment,
 	}
-	return scalars
 }
 
-// TranscriptScalars returns the ordered transcript compressed by the verifier path.
+// TranscriptScalars returns the ordered transcript compressed by the verifier
+// path: TranscriptWords words, commitments and masked shares key-major.
 //
-// PadBigInts can fail when the caller passes more indexes than
-// `MaxRecipients`. The active witness builder validates the assignment
-// first, but a manually-constructed PublicInputs would otherwise
-// silently emit a malformed transcript.
+// The padding helpers can fail when a manually-constructed PublicInputs holds
+// more entries than the circuit bounds; BuildWitness validates its assignment
+// first, but a hand-built value would otherwise emit a malformed transcript.
 func (p PublicInputs) TranscriptScalars() ([]*big.Int, error) {
-	transcript := make([]*big.Int, 0, 64)
-	for _, commitment := range publicCommitmentPoints(p.Commitments) {
-		transcript = append(
-			transcript,
-			ephemeralCoordinate([]twistededwards.Point{commitment}, 0, true),
-			ephemeralCoordinate([]twistededwards.Point{commitment}, 0, false),
+	if len(p.Commitments) != MaxKeys {
+		return nil, fmt.Errorf("contribution transcript: got %d commitment sets, expected %d", len(p.Commitments), MaxKeys)
+	}
+	if len(p.EncryptedShares) != MaxKeys {
+		return nil, fmt.Errorf(
+			"contribution transcript: got %d encrypted share sets, expected %d",
+			len(p.EncryptedShares),
+			MaxKeys,
 		)
+	}
+	commitments := make([][]types.CurvePoint, MaxKeys)
+	maskedShares := make([][]*big.Int, MaxKeys)
+	for j := range MaxKeys {
+		var err error
+		if commitments[j], err = ccommon.PadPoints(p.Commitments[j], MaxCoefficients); err != nil {
+			return nil, fmt.Errorf("contribution transcript: pad key %d commitments: %w", j, err)
+		}
+		values := make([]*big.Int, len(p.EncryptedShares[j]))
+		for i, share := range p.EncryptedShares[j] {
+			values[i] = share.Ciphertext
+		}
+		if maskedShares[j], err = ccommon.PadBigInts(values, MaxRecipients); err != nil {
+			return nil, fmt.Errorf("contribution transcript: pad key %d masked shares: %w", j, err)
+		}
 	}
 	indexes, err := ccommon.PadBigInts(p.RecipientIndexes, MaxRecipients)
 	if err != nil {
 		return nil, fmt.Errorf("contribution transcript: pad recipient indexes: %w", err)
 	}
-	transcript = append(transcript, indexes...)
-	for _, recipient := range publicRecipientPoints(p.RecipientKeys) {
-		transcript = append(
-			transcript,
-			ephemeralCoordinate([]twistededwards.Point{recipient}, 0, true),
-			ephemeralCoordinate([]twistededwards.Point{recipient}, 0, false),
-		)
+	recipientKeys, err := ccommon.PadPoints(p.RecipientKeys, MaxRecipients)
+	if err != nil {
+		return nil, fmt.Errorf("contribution transcript: pad recipient keys: %w", err)
 	}
-	for _, ephemeral := range publicEphemeralPoints(p.EncryptedShares) {
-		transcript = append(
-			transcript,
-			ephemeralCoordinate([]twistededwards.Point{ephemeral}, 0, true),
-			ephemeralCoordinate([]twistededwards.Point{ephemeral}, 0, false),
-		)
+	// The ephemeral is shared by every key, so key 0's rows carry all of them.
+	ephemerals := make([]types.CurvePoint, len(p.EncryptedShares[0]))
+	for i, share := range p.EncryptedShares[0] {
+		ephemerals[i] = share.Ephemeral
 	}
-	for _, maskedShare := range publicMaskedShares(p.EncryptedShares) {
-		value, ok := maskedShare.(*big.Int)
-		if !ok {
-			value = big.NewInt(0)
-		}
-		transcript = append(transcript, value)
+	paddedEphemerals, err := ccommon.PadPoints(ephemerals, MaxRecipients)
+	if err != nil {
+		return nil, fmt.Errorf("contribution transcript: pad ephemerals: %w", err)
 	}
-	return transcript, nil
+	return transcriptWords(commitments, indexes, recipientKeys, paddedEphemerals, maskedShares), nil
 }
 
 // BRLCCommitment compresses the contribution transcript into one scalar commitment.
@@ -372,68 +343,68 @@ func (p PublicInputs) BRLCCommitment(challenge *big.Int) (*big.Int, error) {
 	return ccommon.BRLCNative(challenge, scalars...)
 }
 
-func toWitnessScalars(values []*big.Int) [MaxRecipients]frontend.Variable {
-	var out [MaxRecipients]frontend.Variable
-	for i := range MaxRecipients {
-		out[i] = values[i]
-	}
-	return out
-}
-
-func publicRecipientPoints(points []types.CurvePoint) [MaxRecipients]twistededwards.Point {
-	var out [MaxRecipients]twistededwards.Point
-	for i := range MaxRecipients {
-		out[i] = ccommon.IdentityPoint()
-		if i < len(points) {
-			out[i] = ccommon.CircuitPoint(points[i])
+// transcriptWords lays out the calldata transcript both the circuit and the
+// contract stream: commitments key-major, then the recipient indexes, their
+// public keys, the shared ephemerals, and the masked shares key-major. Every
+// argument must already be padded to the circuit bounds.
+func transcriptWords(
+	commitments [][]types.CurvePoint,
+	recipientIndexes []*big.Int,
+	recipientKeys, ephemerals []types.CurvePoint,
+	maskedShares [][]*big.Int,
+) []*big.Int {
+	words := make([]*big.Int, 0, TranscriptWords)
+	for j := range MaxKeys {
+		for m := range MaxCoefficients {
+			words = append(words, commitments[j][m].X, commitments[j][m].Y)
 		}
 	}
-	return out
-}
-
-func ephemeralCoordinate(points []twistededwards.Point, index int, x bool) *big.Int {
-	value, ok := points[index].X.(*big.Int)
-	if !x {
-		value, ok = points[index].Y.(*big.Int)
-	}
-	if ok {
-		return value
-	}
-	if x {
-		return big.NewInt(0)
-	}
-	return big.NewInt(1)
-}
-
-func publicCommitmentPoints(points []types.CurvePoint) [MaxCoefficients]twistededwards.Point {
-	var out [MaxCoefficients]twistededwards.Point
-	for i := range MaxCoefficients {
-		out[i] = ccommon.IdentityPoint()
-		if i < len(points) {
-			out[i] = ccommon.CircuitPoint(points[i])
-		}
-	}
-	return out
-}
-
-func publicEphemeralPoints(shares []types.EncryptedShare) [MaxRecipients]twistededwards.Point {
-	var out [MaxRecipients]twistededwards.Point
+	words = append(words, recipientIndexes...)
 	for i := range MaxRecipients {
-		out[i] = ccommon.IdentityPoint()
-		if i < len(shares) {
-			out[i] = ccommon.CircuitPoint(shares[i].Ephemeral)
-		}
+		words = append(words, recipientKeys[i].X, recipientKeys[i].Y)
 	}
-	return out
+	for i := range MaxRecipients {
+		words = append(words, ephemerals[i].X, ephemerals[i].Y)
+	}
+	for j := range MaxKeys {
+		words = append(words, maskedShares[j]...)
+	}
+	return words
 }
 
-func publicMaskedShares(shares []types.EncryptedShare) [MaxRecipients]frontend.Variable {
-	var out [MaxRecipients]frontend.Variable
-	for i := range MaxRecipients {
-		out[i] = big.NewInt(0)
-		if i < len(shares) && shares[i].Ciphertext != nil {
-			out[i] = shares[i].Ciphertext
+// rawShareMask recomputes ccommon.ShareMaskHash natively, before the
+// subgroup-order reduction: the circuit takes the quotient of that reduction
+// as a witness and shareenc only ever returns the reduced mask.
+func rawShareMask(
+	roundHash *big.Int,
+	contributorIndex, recipientIndex uint16,
+	keyIndex uint8,
+	shared types.CurvePoint,
+) (*big.Int, error) {
+	meta, err := dkghash.HashFieldElements(
+		ccommon.ShareEncryptionDomain(),
+		roundHash,
+		new(big.Int).SetUint64((uint64(contributorIndex)<<16)|uint64(recipientIndex)),
+		new(big.Int).SetUint64(uint64(keyIndex)),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("hash mask metadata: %w", err)
+	}
+	rawMask, err := dkghash.HashFieldElements(meta, shared.X, shared.Y)
+	if err != nil {
+		return nil, fmt.Errorf("hash shared secret: %w", err)
+	}
+	return rawMask, nil
+}
+
+// newScalarGrid allocates a zeroed MaxKeys × MaxRecipients scalar grid.
+func newScalarGrid() [][]*big.Int {
+	grid := make([][]*big.Int, MaxKeys)
+	for j := range MaxKeys {
+		grid[j] = make([]*big.Int, MaxRecipients)
+		for i := range MaxRecipients {
+			grid[j][i] = big.NewInt(0)
 		}
 	}
-	return out
+	return grid
 }

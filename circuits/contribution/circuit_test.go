@@ -14,6 +14,21 @@ import (
 	"github.com/vocdoni/davinci-dkg/types"
 )
 
+// poolCoefficients spreads one base polynomial over the MaxKeys pool keys,
+// offsetting every key so the circuit sees MaxK genuinely different dealings
+// rather than the same polynomial MaxK times.
+func poolCoefficients(base []*big.Int) [][]*big.Int {
+	sets := make([][]*big.Int, MaxKeys)
+	for j := range MaxKeys {
+		sets[j] = make([]*big.Int, len(base))
+		for m, coefficient := range base {
+			value := new(big.Int).Add(coefficient, big.NewInt(int64(j+1)))
+			sets[j][m] = value.Mod(value, group.ScalarField())
+		}
+	}
+	return sets
+}
+
 func testAssignment() Assignment {
 	key1 := group.NewPoint()
 	key1.ScalarBaseMult(big.NewInt(13))
@@ -29,11 +44,11 @@ func testAssignment() Assignment {
 		Threshold:        3,
 		CommitteeSize:    4,
 		ContributorIndex: 1,
-		Coefficients: []*big.Int{
+		Coefficients: poolCoefficients([]*big.Int{
 			big.NewInt(11),
 			big.NewInt(7),
 			big.NewInt(3),
-		},
+		}),
 		RecipientIndexes: []uint16{1, 2, 3, 4},
 		RecipientKeys: []types.NodeKey{
 			{PubX: group.Encode(key1).X, PubY: group.Encode(key1).Y},
@@ -68,27 +83,65 @@ func TestBuildWitnessIncludesCommitmentsAndEncryptedShares(t *testing.T) {
 	_, publicInputs, err := BuildWitness(assignment)
 	c.Assert(err, qt.IsNil)
 
-	c.Assert(len(publicInputs.Commitments), qt.Equals, len(assignment.Coefficients))
-	c.Assert(len(publicInputs.EncryptedShares), qt.Equals, len(assignment.RecipientIndexes))
+	c.Assert(len(publicInputs.Commitments), qt.Equals, MaxKeys)
+	c.Assert(len(publicInputs.EncryptedShares), qt.Equals, MaxKeys)
+	for j := range MaxKeys {
+		c.Assert(len(publicInputs.Commitments[j]), qt.Equals, len(assignment.Coefficients[j]))
+		c.Assert(len(publicInputs.EncryptedShares[j]), qt.Equals, len(assignment.RecipientIndexes))
 
-	expectedCommitment := group.NewPoint()
-	expectedCommitment.ScalarBaseMult(assignment.Coefficients[0])
-	expectedCommitmentEncoded := group.Encode(expectedCommitment)
-	c.Assert(publicInputs.Commitments[0].X.Cmp(expectedCommitmentEncoded.X), qt.Equals, 0)
-	c.Assert(publicInputs.Commitments[0].Y.Cmp(expectedCommitmentEncoded.Y), qt.Equals, 0)
+		expectedCommitment := group.NewPoint()
+		expectedCommitment.ScalarBaseMult(assignment.Coefficients[j][0])
+		expectedCommitmentEncoded := group.Encode(expectedCommitment)
+		c.Assert(publicInputs.Commitments[j][0].X.Cmp(expectedCommitmentEncoded.X), qt.Equals, 0)
+		c.Assert(publicInputs.Commitments[j][0].Y.Cmp(expectedCommitmentEncoded.Y), qt.Equals, 0)
 
-	expectedCiphertext, err := shareenc.EncryptShareWithNonceRoundHash(
-		assignment.RoundHash,
-		assignment.ContributorIndex,
-		assignment.RecipientIndexes[0],
-		publicInputs.Shares[0],
-		assignment.RecipientKeys[0],
-		assignment.EncryptionNonces[0],
-	)
+		expectedCiphertext, err := shareenc.EncryptShareWithNonceRoundHash(
+			assignment.RoundHash,
+			assignment.ContributorIndex,
+			assignment.RecipientIndexes[0],
+			uint8(j),
+			publicInputs.Shares[j][0],
+			assignment.RecipientKeys[0],
+			assignment.EncryptionNonces[0],
+		)
+		c.Assert(err, qt.IsNil)
+		c.Assert(publicInputs.EncryptedShares[j][0].Ephemeral.X.Cmp(expectedCiphertext.Ephemeral.X), qt.Equals, 0)
+		c.Assert(publicInputs.EncryptedShares[j][0].Ephemeral.Y.Cmp(expectedCiphertext.Ephemeral.Y), qt.Equals, 0)
+		c.Assert(publicInputs.EncryptedShares[j][0].Ciphertext.Cmp(expectedCiphertext.MaskedShare), qt.Equals, 0)
+	}
+}
+
+// Every pool key must reach the same recipient under a different mask: the
+// ECDH secret is shared, so equal masks would be a one-time-pad reuse.
+func TestBuildWitnessMasksDifferPerKey(t *testing.T) {
+	c := qt.New(t)
+
+	_, publicInputs, err := BuildWitness(testAssignment())
 	c.Assert(err, qt.IsNil)
-	c.Assert(publicInputs.EncryptedShares[0].Ephemeral.X.Cmp(expectedCiphertext.Ephemeral.X), qt.Equals, 0)
-	c.Assert(publicInputs.EncryptedShares[0].Ephemeral.Y.Cmp(expectedCiphertext.Ephemeral.Y), qt.Equals, 0)
-	c.Assert(publicInputs.EncryptedShares[0].Ciphertext.Cmp(expectedCiphertext.MaskedShare), qt.Equals, 0)
+
+	seen := make(map[string]struct{}, MaxKeys)
+	for j := range MaxKeys {
+		mask := new(big.Int).Sub(publicInputs.EncryptedShares[j][0].Ciphertext, publicInputs.Shares[j][0])
+		mask.Mod(mask, group.ScalarField())
+		_, duplicate := seen[mask.String()]
+		c.Assert(duplicate, qt.IsFalse, qt.Commentf("key %d reuses a mask", j))
+		seen[mask.String()] = struct{}{}
+	}
+}
+
+func TestTranscriptScalarsRoundTrip(t *testing.T) {
+	c := qt.New(t)
+
+	_, publicInputs, err := BuildWitness(testAssignment())
+	c.Assert(err, qt.IsNil)
+
+	transcript, err := publicInputs.TranscriptScalars()
+	c.Assert(err, qt.IsNil)
+	c.Assert(len(transcript), qt.Equals, TranscriptWords)
+
+	commitment, err := publicInputs.BRLCCommitment(publicInputs.Challenge)
+	c.Assert(err, qt.IsNil)
+	c.Assert(commitment.Cmp(publicInputs.TranscriptCommitment), qt.Equals, 0)
 }
 
 func TestContributionCircuitProveAndVerify(t *testing.T) {
@@ -113,13 +166,10 @@ func TestContributionCircuitRejectsTamperedShare(t *testing.T) {
 
 	witness, _, err := BuildWitness(testAssignment())
 	c.Assert(err, qt.IsNil)
-	witness.Shares[0] = big.NewInt(999999)
+	witness.Shares[MaxKeys-1][0] = big.NewInt(999999)
 
-	runtime, err := Artifacts.LoadOrSetupForCircuit(context.Background(), &ContributionCircuit{})
-	c.Assert(err, qt.IsNil)
-
-	_, err = runtime.ProveAndVerify(witness)
-	c.Assert(err, qt.Not(qt.IsNil))
+	assert := test.NewAssert(t)
+	assert.SolvingFailed(&ContributionCircuit{}, witness, test.WithCurves(ecc.BN254))
 }
 
 func TestContributionArtifactsMatchCompiledCircuit(t *testing.T) {
@@ -161,13 +211,15 @@ func TestContributionCircuitSolvingLargeCoefficients(t *testing.T) {
 
 	for i := range n {
 		t.Run("contributor_"+big.NewInt(int64(i+1)).String(), func(t *testing.T) {
-			coefficients := make([]*big.Int, threshold)
+			// Every pool key gets the same near-max pattern; poolCoefficients
+			// offsets each key so the MaxK dealings still differ.
+			base := make([]*big.Int, threshold)
 			for k := range threshold {
 				// Alternate between near-max and mid-range values.
 				if k%2 == 0 {
-					coefficients[k] = new(big.Int).Set(bigCoeff)
+					base[k] = new(big.Int).Set(bigCoeff)
 				} else {
-					coefficients[k] = new(big.Int).Rsh(rbjj, 1) // r_bjj / 2
+					base[k] = new(big.Int).Rsh(rbjj, 1) // r_bjj / 2
 				}
 			}
 
@@ -176,7 +228,7 @@ func TestContributionCircuitSolvingLargeCoefficients(t *testing.T) {
 				Threshold:        uint16(threshold),
 				CommitteeSize:    uint16(n),
 				ContributorIndex: uint16(i + 1),
-				Coefficients:     coefficients,
+				Coefficients:     poolCoefficients(base),
 				RecipientIndexes: recipientIndexes,
 				RecipientKeys:    recipientKeys,
 				EncryptionNonces: nonces,
@@ -223,9 +275,9 @@ func TestContributionCircuitSolvingN12T8Contributor9(t *testing.T) {
 	}
 
 	// Exact coefficients from the gas benchmark that triggered the failure.
-	coefficients := make([]*big.Int, threshold)
+	base := make([]*big.Int, threshold)
 	for k := range threshold {
-		coefficients[k] = big.NewInt(int64(contributorI*10 + k + 1))
+		base[k] = big.NewInt(int64(contributorI*10 + k + 1))
 	}
 
 	assignment := Assignment{
@@ -233,7 +285,7 @@ func TestContributionCircuitSolvingN12T8Contributor9(t *testing.T) {
 		Threshold:        uint16(threshold),
 		CommitteeSize:    uint16(n),
 		ContributorIndex: uint16(contributorI),
-		Coefficients:     coefficients,
+		Coefficients:     poolCoefficients(base),
 		RecipientIndexes: recipientIndexes,
 		RecipientKeys:    recipientKeys,
 		EncryptionNonces: nonces,
@@ -286,16 +338,16 @@ func TestContributionCircuitProveAndVerifyN12AllContributors(t *testing.T) {
 	for i := range n {
 		t.Run(fmt.Sprintf("contributor_%d", i+1), func(t *testing.T) {
 			c := qt.New(t)
-			coefficients := make([]*big.Int, threshold)
+			base := make([]*big.Int, threshold)
 			for k := range threshold {
-				coefficients[k] = big.NewInt(int64((i+1)*10 + k + 1))
+				base[k] = big.NewInt(int64((i+1)*10 + k + 1))
 			}
 			assignment := Assignment{
 				RoundHash:        roundHash,
 				Threshold:        uint16(threshold),
 				CommitteeSize:    uint16(n),
 				ContributorIndex: uint16(i + 1),
-				Coefficients:     coefficients,
+				Coefficients:     poolCoefficients(base),
 				RecipientIndexes: recipientIndexes,
 				RecipientKeys:    recipientKeys,
 				EncryptionNonces: nonces,
@@ -351,9 +403,9 @@ func TestContributionCircuitSolvingN20T14(t *testing.T) {
 	for startI := 6; startI < n; startI++ {
 		i := startI
 		t.Run("contributor_"+big.NewInt(int64(i+1)).String(), func(t *testing.T) {
-			coefficients := make([]*big.Int, threshold)
+			base := make([]*big.Int, threshold)
 			for k := range threshold {
-				coefficients[k] = big.NewInt(int64((i+1)*10 + k + 1))
+				base[k] = big.NewInt(int64((i+1)*10 + k + 1))
 			}
 
 			assignment := Assignment{
@@ -361,7 +413,7 @@ func TestContributionCircuitSolvingN20T14(t *testing.T) {
 				Threshold:        uint16(threshold),
 				CommitteeSize:    uint16(n),
 				ContributorIndex: uint16(i + 1),
-				Coefficients:     coefficients,
+				Coefficients:     poolCoefficients(base),
 				RecipientIndexes: recipientIndexes,
 				RecipientKeys:    recipientKeys,
 				EncryptionNonces: nonces,

@@ -9,6 +9,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	qt "github.com/frankban/quicktest"
 	"github.com/vocdoni/davinci-dkg/crypto/group"
+	"github.com/vocdoni/davinci-dkg/web3"
 )
 
 // d_i = Σ_j f_j(i) over every accepted contribution. A partial sum is a wrong
@@ -57,6 +58,70 @@ func TestStaggerSlotIsAPermutationOfTheCommittee(t *testing.T) {
 	c.Assert(staggerSlot(seed, 1, 5, n), qt.Equals, uint64(0))
 	// Degenerate committee: everyone is slot 0.
 	c.Assert(staggerSlot(seed, 7, 1, 1), qt.Equals, uint64(0))
+}
+
+// The activation reserve is the contiguous run of activated keys from the
+// pool's next index: registration claims in order and reverts on the first
+// gap, so an activated key past a gap counts for nothing. The key to activate
+// is always the first gap at or after nextIndex.
+func TestNextKeyToActivateUsesContiguityNotPopcount(t *testing.T) {
+	c := qt.New(t)
+	pick := func(next, activated, ahead uint8) (int, bool) {
+		k, ok := nextKeyToActivate(next, activated, ahead)
+		return int(k), ok
+	}
+	// Fresh Live epoch: key 0 first.
+	k, ok := pick(0, 0b0000_0000, 2)
+	c.Assert(ok, qt.IsTrue)
+	c.Assert(k, qt.Equals, 0)
+	// Keys 0 and 1 up, nothing claimed, ahead=2: reserve satisfied.
+	_, ok = pick(0, 0b0000_0011, 2)
+	c.Assert(ok, qt.IsFalse)
+	// Keys 0 and 2 up but 1 missing: popcount says two, contiguity says one.
+	k, ok = pick(0, 0b0000_0101, 2)
+	c.Assert(ok, qt.IsTrue)
+	c.Assert(k, qt.Equals, 1)
+	// Key 0 claimed (next=1), keys 0,1 up: need key 2.
+	k, ok = pick(1, 0b0000_0011, 2)
+	c.Assert(ok, qt.IsTrue)
+	c.Assert(k, qt.Equals, 2)
+	// Near the end of the pool the window clips at MaxK.
+	k, ok = pick(7, 0b0111_1111, 2)
+	c.Assert(ok, qt.IsTrue)
+	c.Assert(k, qt.Equals, 7)
+	_, ok = pick(7, 0b1111_1111, 2)
+	c.Assert(ok, qt.IsFalse)
+	_, ok = pick(8, 0b1111_1111, 2)
+	c.Assert(ok, qt.IsFalse)
+}
+
+// Older Live epochs whose pools still need activations stay on the visiting
+// list next to the newest two, oldest first, until they turn terminal; the
+// list is bounded by dropping the oldest tracked epoch.
+func TestEpochsToVisitCoversTrackedLiveEpochsAndIsBounded(t *testing.T) {
+	c := qt.New(t)
+	n := &Node{terminal: map[[12]byte]bool{}, liveEpochs: map[[12]byte]uint64{}}
+	const prefix = uint32(0xdead)
+	id := func(nonce uint64) [12]byte { return web3.EpochID(prefix, nonce) }
+
+	c.Assert(n.epochsToVisit(prefix, 1), qt.DeepEquals, [][12]byte{id(1)})
+	c.Assert(n.epochsToVisit(prefix, 5), qt.DeepEquals, [][12]byte{id(4), id(5)})
+
+	n.trackLive(id(2), 2)
+	n.trackLive(id(4), 4) // already among the newest two: no duplicate
+	c.Assert(n.epochsToVisit(prefix, 5), qt.DeepEquals, [][12]byte{id(2), id(4), id(5)})
+
+	n.finish(id(2))
+	c.Assert(n.epochsToVisit(prefix, 5), qt.DeepEquals, [][12]byte{id(4), id(5)})
+	_, tracked := n.liveEpochs[id(2)]
+	c.Assert(tracked, qt.IsFalse)
+
+	for nonce := uint64(10); nonce < 10+maxTrackedLiveEpochs+3; nonce++ {
+		n.trackLive(id(nonce), nonce)
+	}
+	c.Assert(n.liveEpochs, qt.HasLen, maxTrackedLiveEpochs)
+	_, tracked = n.liveEpochs[id(10)]
+	c.Assert(tracked, qt.IsFalse, qt.Commentf("the oldest tracked epoch is dropped first"))
 }
 
 // A finalize attempt only stops when the race is really lost: AlreadyLive

@@ -8,13 +8,13 @@
 // reference is davinci-node/crypto/ecc/format/twistededwards.go.
 //
 // Why this matters: davinci-dkg's on-chain validators (DKGManager._isOnBabyJubJub
-// and the ZK circuits) operate in RTE. The collective public key returned by
-// the contract is in RTE. This SDK's ElGamal layer (and the @zk-kit
-// implementation it wraps) operates in TE. Mixing forms produces points that
-// pass neither curve equation, hence InvalidCiphertext() reverts.
+// and the ZK circuits) operate in RTE. The pool keys returned by the contract
+// are in RTE. This SDK's ElGamal layer (and the @zk-kit implementation it
+// wraps) operates in TE. Mixing forms produces points that pass neither curve
+// equation, hence InvalidCiphertext() reverts.
 //
 // Convention used by this SDK:
-//   - Anything coming OUT of the SDK to the user (getCollectivePublicKey,
+//   - Anything coming OUT of the SDK to the user (getPoolKey, getApplicationKey,
 //     decrypted points, etc.) is in TE so it composes with circomlibjs/zk-kit.
 //   - Anything going TO the chain (submitCiphertext) is converted back to RTE
 //     just before sending so it satisfies the contract's curve check.

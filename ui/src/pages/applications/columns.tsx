@@ -1,13 +1,25 @@
-// Columns for the cross-epoch applications table.
+// Columns for the cross-epoch applications table. Sized so the table fits a
+// 1440 px viewport without a horizontal scroll: every track is fixed except
+// the decryption window, which takes the slack; the pool key and the two
+// windows stack on two lines rather than widen.
 
 import { Link } from 'react-router-dom'
-import { Address, Badge, BlockCell, Hash, ProgressBar, type AnyColumnDef } from '~kit'
+import { Address, BlockCell, Hash, ProgressBar, type AnyColumnDef } from '~kit'
 import type { ApplicationRow } from '~indexer/selectors'
 import type { EpochId } from '~indexer/types'
 import { shortHash } from '~lib/format'
 import { paths } from '~routes/paths'
 import { StopClick } from '../operators/cells'
-import { WindowCell } from './cells'
+import {
+  CiphertextCountCell,
+  DecryptionWindowCell,
+  ModeBadge,
+  PoolKeyCell,
+  SecretCell,
+  SubmissionCell,
+  WindowCell,
+} from './cells'
+import { submissionPolicy, submissionPolicyLabel } from './policy'
 
 export type EpochLabel = (id: EpochId) => number | null | undefined
 
@@ -17,7 +29,7 @@ export function applicationColumns(nonceOf: EpochLabel): AnyColumnDef<Applicatio
       id: 'epoch',
       header: 'Epoch',
       accessorFn: (row) => nonceOf(row.epoch) ?? 0,
-      meta: { width: '80px' },
+      meta: { width: '72px' },
       cell: ({ row }) => {
         const nonce = nonceOf(row.original.epoch)
         return (
@@ -37,20 +49,27 @@ export function applicationColumns(nonceOf: EpochLabel): AnyColumnDef<Applicatio
       id: 'aid',
       header: 'Application',
       accessorKey: 'aid',
+      meta: { width: '136px' },
       cell: ({ row }) => (
-        <Hash
-          value={row.original.aid}
-          chars={8}
-          copy={false}
-          href={paths.application(row.original.epoch, row.original.aid)}
-        />
+        <Hash value={row.original.aid} copy={false} href={paths.application(row.original.epoch, row.original.aid)} />
       ),
+    },
+    {
+      id: 'mode',
+      header: 'Mode',
+      accessorKey: 'mode',
+      meta: {
+        width: '128px',
+        headerTooltip:
+          'organizer-locked: PK_aid = P_j + PK_org, partials and combines refused until the organizer reveals sk_org · automatic: PK_aid = P_j, no organizer key',
+      },
+      cell: ({ row }) => <ModeBadge mode={row.original.mode} />,
     },
     {
       id: 'organizer',
       header: 'Organizer',
       accessorKey: 'creator',
-      meta: { width: '140px', headerTooltip: 'Registered the application and holds sk_org' },
+      meta: { width: '112px', headerTooltip: 'Registered the application and, when organizer-locked, holds sk_org until the reveal' },
       cell: ({ row }) => (
         <StopClick>
           <Address
@@ -63,45 +82,57 @@ export function applicationColumns(nonceOf: EpochLabel): AnyColumnDef<Applicatio
       ),
     },
     {
-      id: 'submitter',
-      header: 'Submitter',
-      accessorFn: (row) => row.authorizedSubmitter ?? '',
-      meta: { width: '140px', headerTooltip: 'The only address allowed to submit ciphertexts for this application' },
-      cell: ({ row }) =>
-        row.original.authorizedSubmitter ? (
-          <StopClick>
-            <Address value={row.original.authorizedSubmitter} copy={false} explorer={false} />
-          </StopClick>
-        ) : (
-          <span className='text-ash'>—</span>
-        ),
+      id: 'submission',
+      header: 'Submission',
+      accessorFn: (row) => submissionPolicyLabel(submissionPolicy(row)),
+      meta: {
+        width: '124px',
+        headerTooltip: 'Who may call submitCiphertext: the registrant only, an allow-list, or anyone (open)',
+      },
+      cell: ({ row }) => (
+        <StopClick>
+          <SubmissionCell row={row.original} />
+        </StopClick>
+      ),
     },
     {
       id: 'window',
       header: 'Window',
       enableSorting: false,
-      meta: { width: '150px', headerTooltip: 'Blocks between which ciphertexts are accepted (0 = unbounded)' },
+      meta: { width: '112px', headerTooltip: 'Blocks between which ciphertexts are accepted; any block when unbounded' },
       cell: ({ row }) => <WindowCell row={row.original} />,
     },
     {
-      id: 'cap',
-      header: 'Cap',
-      accessorFn: (row) => row.maxCiphertexts ?? 0,
-      meta: { numeric: true, width: '64px', headerTooltip: 'Maximum ciphertext index; 0 means uncapped' },
-      cell: ({ row }) =>
-        row.original.maxCiphertexts ? row.original.maxCiphertexts : <span className='text-ash'>∞</span>,
+      id: 'pool',
+      header: 'Pool key',
+      accessorFn: (row) => row.poolIndex ?? -1,
+      meta: { width: '96px', headerTooltip: 'Index of the epoch pool key this application claimed at registration, and P_j.x' },
+      cell: ({ row }) => <PoolKeyCell row={row.original} />,
+    },
+    {
+      id: 'decryption',
+      header: 'Decryption window',
+      accessorFn: (row) => row.decryptNotAfter ?? -1,
+      meta: {
+        headerTooltip:
+          'policy.decryptNotBefore → decryptNotAfter — partials and combines revert outside it (and, when organizer-locked, before the reveal)',
+      },
+      cell: ({ row }) => (
+        <DecryptionWindowCell notBefore={row.original.decryptNotBefore} notAfter={row.original.decryptNotAfter} compact />
+      ),
     },
     {
       id: 'ciphertexts',
       header: 'Ciphertexts',
       accessorKey: 'ciphertexts',
-      meta: { numeric: true, width: '92px' },
+      meta: { numeric: true, width: '96px', headerTooltip: 'Submitted / policy.maxCiphertexts (∞ = uncapped)' },
+      cell: ({ row }) => <CiphertextCountCell row={row.original} />,
     },
     {
       id: 'decrypted',
       header: 'Decrypted',
       accessorFn: (row) => (row.ciphertexts === 0 ? -1 : row.decrypted / row.ciphertexts),
-      meta: { width: '120px' },
+      meta: { width: '92px', headerTooltip: 'Ciphertexts with a combined plaintext on chain' },
       cell: ({ row }) =>
         row.original.ciphertexts === 0 ? (
           <span className='text-ash'>—</span>
@@ -111,25 +142,16 @@ export function applicationColumns(nonceOf: EpochLabel): AnyColumnDef<Applicatio
             total={row.original.ciphertexts}
             label={false}
             size='sm'
-            className='w-24'
+            className='w-14'
           />
         ),
     },
     {
-      id: 'shares',
-      header: 'Shares',
-      accessorFn: (row) => row.sharesPublished,
-      meta: { width: '104px', headerTooltip: 'Ciphertexts whose organizer share is on chain' },
-      cell: ({ row }) => {
-        const { sharesPublished, ciphertexts } = row.original
-        if (ciphertexts === 0) return <span className='text-ash'>—</span>
-        const all = sharesPublished >= ciphertexts
-        return (
-          <Badge size='sm' tone={all ? 'ok' : sharesPublished === 0 ? 'warn' : 'neutral'}>
-            {sharesPublished} / {ciphertexts}
-          </Badge>
-        )
-      },
+      id: 'secret',
+      header: 'Secret',
+      accessorFn: (row) => (row.mode === 'automatic' ? 2 : row.unlocked ? 1 : 0),
+      meta: { width: '92px', headerTooltip: 'Organizer secret: revealed, kept, or none for an automatic application' },
+      cell: ({ row }) => <SecretCell row={row.original} />,
     },
     {
       id: 'created',

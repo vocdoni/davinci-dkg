@@ -15,7 +15,7 @@ import type { Address, Hex } from 'viem'
 export type { Address, Hex }
 
 /** Bumped whenever the shape below changes; a mismatch drops the cache. */
-export const STORE_VERSION = 3
+export const STORE_VERSION = 5
 
 /** `bytes12` epoch id (4-byte prefix ‖ 8-byte nonce). */
 export type EpochId = Hex
@@ -36,6 +36,23 @@ export type EpochPhaseName =
   | 'completed'
 
 export type NodeStatusName = 'none' | 'active' | 'inactive'
+
+/** `MaxK`: pool keys dealt per epoch (`circuits/common/sizes.go`, `Sizes.sol`). */
+export const POOL_SIZE = 8
+/** `MaxN`: the committee cap the circuits are compiled for. */
+export const MAX_COMMITTEE = 32
+
+/**
+ * Whether an organizer key sits on top of the pool key (`DKGTypes.AppMode`).
+ * Organizer-locked: `PK_aid = P_j + PK_org`, and the organizer reveals
+ * `sk_org` once before the committee can combine. Automatic: `PK_aid = P_j`,
+ * no organizer key at all (`organizerPK` is the identity `(0, 1)`).
+ */
+export type AppModeName = 'organizer-locked' | 'automatic'
+
+export function appModeName(mode: number | bigint): AppModeName {
+  return Number(mode) === 1 ? 'automatic' : 'organizer-locked'
+}
 
 // ── Normalised events ────────────────────────────────────────────────────────
 
@@ -66,12 +83,11 @@ export interface EventDataMap {
     commitmentsHash: Hex
     encryptedSharesHash: Hex
   }
-  EpochLive: {
-    epochId: EpochId
-    aggregateCommitmentsHash: Hex
-    collectivePublicKeyHash: Hex
-    shareCommitmentHash: Hex
-  }
+  /** Proof-less finalize: freezes the accepted contributor set, no key yet. */
+  EpochLive: { epochId: EpochId; contributionCount: number }
+  /** Pool key `P_j` proven and stored; `key` is in TE form. */
+  PoolKeyActivated: { epochId: EpochId; keyIndex: number; key: Point }
+  PoolKeyClaimed: { epochId: EpochId; aid: Aid; keyIndex: number }
   CiphertextSubmitted: {
     epochId: EpochId
     aid: Aid
@@ -101,18 +117,13 @@ export interface EventDataMap {
     epochId: EpochId
     aid: Aid
     creator: Address
-    /** TE form, matching `getApplication`. */
+    /** TE form, matching `getApplication`; the identity `(0, 1)` when automatic. */
     organizerPK: Point
+    mode: AppModeName
+    /** Pool key the registration claimed. */
+    poolIndex: number
   }
-  OrganizerShareSubmitted: {
-    epochId: EpochId
-    aid: Aid
-    ciphertextIndex: number
-    delta: Point
-    a1: Point
-    a2: Point
-    z: bigint
-  }
+  OrganizerSecretRevealed: { epochId: EpochId; aid: Aid; organizerSecret: bigint }
 }
 
 export type IndexedEventName = keyof EventDataMap
@@ -189,9 +200,24 @@ export interface FinalizationEntity {
   by: Address | null
   block: number
   tx: Hex | null
-  aggregateCommitmentsHash: Hex
-  collectivePublicKeyHash: Hex
-  shareCommitmentHash: Hex
+  /** Accepted contributions frozen by `finalizeEpoch`. */
+  contributionCount: number
+}
+
+/**
+ * One of the `POOL_SIZE` keys an epoch deals. A slot exists from the moment
+ * the epoch does; `key` is null until `activatePoolKey` proves it, and
+ * `claimedBy` until a registration claims it.
+ */
+export interface PoolKeyEntity {
+  index: number
+  /** `P_j`, TE form; null until activated. */
+  key: Point | null
+  activatedBlock: number | null
+  activatedTx: Hex | null
+  claimedBy: Aid | null
+  claimedBlock: number | null
+  claimedTx: Hex | null
 }
 
 export interface EpochCounts {
@@ -229,10 +255,10 @@ export interface EpochEntity {
   /** Keys into `contributions`, submission order. */
   contributions: string[]
   finalization: FinalizationEntity | null
-  /** PK_ep, TE form. Read on chain; null until the epoch is Live. */
-  collectivePublicKey: Point | null
-  /** D_i per participant index, read on chain. */
-  shareCommitmentHashes: (Hex | null)[]
+  /** The pool, always `POOL_SIZE` long, by key index. */
+  poolKeys: PoolKeyEntity[]
+  /** Index of the next key a registration would claim (`getPoolStatus.nextIndex`). */
+  poolNext: number
   /** Keys into `applications`, registration order. */
   applications: string[]
   counts: EpochCounts
@@ -241,10 +267,16 @@ export interface EpochEntity {
 }
 
 export interface AppPolicyEntity {
-  authorizedSubmitter: Address
+  /** Anyone may call submitCiphertext. */
+  openSubmission: boolean
+  /** Allow-list; empty means the registrant only. */
+  submitters: Address[]
   maxCiphertexts: number
   notBeforeBlock: number
   notAfterBlock: number
+  /** Decryption window as unix seconds; 0 = unbounded on that side. */
+  decryptNotBefore: number
+  decryptNotAfter: number
 }
 
 export interface ApplicationEntity {
@@ -252,8 +284,16 @@ export interface ApplicationEntity {
   epoch: EpochId
   aid: Aid
   creator: Address
-  /** PK_org, TE form. */
+  /** PK_org, TE form; the identity `(0, 1)` for an automatic application. */
   organizerPK: Point
+  /** From the `ApplicationRegistered` event, so known before the record is read. */
+  mode: AppModeName
+  /** Pool key claimed at registration; null until the event or record is seen. */
+  poolIndex: number | null
+  /** `sk_org` once revealed; null until then, and always for an automatic application. */
+  organizerSecret: bigint | null
+  /** The `OrganizerSecretRevealed` event behind `organizerSecret`, when indexed. */
+  organizerReveal: { block: number; tx: Hex | null } | null
   policy: AppPolicyEntity | null
   createdBlock: number
   createdTx: Hex | null
@@ -269,17 +309,6 @@ export interface PartialEntity {
   block: number
   tx: Hex | null
   delta: Point
-}
-
-export interface OrganizerShareEntity {
-  block: number
-  tx: Hex | null
-  delta: Point
-  a1: Point
-  a2: Point
-  z: bigint
-  /** Number of times the share was re-submitted (0 = published once). */
-  overwrites: number
 }
 
 export interface CombineEntity {
@@ -302,7 +331,6 @@ export interface CiphertextEntity {
   block: number
   tx: Hex | null
   partials: PartialEntity[]
-  organizerShare: OrganizerShareEntity | null
   combined: CombineEntity | null
 }
 

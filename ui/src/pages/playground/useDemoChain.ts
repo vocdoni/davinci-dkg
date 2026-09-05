@@ -7,51 +7,55 @@
 // Two deliberate substitutions, both surfaced in the UI:
 //
 //   • the wallet is a fixed address that "connects" instantly;
-//   • `PK_ep` is a real curve point derived from the epoch id rather than the
-//     fixture's decorative one, so the ciphertext, the DLEQ and the local
-//     verification are genuine rather than arithmetic on a non-curve pair.
+//   • the pool key `P_j` is a real curve point derived from the epoch id and
+//     the key index rather than the fixture's decorative one, so the
+//     ciphertext and the local verification are genuine rather than
+//     arithmetic on a non-curve pair.
 //
-// Because the simulator knows that `sk_ep`, and the organizer hands it
-// `sk_org` when it releases the share, it recovers the plaintext the way the
-// committee would — `m·G = C2 − (sk_ep + sk_org)·C1`, then a BSGS dlog — so
-// the closing "verify locally" step is a real comparison, not a tautology.
+// Because the simulator knows that `sk_j`, and the organizer hands it
+// `sk_org` when it reveals the secret (an automatic application has none), it
+// recovers the plaintext the way the committee would —
+// `m·G = C2 − (sk_j + sk_org)·C1`, then a dlog — so the closing "verify
+// locally" step is a real comparison, not a tautology. The decryption window
+// is not simulated: the demo committee answers whenever the partials are due.
+// The reveal gate is: an organizer-locked application gets no partials until
+// its secret is revealed, exactly as the contract enforces, so the "watch"
+// step shows them arriving after the reveal rather than a finished tally.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Base8, mulPointEscalar, subOrder } from '@zk-kit/baby-jubjub'
-import { keccak256, stringToHex, type Hex } from 'viem'
+import { subOrder } from '@zk-kit/baby-jubjub'
+import type { Hex } from 'viem'
 import type { BabyJubPoint, ElGamalCiphertext } from '@vocdoni/davinci-dkg-sdk'
 import { useStore } from '~data/hooks'
 import { resolveHeadBlock } from './head-block'
-import { epochKey as epochStoreKey } from '~indexer/types'
+import { epochKey as epochStoreKey, POOL_SIZE } from '~indexer/types'
 import {
   DEMO_ACCOUNT,
   DEMO_BLOCK_MS,
   demoCombineAt,
   demoPartialsAt,
+  demoPoolKey,
+  demoPoolSecret,
   demoRecoverPlaintext,
   demoRegister,
-  demoReleaseShare,
+  demoRevealSecret,
   demoSubmitCiphertext,
   initialDemoChain,
   tickDemoChain,
   type DemoChainState,
   type DemoDecryptionParams,
 } from './demo-chain'
-import type { DecryptionView, PlaygroundChain, PlaygroundTarget, TxRecord } from './types'
-
-/**
- * A deterministic, genuinely-on-curve stand-in for the epoch's collective
- * public key. The fixture's `PK_ep` is decorative bytes; the demo needs a real
- * point so the organizer's crypto is the real crypto.
- */
-export function demoEpochSecret(epochId: string): bigint {
-  const digest = keccak256(stringToHex(`davinci-dkg:demo-epoch-key:${epochId}`))
-  return BigInt(digest) % subOrder || 1n
-}
-
-export function demoEpochKey(epochId: string): BabyJubPoint {
-  return mulPointEscalar(Base8, demoEpochSecret(epochId)) as BabyJubPoint
-}
+import { applicationPublicKey, organizerPublicKey } from './organizer'
+import type {
+  ApplicationKeys,
+  DecryptionView,
+  PlaygroundChain,
+  PlaygroundTarget,
+  RegisterArgs,
+  RegisterResult,
+  RevealArgs,
+  TxRecord,
+} from './types'
 
 export function useDemoChain(target: PlaygroundTarget): PlaygroundChain {
   const store = useStore()
@@ -60,6 +64,8 @@ export function useDemoChain(target: PlaygroundTarget): PlaygroundChain {
   const [submitted, setSubmitted] = useState<ElGamalCiphertext | null>(null)
   const [plaintext, setPlaintext] = useState<bigint | null>(null)
   const submittedRef = useRef<ElGamalCiphertext | null>(null)
+  /** `PK_org` of the registered application; null when automatic. */
+  const organizerPKRef = useRef<BabyJubPoint | null>(null)
 
   // The simulator runs faster than a real chain: waiting 12 s per partial
   // would make the "watch" step unwatchable.
@@ -72,17 +78,37 @@ export function useDemoChain(target: PlaygroundTarget): PlaygroundChain {
   const threshold = epoch?.policy?.threshold ?? 0
   const committeeSize = epoch?.policy?.committeeSize ?? epoch?.committee.length ?? 0
   const staggerBlocks = store.chain.staggerBlocks || 3
+  const poolActivated = epoch?.poolKeys.filter((slot) => slot.key != null).length ?? 0
+  const poolClaimed = epoch?.poolKeys.filter((slot) => slot.claimedBy != null).length ?? 0
+  /** The key a registration claims: the fixture's cursor, exactly like `claimPoolKey`. */
+  const nextPoolIndex = epoch?.poolNext ?? 0
 
   // Reads inside the async callbacks below must see the latest simulator
   // state without making every callback change identity each block.
   const latest = useRef(chain)
   latest.current = chain
+  const nextPoolIndexRef = useRef(nextPoolIndex)
+  nextPoolIndexRef.current = nextPoolIndex
 
-  const register = useCallback(async (): Promise<TxRecord> => {
-    const { state, tx } = demoRegister(latest.current, target.aid ?? '0x')
-    setChain(state)
-    return { hash: tx.hash, block: tx.block, gasUsed: tx.gasUsed, simulated: true }
-  }, [target.aid])
+  const register = useCallback(
+    async ({ mode, skOrg }: RegisterArgs): Promise<RegisterResult> => {
+      const poolIndex = nextPoolIndexRef.current
+      if (poolIndex >= POOL_SIZE) throw new Error('PoolExhausted()')
+      const { state, tx } = demoRegister(latest.current, target.aid ?? '0x', mode, poolIndex)
+      setChain(state)
+      organizerPKRef.current = mode === 'organizer-locked' && skOrg != null ? organizerPublicKey(skOrg) : null
+      return { tx: { hash: tx.hash, block: tx.block, gasUsed: tx.gasUsed, simulated: true }, poolIndex }
+    },
+    [target.aid]
+  )
+
+  const applicationKeys = useCallback(async (): Promise<ApplicationKeys> => {
+    const poolIndex = latest.current.poolIndex
+    if (poolIndex == null || !target.epochId) throw new Error('The application is not registered yet')
+    const poolKey = demoPoolKey(target.epochId, poolIndex)
+    const organizerPK = organizerPKRef.current
+    return { poolIndex, poolKey, organizerPK, key: applicationPublicKey(poolKey, organizerPK) }
+  }, [target.epochId])
 
   const submitCiphertext = useCallback(
     async ({ aid, ciphertext }: { aid: Hex; ciphertext: ElGamalCiphertext }) => {
@@ -90,23 +116,29 @@ export function useDemoChain(target: PlaygroundTarget): PlaygroundChain {
       setChain(state)
       submittedRef.current = ciphertext
       setSubmitted(ciphertext)
+      // Automatic: the committee holds the whole of sk_aid from the start, so
+      // the plaintext is known as soon as the ciphertext is; it is only shown
+      // once the simulated combine lands.
+      if (state.mode === 'automatic' && state.poolIndex != null && target.epochId) {
+        setPlaintext(demoRecoverPlaintext(ciphertext, demoPoolSecret(target.epochId, state.poolIndex)))
+      }
       return {
         tx: { hash: tx.hash, block: tx.block, gasUsed: tx.gasUsed, simulated: true },
         ciphertextIndex,
       }
     },
-    []
+    [target.epochId]
   )
 
-  const releaseShare = useCallback(
-    async ({ aid, ciphertextIndex, skOrg }: { aid: Hex; ciphertextIndex: number; skOrg: bigint }) => {
-      const { state, tx } = demoReleaseShare(latest.current, aid, ciphertextIndex)
+  const revealSecret = useCallback(
+    async ({ aid, skOrg }: RevealArgs): Promise<TxRecord> => {
+      const { state, tx } = demoRevealSecret(latest.current, aid)
       setChain(state)
       // With both halves of `sk_aid` in hand the simulator can recover the
       // plaintext exactly as the committee's combine proof does.
       const ciphertext = submittedRef.current
-      if (ciphertext && target.epochId) {
-        const skAid = (demoEpochSecret(target.epochId) + skOrg) % subOrder
+      if (ciphertext && state.poolIndex != null && target.epochId) {
+        const skAid = (demoPoolSecret(target.epochId, state.poolIndex) + skOrg) % subOrder
         setPlaintext(demoRecoverPlaintext(ciphertext, skAid))
       }
       return { hash: tx.hash, block: tx.block, gasUsed: tx.gasUsed, simulated: true }
@@ -125,16 +157,25 @@ export function useDemoChain(target: PlaygroundTarget): PlaygroundChain {
         ciphertextIndex,
       }
       const ctBlock = chain.ciphertext.tx.block
-      const partials = demoPartialsAt(ctBlock, chain.block, params)
-      const shareBlock = chain.share?.block ?? null
-      const combine = demoCombineAt(partials, shareBlock, chain.block, params)
+      // Automatic: unlocked from the start. Organizer-locked: from the reveal —
+      // and, as on chain, no partial exists before it.
+      const required = chain.mode === 'organizer-locked'
+      const unlockedAt = required ? (chain.reveal?.block ?? null) : 0
+      const openBlock = unlockedAt == null ? null : Math.max(ctBlock, unlockedAt)
+      const partials = openBlock == null ? [] : demoPartialsAt(openBlock, chain.block, params)
+      const combine = demoCombineAt(partials, unlockedAt, chain.block, params)
       return {
         threshold,
         committeeSize,
         staggerBlocks,
         ciphertextBlock: ctBlock,
         partials,
-        share: { present: shareBlock != null, block: shareBlock, tx: chain.share?.hash ?? null },
+        reveal: {
+          required,
+          done: unlockedAt != null,
+          block: chain.reveal?.block ?? null,
+          tx: chain.reveal?.hash ?? null,
+        },
         combined: {
           done: combine != null,
           block: combine?.block ?? null,
@@ -147,11 +188,14 @@ export function useDemoChain(target: PlaygroundTarget): PlaygroundChain {
     [chain, target.epochId, threshold, committeeSize, staggerBlocks, submitted, plaintext]
   )
 
+  const registered = chain.register != null
   return useMemo<PlaygroundChain>(
     () => ({
       kind: 'demo',
       headBlock: chain.block,
-      epochKey: target.epochId ? demoEpochKey(target.epochId) : null,
+      pool: epoch?.finalization
+        ? { activated: poolActivated, claimed: poolClaimed + (registered ? 1 : 0), size: POOL_SIZE }
+        : null,
       wallet: {
         connected,
         address: connected ? DEMO_ACCOUNT : null,
@@ -161,10 +205,23 @@ export function useDemoChain(target: PlaygroundTarget): PlaygroundChain {
         problem: null,
       },
       register,
+      applicationKeys,
       submitCiphertext,
-      releaseShare,
+      revealSecret,
       decryption,
     }),
-    [chain.block, connected, decryption, register, releaseShare, submitCiphertext, target.epochId]
+    [
+      chain.block,
+      epoch?.finalization,
+      poolActivated,
+      poolClaimed,
+      registered,
+      connected,
+      decryption,
+      register,
+      applicationKeys,
+      revealSecret,
+      submitCiphertext,
+    ]
   )
 }

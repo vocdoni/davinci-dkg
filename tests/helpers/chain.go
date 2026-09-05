@@ -41,3 +41,27 @@ func WaitForFinalizeGate(ctx context.Context, services *TestServices, epochID [1
 	}
 	return MineBlocks(ctx, services, epoch.Policy.LiveNotBeforeBlock-head)
 }
+
+// ChainTimestamp is the timestamp of the latest block — the value the
+// application decryption window (`decryptNotBefore` / `decryptNotAfter`) is
+// compared against.
+func ChainTimestamp(ctx context.Context, services *TestServices) (uint64, error) {
+	header, err := services.Contracts.Client().HeaderByNumber(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("read head header: %w", err)
+	}
+	return header.Time, nil
+}
+
+// MineUntilTimestamp mines blocks until the chain's clock has passed `ts`.
+// Anvil timestamps follow the wall clock, so callers should keep the window
+// they wait for short.
+func MineUntilTimestamp(ctx context.Context, services *TestServices, ts uint64) error {
+	return WaitUntilCondition(ctx, DefaultWaitInterval, func() bool {
+		if err := MineBlocks(ctx, services, 1); err != nil {
+			return false
+		}
+		now, err := ChainTimestamp(ctx, services)
+		return err == nil && now > ts
+	})
+}

@@ -13,19 +13,15 @@
 
 import { keccak256, toHex } from 'viem';
 
-// ─── Fiat-Shamir / Schnorr / DLEQ transcript domain prefixes ─────────────────
+// ─── Schnorr registration and BRLC transcript domain prefixes ────────────────
 
 /** Canonical UTF-8 strings hashed to derive the domain digests below. */
 export const DomainOperatorRegisterV1Str = 'davinci-dkg:operator-register:v1';
 export const DomainOrganizerRegisterV1Str = 'davinci-dkg:organizer-register:v1';
-export const DomainDLEQV1Str = 'davinci-dkg:dleq:v1';
-/**
- * Chaum-Pedersen transcript of the organizer's decryption share
- * `Δ = sk_org · C1`. The challenge is a keccak256 (not Poseidon) because the
- * organizer runs in a browser and the contract recomputes the same value to
- * bind the share into the committee's combine proof.
- */
-export const DomainOrganizerShareV1Str = 'davinci-dkg:organizer-share:v1';
+/** BRLC transcript domains: bound into every proof-carrying call's challenge (`keccak(eid ‖ domain ‖ anchor) mod p`). */
+export const DomainContributionTranscriptV1Str = 'davinci-dkg:contribution:v1';
+export const DomainPoolKeyTranscriptV1Str = 'davinci-dkg:poolkey:v1';
+export const DomainDecryptCombineTranscriptV1Str = 'davinci-dkg:decrypt-combine:v1';
 
 /**
  * Domain-prefix digests (keccak256 of the strings above). Bound into the
@@ -37,5 +33,6 @@ export const DomainOrganizerShareV1Str = 'davinci-dkg:organizer-share:v1';
  */
 export const DomainOperatorRegisterV1 = keccak256(toHex(DomainOperatorRegisterV1Str));
 export const DomainOrganizerRegisterV1 = keccak256(toHex(DomainOrganizerRegisterV1Str));
-export const DomainDLEQV1 = keccak256(toHex(DomainDLEQV1Str));
-export const DomainOrganizerShareV1 = keccak256(toHex(DomainOrganizerShareV1Str));
+export const DomainContributionTranscriptV1 = keccak256(toHex(DomainContributionTranscriptV1Str));
+export const DomainPoolKeyTranscriptV1 = keccak256(toHex(DomainPoolKeyTranscriptV1Str));
+export const DomainDecryptCombineTranscriptV1 = keccak256(toHex(DomainDecryptCombineTranscriptV1Str));

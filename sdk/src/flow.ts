@@ -7,17 +7,26 @@
  * Full flow:
  *   1. anyone calls createEpoch() once the cadence window allows it
  *   2. DKG nodes call claimSlot() once the seed block is mined
- *   3. Nodes submit contributions → epoch moves to KeyAssembly phase
- *   4. A node finalizes the epoch → epoch goes Live; collective public key available
- *   5. An organizer registers an application (registerApplication) with its
- *      own secret sk_org; the encryption key is PK_aid = PK_ep + PK_org
- *   6. The authorised submitter encrypts under PK_aid and publishes the
- *      ciphertext via DKGWriter.submitCiphertext(), which returns the
- *      on-chain-assigned ciphertext index
- *   7. DKG nodes submit partial decryptions; the organizer releases its share
- *      Δ = sk_org·C1 (submitOrganizerShare)
- *   8. A node calls combineDecryption → DecryptionCombined event emitted
- *   9. Caller can verify the plaintext matches the original message
+ *   3. Nodes submit contributions, each dealing all MaxK pool keys
+ *   4. A node finalizes the (now proof-less) epoch → epoch goes Live,
+ *      freezing the accepted contributor set
+ *   5. Anyone activates pool keys one at a time (activatePoolKey); each
+ *      activation emits PoolKeyActivated(epochId, keyIndex, x, y)
+ *   6. An organizer registers an application (registerApplication), claiming
+ *      the next activated pool key P_j. In automatic mode the application
+ *      key is PK_aid = P_j; in organizer-locked mode it additionally
+ *      registers PK_org and the key is PK_aid = P_j + PK_org
+ *   7. A permitted submitter (the registrant, the allow-list or anyone, per
+ *      the policy) encrypts under PK_aid and publishes the ciphertext via
+ *      DKGWriter.submitCiphertext(), which returns the on-chain-assigned
+ *      ciphertext index
+ *   8. DKG nodes submit partial decryptions (with a Merkle proof against the
+ *      pool key's share root). For an organizer-locked application the
+ *      contract refuses partials and combines (OrganizerSecretNotRevealed)
+ *      until its organizer reveals sk_org once (revealOrganizerSecret); an
+ *      automatic application needs no reveal
+ *   9. A node calls combineDecryption → DecryptionCombined event emitted
+ *   10. Caller can verify the plaintext matches the original message
  */
 
 import { DKGClient } from './client.js';
@@ -26,47 +35,31 @@ import {
   type BabyJubPoint,
   type ElGamalCiphertext,
 } from './types.js';
-import { waitForEpochPhase, waitForDecryption } from './monitor.js';
+import { waitForEpochPhase, waitForDecryption, waitForPoolKeyActivated } from './monitor.js';
 import { applicationKey, buildElGamal } from './crypto/elgamal.js';
 
-export interface CollectivePublicKey {
-  /**
-   * The BabyJubJub point that is the collective public key.
-   * Equals PK = Σ_i a_{i,0}·G, the sum of each contributor's zeroth Feldman
-   * commitment. The contract accumulates this incrementally as contributions
-   * are accepted. Retrieve it with `client.getCollectivePublicKey(epochId)`.
-   *
-   * NOTE: The on-chain `collectivePublicKeyHash` is keccak256(x, y).
-   */
-  x: bigint;
-  y: bigint;
-}
-
 /**
- * Wait until a epoch is Finalized, then return the collective public key hash
- * (keccak256 of the key point, emitted in the EpochLive event).
- *
- * To get the actual curve point (x, y) call `client.getCollectivePublicKey(epochId)` —
- * a simple view-call that returns the key accumulated on-chain during contribution.
+ * Wait until an epoch is Live, then activate and return pool key `keyIndex`
+ * (the curve point `P_j`, TE form). Activation is permissionless and can
+ * happen in any order once Live; this just waits for someone else to have
+ * done it — call `writer.activatePoolKey` first if nobody has.
  */
-export async function waitForCollectivePublicKeyHash(
+export async function waitForPoolKey(
   client: DKGClient,
   epochId: `0x${string}`,
+  keyIndex: number,
   options?: { intervalMs?: number; timeoutMs?: number },
-): Promise<`0x${string}`> {
+): Promise<BabyJubPoint> {
   await waitForEpochPhase(client, epochId, EpochPhase.Live, options);
-  const events = await client.getEpochLiveEvents(epochId);
-  if (events.length === 0) {
-    throw new Error(`No EpochLive event found for epoch ${epochId}`);
-  }
-  return events[events.length - 1].collectivePublicKeyHash;
+  await waitForPoolKeyActivated(client, epochId, keyIndex, options);
+  return client.getPoolKey(epochId, keyIndex);
 }
 
 /**
- * Encrypt a message using the DKG collective public key.
+ * Encrypt a message under a BabyJubJub public key.
  *
  * @param message    Small integer plaintext (must fit in BabyJubJub scalar)
- * @param pubKey     Collective public key as a BabyJubJub point [x, y]
+ * @param pubKey     Public key as a BabyJubJub point [x, y]
  * @param k          Optional ephemeral key; a random scalar is used when omitted
  * @returns          ElGamal ciphertext {c1, c2}
  */
@@ -82,28 +75,29 @@ export async function encrypt(
 /**
  * Encrypt a message under an application's key.
  *
- * `PK_aid = PK_ep + PK_org`, so both halves are needed: the epoch key from
- * `client.getCollectivePublicKey(epochId)` and the organizer key from
- * `client.getApplication(epochId, aid).organizerPK`. Both are returned in TE
- * form, which is what this helper expects.
+ * `PK_aid = P_j` (automatic) or `P_j + PK_org` (organizer-locked) — see
+ * `applicationKey`. `poolKey` comes from `client.getPoolKey(epochId,
+ * app.poolIndex)` or `client.getApplicationKey(epochId, aid)`; `pkOrg` from
+ * `client.getApplication(epochId, aid).organizerPK`, omitted for automatic
+ * applications. Both inputs and the result are in TE form.
  *
  * There is no proof of knowledge of the randomness — see
  * `DKGWriter.submitCiphertext` for why — so the result goes straight to the
  * writer.
  *
  * @param message  Small integer plaintext (the committee recovers values < 2^50)
- * @param pkEp     Epoch collective public key, TE form
- * @param pkOrg    Application organizer public key, TE form
+ * @param poolKey  The application's pool key P_j, TE form
+ * @param pkOrg    Organizer public key, TE form; omit for automatic applications
  * @param k        Optional randomness; drawn from the CSPRNG when omitted
  */
 export async function encryptForApplication(
   message: bigint,
-  pkEp: BabyJubPoint,
-  pkOrg: BabyJubPoint,
+  poolKey: BabyJubPoint,
+  pkOrg?: BabyJubPoint,
   k?: bigint,
 ): Promise<ElGamalCiphertext> {
   const elgamal = await buildElGamal();
-  return elgamal.encrypt(message, applicationKey(pkEp, pkOrg), k);
+  return elgamal.encrypt(message, applicationKey(poolKey, pkOrg), k);
 }
 
 /**
@@ -140,21 +134,22 @@ export async function waitForCombinedDecryption(
 /**
  * End-to-end encrypt/decrypt flow for testing and documentation.
  *
- * Assumes the epoch was already created. The function encrypts `plaintext`
- * with `collectivePub`, then waits for the on-chain combined decryption to
- * complete.
+ * Assumes the epoch was already created and the application already
+ * registered. The function encrypts `plaintext` under `pkAid`, then waits
+ * for the on-chain combined decryption to complete.
  *
- * In production these steps happen across different parties: the data producer
- * encrypts and publishes the ciphertext, DKG nodes submit partial decryptions,
- * the organizer releases its share, and any caller with enough partials plus
- * that share calls combineDecryption.
+ * In production these steps happen across different parties: the data
+ * producer encrypts and publishes the ciphertext, DKG nodes submit partial
+ * decryptions, an organizer-locked application's organizer reveals sk_org
+ * once (an automatic application needs no reveal), and any caller with
+ * enough partials calls combineDecryption.
  *
- * @param client         Read-only DKGClient
- * @param epochId        The epoch ID
- * @param aid            Application id the ciphertext is submitted under
- * @param collectivePub  The collective public key point [x, y] (from
- *                       `client.getCollectivePublicKey(epochId)`)
- * @param plaintext      Small integer to encrypt/decrypt
+ * @param client      Read-only DKGClient
+ * @param epochId     The epoch ID
+ * @param aid         Application id the ciphertext is submitted under
+ * @param pkAid       The application's public key [x, y] (from
+ *                    `client.getApplicationKey(epochId, aid)`)
+ * @param plaintext   Small integer to encrypt/decrypt
  * @param ciphertextIndex  On-chain-assigned index of the ciphertext to wait for
  *                         (as returned by `DKGWriter.submitCiphertext`)
  */
@@ -162,7 +157,7 @@ export async function demonstrateEncryptDecryptFlow(
   client: DKGClient,
   epochId: `0x${string}`,
   aid: `0x${string}`,
-  collectivePub: BabyJubPoint,
+  pkAid: BabyJubPoint,
   plaintext: bigint,
   ciphertextIndex: number,
 ): Promise<{
@@ -170,7 +165,7 @@ export async function demonstrateEncryptDecryptFlow(
   decryptionCompleted: boolean;
 }> {
   // 1. Encrypt
-  const ciphertext = await encrypt(plaintext, collectivePub);
+  const ciphertext = await encrypt(plaintext, pkAid);
 
   // 2. Wait for the DKG nodes to decrypt on-chain
   const record = await waitForCombinedDecryption(client, epochId, aid, ciphertextIndex, {

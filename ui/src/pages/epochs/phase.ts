@@ -22,7 +22,7 @@ export const PHASE_TITLE: Record<EpochPhaseName, string> = {
   none: 'no epoch',
   'committee-selection': 'committee selection — operators are claiming slots',
   'key-assembly': 'key assembly — the committee is submitting contributions',
-  live: 'live — the collective key is usable',
+  live: 'live — pool keys can be activated and claimed',
   aborted: 'aborted — the committee never filled',
   completed: 'closed — the service window has passed',
 }

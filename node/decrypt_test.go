@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"os"
 	"slices"
 	"testing"
 
@@ -226,16 +227,20 @@ func TestLaterWaveDueNeedsBothDelayAndStalledProgress(t *testing.T) {
 	}
 }
 
-func TestParkMovesASlotOutOfPendingAndForgetClearsIt(t *testing.T) {
-	n := &Node{
-		pending: map[ctKey]*ciphertext{}, parked: map[ctKey]*ciphertext{},
+func newTestNode() *Node {
+	return &Node{
+		pending: map[ctKey]*ciphertext{}, parked: map[ctKey]*parkedSlot{},
 		partialDone: map[ctKey]bool{}, backoff: map[ctKey]*serviceBackoff{}, inflight: map[ctKey]inflightTx{},
-		combineJobs: map[ctKey]*combineResult{},
+		combineJobs: map[ctKey]*combineResult{}, taints: map[taintKey]bool{},
 	}
+}
+
+func TestParkMovesASlotOutOfPendingAndForgetClearsIt(t *testing.T) {
+	n := newTestNode()
 	key := ctKey{idx: 1}
 	n.trackCiphertext(key, &ciphertext{block: 10})
 	n.backoff[key] = &serviceBackoff{}
-	n.park(key)
+	n.park(key, 0)
 	if _, ok := n.pending[key]; ok {
 		t.Fatal("parked slot still pending")
 	}
@@ -245,27 +250,78 @@ func TestParkMovesASlotOutOfPendingAndForgetClearsIt(t *testing.T) {
 	if _, ok := n.backoff[key]; ok {
 		t.Fatal("park kept the backoff record")
 	}
-	n.park(key) // idempotent: not pending any more
+	n.park(key, 0) // idempotent: not pending any more
 	n.forget(key)
 	if _, ok := n.parked[key]; ok {
 		t.Fatal("forget left the slot parked")
 	}
 }
 
+// A slot whose decryption window has not opened is parked with the window's
+// start; every tick compares the parked slots against the head time and
+// wakes the due ones, anchoring their stagger schedules on the wake block so
+// the committee does not pile on at once.
+func TestWakeDueResumesWindowedSlotsAndAnchorsThem(t *testing.T) {
+	c := qt.New(t)
+	n := newTestNode()
+	windowed, locked := ctKey{idx: 1}, ctKey{idx: 2}
+	n.trackCiphertext(windowed, &ciphertext{block: 10})
+	n.trackCiphertext(locked, &ciphertext{block: 11})
+	n.park(windowed, 1_700_000_000)
+	n.park(locked, 0)
+	c.Assert(n.timeParked(), qt.IsTrue)
+
+	n.wakeDue(500, 1_699_999_999)
+	c.Assert(n.pending, qt.HasLen, 0, qt.Commentf("woke before the window opened"))
+
+	n.wakeDue(520, 1_700_000_000)
+	ct, ok := n.pending[windowed]
+	c.Assert(ok, qt.IsTrue)
+	c.Assert(ct.wakeBlock, qt.Equals, uint64(520))
+	c.Assert(ct.anchor(), qt.Equals, uint64(520))
+	_, stillParked := n.parked[locked]
+	c.Assert(stillParked, qt.IsTrue, qt.Commentf("a reveal-parked slot is not woken by time"))
+	c.Assert(n.timeParked(), qt.IsFalse)
+}
+
 func TestTaintsSurviveARestart(t *testing.T) {
 	dir := t.TempDir()
-	n := &Node{taintedApps: map[appKey]bool{}, taintFile: taintPath(dir)}
-	key := appKey{epoch: [12]byte{1, 2, 3}, aid: [32]byte{9}}
-	n.taintedApps[key] = true
+	n := &Node{taints: map[taintKey]bool{}, taintFile: taintPath(dir)}
+	app := taintKey{epoch: [12]byte{1, 2, 3}, aid: [32]byte{9}}
+	sub := taintKey{epoch: [12]byte{1, 2, 3}, aid: [32]byte{8}, submitter: common.HexToAddress("0xabc")}
+	n.taints[app] = true
+	n.taints[sub] = true
 	n.saveTaints()
-	again := &Node{taintedApps: map[appKey]bool{}, taintFile: taintPath(dir)}
+	again := &Node{taints: map[taintKey]bool{}, taintFile: taintPath(dir)}
 	again.loadTaints()
-	if !again.taintedApps[key] {
-		t.Fatal("taint not reloaded from disk")
+	if !again.taints[app] || !again.taints[sub] {
+		t.Fatal("taints not reloaded from disk")
 	}
-	empty := &Node{taintedApps: map[appKey]bool{}, taintFile: taintPath(t.TempDir())}
+	empty := &Node{taints: map[taintKey]bool{}, taintFile: taintPath(t.TempDir())}
 	empty.loadTaints() // no file: nothing to load, no error
-	if len(empty.taintedApps) != 0 {
+	if len(empty.taints) != 0 {
 		t.Fatal("unexpected taints")
 	}
+}
+
+// Files written before per-submitter taints existed hold epoch:aid entries;
+// they load as whole-application taints, and the lookup honours both kinds.
+func TestTaintFileLoadsLegacyEntriesAsWholeApplicationTaints(t *testing.T) {
+	c := qt.New(t)
+	dir := t.TempDir()
+	path := taintPath(dir)
+	legacy := "010203000000000000000000:0900000000000000000000000000000000000000000000000000000000000000"
+	c.Assert(os.WriteFile(path, []byte(`["`+legacy+`","garbage"]`), 0o600), qt.IsNil)
+	n := newTestNode()
+	n.taintFile = path
+	n.loadTaints()
+	c.Assert(n.taints, qt.HasLen, 1)
+
+	key := ctKey{epoch: [12]byte{1, 2, 3}, aid: [32]byte{9}}
+	c.Assert(n.tainted(key, common.HexToAddress("0x1")), qt.IsTrue, qt.Commentf("whole-app taint covers every submitter"))
+	other := ctKey{epoch: [12]byte{1, 2, 3}, aid: [32]byte{8}}
+	c.Assert(n.tainted(other, common.HexToAddress("0x1")), qt.IsFalse)
+	n.taints[taintKey{epoch: other.epoch, aid: other.aid, submitter: common.HexToAddress("0x1")}] = true
+	c.Assert(n.tainted(other, common.HexToAddress("0x1")), qt.IsTrue)
+	c.Assert(n.tainted(other, common.HexToAddress("0x2")), qt.IsFalse, qt.Commentf("per-submitter taint spares the others"))
 }

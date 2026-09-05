@@ -1,5 +1,5 @@
-// The per-ciphertext pipeline table: submitted → partials → organizer share →
-// combined, with the transaction behind every step.
+// The per-ciphertext pipeline table: submitted → partials → combined, with
+// the transaction behind every step.
 
 import {
   Address,
@@ -20,8 +20,7 @@ import { paths } from '~routes/paths'
 const STATE_TONE: Record<CiphertextState, 'ok' | 'warn' | 'neutral' | 'accent'> = {
   submitted: 'neutral',
   partials: 'neutral',
-  'threshold-met': 'accent',
-  'awaiting-share': 'warn',
+  'awaiting-reveal': 'warn',
   ready: 'accent',
   combined: 'ok',
 }
@@ -29,9 +28,9 @@ const STATE_TONE: Record<CiphertextState, 'ok' | 'warn' | 'neutral' | 'accent'> 
 const STATE_HELP: Record<CiphertextState, string> = {
   submitted: 'On chain, no partial decryption yet',
   partials: 'Some partials in, still below the threshold t',
-  'threshold-met': 'Threshold reached',
-  'awaiting-share': 't partials are in; the organizer share is the only thing missing',
-  ready: 't partials and the organizer share are on chain — anyone may combine',
+  'awaiting-reveal':
+    'Organizer-locked and sk_org not revealed: the contract refuses every partial and combine until the reveal',
+  ready: 't partials are in and decryption is open — anyone may combine',
   combined: 'Decrypted; the plaintext is on chain',
 }
 
@@ -146,35 +145,6 @@ const columns: AnyColumnDef<CiphertextRow>[] = [
     ),
   },
   {
-    id: 'share',
-    header: 'Organizer share',
-    accessorFn: (row) => (row.share.present ? 1 : 0),
-    meta: { width: '148px', headerTooltip: 'Δ = sk_org·C1; re-submission overwrites until the ciphertext is combined' },
-    cell: ({ row }) => {
-      const { share } = row.original
-      if (!share.present) {
-        return (
-          <Badge size='sm' tone='warn'>
-            withheld
-          </Badge>
-        )
-      }
-      return (
-        <span className='flex items-center gap-2'>
-          <Badge size='sm' tone='ok'>
-            released
-          </Badge>
-          {share.overwrites > 0 ? (
-            <span className='font-mono text-[11px] tnum text-ash' title={`${share.overwrites} overwrite(s)`}>
-              ×{share.overwrites + 1}
-            </span>
-          ) : null}
-          {share.block != null ? <BlockCell block={share.block} /> : null}
-        </span>
-      )
-    },
-  },
-  {
     id: 'combined',
     header: 'Combined',
     accessorFn: (row) => row.combined.block ?? 0,
@@ -218,7 +188,7 @@ const columns: AnyColumnDef<CiphertextRow>[] = [
 export function CiphertextTable({ rows, loading }: { rows: CiphertextRow[]; loading?: boolean }) {
   return (
     <div className='overflow-x-auto scroll-slim'>
-      <div className='min-w-[1200px]'>
+      <div className='min-w-[1060px]'>
         <DataTable
           data={rows}
           columns={columns}

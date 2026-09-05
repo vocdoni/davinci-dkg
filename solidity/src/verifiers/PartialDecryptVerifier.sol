@@ -6,7 +6,7 @@ import {Verifier as BasePartialDecryptVerifier} from "./partialdecrypt_vkey.sol"
 
 contract PartialDecryptVerifier is BasePartialDecryptVerifier, IZKVerifier {
     bytes32 internal constant PROVING_KEY_HASH =
-        hex"9c536a045045acc6d2bc25066b8af160f7b2cc9d6affb3f1a5fe6a8b4299b1a1";
+        hex"80205078ebcf34a4bb2e68928450e1afd388a0dfd8a0810e6fedc1ae5f855b57";
 
     error InvalidProofEncoding();
 
@@ -16,8 +16,7 @@ contract PartialDecryptVerifier is BasePartialDecryptVerifier, IZKVerifier {
 
     function verifyProof(bytes calldata proof, bytes calldata input) external view {
         if (proof.length != 32 * 8) revert InvalidProofEncoding();
-        uint256[8] memory decodedProof = abi.decode(proof, (uint256[8]));
         uint256[15] memory decodedInput = abi.decode(input, (uint256[15]));
-        this.verifyProof(decodedProof, decodedInput);
+        this.verifyProof(proof, decodedInput);
     }
 }

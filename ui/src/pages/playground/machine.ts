@@ -7,12 +7,18 @@
 //
 // The one rule that is easy to get wrong, and therefore the one this file
 // exists to enforce: **the epoch is pinned the moment an application is
-// registered**. `PK_aid = PK_ep + PK_org` is bound to the epoch the
-// registration landed in, so a newer epoch going Live must not silently
-// re-point the encrypt / submit / release steps at a key nothing was
+// registered**. The registration claimed one of that epoch's pool keys, so
+// `PK_aid` is bound to it and a newer epoch going Live must not silently
+// re-point the encrypt / submit / reveal steps at a key nothing was
 // registered under.
+//
+// The second rule is the application mode: an automatic application has no
+// organizer key, so there is no secret to reveal or keep — the reveal step is
+// skipped and the committee decrypts alone.
 
-export type StepId = 'connect' | 'epoch' | 'register' | 'encrypt' | 'submit' | 'share' | 'watch' | 'verify'
+import type { AppModeName } from '~indexer/types'
+
+export type StepId = 'connect' | 'epoch' | 'register' | 'encrypt' | 'submit' | 'reveal' | 'watch' | 'verify'
 
 export const STEPS: readonly StepId[] = [
   'connect',
@@ -20,7 +26,7 @@ export const STEPS: readonly StepId[] = [
   'register',
   'encrypt',
   'submit',
-  'share',
+  'reveal',
   'watch',
   'verify',
 ]
@@ -31,17 +37,18 @@ export const STEP_TITLES: Record<StepId, string> = {
   register: 'Register an application',
   encrypt: 'Encrypt a value',
   submit: 'Submit the ciphertext',
-  share: 'Release or withhold the share',
+  reveal: 'Reveal the organizer secret',
   watch: 'Watch the decryption',
   verify: 'Verify locally',
 }
 
-export type StepStatus = 'done' | 'current' | 'todo'
+/** `skipped`: the reveal step of an automatic application, which has no secret. */
+export type StepStatus = 'done' | 'current' | 'todo' | 'skipped'
 
 /** Which transaction a `TxRecord` belongs to. */
-export type TxSlot = 'register' | 'submit' | 'share'
+export type TxSlot = 'register' | 'submit' | 'reveal'
 
-export type ShareDecision = 'undecided' | 'released' | 'withheld'
+export type RevealDecision = 'undecided' | 'revealed' | 'kept'
 
 /** A ciphertext in the shape session storage can hold (decimal strings). */
 export interface SerialCiphertext {
@@ -80,15 +87,22 @@ export interface PlaygroundState {
   /** True once an application exists: the epoch may no longer be changed. */
   pinned: boolean
   registered: boolean
+  /** Organizer-locked keeps `sk_org` in this tab; automatic has none. */
+  mode: AppModeName
   /** `maxCiphertexts` for the application policy. */
   cap: number
   /** Authorised submitter; empty means "the connected address". */
   submitter: string
+  /** Decryption window as `datetime-local` values; empty = unbounded. */
+  decryptNotBefore: string
+  decryptNotAfter: string
+  /** The pool key the registration claimed. */
+  poolIndex: number | null
   /** The plaintext the user typed, kept as text so the field stays editable. */
   value: string
   ciphertext: SerialCiphertext | null
   ciphertextIndex: number | null
-  share: ShareDecision
+  reveal: RevealDecision
   txs: Partial<Record<TxSlot, TxState>>
   /** Step the user navigated to; clamped to what is actually reachable. */
   current: StepId | null
@@ -115,12 +129,16 @@ export function initialState(): PlaygroundState {
     aid: null,
     pinned: false,
     registered: false,
+    mode: 'organizer-locked',
     cap: 4,
     submitter: '',
+    decryptNotBefore: '',
+    decryptNotAfter: '',
+    poolIndex: null,
     value: '42',
     ciphertext: null,
     ciphertextIndex: null,
-    share: 'undecided',
+    reveal: 'undecided',
     txs: {},
     current: null,
     advanced: false,
@@ -138,14 +156,16 @@ export type PlaygroundAction =
   | { type: 'select-epoch'; epochId: string }
   | { type: 'default-epoch'; epochId: string }
   | { type: 'set-aid'; aid: string }
+  | { type: 'set-mode'; mode: AppModeName }
   | { type: 'set-cap'; cap: number }
   | { type: 'set-submitter'; submitter: string }
+  | { type: 'set-window'; notBefore: string; notAfter: string }
   | { type: 'set-value'; value: string }
-  | { type: 'registered'; aid: string; tx: TxState }
+  | { type: 'registered'; aid: string; tx: TxState; poolIndex: number }
   | { type: 'encrypted'; ciphertext: SerialCiphertext }
   | { type: 'submitted'; ciphertextIndex: number; tx: TxState }
-  | { type: 'share-released'; tx: TxState }
-  | { type: 'share-withheld' }
+  | { type: 'secret-revealed'; tx: TxState }
+  | { type: 'secret-kept' }
   | { type: 'tx-resolved'; slot: TxSlot; block: number | null; gasUsed: number | null }
   | { type: 'goto'; step: StepId }
   | { type: 'toggle-advanced' }
@@ -188,11 +208,17 @@ export function reducer(state: PlaygroundState, action: PlaygroundAction): Playg
     case 'set-aid':
       return state.pinned ? state : { ...state, aid: action.aid }
 
+    case 'set-mode':
+      return state.pinned ? state : { ...state, mode: action.mode }
+
     case 'set-cap':
       return state.pinned ? state : { ...state, cap: action.cap }
 
     case 'set-submitter':
       return state.pinned ? state : { ...state, submitter: action.submitter }
+
+    case 'set-window':
+      return state.pinned ? state : { ...state, decryptNotBefore: action.notBefore, decryptNotAfter: action.notAfter }
 
     case 'set-value':
       // Re-typing the value invalidates a ciphertext that was already built
@@ -206,6 +232,7 @@ export function reducer(state: PlaygroundState, action: PlaygroundAction): Playg
         aid: action.aid,
         registered: true,
         pinned: true,
+        poolIndex: action.poolIndex,
         txs: { ...state.txs, register: action.tx },
         busy: null,
         error: null,
@@ -225,18 +252,18 @@ export function reducer(state: PlaygroundState, action: PlaygroundAction): Playg
         current: null,
       }
 
-    case 'share-released':
+    case 'secret-revealed':
       return {
         ...state,
-        share: 'released',
-        txs: { ...state.txs, share: action.tx },
+        reveal: 'revealed',
+        txs: { ...state.txs, reveal: action.tx },
         busy: null,
         error: null,
         current: null,
       }
 
-    case 'share-withheld':
-      return { ...state, share: 'withheld', current: null }
+    case 'secret-kept':
+      return { ...state, reveal: 'kept', current: null }
 
     case 'tx-resolved': {
       const tx = state.txs[action.slot]
@@ -279,7 +306,9 @@ export function furthestStep(state: PlaygroundState, facts: ChainFacts = NO_FACT
   if (!state.registered) return 'register'
   if (!state.ciphertext) return 'encrypt'
   if (state.ciphertextIndex == null) return 'submit'
-  if (state.share === 'undecided') return 'share'
+  // An automatic application has no organizer secret: nothing to reveal, the
+  // committee combines on its own.
+  if (state.reveal === 'undecided' && state.mode !== 'automatic') return 'reveal'
   if (!facts.combined) return 'watch'
   return 'verify'
 }
@@ -302,6 +331,9 @@ export function activeStep(state: PlaygroundState, facts: ChainFacts = NO_FACTS)
 export function stepStatus(step: StepId, state: PlaygroundState, facts: ChainFacts = NO_FACTS): StepStatus {
   const active = activeStep(state, facts)
   if (step === active) return 'current'
+  // An automatic application has no organizer secret: the rail says the reveal
+  // is skipped rather than ticking it off as something that happened.
+  if (step === 'reveal' && state.mode === 'automatic') return 'skipped'
   return stepIndex(step) < stepIndex(furthestStep(state, facts)) ? 'done' : 'todo'
 }
 
@@ -358,13 +390,18 @@ export function resumeState(base: PlaygroundState, input: ResumeInput): Playgrou
   state.registered = true
   state.pinned = true
   if (input.session) {
-    const { value, ciphertext, ciphertextIndex, share, cap, submitter, txs } = input.session
+    const { value, ciphertext, ciphertextIndex, reveal, mode, cap, submitter, txs } = input.session
+    const { decryptNotBefore, decryptNotAfter, poolIndex } = input.session
     if (typeof value === 'string') state.value = value
+    if (mode === 'automatic' || mode === 'organizer-locked') state.mode = mode
     if (ciphertext) state.ciphertext = ciphertext
     if (typeof ciphertextIndex === 'number') state.ciphertextIndex = ciphertextIndex
-    if (share) state.share = share
+    if (reveal) state.reveal = reveal
     if (typeof cap === 'number') state.cap = cap
     if (typeof submitter === 'string') state.submitter = submitter
+    if (typeof decryptNotBefore === 'string') state.decryptNotBefore = decryptNotBefore
+    if (typeof decryptNotAfter === 'string') state.decryptNotAfter = decryptNotAfter
+    if (typeof poolIndex === 'number') state.poolIndex = poolIndex
     if (txs) state.txs = txs
   }
   return state

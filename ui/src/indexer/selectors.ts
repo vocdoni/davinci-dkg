@@ -13,6 +13,7 @@ import {
   txKey,
   type Address,
   type Aid,
+  type AppModeName,
   type ApplicationEntity,
   type CiphertextEntity,
   type ContributionEntity,
@@ -24,6 +25,7 @@ import {
   type IndexerStore,
   type OperatorEntity,
   type Point,
+  type PoolKeyEntity,
   type TxMeta,
 } from './types'
 
@@ -235,6 +237,9 @@ export interface EpochRow {
   finalizer: Address | null
   finalizationTx: Hex | null
   finalizationGas: number | null
+  /** Pool keys activated / claimed so far, out of `POOL_SIZE`. */
+  poolActivated: number
+  poolClaimed: number
   /** 0…1 over the committee. */
   claimProgress: number
   contributionProgress: number
@@ -281,6 +286,8 @@ function epochRow(store: IndexerStore, epoch: EpochEntity): EpochRow {
     finalizer: epoch.finalization?.by ?? senderOf(store, epoch.finalization?.tx),
     finalizationTx: epoch.finalization?.tx ?? null,
     finalizationGas: gasOf(store, epoch.finalization?.tx),
+    poolActivated: epoch.poolKeys.filter((slot) => slot.key != null).length,
+    poolClaimed: epoch.poolKeys.filter((slot) => slot.claimedBy != null).length,
     claimProgress: n > 0 ? Math.min(1, claims / n) : 0,
     contributionProgress: n > 0 ? Math.min(1, contributions / n) : 0,
   }
@@ -345,7 +352,6 @@ export interface CommitteeRow {
   contributionGas: number | null
   commitmentsHash: Hex | null
   encryptedSharesHash: Hex | null
-  shareCommitmentHash: Hex | null
   partials: number
 }
 
@@ -364,16 +370,45 @@ export interface ApplicationRow {
   epoch: EpochId
   aid: Aid
   creator: Address
+  /** `PK_org`, TE form; the identity `(0, 1)` when automatic. */
   organizerPK: Point
-  authorizedSubmitter: Address | null
+  mode: AppModeName
+  /** Pool key claimed at registration; null until seen. */
+  poolIndex: number | null
+  /** `P_j`, TE form; null until the key's activation has been indexed. */
+  poolKey: Point | null
+  /** Policy fields are null until the record has been read on chain. */
+  openSubmission: boolean | null
+  /** Allow-list; empty means the registrant only. */
+  submitters: Address[] | null
   maxCiphertexts: number | null
   notBeforeBlock: number | null
   notAfterBlock: number | null
+  /** Decryption window, unix seconds; 0 = unbounded on that side. */
+  decryptNotBefore: number | null
+  decryptNotAfter: number | null
+  /**
+   * Whether the committee can combine on its own: always for an automatic
+   * application, and once `sk_org` is revealed for an organizer-locked one.
+   */
+  unlocked: boolean
+  /** `sk_org` after the reveal; null before it and for automatic applications. */
+  organizerSecret: bigint | null
+  revealBlock: number | null
+  revealTx: Hex | null
   createdBlock: number
   createdTx: Hex | null
   ciphertexts: number
   decrypted: number
-  sharesPublished: number
+}
+
+export type PoolSlotState = 'inactive' | 'activated' | 'claimed'
+
+/** One of the `POOL_SIZE` keys of an epoch, as the pool panel draws it. */
+export interface PoolSlotRow extends PoolKeyEntity {
+  state: PoolSlotState
+  activatedBy: Address | null
+  activatedGas: number | null
 }
 
 export interface EpochDetail {
@@ -388,23 +423,33 @@ export interface EpochDetail {
     block: number
     tx: Hex | null
     gasUsed: number | null
-    collectivePublicKeyHash: Hex
-    aggregateCommitmentsHash: Hex
-    shareCommitmentHash: Hex
+    contributionCount: number
   } | null
-  collectivePublicKey: Point | null
+  /** The pool, by key index. */
+  pool: PoolSlotRow[]
+  poolNext: number
+  poolActivated: number
+  poolClaimed: number
   events: IndexedEvent[]
   /** Contributions in submission order. */
   contributions: CommitteeRow[]
 }
 
+/** `P_j` of the key `app` claimed, once its activation is in the store. */
+export function poolKeyOf(store: IndexerStore, app: ApplicationEntity): Point | null {
+  if (app.poolIndex == null) return null
+  return store.epochs[epochKey(app.epoch)]?.poolKeys[app.poolIndex]?.key ?? null
+}
+
+/** True once the committee alone can combine this application's ciphertexts. */
+export function isUnlocked(app: ApplicationEntity): boolean {
+  return app.mode === 'automatic' || app.organizerSecret != null
+}
+
 function applicationRow(store: IndexerStore, app: ApplicationEntity): ApplicationRow {
   let decrypted = 0
-  let shares = 0
   for (const key of app.ciphertexts) {
-    const ct = store.ciphertexts[key]
-    if (ct.combined) decrypted += 1
-    if (ct.organizerShare) shares += 1
+    if (store.ciphertexts[key].combined) decrypted += 1
   }
   return {
     key: app.key,
@@ -412,15 +457,33 @@ function applicationRow(store: IndexerStore, app: ApplicationEntity): Applicatio
     aid: app.aid,
     creator: app.creator,
     organizerPK: app.organizerPK,
-    authorizedSubmitter: app.policy?.authorizedSubmitter ?? null,
+    mode: app.mode,
+    poolIndex: app.poolIndex,
+    poolKey: poolKeyOf(store, app),
+    openSubmission: app.policy?.openSubmission ?? null,
+    submitters: app.policy?.submitters ?? null,
     maxCiphertexts: app.policy?.maxCiphertexts ?? null,
     notBeforeBlock: app.policy?.notBeforeBlock ?? null,
     notAfterBlock: app.policy?.notAfterBlock ?? null,
+    decryptNotBefore: app.policy?.decryptNotBefore ?? null,
+    decryptNotAfter: app.policy?.decryptNotAfter ?? null,
+    unlocked: isUnlocked(app),
+    organizerSecret: app.organizerSecret,
+    revealBlock: app.organizerReveal?.block ?? null,
+    revealTx: app.organizerReveal?.tx ?? null,
     createdBlock: app.createdBlock,
     createdTx: app.createdTx,
     ciphertexts: app.ciphertexts.length,
     decrypted,
-    sharesPublished: shares,
+  }
+}
+
+function poolSlotRow(store: IndexerStore, slot: PoolKeyEntity): PoolSlotRow {
+  return {
+    ...slot,
+    state: slot.claimedBy != null ? 'claimed' : slot.key != null ? 'activated' : 'inactive',
+    activatedBy: senderOf(store, slot.activatedTx),
+    activatedGas: gasOf(store, slot.activatedTx),
   }
 }
 
@@ -488,7 +551,6 @@ export function epochDetail(store: IndexerStore, id: EpochId | string): EpochDet
       contributionGas: gasOf(store, contribution?.tx),
       commitmentsHash: contribution?.commitmentsHash ?? null,
       encryptedSharesHash: contribution?.encryptedSharesHash ?? null,
-      shareCommitmentHash: epoch.shareCommitmentHashes[i] ?? null,
       partials: partialsBySlot.get(i) ?? 0,
     })
   }
@@ -504,6 +566,8 @@ export function epochDetail(store: IndexerStore, id: EpochId | string): EpochDet
     endBlock: duration != null ? epoch.startBlock + duration : null,
   }
 
+  const pool = epoch.poolKeys.map((slot) => poolSlotRow(store, slot))
+
   return {
     epoch,
     row: epochRow(store, epoch),
@@ -517,12 +581,13 @@ export function epochDetail(store: IndexerStore, id: EpochId | string): EpochDet
           block: epoch.finalization.block,
           tx: epoch.finalization.tx,
           gasUsed: gasOf(store, epoch.finalization.tx),
-          collectivePublicKeyHash: epoch.finalization.collectivePublicKeyHash,
-          aggregateCommitmentsHash: epoch.finalization.aggregateCommitmentsHash,
-          shareCommitmentHash: epoch.finalization.shareCommitmentHash,
+          contributionCount: epoch.finalization.contributionCount,
         }
       : null,
-    collectivePublicKey: epoch.collectivePublicKey,
+    pool,
+    poolNext: epoch.poolNext,
+    poolActivated: pool.filter((slot) => slot.key != null).length,
+    poolClaimed: pool.filter((slot) => slot.claimedBy != null).length,
     events: epoch.events.map((i) => store.events[i]),
     contributions: epoch.contributions
       .map((key) => committee[participantIndexToSlot(store.contributions[key].index)])
@@ -794,13 +859,24 @@ export const applicationRows = memoPerStore((store: IndexerStore): ApplicationRo
     .sort((a, b) => b.createdBlock - a.createdBlock),
 )
 
-export type CiphertextState =
-  | 'submitted'
-  | 'partials'
-  | 'threshold-met'
-  | 'awaiting-share'
-  | 'ready'
-  | 'combined'
+/**
+ * Where a ciphertext is in the pipeline. `awaiting-reveal`: the application
+ * is organizer-locked and `sk_org` is not out yet — the contract refuses every
+ * partial and combine until it is, so nothing else can have happened;
+ * `partials`: some in, below `t`; `ready`: `t` partials and nothing else
+ * stands in the way of a combine.
+ */
+export type CiphertextState = 'submitted' | 'partials' | 'awaiting-reveal' | 'ready' | 'combined'
+
+/**
+ * Block from which the contract accepts partials for a ciphertext: its own
+ * block, or — organizer-locked — the reveal block when that came later. Waves
+ * are counted from here, since that is when the committee could start.
+ */
+function decryptionOpensAt(ct: CiphertextEntity, app: ApplicationEntity | undefined): number {
+  const reveal = app?.mode === 'organizer-locked' ? app.organizerReveal?.block : null
+  return reveal != null ? Math.max(ct.block, reveal) : ct.block
+}
 
 export interface PartialRow {
   /** 1-based, as it appears on chain. */
@@ -828,7 +904,6 @@ export interface CiphertextRow {
   committeeSize: number
   partials: PartialRow[]
   partialCount: number
-  share: { present: boolean; block: number | null; tx: Hex | null; overwrites: number }
   combined: {
     done: boolean
     by: Address | null
@@ -845,20 +920,25 @@ function ciphertextRow(store: IndexerStore, ct: CiphertextEntity): CiphertextRow
   const threshold = epoch?.policy?.threshold ?? 0
   const committeeSize = epoch?.policy?.committeeSize ?? epoch?.committee.length ?? 0
   const stagger = store.chain.staggerBlocks || 1
+  const app = store.applications[applicationKey(ct.epoch, ct.aid)]
+  const opensAt = decryptionOpensAt(ct, app)
   const partials: PartialRow[] = ct.partials.map((partial) => ({
     participantIndex: partial.participantIndex,
     slot: participantIndexToSlot(partial.participantIndex),
     participant: partial.participant,
     block: partial.block,
     tx: partial.tx,
-    wave: Math.max(0, Math.floor((partial.block - ct.block) / stagger)),
+    wave: Math.max(0, Math.floor((partial.block - opensAt) / stagger)),
   }))
-  const hasShare = ct.organizerShare != null
+  const unlocked = app ? isUnlocked(app) : true
   const thresholdMet = threshold > 0 && partials.length >= threshold
   let state: CiphertextState = 'submitted'
   if (ct.combined) state = 'combined'
-  else if (thresholdMet && hasShare) state = 'ready'
-  else if (thresholdMet) state = 'awaiting-share'
+  // A locked application has no partials before the reveal — the contract
+  // refuses them — so every one of its ciphertexts waits there until sk_org
+  // is on chain, whatever the partial count says.
+  else if (!unlocked) state = 'awaiting-reveal'
+  else if (thresholdMet) state = 'ready'
   else if (partials.length > 0) state = 'partials'
 
   return {
@@ -875,12 +955,6 @@ function ciphertextRow(store: IndexerStore, ct: CiphertextEntity): CiphertextRow
     committeeSize,
     partials,
     partialCount: partials.length,
-    share: {
-      present: hasShare,
-      block: ct.organizerShare?.block ?? null,
-      tx: ct.organizerShare?.tx ?? null,
-      overwrites: ct.organizerShare?.overwrites ?? 0,
-    },
     combined: {
       done: ct.combined != null,
       by: ct.combined?.by ?? senderOf(store, ct.combined?.tx),
@@ -902,8 +976,9 @@ export interface ApplicationDetail {
   summary: {
     total: number
     combined: number
-    withShare: number
     thresholdMet: number
+    /** Ciphertexts parked at `awaiting-reveal`. */
+    awaitingReveal: number
   }
 }
 
@@ -924,9 +999,8 @@ export function applicationDetail(
     summary: {
       total: ciphertexts.length,
       combined: ciphertexts.filter((row) => row.combined.done).length,
-      withShare: ciphertexts.filter((row) => row.share.present).length,
-      thresholdMet: ciphertexts.filter((row) => row.state !== 'submitted' && row.state !== 'partials')
-        .length,
+      thresholdMet: ciphertexts.filter((row) => row.threshold > 0 && row.partialCount >= row.threshold).length,
+      awaitingReveal: ciphertexts.filter((row) => row.state === 'awaiting-reveal').length,
     },
   }
 }
@@ -998,7 +1072,6 @@ export interface MatrixColumn {
   submitBlock: number
   partials: number
   threshold: number
-  share: boolean
   combined: boolean
 }
 
@@ -1015,9 +1088,10 @@ export interface PartialMatrix {
 
 /**
  * Members × ciphertexts heat-map data. `wave` is the decryption round a
- * partial landed in: the node schedules its `i`-th attempt `i · staggerBlocks`
- * after the ciphertext, so `floor((block − submitBlock) / staggerBlocks)`
- * recovers it.
+ * partial landed in, counted from 0: the node schedules its `i`-th attempt
+ * `i · staggerBlocks` after decryption opened (the ciphertext, or the reveal
+ * for an organizer-locked application — see `decryptionOpensAt`), so
+ * `floor((block − opened) / staggerBlocks)` recovers it.
  */
 export function partialMatrix(
   store: IndexerStore,
@@ -1052,9 +1126,9 @@ export function partialMatrix(
       submitBlock: ct.block,
       partials: ct.partials.length,
       threshold: epoch.policy?.threshold ?? 0,
-      share: ct.organizerShare != null,
       combined: ct.combined != null,
     })
+    const opensAt = decryptionOpensAt(ct, store.applications[applicationKey(ct.epoch, ct.aid)])
     for (const partial of ct.partials) {
       const row = participantIndexToSlot(partial.participantIndex)
       if (row < 0 || row >= size) continue
@@ -1065,7 +1139,7 @@ export function partialMatrix(
         aid: ct.aid,
         ciphertextIndex: ct.index,
         block: partial.block,
-        wave: Math.max(0, Math.floor((partial.block - ct.block) / stagger)),
+        wave: Math.max(0, Math.floor((partial.block - opensAt) / stagger)),
         tx: partial.tx,
       }
       rowTotals[row] += 1

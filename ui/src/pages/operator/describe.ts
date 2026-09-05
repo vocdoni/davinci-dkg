@@ -78,7 +78,21 @@ export function describeEvent(event: IndexedEvent, nonceOf?: NonceLookup): Event
         href,
       }
     case 'EpochLive':
-      return { title: `Finalized ${where}`, detail: 'the collective key is assembled', tone: 'ok', href }
+      return {
+        title: `Finalized ${where}`,
+        detail: `${event.data.contributionCount} contributions frozen — the pool opens`,
+        tone: 'ok',
+        href,
+      }
+    case 'PoolKeyActivated':
+      return { title: `Activated pool key ${event.data.keyIndex} in ${where}`, tone: 'ok', href }
+    case 'PoolKeyClaimed':
+      return {
+        title: `Pool key ${event.data.keyIndex} claimed in ${where}`,
+        detail: `application ${shortHash(event.data.aid, 6, 4)}`,
+        tone: 'neutral',
+        href,
+      }
     case 'EpochAborted':
       return { title: `Aborted ${where}`, detail: 'the epoch could no longer progress', tone: 'danger', href }
     case 'CiphertextSubmitted':
@@ -109,10 +123,10 @@ export function describeEvent(event: IndexedEvent, nonceOf?: NonceLookup): Event
         tone: 'neutral',
         href,
       }
-    case 'OrganizerShareSubmitted':
+    case 'OrganizerSecretRevealed':
       return {
-        title: `Released the organizer share for ciphertext ${event.data.ciphertextIndex}`,
-        detail: `${where} · application ${shortHash(event.data.aid, 6, 4)}`,
+        title: `Revealed the organizer secret of application ${shortHash(event.data.aid, 6, 4)}`,
+        detail: `${where} · the committee combines on its own from here`,
         tone: 'ok',
         href,
       }

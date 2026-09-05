@@ -40,13 +40,21 @@ export interface CardHeaderProps {
 
 export function CardHeader({ title, label, description, actions, className }: CardHeaderProps) {
   return (
-    <div className={cn('flex items-start justify-between gap-4 border-b border-charcoal px-5 py-4', className)}>
+    // Actions sit beside the title from `sm` up and stack under it on a phone,
+    // where a long action string (the committee panel's `t · m_min · n`) would
+    // otherwise squeeze the title into a sliver.
+    <div
+      className={cn(
+        'flex flex-col gap-3 border-b border-charcoal px-5 py-4 sm:flex-row sm:items-start sm:justify-between sm:gap-4',
+        className
+      )}
+    >
       <div className='min-w-0'>
         {label ? <div className='label-caps mb-1.5 text-emerald'>{label}</div> : null}
         <h2 className='truncate text-[15px] font-semibold text-ghost'>{title}</h2>
         {description ? <p className='mt-1 text-[13px] leading-relaxed text-ash'>{description}</p> : null}
       </div>
-      {actions ? <div className='flex shrink-0 items-center gap-2'>{actions}</div> : null}
+      {actions ? <div className='flex shrink-0 flex-wrap items-center gap-2'>{actions}</div> : null}
     </div>
   )
 }

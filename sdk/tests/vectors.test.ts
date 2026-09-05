@@ -10,8 +10,9 @@ import { resolve } from 'node:path';
 import {
   DomainOperatorRegisterV1,
   DomainOrganizerRegisterV1,
-  DomainDLEQV1,
-  DomainOrganizerShareV1,
+  DomainContributionTranscriptV1,
+  DomainPoolKeyTranscriptV1,
+  DomainDecryptCombineTranscriptV1,
 } from '../src/protocol';
 import {
   verifyOperatorSchnorr,
@@ -24,14 +25,6 @@ import {
   BN254_Q,
   SUBGROUP_ORDER,
 } from '../src/schnorr';
-import {
-  organizerShareChallenge,
-  proveOrganizerShare,
-  verifyOrganizerShare,
-} from '../src/dleq';
-import { fromRTEtoTE, fromTEtoRTE } from '../src/crypto/babyjub-form';
-import type { BabyJubPoint } from '../src/types';
-import { Base8, mulPointEscalar } from '@zk-kit/baby-jubjub';
 import type { Hex } from 'viem';
 import type { Point } from '@zk-kit/baby-jubjub';
 
@@ -43,33 +36,10 @@ function load<T>(name: string): T {
 
 // ─── protocol.json ─────────────────────────────────────────────────────────
 
-interface OrganizerShareVector {
-  label: string;
-  domain: string;
-  skOrg: string;
-  w: string;
-  epochId: string;
-  aid: string;
-  ctIdx: number;
-  pkOrgX: string;
-  pkOrgY: string;
-  c1x: string;
-  c1y: string;
-  deltaX: string;
-  deltaY: string;
-  a1x: string;
-  a1y: string;
-  a2x: string;
-  a2y: string;
-  e: string;
-  z: string;
-}
-
 interface ProtocolFile {
   domains: Record<string, { preimage: string; keccak256: string; bn254Reduced: string }>;
   bn254Q: string;
   subgroupOrderL: string;
-  organizerShare: OrganizerShareVector;
 }
 
 describe('vectors / protocol.json', () => {
@@ -78,13 +48,9 @@ describe('vectors / protocol.json', () => {
   it('domain digests match', () => {
     expect(DomainOperatorRegisterV1).toBe(f.domains.OperatorRegisterV1.keccak256);
     expect(DomainOrganizerRegisterV1).toBe(f.domains.OrganizerRegisterV1.keccak256);
-    expect(DomainDLEQV1).toBe(f.domains.DLEQV1.keccak256);
-  });
-
-  it('OrganizerShareV1 domain digest matches', () => {
-    const d = f.domains.OrganizerShareV1;
-    expect(d.preimage).toBe('davinci-dkg:organizer-share:v1');
-    expect(DomainOrganizerShareV1).toBe(d.keccak256);
+    expect(DomainContributionTranscriptV1).toBe(f.domains.ContributionTranscriptV1.keccak256);
+    expect(DomainPoolKeyTranscriptV1).toBe(f.domains.PoolKeyTranscriptV1.keccak256);
+    expect(DomainDecryptCombineTranscriptV1).toBe(f.domains.DecryptCombineTranscriptV1.keccak256);
   });
 
   it('PartialDecrypt domain reduction matches', () => {
@@ -99,66 +65,6 @@ describe('vectors / protocol.json', () => {
 
   it('BabyJubJub subgroup order matches', () => {
     expect(SUBGROUP_ORDER.toString()).toBe(f.subgroupOrderL);
-  });
-});
-
-// ─── protocol.json → organizer share (spec §3) ─────────────────────────────
-
-describe('vectors / organizer share', () => {
-  const v = load<ProtocolFile>('protocol.json').organizerShare;
-
-  const epochId = v.epochId as Hex;
-  const aid = v.aid as Hex;
-  const skOrg = BigInt(v.skOrg);
-  const w = BigInt(v.w);
-  const pkOrg: BabyJubPoint = [BigInt(v.pkOrgX), BigInt(v.pkOrgY)];
-  const c1: BabyJubPoint = [BigInt(v.c1x), BigInt(v.c1y)];
-  const delta: BabyJubPoint = [BigInt(v.deltaX), BigInt(v.deltaY)];
-  const a1: BabyJubPoint = [BigInt(v.a1x), BigInt(v.a1y)];
-  const a2: BabyJubPoint = [BigInt(v.a2x), BigInt(v.a2y)];
-
-  it('binds the OrganizerShareV1 domain', () => {
-    expect(v.domain).toBe(DomainOrganizerShareV1);
-  });
-
-  it('PK_org in the vector is sk_org·G in on-chain (RTE) form', () => {
-    const pkTE = mulPointEscalar(Base8, skOrg) as Point<bigint>;
-    expect(fromTEtoRTE(pkTE[0], pkTE[1])).toEqual(pkOrg);
-  });
-
-  it('reproduces the Go challenge e byte for byte', () => {
-    expect(
-      organizerShareChallenge(epochId, aid, v.ctIdx, pkOrg, c1, delta, a1, a2).toString(),
-    ).toBe(v.e);
-  });
-
-  it('verifies the Go-produced proof', () => {
-    expect(
-      verifyOrganizerShare(epochId, aid, v.ctIdx, pkOrg, c1, delta, { a1, a2, z: BigInt(v.z) }),
-    ).toBe(true);
-  });
-
-  it('the SDK prover reproduces every word given the same secret and witness', () => {
-    // This is what catches a coordinate-form or reduction drift: the prover
-    // does the curve arithmetic in TE and emits RTE, and every one of those
-    // words has to land on the Go value.
-    const c1TE = fromRTEtoTE(c1[0], c1[1]) as BabyJubPoint;
-    const share = proveOrganizerShare(epochId, aid, v.ctIdx, skOrg, c1TE, w);
-    expect(share.delta).toEqual(delta);
-    expect(share.a1).toEqual(a1);
-    expect(share.a2).toEqual(a2);
-    expect(share.z.toString()).toBe(v.z);
-  });
-
-  it('rejects the vector under a tampered response or a foreign ciphertext index', () => {
-    expect(
-      verifyOrganizerShare(epochId, aid, v.ctIdx, pkOrg, c1, delta, {
-        a1, a2, z: BigInt(v.z) + 1n,
-      }),
-    ).toBe(false);
-    expect(
-      verifyOrganizerShare(epochId, aid, v.ctIdx + 1, pkOrg, c1, delta, { a1, a2, z: BigInt(v.z) }),
-    ).toBe(false);
   });
 });
 

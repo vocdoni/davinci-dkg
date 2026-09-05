@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/big"
 
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	ethcrypto "github.com/ethereum/go-ethereum/crypto"
 	ccommon "github.com/vocdoni/davinci-dkg/circuits/common"
@@ -120,10 +121,11 @@ func randomSubgroupPoint() (types.CurvePoint, error) {
 }
 
 // ownContribution is what the battery keeps of a contribution it made
-// itself: enough to evaluate its own polynomial at its own index.
+// itself: enough to evaluate any of its MaxK polynomials at its own index.
+// Coefficients is indexed by pool key, then coefficient.
 type ownContribution struct {
 	Index        uint16
-	Coefficients []*big.Int
+	Coefficients [][]*big.Int
 }
 
 // recoverPrivateShare rebuilds d_i = Σ_j f_j(i) for committee member myIdx
@@ -132,7 +134,7 @@ type ownContribution struct {
 // ContributionSubmitted event, its calldata transcript decoded and the share
 // slot addressed to myIdx decrypted with the member's BabyJubJub secret.
 func recoverPrivateShare(
-	ctx context.Context, f *Fleet, epochID [12]byte, myIdx uint16,
+	ctx context.Context, f *Fleet, epochID [12]byte, myIdx uint16, keyIndex uint8,
 	committee []common.Address, secret *big.Int, own *ownContribution, fromBlock uint64,
 ) (*big.Int, int, error) {
 	roundHash := helpers.RoundScalar(epochID)
@@ -151,9 +153,9 @@ func recoverPrivateShare(
 		accepted++
 		var share *big.Int
 		if own != nil && own.Index == contribIdx {
-			share, err = ccommon.EvaluatePolynomialNative(own.Coefficients, big.NewInt(int64(myIdx)))
+			share, err = ccommon.EvaluatePolynomialNative(own.Coefficients[keyIndex], big.NewInt(int64(myIdx)))
 		} else {
-			share, err = decryptShareFrom(ctx, f, epochID, addr, contribIdx, roundHash, myIdx, secret, fromBlock)
+			share, err = decryptShareFrom(ctx, f, epochID, addr, contribIdx, roundHash, myIdx, keyIndex, secret, fromBlock)
 		}
 		if err != nil {
 			return nil, 0, fmt.Errorf("share from %s (idx %d): %w", addr.Hex(), contribIdx, err)
@@ -169,7 +171,7 @@ func recoverPrivateShare(
 
 func decryptShareFrom(
 	ctx context.Context, f *Fleet, epochID [12]byte, contributor common.Address,
-	contribIdx uint16, roundHash *big.Int, myIdx uint16, secret *big.Int, fromBlock uint64,
+	contribIdx uint16, roundHash *big.Int, myIdx uint16, keyIndex uint8, secret *big.Int, fromBlock uint64,
 ) (*big.Int, error) {
 	client := f.Services.Contracts.Client()
 	data, err := finalizer.ContributionCalldata(ctx, client, f.Services.Manager, epochID, contributor, fromBlock)
@@ -180,32 +182,109 @@ func decryptShareFrom(
 	if err != nil {
 		return nil, err
 	}
-	// Layout (N = MaxN words of 32 bytes): [0..2N) commitments, [2N..3N)
-	// recipient indexes, [3N..5N) recipient keys, [5N..7N) ephemerals,
-	// [7N..8N) masked shares.
-	const n = ccommon.MaxN
+	// Layout (N = MaxN, K = MaxK, words of 32 bytes; see docs/pool-keys.md):
+	// [0, 2KN) commitments key-major, [2KN, 2KN+N) recipient indexes,
+	// [2KN+N, 2KN+3N) recipient keys, [2KN+3N, 2KN+5N) ephemerals,
+	// [2KN+5N, 3KN+5N) masked shares key-major.
+	const (
+		n          = ccommon.MaxN
+		k          = ccommon.MaxK
+		indexBase  = 2 * k * n
+		ephBase    = indexBase + 3*n
+		maskedBase = indexBase + 5*n
+	)
 	word := func(i int) *big.Int { return new(big.Int).SetBytes(transcript[i*32 : (i+1)*32]) }
 	for slot := range n {
-		if uint16(word(2*n+slot).Uint64()) != myIdx {
+		if uint16(word(indexBase+slot).Uint64()) != myIdx {
 			continue
 		}
 		ct := shareenc.Ciphertext{
-			Ephemeral:   types.CurvePoint{X: word(5*n + 2*slot), Y: word(5*n + 2*slot + 1)},
-			MaskedShare: word(7*n + slot),
+			Ephemeral:   types.CurvePoint{X: word(ephBase + 2*slot), Y: word(ephBase + 2*slot + 1)},
+			MaskedShare: word(maskedBase + int(keyIndex)*n + slot),
 		}
-		return shareenc.DecryptShareRoundHash(roundHash, contribIdx, myIdx, ct, secret)
+		return shareenc.DecryptShareRoundHash(roundHash, contribIdx, myIdx, keyIndex, ct, secret)
 	}
 	return nil, fmt.Errorf("no share slot for index %d", myIdx)
 }
 
-// shareCommitmentMatches checks d·G against the share commitment hash the
-// finalize proof pinned on chain for participant idx.
-func shareCommitmentMatches(ctx context.Context, f *Fleet, epochID [12]byte, idx uint16, d *big.Int) (bool, error) {
-	stored, err := f.Services.Manager.GetShareCommitmentHash(f.callOpts(ctx), epochID, idx)
+// shareCommitmentMatches checks d·G against the share commitment the
+// activation of `keyIndex` published for participant idx. The commitments
+// travel as activatePoolKey calldata; only their Merkle root is stored, so
+// the check reads the transcript back from the activation transaction.
+func shareCommitmentMatches(
+	ctx context.Context, f *Fleet, epochID [12]byte, keyIndex uint8, idx uint16, d *big.Int, fromBlock uint64,
+) (bool, error) {
+	commitment, err := poolShareCommitment(ctx, f, epochID, keyIndex, idx, fromBlock)
 	if err != nil {
 		return false, err
 	}
 	point := helpers.ScalarBasePoint(d)
-	digest := ethcrypto.Keccak256Hash(common.LeftPadBytes(point.X.Bytes(), 32), common.LeftPadBytes(point.Y.Bytes(), 32))
-	return digest == common.Hash(stored), nil
+	return point.X.Cmp(commitment.X) == 0 && point.Y.Cmp(commitment.Y) == 0, nil
+}
+
+// activationCalldata reads back the calldata of the activatePoolKey
+// transaction that proved `keyIndex`. Only the Merkle root of the share
+// commitments is stored on chain, so everything the battery needs about
+// them comes from here, decoded with the finalizer's hostile-calldata
+// parsers.
+func activationCalldata(
+	ctx context.Context, f *Fleet, epochID [12]byte, keyIndex uint8, fromBlock uint64,
+) ([]byte, error) {
+	head, err := f.head(ctx)
+	if err != nil {
+		return nil, err
+	}
+	it, err := f.Services.Manager.FilterPoolKeyActivated(
+		&bind.FilterOpts{Context: ctx, Start: fromBlock, End: &head}, [][12]byte{epochID}, []uint8{keyIndex},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("filter PoolKeyActivated: %w", err)
+	}
+	defer func() { _ = it.Close() }()
+	if !it.Next() {
+		return nil, fmt.Errorf("pool key %d of %x was never activated", keyIndex, epochID)
+	}
+
+	tx, _, err := f.Services.Contracts.Client().TransactionByHash(ctx, it.Event.Raw.TxHash)
+	if err != nil {
+		return nil, fmt.Errorf("read activation tx: %w", err)
+	}
+	return tx.Data(), nil
+}
+
+// poolShareTree rebuilds one pool key's share-commitment tree, so a battery
+// member can produce the Merkle path submitPartialDecryption asks for. The
+// transcript carries D_p for every committee member p (slot p−1), whether
+// or not p contributed, and the tree is laid out over exactly those.
+func poolShareTree(
+	ctx context.Context, f *Fleet, epochID [12]byte, keyIndex uint8, fromBlock uint64,
+) (helpers.ShareTree, error) {
+	data, err := activationCalldata(ctx, f, epochID, keyIndex, fromBlock)
+	if err != nil {
+		return helpers.ShareTree{}, err
+	}
+	indexes, commitments, err := finalizer.PoolKeyShareCommitments(data)
+	if err != nil {
+		return helpers.ShareTree{}, fmt.Errorf("decode activation share commitments: %w", err)
+	}
+	return helpers.NewShareTree(indexes, commitments)
+}
+
+// poolShareCommitment reads D_idx for one committee member out of the
+// activation transcript of `keyIndex`.
+func poolShareCommitment(
+	ctx context.Context, f *Fleet, epochID [12]byte, keyIndex uint8, idx uint16, fromBlock uint64,
+) (types.CurvePoint, error) {
+	data, err := activationCalldata(ctx, f, epochID, keyIndex, fromBlock)
+	if err != nil {
+		return types.CurvePoint{}, err
+	}
+	_, commitments, err := finalizer.PoolKeyShareCommitments(data)
+	if err != nil {
+		return types.CurvePoint{}, fmt.Errorf("decode activation share commitments: %w", err)
+	}
+	if idx == 0 || int(idx) > len(commitments) {
+		return types.CurvePoint{}, fmt.Errorf("member %d is outside the committee of %d", idx, len(commitments))
+	}
+	return commitments[idx-1], nil
 }

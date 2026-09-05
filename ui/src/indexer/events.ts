@@ -8,7 +8,7 @@
 
 import { dkgAppManagerAbi, dkgManagerAbi, dkgRegistryAbi, fromRTEtoTE } from '@vocdoni/davinci-dkg-sdk'
 import type { AbiEvent } from 'viem'
-import type { Address, Hex, IndexedEvent, IndexedEventName, Point } from './types'
+import { appModeName, type Address, type Hex, type IndexedEvent, type IndexedEventName, type Point } from './types'
 
 /** Every event fragment of the three contracts, in ABI order. */
 export const ALL_EVENT_ABIS: AbiEvent[] = [
@@ -40,12 +40,14 @@ const KNOWN_EVENTS = new Set<string>([
   'CommitteeFilled',
   'ContributionSubmitted',
   'EpochLive',
+  'PoolKeyActivated',
+  'PoolKeyClaimed',
   'CiphertextSubmitted',
   'PartialDecryptionSubmitted',
   'DecryptionCombined',
   'EpochAborted',
   'ApplicationRegistered',
-  'OrganizerShareSubmitted',
+  'OrganizerSecretRevealed',
 ])
 
 export function isKnownEvent(name: string | undefined): name is IndexedEventName {
@@ -214,12 +216,28 @@ export function normalizeLog(log: RawLog): IndexedEvent | null {
         epoch: epochId,
         aid: null,
         actor: null,
-        data: {
-          epochId: epochId as Hex,
-          aggregateCommitmentsHash: hex(a.aggregateCommitmentsHash),
-          collectivePublicKeyHash: hex(a.collectivePublicKeyHash),
-          shareCommitmentHash: hex(a.shareCommitmentHash),
-        },
+        data: { epochId: epochId as Hex, contributionCount: num(a.contributionCount) },
+      }
+    case 'PoolKeyActivated': {
+      // On-chain (RTE) words in the log; TE in the store, like every key.
+      const [x, y] = fromRTEtoTE(big(a.x), big(a.y))
+      return {
+        ...envelope,
+        name,
+        epoch: epochId,
+        aid: null,
+        actor: null,
+        data: { epochId: epochId as Hex, keyIndex: num(a.keyIndex), key: { x, y } },
+      }
+    }
+    case 'PoolKeyClaimed':
+      return {
+        ...envelope,
+        name,
+        epoch: epochId,
+        aid,
+        actor: null,
+        data: { epochId: epochId as Hex, aid: aid as Hex, keyIndex: num(a.keyIndex) },
       }
     case 'CiphertextSubmitted':
       return {
@@ -293,25 +311,19 @@ export function normalizeLog(log: RawLog): IndexedEvent | null {
           aid: aid as Hex,
           creator: addr(a.creator),
           organizerPK: { x, y },
+          mode: appModeName(num(a.mode)),
+          poolIndex: num(a.poolIndex),
         },
       }
     }
-    case 'OrganizerShareSubmitted':
+    case 'OrganizerSecretRevealed':
       return {
         ...envelope,
         name,
         epoch: epochId,
         aid,
         actor: null,
-        data: {
-          epochId: epochId as Hex,
-          aid: aid as Hex,
-          ciphertextIndex: num(a.ctIdx),
-          delta: point(a.deltaX, a.deltaY),
-          a1: point(a.a1x, a.a1y),
-          a2: point(a.a2x, a.a2y),
-          z: big(a.z),
-        },
+        data: { epochId: epochId as Hex, aid: aid as Hex, organizerSecret: big(a.organizerSecret) },
       }
     default:
       return null

@@ -14,7 +14,7 @@ pragma solidity 0.8.28;
 ///
 /// @dev    Per-transcript domain prefixes for cross-protocol replay safety.
 library DKGProtocol {
-    // ─── Fiat-Shamir / Schnorr / DLEQ transcript domain prefixes ─────────────
+    // ─── Schnorr registration transcript domain prefixes ─────────────────────
     //
     // These are versioned `keccak256` digests of the canonical UTF-8 strings.
     // The cross-impl byte equality is the basis for cross-protocol replay
@@ -24,16 +24,16 @@ library DKGProtocol {
         keccak256("davinci-dkg:operator-register:v1");
     bytes32 internal constant DOMAIN_ORGANIZER_REGISTER_V1 =
         keccak256("davinci-dkg:organizer-register:v1");
-    /// @dev Chaum–Pedersen challenge domain of the organizer's decryption
-    ///      share `Δ = sk_org · C_1`. The challenge is keccak (not Poseidon)
-    ///      so a browser-only organizer needs nothing but keccak and
-    ///      BabyJubJub arithmetic to produce it; `DKGManager.combineDecryption`
-    ///      recomputes it from calldata and the combine circuit consumes it
-    ///      from the transcript.
-    bytes32 internal constant DOMAIN_ORGANIZER_SHARE_V1 =
-        keccak256("davinci-dkg:organizer-share:v1");
-    /// @dev In-circuit Poseidon domain of the committee's partial-decryption
-    ///      DLEQ proofs.
-    bytes32 internal constant DOMAIN_DLEQ_V1 =
-        keccak256("davinci-dkg:dleq:v1");
+
+    // ─── BRLC transcript domains ─────────────────────────────────────────────
+    //
+    // The Fiat-Shamir domain every proof-carrying call binds into its
+    // challenge: `keccak(eid || domain || anchor) mod p` (see BRLC.sol). One
+    // per circuit whose transcript the contract streams.
+    bytes32 internal constant DOMAIN_CONTRIBUTION_TRANSCRIPT_V1 =
+        keccak256("davinci-dkg:contribution:v1");
+    bytes32 internal constant DOMAIN_POOLKEY_TRANSCRIPT_V1 =
+        keccak256("davinci-dkg:poolkey:v1");
+    bytes32 internal constant DOMAIN_DECRYPT_COMBINE_TRANSCRIPT_V1 =
+        keccak256("davinci-dkg:decrypt-combine:v1");
 }

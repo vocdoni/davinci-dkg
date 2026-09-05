@@ -37,6 +37,13 @@ members. Later waves fill in the partials and combines still land. From
 `n - t + 1` stopped nodes on, slots stop combining and the rows say
 `not combined within N blocks`.
 
+**Restart nodes while a wave registers.** The swarm registers a wave of
+organizers only after the nodes have activated as many pool keys, one
+activation proof per tick in a seed-derived rotation. Restarting the node
+whose turn it is delays the wave by a stagger slot; once the ready count
+stands still for 15 blocks the wave shrinks to what is activated and the
+remaining organizers go into the next epoch.
+
 **Let the epoch boundary pass.** Just start the swarm late in an epoch. The
 epoch stays `Live` on chain and the nodes keep serving its ciphertexts while
 they claim and contribute to the next one, so combines slow down during the
@@ -53,7 +60,7 @@ next epoch's preparation. The summary row counts
   partial count, the combiner address and the plaintext check, so one stuck
   slot never masks the others.
 - Withheld slots are asserted after a fixed window. A pause that delays
-  partials does not change their verdict: no share means no combine.
+  partials does not change their verdict: no revealed secret means no combine.
 - The summary reports throughput and average latency over the ciphertexts that
   did combine, plus the counts of the ones that did not, so even a chaotic run
   yields numbers.

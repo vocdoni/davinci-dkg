@@ -7,9 +7,8 @@ import (
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/vocdoni/davinci-dkg/crypto/dleq"
 	"github.com/vocdoni/davinci-dkg/crypto/schnorr"
-	"github.com/vocdoni/davinci-dkg/solidity/golang-types"
+	golangtypes "github.com/vocdoni/davinci-dkg/solidity/golang-types"
 	"github.com/vocdoni/davinci-dkg/types"
 	"github.com/vocdoni/davinci-dkg/web3"
 	"github.com/vocdoni/davinci-dkg/web3/txmanager"
@@ -69,11 +68,7 @@ func SubmitContributionAs(
 	actor *TestActor,
 	epochID [12]byte,
 	contributorIndex uint16,
-	commitmentsHash [32]byte,
-	encryptedSharesHash [32]byte,
-	transcript []byte,
-	proof []byte,
-	input []byte,
+	sub *ContributionSubmission,
 ) error {
 	auth, err := actor.TxManager.NewTransactOpts(ctx)
 	if err != nil {
@@ -83,11 +78,11 @@ func SubmitContributionAs(
 		auth,
 		epochID,
 		contributorIndex,
-		commitmentsHash,
-		encryptedSharesHash,
-		transcript,
-		proof,
-		input,
+		sub.CommitmentsHash,
+		sub.EncryptedSharesHash,
+		sub.Transcript,
+		sub.Proof,
+		sub.Input,
 	)
 	if err != nil {
 		return fmt.Errorf("submit contribution: %w", err)
@@ -95,6 +90,8 @@ func SubmitContributionAs(
 	return actor.TxManager.WaitTxByHash(tx.Hash(), DefaultTxTimeout)
 }
 
+// SubmitPartialDecryptionAs posts one member's partial with the Merkle path
+// proving its share commitment against the pool key's root.
 func SubmitPartialDecryptionAs(
 	ctx context.Context,
 	actor *TestActor,
@@ -102,10 +99,7 @@ func SubmitPartialDecryptionAs(
 	aid [32]byte,
 	participantIndex uint16,
 	ciphertextIndex uint16,
-	c1, c2 types.CurvePoint,
-	deltaHash [32]byte,
-	proof []byte,
-	input []byte,
+	partial *PartialDecryptionSubmission,
 ) error {
 	auth, err := actor.TxManager.NewTransactOpts(ctx)
 	if err != nil {
@@ -117,10 +111,11 @@ func SubmitPartialDecryptionAs(
 		aid,
 		participantIndex,
 		ciphertextIndex,
-		c1.X, c1.Y, c2.X, c2.Y,
-		deltaHash,
-		proof,
-		input,
+		partial.C1.X, partial.C1.Y, partial.C2.X, partial.C2.Y,
+		partial.DeltaHash,
+		partial.Proof,
+		partial.Input,
+		partial.ShareProof,
 	)
 	if err != nil {
 		return fmt.Errorf("submit partial decryption: %w", err)
@@ -128,33 +123,47 @@ func SubmitPartialDecryptionAs(
 	return actor.TxManager.WaitTxByHash(tx.Hash(), DefaultTxTimeout)
 }
 
-func FinalizeEpochAs(
-	ctx context.Context,
-	actor *TestActor,
-	epochID [12]byte,
-	aggregateCommitmentsHash [32]byte,
-	collectivePublicKeyHash [32]byte,
-	shareCommitmentHash [32]byte,
-	transcript []byte,
-	proof []byte,
-	input []byte,
-) error {
+// FinalizeEpochAs closes the key-assembly phase. There is no proof any more:
+// the contract only checks the phase, the liveNotBeforeBlock gate and the
+// accepted contribution count.
+func FinalizeEpochAs(ctx context.Context, actor *TestActor, epochID [12]byte) error {
 	auth, err := actor.TxManager.NewTransactOpts(ctx)
 	if err != nil {
 		return err
 	}
-	tx, err := actor.Manager.FinalizeEpoch(
-		auth,
-		epochID,
-		aggregateCommitmentsHash,
-		collectivePublicKeyHash,
-		shareCommitmentHash,
-		transcript,
-		proof,
-		input,
-	)
+	tx, err := actor.Manager.FinalizeEpoch(auth, epochID)
 	if err != nil {
 		return fmt.Errorf("finalize epoch: %w", err)
+	}
+	return actor.TxManager.WaitTxByHash(tx.Hash(), DefaultTxTimeout)
+}
+
+// ActivatePoolKeyAs proves one key of a Live epoch's pool. Permissionless.
+func ActivatePoolKeyAs(ctx context.Context, actor *TestActor, epochID [12]byte, activation *PoolKeyActivation) error {
+	auth, err := actor.TxManager.NewTransactOpts(ctx)
+	if err != nil {
+		return err
+	}
+	tx, err := actor.Manager.ActivatePoolKey(
+		auth, epochID, activation.KeyIndex, activation.TranscriptDigest,
+		activation.Transcript, activation.Proof, activation.Input,
+	)
+	if err != nil {
+		return fmt.Errorf("activate pool key %d: %w", activation.KeyIndex, err)
+	}
+	return actor.TxManager.WaitTxByHash(tx.Hash(), DefaultTxTimeout)
+}
+
+// AbortEpochAs records a provably dead epoch as Aborted. Permissionless; the
+// contract refuses it for any epoch that can still progress.
+func AbortEpochAs(ctx context.Context, actor *TestActor, epochID [12]byte) error {
+	auth, err := actor.TxManager.NewTransactOpts(ctx)
+	if err != nil {
+		return err
+	}
+	tx, err := actor.Manager.AbortEpoch(auth, epochID)
+	if err != nil {
+		return fmt.Errorf("abort epoch: %w", err)
 	}
 	return actor.TxManager.WaitTxByHash(tx.Hash(), DefaultTxTimeout)
 }
@@ -165,27 +174,26 @@ func CombineDecryptionAs(
 	epochID [12]byte,
 	aid [32]byte,
 	ciphertextIndex uint16,
-	combineHash [32]byte,
-	plaintext *big.Int,
-	transcript []byte,
-	proof []byte,
-	input []byte,
+	out *DecryptCombineOutput,
 ) error {
 	auth, err := actor.TxManager.NewTransactOpts(ctx)
 	if err != nil {
 		return err
 	}
-	tx, err := actor.Manager.CombineDecryption(auth, epochID, aid, ciphertextIndex, combineHash, plaintext, transcript, proof, input)
+	tx, err := actor.Manager.CombineDecryption(
+		auth, epochID, aid, ciphertextIndex, out.CombineHash, out.Plaintext, out.Transcript, out.Proof, out.Input,
+	)
 	if err != nil {
 		return fmt.Errorf("combine decryption: %w", err)
 	}
 	return actor.TxManager.WaitTxByHash(tx.Hash(), DefaultTxTimeout)
 }
 
-// RegisterApplication registers `aid` against a Live epoch with the organizer
-// key PK_org = skOrg·G and the Schnorr proof of possession the contract
-// verifies. Every application carries an organizer key; there is no other
-// registration path.
+// RegisterApplication claims the epoch's next activated pool key for `aid`.
+// An organizer-locked registration publishes PK_org = skOrg·G with its
+// Schnorr proof of possession; an automatic one passes zero key and proof
+// words (the contract stores the identity and ignores them), so `skOrg` may
+// be nil or zero there.
 func RegisterApplication(
 	ctx context.Context,
 	actor *TestActor,
@@ -195,17 +203,45 @@ func RegisterApplication(
 	skOrg *big.Int,
 	policy golangtypes.DKGTypesAppPolicy,
 ) error {
-	pkX, pkY, proof, err := schnorr.ProveOrganizerRegister(skOrg, epochID, aid)
-	if err != nil {
-		return fmt.Errorf("organizer schnorr proof: %w", err)
+	pkX, pkY := new(big.Int), new(big.Int)
+	ax, ay, z := new(big.Int), new(big.Int), new(big.Int)
+	if policy.Mode != uint8(types.AppModeAutomatic) {
+		pkOrgX, pkOrgY, proof, err := schnorr.ProveOrganizerRegister(skOrg, epochID, aid)
+		if err != nil {
+			return fmt.Errorf("organizer schnorr proof: %w", err)
+		}
+		pkX, pkY = pkOrgX, pkOrgY
+		ax, ay, z = proof.Ax, proof.Ay, proof.Z
 	}
 	auth, err := actor.TxManager.NewTransactOpts(ctx)
 	if err != nil {
 		return err
 	}
-	tx, err := appManager.RegisterApplication(auth, epochID, aid, policy, pkX, pkY, proof.Ax, proof.Ay, proof.Z)
+	tx, err := appManager.RegisterApplication(auth, epochID, aid, policy, pkX, pkY, ax, ay, z)
 	if err != nil {
 		return fmt.Errorf("register application: %w", err)
+	}
+	return actor.TxManager.WaitTxByHash(tx.Hash(), DefaultTxTimeout)
+}
+
+// RevealOrganizerSecretAs publishes sk_org for an organizer-locked
+// application. Permissionless and one-shot: from then on the committee
+// combines by itself.
+func RevealOrganizerSecretAs(
+	ctx context.Context,
+	actor *TestActor,
+	appManager *golangtypes.DKGAppManager,
+	epochID [12]byte,
+	aid [32]byte,
+	skOrg *big.Int,
+) error {
+	auth, err := actor.TxManager.NewTransactOpts(ctx)
+	if err != nil {
+		return err
+	}
+	tx, err := appManager.RevealOrganizerSecret(auth, epochID, aid, skOrg)
+	if err != nil {
+		return fmt.Errorf("reveal organizer secret: %w", err)
 	}
 	return actor.TxManager.WaitTxByHash(tx.Hash(), DefaultTxTimeout)
 }
@@ -220,91 +256,39 @@ func SubmitCiphertextAs(
 	aid [32]byte,
 	c1, c2 types.CurvePoint,
 ) (uint16, error) {
+	index, _, err := SubmitCiphertextMeasured(ctx, actor, epochID, aid, c1, c2)
+	return index, err
+}
+
+// SubmitCiphertextMeasured is SubmitCiphertextAs plus the gas used.
+func SubmitCiphertextMeasured(
+	ctx context.Context,
+	actor *TestActor,
+	epochID [12]byte,
+	aid [32]byte,
+	c1, c2 types.CurvePoint,
+) (uint16, uint64, error) {
 	auth, err := actor.TxManager.NewTransactOpts(ctx)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	tx, err := actor.Manager.SubmitCiphertext(auth, epochID, aid, c1.X, c1.Y, c2.X, c2.Y)
 	if err != nil {
-		return 0, fmt.Errorf("submit ciphertext: %w", err)
+		return 0, 0, fmt.Errorf("submit ciphertext: %w", err)
 	}
 	if err := actor.TxManager.WaitTxByHash(tx.Hash(), DefaultTxTimeout); err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	receipt, err := actor.Contracts.Client().TransactionReceipt(ctx, tx.Hash())
 	if err != nil {
-		return 0, fmt.Errorf("ciphertext receipt: %w", err)
+		return 0, 0, fmt.Errorf("ciphertext receipt: %w", err)
 	}
 	for _, lg := range receipt.Logs {
 		if ev, err := actor.Manager.ParseCiphertextSubmitted(*lg); err == nil {
-			return ev.CiphertextIndex, nil
+			return ev.CiphertextIndex, receipt.GasUsed, nil
 		}
 	}
-	return 0, fmt.Errorf("CiphertextSubmitted event not found in tx %s", tx.Hash().Hex())
-}
-
-// SubmitOrganizerShareAs posts Δ = skOrg·C1 with its Chaum-Pedersen DLEQ for
-// one ciphertext. It returns the exact share words that landed on chain: the
-// combine transcript must carry those same words, so callers pass them into
-// the combine builder rather than re-proving (the nonce is fresh per call).
-func SubmitOrganizerShareAs(
-	ctx context.Context,
-	actor *TestActor,
-	appManager *golangtypes.DKGAppManager,
-	epochID [12]byte,
-	aid [32]byte,
-	ciphertextIndex uint16,
-	c1, c2 types.CurvePoint,
-	skOrg *big.Int,
-) (types.CurvePoint, dleq.Proof, error) {
-	delta, proof, err := dleq.ProveOrganizerShare(epochID, aid, ciphertextIndex, skOrg, c1)
-	if err != nil {
-		return types.CurvePoint{}, dleq.Proof{}, fmt.Errorf("prove organizer share: %w", err)
-	}
-	auth, err := actor.TxManager.NewTransactOpts(ctx)
-	if err != nil {
-		return types.CurvePoint{}, dleq.Proof{}, err
-	}
-	tx, err := appManager.SubmitOrganizerShare(auth, epochID, aid, ciphertextIndex,
-		c1.X, c1.Y, c2.X, c2.Y,
-		delta.X, delta.Y,
-		proof.A1.X, proof.A1.Y, proof.A2.X, proof.A2.Y, proof.Response)
-	if err != nil {
-		return types.CurvePoint{}, dleq.Proof{}, fmt.Errorf("submit organizer share: %w", err)
-	}
-	if err := actor.TxManager.WaitTxByHash(tx.Hash(), DefaultTxTimeout); err != nil {
-		return types.CurvePoint{}, dleq.Proof{}, err
-	}
-	return delta, proof, nil
-}
-
-// PostOrganizerShare submits the exact organizer-share words a combine output
-// commits to. `combineDecryption` re-hashes them against what
-// `submitOrganizerShare` stored, so the two must be the same share — hence
-// posting the words the builder produced rather than re-proving.
-func PostOrganizerShare(
-	ctx context.Context,
-	actor *TestActor,
-	appManager *golangtypes.DKGAppManager,
-	epochID [12]byte,
-	aid [32]byte,
-	ciphertextIndex uint16,
-	out *DecryptCombineOutput,
-) error {
-	auth, err := actor.TxManager.NewTransactOpts(ctx)
-	if err != nil {
-		return err
-	}
-	tx, err := appManager.SubmitOrganizerShare(auth, epochID, aid, ciphertextIndex,
-		out.CiphertextC1.X, out.CiphertextC1.Y, out.CiphertextC2.X, out.CiphertextC2.Y,
-		out.DeltaOrg.X, out.DeltaOrg.Y,
-		out.OrganizerProof.A1.X, out.OrganizerProof.A1.Y,
-		out.OrganizerProof.A2.X, out.OrganizerProof.A2.Y,
-		out.OrganizerProof.Response)
-	if err != nil {
-		return fmt.Errorf("submit organizer share: %w", err)
-	}
-	return actor.TxManager.WaitTxByHash(tx.Hash(), DefaultTxTimeout)
+	return 0, receipt.GasUsed, fmt.Errorf("CiphertextSubmitted event not found in tx %s", tx.Hash().Hex())
 }
 
 // EnsureNodeKeyRegistered registers or updates the BJJ key for actor if it is
@@ -355,6 +339,8 @@ func EnsureNodeKeyRegistered(ctx context.Context, services *TestServices, actor 
 	return actor.TxManager.WaitTxByHash(txHash, DefaultTxTimeout)
 }
 
+// ── measured variants (gas profiles) ─────────────────────────────────────────
+
 // ClaimSlotMeasured claims a slot for actor and returns the gas used.
 func ClaimSlotMeasured(ctx context.Context, services *TestServices, actor *TestActor, epochID [12]byte) (uint64, error) {
 	auth, err := actor.TxManager.NewTransactOpts(ctx)
@@ -365,14 +351,7 @@ func ClaimSlotMeasured(ctx context.Context, services *TestServices, actor *TestA
 	if err != nil {
 		return 0, fmt.Errorf("claim slot: %w", err)
 	}
-	if err := actor.TxManager.WaitTxByHash(tx.Hash(), DefaultTxTimeout); err != nil {
-		return 0, err
-	}
-	receipt, err := services.Contracts.Client().TransactionReceipt(ctx, tx.Hash())
-	if err != nil {
-		return 0, err
-	}
-	return receipt.GasUsed, nil
+	return gasOf(ctx, services, actor, tx.Hash())
 }
 
 // SubmitContributionMeasured submits a contribution for actor and returns the gas used.
@@ -401,14 +380,110 @@ func SubmitContributionMeasured(
 	if err != nil {
 		return 0, fmt.Errorf("submit contribution: %w", err)
 	}
-	if err := actor.TxManager.WaitTxByHash(tx.Hash(), DefaultTxTimeout); err != nil {
-		return 0, err
-	}
-	receipt, err := services.Contracts.Client().TransactionReceipt(ctx, tx.Hash())
+	return gasOf(ctx, services, actor, tx.Hash())
+}
+
+// FinalizeEpochMeasured finalizes and returns the gas used.
+func FinalizeEpochMeasured(
+	ctx context.Context, services *TestServices, actor *TestActor, epochID [12]byte,
+) (uint64, error) {
+	auth, err := actor.TxManager.NewTransactOpts(ctx)
 	if err != nil {
 		return 0, err
 	}
-	return receipt.GasUsed, nil
+	tx, err := actor.Manager.FinalizeEpoch(auth, epochID)
+	if err != nil {
+		return 0, fmt.Errorf("finalize epoch: %w", err)
+	}
+	return gasOf(ctx, services, actor, tx.Hash())
+}
+
+// ActivatePoolKeyMeasured activates one pool key and returns the gas used.
+func ActivatePoolKeyMeasured(
+	ctx context.Context, services *TestServices, actor *TestActor, epochID [12]byte, activation *PoolKeyActivation,
+) (uint64, error) {
+	auth, err := actor.TxManager.NewTransactOpts(ctx)
+	if err != nil {
+		return 0, err
+	}
+	tx, err := actor.Manager.ActivatePoolKey(
+		auth, epochID, activation.KeyIndex, activation.TranscriptDigest,
+		activation.Transcript, activation.Proof, activation.Input,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("activate pool key %d: %w", activation.KeyIndex, err)
+	}
+	return gasOf(ctx, services, actor, tx.Hash())
+}
+
+// RegisterApplicationMeasured registers an application and returns the gas used.
+func RegisterApplicationMeasured(
+	ctx context.Context,
+	services *TestServices,
+	actor *TestActor,
+	appManager *golangtypes.DKGAppManager,
+	epochID [12]byte,
+	aid [32]byte,
+	skOrg *big.Int,
+	policy golangtypes.DKGTypesAppPolicy,
+) (uint64, error) {
+	if err := RegisterApplication(ctx, actor, appManager, epochID, aid, skOrg, policy); err != nil {
+		return 0, err
+	}
+	return lastGasFor(ctx, services, actor, appManager, epochID, aid)
+}
+
+// lastGasFor reads the gas of the ApplicationRegistered transaction. Kept
+// separate so RegisterApplication itself stays free of receipt plumbing.
+func lastGasFor(
+	ctx context.Context,
+	services *TestServices,
+	actor *TestActor,
+	appManager *golangtypes.DKGAppManager,
+	epochID [12]byte,
+	aid [32]byte,
+) (uint64, error) {
+	head, err := services.Contracts.Client().BlockNumber(ctx)
+	if err != nil {
+		return 0, err
+	}
+	start := uint64(0)
+	if head > 200 {
+		start = head - 200
+	}
+	it, err := appManager.FilterApplicationRegistered(
+		&bind.FilterOpts{Context: ctx, Start: start, End: &head},
+		[][12]byte{epochID}, [][32]byte{aid}, nil,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("filter ApplicationRegistered: %w", err)
+	}
+	defer func() { _ = it.Close() }()
+	if !it.Next() {
+		return 0, fmt.Errorf("no ApplicationRegistered event for aid %x", aid)
+	}
+	return gasOf(ctx, services, actor, it.Event.Raw.TxHash)
+}
+
+// RevealOrganizerSecretMeasured reveals sk_org and returns the gas used.
+func RevealOrganizerSecretMeasured(
+	ctx context.Context,
+	services *TestServices,
+	actor *TestActor,
+	appManager *golangtypes.DKGAppManager,
+	epochID [12]byte,
+	aid [32]byte,
+	skOrg *big.Int,
+) (uint64, error) {
+	auth, err := actor.TxManager.NewTransactOpts(ctx)
+	if err != nil {
+		return 0, err
+	}
+	tx, err := appManager.RevealOrganizerSecret(auth, epochID, aid, skOrg)
+	if err != nil {
+		return 0, fmt.Errorf("reveal organizer secret: %w", err)
+	}
+	return gasOf(ctx, services, actor, tx.Hash())
 }
 
 // SubmitPartialDecryptionMeasured submits a partial decryption for actor and returns the gas used.
@@ -436,14 +511,43 @@ func SubmitPartialDecryptionMeasured(
 		partial.DeltaHash,
 		partial.Proof,
 		partial.Input,
+		partial.ShareProof,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("submit partial decryption: %w", err)
 	}
-	if err := actor.TxManager.WaitTxByHash(tx.Hash(), DefaultTxTimeout); err != nil {
+	return gasOf(ctx, services, actor, tx.Hash())
+}
+
+// CombineDecryptionMeasured combines and returns the gas used.
+func CombineDecryptionMeasured(
+	ctx context.Context,
+	services *TestServices,
+	actor *TestActor,
+	epochID [12]byte,
+	aid [32]byte,
+	ciphertextIndex uint16,
+	out *DecryptCombineOutput,
+) (uint64, error) {
+	auth, err := actor.TxManager.NewTransactOpts(ctx)
+	if err != nil {
 		return 0, err
 	}
-	receipt, err := services.Contracts.Client().TransactionReceipt(ctx, tx.Hash())
+	tx, err := actor.Manager.CombineDecryption(
+		auth, epochID, aid, ciphertextIndex, out.CombineHash, out.Plaintext, out.Transcript, out.Proof, out.Input,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("combine decryption: %w", err)
+	}
+	return gasOf(ctx, services, actor, tx.Hash())
+}
+
+// gasOf waits for the transaction and returns its gas usage.
+func gasOf(ctx context.Context, services *TestServices, actor *TestActor, hash common.Hash) (uint64, error) {
+	if err := actor.TxManager.WaitTxByHash(hash, DefaultTxTimeout); err != nil {
+		return 0, err
+	}
+	receipt, err := services.Contracts.Client().TransactionReceipt(ctx, hash)
 	if err != nil {
 		return 0, err
 	}

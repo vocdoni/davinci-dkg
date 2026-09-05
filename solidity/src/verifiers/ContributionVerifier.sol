@@ -11,7 +11,7 @@ import {Verifier as BaseContributionVerifier} from "./contribution_vkey.sol";
 ///         instance (no extra address hop).
 contract ContributionVerifier is BaseContributionVerifier, IZKVerifier {
     bytes32 internal constant PROVING_KEY_HASH =
-        hex"d747a935a6680c8b6446389ab994a7d939aa12b0def66c921f85fc984b1e69d9";
+        hex"3ff7007dbb761e27713637a497ef763e3a159564aeac58baaccbc3610ea0a6cf";
 
     error InvalidProofEncoding();
     error InvalidInputEncoding();
@@ -29,8 +29,7 @@ contract ContributionVerifier is BaseContributionVerifier, IZKVerifier {
     function verifyProof(bytes calldata proof, bytes calldata input) external view {
         if (proof.length != 32 * 8) revert InvalidProofEncoding();
         if (input.length != 32 * 8) revert InvalidInputEncoding();
-        uint256[8] memory decodedProof = abi.decode(proof, (uint256[8]));
         uint256[8] memory decodedInput = abi.decode(input, (uint256[8]));
-        this.verifyProof(decodedProof, decodedInput);
+        this.verifyProof(proof, decodedInput);
     }
 }

@@ -1,103 +1,213 @@
 # DAVINCI DKG — Benchmarks
 
-Reference figures for the **MaxN = 32** production build, with MaxN = 16 and
-MaxN = 48 columns so operators can size proving infrastructure for other
-committee bounds. The four Groth16 circuits are Contribution, Finalize,
-PartialDecrypt and DecryptCombine.
+Reference figures for the **MaxN = 32, MaxK = 8** production build (a pool
+of eight committee-held application keys per epoch, see
+`docs/pool-keys.md`), with a MaxN = 16 column so operators can size proving
+infrastructure for a smaller committee bound. `MaxN` must be a power of two
+(the share-commitment Merkle tree has `2^MERKLE_DEPTH = MaxN` leaves), so the
+earlier MaxN = 48 column no longer applies. The four Groth16 circuits are
+Contribution, PoolKey (activation), PartialDecrypt and DecryptCombine.
 
 > **Caveat — single-party trusted setup.** The reference artifacts come from a
 > single-party Groth16 setup. A multi-party ceremony produces fresh pk/vk
 > values; constraint counts and gas are unchanged by the ceremony (the verifier
 > bytecode shifts by a few hundred bytes of vkey constants).
 
+> **Two toolchains.** The first three sections are the current build (v3.1,
+> gnark v0.16.3 / gnark-crypto v0.21.0, measured 2026-09-05). The sections
+> marked **pre-upgrade** were measured with the previously pinned gnark
+> snapshot (`v0.14.1-0.20260126…`) and the first pool-key cut, and are kept
+> for comparison. That snapshot — like every gnark release up to v0.15.0 —
+> has an unsound variable-base twisted-Edwards `ScalarMul`: the fake-GLV
+> decomposition check leaves its quotient unconstrained, so a prover can make
+> the gadget return any point (fixed upstream in gnark v0.16.0, PR #1765,
+> without an advisory; the weaker cofactor-torsion offset is IACR ePrint
+> 2026/1776). Every circuit is recompiled and re-pinned against v0.16.3 and no
+> circuit uses the hinted gadget any more; the v3.1 activation proof also adds
+> a public input (`transcriptDigest`) and one calldata word.
+
 ---
 
-## Circuit constraint counts
+## Circuit constraint counts after the gnark upgrade (v3.1, 2026-09-04)
 
-Rank-1 constraint system (R1CS) sizes, measured with
-`go run ./cmd/constraints` (`<circuit>.Compile()` + `ccs.GetNbConstraints()`),
-September 2026.
+Recompiled with gnark v0.16.3 / gnark-crypto v0.21.0 after the pool-key v3.1
+changes (activation transcript digest, whole-committee share commitments,
+canonical Lagrange mask) and with every variable-base scalar multiplication
+done by the hint-free `ccommon.ScalarMulVar` gadget instead of gnark's hinted
+fake-GLV (the pinned snapshot's version was unsound; the fixed one commits and
+would have added a pairing to every proof). `go run ./cmd/constraints`, MaxN = 32,
+MaxK = 8:
 
-| Circuit         | MaxN = 16 | MaxN = 32 | MaxN = 48 |
-|-----------------|----------:|----------:|----------:|
-| Contribution    |   254,270 |   541,218 |   866,120 |
-| Finalize        |    65,343 |   211,600 |   444,799 |
-| PartialDecrypt  |    22,026 |    22,026 |    22,026 |
-| DecryptCombine  |   113,200 |   247,076 |   418,823 |
+| Circuit         | constraints |
+|-----------------|------------:|
+| Contribution    |   3,060,692 |
+| PoolKey         |     187,495 |
+| PartialDecrypt  |      29,026 |
+| DecryptCombine  |     287,338 |
 
-Contribution and Finalize scale with `MaxN × t` because every polynomial
-evaluation is a Horner chain of `t` short scalar multiplications by the 6-bit
-recipient index. PartialDecrypt is one committee DLEQ proof and does not
-depend on N. DecryptCombine grows with `MaxN` fixed-base multiplications plus
-`MaxN²` six-bit multiplications of the Vandermonde identity that pins the
-Lagrange vector; it also verifies the organizer's Chaum–Pedersen proof (two
-double-base equations, about 9k constraints) so that the organizer never
-needs a prover. The contribution share digest is one Poseidon per recipient
-row plus one over the row digests, which keeps every sponge below its
-256-input cap at any MaxN.
+## Proof generation time (v3.1, gnark v0.16.3)
 
-## Proof generation time
+Wall-clock per single proof, mean of five runs (`go test ./circuits/... -run XXX
+-bench '^BenchmarkProve$' -benchtime=5x`, which reports the mean), gnark
+parallelising over all 32 logical threads of an **AMD Ryzen 9 9950X3D (64 GiB
+RAM)**, idle host, 2026-09-05. The time includes witness solving but not
+loading the proving key (a few seconds once per process for the contribution
+key, which is on the order of a gigabyte; the node preloads all four).
 
-Wall-clock per single proof, median of five runs, gnark parallelising over
-all 32 logical threads of an **AMD Ryzen 9 9950X3D (64 GiB RAM)**, idle
-host. The time includes witness solving but not loading the proving key
-(hundreds of ms once per process). Command:
-`go test ./circuits/... -run XXX -bench '^BenchmarkProve$' -benchtime=5x`.
+| Circuit         | MaxN = 32 | pre-upgrade |
+|-----------------|----------:|------------:|
+| Contribution    |  1,574 ms |    1,687 ms |
+| PoolKey         |    181 ms |      246 ms |
+| PartialDecrypt  |     32 ms |       28 ms |
+| DecryptCombine  |    213 ms |      134 ms |
 
-| Circuit         | MaxN = 16 | MaxN = 32 | MaxN = 48 |
-|-----------------|----------:|----------:|----------:|
-| Contribution    |    137 ms |    374 ms |    421 ms |
-| Finalize        |     78 ms |    191 ms |    365 ms |
-| PartialDecrypt  |     26 ms |     25 ms |     26 ms |
-| DecryptCombine  |     75 ms |    134 ms |    222 ms |
+The two large circuits prove faster than before despite more constraints; the
+two small ones pay for the hint-free multiplications (a 254-step constrained
+double-and-add per variable-base product instead of a hinted fake-GLV). A node
+still spends under two seconds of CPU per epoch on its contribution, under a
+fifth of a second per key it activates, and about a quarter of a second per
+ciphertext it combines.
 
-Contribution grows little from MaxN = 32 to 48 because both sizes round up to
-the same 2²⁰ FFT domain. A node therefore spends well under a second of CPU
-per epoch (one contribution, possibly one finalization) and under 200 ms per
-ciphertext it helps decrypt.
+## On-chain gas (Anvil, real verifiers, v3.1)
 
-## On-chain gas (Sepolia, real verifiers)
+Measured on 2026-09-05 with the verifiers generated from the re-pinned gnark
+v0.16.3 artifacts, same procedure as the pre-upgrade table below
+(`RUN_BENCHMARKS=true` single-node profile and `RUN_BENCHMARKS_MULTI=true`
+sweep, each in its own process, harness windows widened through
+`COMMITTEE_SELECTION_BLOCKS=50 KEY_ASSEMBLY_BLOCKS=120 EPOCH_DURATION_BLOCKS=250`),
+**MaxN = 32, MaxK = 8**, `gasUsed` from the receipts.
 
-Measured on Sepolia with the contract build of the public testnet (the
-same bytecode is deployed at `0xd38af14cd3b550e268693b459c08ef7331cb23b0`;
-per-call gas does not depend on the epoch windows) with **MaxN = 32**, a
-committee of `n = 3`, `t = 2`, reading `gasUsed` from the receipts.
+| Call                        | n = 4, t = 3 | n = 32, t = 22 | Paid by |
+|-----------------------------|-------------:|---------------:|---------|
+| `createEpoch`               |      133,313 |        133,313 | race winner, per epoch (150,324 for the epoch that resolves the first seed) |
+| `claimSlot`                 |      138,831 |        119,505 | each member (average; the first claim pays the seed resolution, 205,116) |
+| `submitContribution`        |      702,013 |        944,425 | each member (8 polynomials; +8.7k per extra member of calldata) |
+| `finalizeEpoch`             |       34,806 |         34,806 | one member, per epoch (no proof) |
+| `activatePoolKey`           |      508,137 |        808,913 | one member, per key (+10.7k per extra member) |
+| `registerApplication`       | 453,167 / 234,269 | 455,715 / 234,257 | organizer, per application (organizer-locked / automatic) |
+| `revealOrganizerSecret`     |      223,307 |        228,439 | organizer, once per locked application |
+| `submitCiphertext`          |      102,814 |        102,802 | authorised submitter |
+| `submitPartialDecryption`   |      402,332 |        402,340 | each of `t` members (5-word Merkle path included) |
+| `combineDecryption`         |      410,651 |        483,980 | one member, per ciphertext (+3.9k per extra partial) |
 
-| Call                        |                 Gas | Paid by                                        | Evidence (tx) |
-|-----------------------------|--------------------:|------------------------------------------------|---------------|
-| `registerKey`               |             322,112 | operator, once (+17k for the first ever)       | `NodeRegistered` events from block 11,619,019 |
-| `createEpoch`               |             150,279 | race winner, per epoch                         | `EpochCreated` |
-| `claimSlot`                 | 103,725 – 175,520   | each member (seed resolution / key snapshot on first / last claim) | `SlotClaimed` |
-| `submitContribution`        |             462,523 | each member                                    | `ContributionSubmitted` |
-| `finalizeEpoch`             |           1,112,337 | one member, per epoch                          | `0x68137083…` |
-| `registerApplication`       |             407,793 | organizer, per application (Schnorr proof of possession on chain) | `0xe1a0230e…` |
-| `submitCiphertext`          |    96,001 / 78,901  | authorised submitter (first / later ciphertext) | `0x2d086c97…`, `0xc620ee49…` |
-| `submitPartialDecryption`   | 381,604 – 398,704   | each of `t` members                            | `0x2064118e…`, `0xde371a95…` |
-| `submitOrganizerShare`      |    87,991 / 70,879  | organizer, per ciphertext (first / overwrite)  | `0x900886c6…`, `0x85642284…` |
-| `combineDecryption`         |             430,432 | one member, per ciphertext                     | `0x9cc53df3…` |
-| deployment (4 verifiers + 3 contracts) | 11,865,129 | deployer, once                       | `broadcast/DeployAll.s.sol/11155111/run-latest.json` |
+Intermediate committee sizes (8, 12, 16, 20, 24, 28): contribution 738,217 /
+768,421 / 804,793 / 841,141 / 871,729 / 908,053; activation 551,297 / 593,797 /
+636,945 / 680,093 / 722,533 / 765,717; combine 422,234 / 429,923 / 441,550 /
+453,118 / 460,818 / 472,483. The other calls do not depend on `n`.
+
+Against the pre-upgrade table: activation +24.5k (+5 %), contribution +15.6k
+(+2.3 %), combine +3.0k, reveal +2.5k, partial +1.6k; every other call moves by
+less than 0.1 %. The v3.1 changes that touch these calls are one more public
+input and the digest word for activation, a tagged Merkle tree over all 32
+member slots (activation, partial), the reveal-gate storage read (partial,
+combine), and verifiers that now receive the proof as `bytes`.
 
 Reading the table:
 
 * Every proof-carrying call pays roughly 250k gas for the Groth16 verification
-  itself (four pairings plus the public-input multiplications, EIP-1108
-  prices); calldata explains the rest, which is why the contribution
-  (256 words) and the finalization (2,208 words) dominate.
-* An epoch with `n` members costs about `1.26M + n × 0.61M` gas at MaxN = 32:
-  3.1M for the `n = 3` committee above, about 20.7M for `n = 32`.
-* Decrypting one ciphertext costs 0.10M (submission) + `t` × ~0.39M
-  (partials) + 0.09M (organizer share) + 0.43M (combine): 1.4M at `t = 2`.
-  The organizer's two transactions together cost less than a fifth of one
-  partial; its Chaum–Pedersen proof is stored as a hash and verified inside
-  the combine proof, which is why the organizer needs neither a prover nor
-  half a million gas of on-chain curve arithmetic.
-* `registerApplication` and `registerKey` are dominated by a Schnorr
-  verification in extended twisted-Edwards coordinates (~200k); the affine
-  implementation cost 1.27M for `registerKey`.
+  itself; calldata explains the rest. A contribution carries `3·MaxK·MaxN +
+  5·MaxN = 928` words, most of them commitments and masked shares of the
+  eight keys; the activation transcript is `6·MaxN = 192` words plus the row
+  checks against every accepted contribution.
+* An epoch with `n` members and all eight keys activated costs about
+  `n × 0.70M + 8 × 0.51M` at `n = 4` (6.9M, i.e. 0.86M per key) and
+  `32 × 0.94M + 8 × 0.81M ≈ 37M` at `n = 32` (4.6M per key). Keys are
+  activated lazily, two ahead of demand, so an epoch that serves few
+  applications pays for few activations.
+* Decrypting one ciphertext costs 0.10M (submission) + `t` × 0.40M (partials)
+  + 0.41–0.48M (combine): 1.7M at `t = 3`. There is no organizer transaction
+  per ciphertext; an organizer-locked application pays one 0.22M reveal when
+  it opens.
+* `registerApplication` in organizer-locked mode is dominated by the Schnorr
+  proof of possession (~200k); the automatic mode skips it. `revealOrganizerSecret`
+  pays one fixed-base multiplication to check the secret against `PK_org`.
+
+## Circuit constraint counts (pre-upgrade)
+
+Rank-1 constraint system (R1CS) sizes, measured with
+`go run ./cmd/constraints` (`<circuit>.Compile()` + `ccs.GetNbConstraints()`),
+2026-09-04, with the gnark v0.14 snapshot and the 7-input activation circuit
+(the v3.1 table above has the current counts).
+
+| Circuit         | MaxN = 16 | MaxN = 32 |
+|-----------------|----------:|----------:|
+| Contribution    | 1,359,732 | 3,015,892 |
+| PoolKey         |    66,859 |   215,291 |
+| PartialDecrypt  |    22,026 |    22,026 |
+| DecryptCombine  |   107,259 |   241,138 |
+
+The contribution circuit deals all `MaxK` polynomials in one proof: per key
+and recipient it evaluates the Feldman polynomial (a Horner chain of `t`
+six-bit multiplications), one fixed-base multiplication for the share and one
+Poseidon share mask, so it scales with `MaxK × MaxN × t`; the ECDH secret per
+recipient is shared by every key. PoolKey recomputes each contributor's
+two-level Poseidon commitment digest for the activated key (about 2,400
+absorptions at MaxN = 32) and the Vandermonde share commitments, and replaces
+the old Finalize circuit (211,600 constraints) at a similar size while
+dropping the `2·N²`-word contributor matrix from calldata. PartialDecrypt is
+unchanged. DecryptCombine proves knowledge of the organizer secret instead of
+verifying a Chaum–Pedersen transcript and is 2.4% smaller than before.
+
+## Proof generation time (pre-upgrade)
+
+Wall-clock per single proof, median of five runs, gnark parallelising over
+all 32 logical threads of an **AMD Ryzen 9 9950X3D (64 GiB RAM)**, idle
+host, 2026-09-04, with the gnark v0.14 snapshot (the v3.1 table above has the
+current times). The time includes witness solving but not loading the
+proving key (a few seconds once per process for the contribution key).
+Command: `go test ./circuits/... -run XXX -bench '^BenchmarkProve$' -benchtime=5x`.
+
+| Circuit         | MaxN = 32 |
+|-----------------|----------:|
+| Contribution    |  1,687 ms |
+| PoolKey         |    246 ms |
+| PartialDecrypt  |     28 ms |
+| DecryptCombine  |    134 ms |
+
+A node therefore spends under two seconds of CPU per epoch on its
+contribution plus a quarter of a second per key it activates, and under 200
+ms per ciphertext it helps decrypt. The contribution circuit's Groth16 setup
+takes about ten minutes on this host and its proving key is on the order of
+a gigabyte; the circuit package's tests need `-timeout 120m`. Peak memory
+during setup and proving has not been measured yet.
+
+## On-chain gas (Anvil, real verifiers, pre-upgrade)
+
+Measured on 2026-09-04 with the real verifier contracts of the first pool-key
+cut on the Docker test
+stack (`RUN_INTEGRATION_TESTS=true RUN_BENCHMARKS=true go test ./tests -run TestGasProfiles`
+for the single-node profile and `RUN_BENCHMARKS_MULTI=true` for the sweep
+over committee sizes, each in its own process, with the harness epoch
+windows widened through `COMMITTEE_SELECTION_BLOCKS=50 KEY_ASSEMBLY_BLOCKS=120
+EPOCH_DURATION_BLOCKS=250` so that 32 sequential proofs fit), **MaxN = 32,
+MaxK = 8**, reading `gasUsed` from the receipts.
+
+| Call                        | n = 4, t = 3 | n = 32, t = 22 | Paid by |
+|-----------------------------|-------------:|---------------:|---------|
+| `createEpoch`               |      133,291 |        133,291 | race winner, per epoch (150,302 for the epoch that resolves the first seed) |
+| `claimSlot`                 |      138,831 |        119,505 | each member (average; the first claim pays the seed resolution) |
+| `submitContribution`        |      686,441 |        928,865 | each member (8 polynomials; +8.7k per extra member of calldata) |
+| `finalizeEpoch`             |       34,781 |         34,781 | one member, per epoch (no proof) |
+| `activatePoolKey`           |      483,639 |        797,131 | one member, per key (+11.2k per extra member) |
+| `registerApplication`       |      452,505 / 234,235 | 452,481 / 234,235 | organizer, per application (organizer-locked / automatic) |
+| `revealOrganizerSecret`     |      220,759 |        221,905 | organizer, once per locked application |
+| `submitCiphertext`          |      102,792 |        102,792 | authorised submitter |
+| `submitPartialDecryption`   |      400,767 |        400,773 | each of `t` members (5-word Merkle path included) |
+| `combineDecryption`         |      407,651 |        481,004 | one member, per ciphertext |
+
+Intermediate committee sizes (8, 12, 16, 20, 24, 28) interpolate linearly:
+contribution 722,657 / 752,885 / 789,233 / 825,617 / 856,181 / 892,517 and
+activation 528,655 / 572,927 / 617,919 / 662,851 / 707,111 / 752,091.
+
+The previous release's Sepolia figures (single epoch key, per-ciphertext
+organizer share) were: contribution 462,523, finalize 1,112,337,
+registerApplication 407,793, partial 381,604–398,704, organizer share
+87,991, combine 430,432, deployment 11,865,129 (not re-measured).
 
 ## A 32-node fleet under load (Anvil, two hosts)
 
-Measured with `tests/battery` on 2026-09-03: 32 operators split over two
+Measured with `tests/battery` on 2026-09-03, before pool keys (single epoch
+key, per-ciphertext organizer shares): 32 operators split over two
 32-core hosts, committee n = 24, t = 16, m_min = 20, 2-second blocks,
 300-block epochs. Eight organizers register concurrently and submit six
 ciphertexts each (48 in one block), releasing shares immediately, after six
@@ -134,6 +244,10 @@ withheld organizer share parks its slot in every node at no recurring cost
 until a share event wakes it.
 
 ## Groth16 versus PLONK (universal setup)
+
+Measured on 2026-09-03 with the single-key circuits that preceded pool keys
+(the Finalize row is the old finalization circuit); the backend comparison
+is unchanged in kind.
 
 Measured on 2026-09-03 with gnark v0.16.3 / gnark-crypto v0.21.0 at
 `MaxN = 32` (`go test ./circuits/... -bench BenchmarkBackends -benchtime=1x`,
@@ -172,7 +286,9 @@ circuits is the cheaper way to remove the single-party setup.
 The same run showed that upgrading gnark from the pinned v0.14 snapshot to
 v0.16.3 changes the compiled R1CS (partial +19 %, combine +11 %,
 contribution +5 %, finalize unchanged) and therefore the pinned artifact
-hashes: the upgrade has to ship with a circuit re-release.
+hashes. That upgrade has since been made — the snapshot's `ScalarMul` was
+unsound, see the caveat at the top — and ships with the pool-key circuit
+release; the constraint, proving-time and gas tables above predate it.
 
 ## How to reproduce
 
@@ -181,8 +297,9 @@ hashes: the upgrade has to ship with a circuit re-release.
   for the contracts).
 * Proving times: `DAVINCI_ARTIFACTS_DIR=/tmp/bench-$N go test ./circuits/... -run XXX -bench '^BenchmarkProve$' -benchtime=5x`
   on an idle host; the first run performs the setup.
-* Gas: run the flow on any deployment (`make testnet-up`, or the Sepolia
-  deployment with `cmd/dkgapp`: `register`, `encrypt`, `share`, `plaintext`)
+* Gas: run the flow on any deployment (`make testnet-up`; the Sepolia
+  deployment is still the previous single-key release) with `cmd/dkgapp`
+  (`register`, `encrypt`, `reveal`, `plaintext`)
   and read `gasUsed` from the receipts, e.g. `cast receipt --json <tx> | jq
   .gasUsed`. `forge test --gas-report` gives the same per-function figures
   against mock verifiers, i.e. without the ~250k pairing check.

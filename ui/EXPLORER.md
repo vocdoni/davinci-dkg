@@ -32,8 +32,9 @@ the SDK's chunked `getLogs`; normalises them into an entity store; persists
 that store in IndexedDB keyed by `chainId:managerAddress`; and keeps it
 current by polling from the last indexed block. Contract state that events do
 not carry is fetched with viem `multicall` in batches and cached per block
-height: epoch structs, node records, application records, ciphertext and
-combine records, plaintexts.
+height: epoch structs and pool status, node records, application records,
+ciphertext and combine records, plaintexts. Pool keys themselves arrive with
+`PoolKeyActivated`, which carries the coordinates.
 
 Pages never call `getLogs` themselves. They read a snapshot of the store
 through a pure selector. [`src/data/README.md`](src/data/README.md) is the
@@ -46,10 +47,10 @@ event:
 | Entity | Key | Holds |
 |---|---|---|
 | `operators` | address | public key, status, registered block, last active, event history |
-| `epochs` | epoch id | nonce, creator, start and seed blocks, seed, policy, status, committee in slot order, contributions, finalization, `PK_ep`, share commitment hashes, applications |
+| `epochs` | epoch id | nonce, creator, start and seed blocks, seed, policy, status, committee in slot order, contributions, finalization (block, tx, frozen contribution count), the pool (`POOL_SIZE = 8` slots: `P_j` once activated, the aid that claimed it), next pool index, applications |
 | `slots` | epoch, slot | operator, block, tx |
-| `applications` | epoch, aid | creator, `PK_org`, policy, created block, ciphertexts |
-| `ciphertexts` | epoch, aid, index | submitter, `C1`, `C2`, partials, organizer share, combined record and plaintext |
+| `applications` | epoch, aid | creator, mode, pool index, `PK_org` (the identity when automatic), `sk_org` once revealed with the reveal block and tx, policy (submission, block window, cap, decryption window), created block, ciphertexts |
+| `ciphertexts` | epoch, aid, index | submitter, `C1`, `C2`, partials, combined record and plaintext |
 | `txMeta` | tx | sender, gas used, block number, fetched lazily |
 
 Selectors are pure functions over the store and are unit-tested against the
@@ -64,8 +65,14 @@ block).
 generated event stream through the real reducers, so the fixture store has the
 same shape as a live one: 300 operators including reaped and reactivated rows,
 8 epochs with 64-member committees at `t = 33`, one aborted epoch and one
-still in key assembly, 2 applications per live epoch with 8 ciphertexts each,
-partials arriving in waves of `t`, some organizer shares withheld, most
+still in key assembly, four pool keys activated per live epoch (two claimed,
+two ahead), 2 applications per live epoch with 8 ciphertexts each (one
+organizer-locked with a one-address allow-list and a decryption window that
+opened in 2023 — closed in 2025 on even epochs — and one automatic with open
+submission and a deadline in 2033), partials arriving in waves of `t`, every
+organizer's secret revealed right after registration except the newest live
+epoch's — whose ciphertexts have no partials at all, since the contract refuses
+partials and combines before the reveal, and sit at `awaiting-reveal` — most
 plaintexts combined.
 
 Append `?demo=1` to any URL, or build with `VITE_DEMO=1`, and the whole app
@@ -88,7 +95,8 @@ transaction links, and the global search box that routes an epoch id,
 application id, address or transaction hash to its page.
 
 **`/epochs` Epochs.** Virtualised table: id, nonce, phase, `t` of `n`, claim
-and contribution progress bars, ciphertexts, live since, creator, finalizer.
+and contribution progress bars, ciphertexts, live since, creator, finalizer
+(the proof-less `finalizeEpoch` sender).
 Filter by phase, search, click through to the epoch.
 
 **`/epochs/:id` Epoch.** The header carries the id, nonce, phase badge,
@@ -97,12 +105,23 @@ the four windows. The lottery panel shows the seed block and hash, the
 threshold as a fraction of the hash space, `α`, the snapshotted `R`, the
 admission probability and the claims in slot order; when the epoch aborted it
 shows why. The committee panel is a grid of `n` members that stays readable at
-64, with claim block, contribution block, transaction, gas and `D_i` hash, over
-a contributions summary bar. The key panel has the copyable `PK_ep`
-coordinates, the finalizer, the finalization transaction and gas, and the
-transcript size. Below that: the applications table, a members by ciphertexts
-heatmap of partials coloured by wave, the epoch's full event log, and the raw
-policy struct.
+64, with claim block, contribution block, transaction and gas, over a
+contributions summary bar. The pool panel has the finalizer, the finalization
+transaction and gas, the frozen contribution count, and the eight pool slots —
+each activated (copyable `P_j` coordinates, block, transaction, gas, activator),
+claimed by which application ("activated by" the operator, "claimed by" the
+application), or not activated yet — with the activation transcript size.
+Below that: the applications table (the same compact columns as
+`/applications`, with the pool key and the reveal state per row), a members by
+ciphertexts heatmap of partials coloured by wave with a combined row, the
+epoch's full event log, and the raw policy struct. The header's countdown reads
+"service window · ended" once a live epoch's window has passed — the epoch
+itself stays Live on chain.
+
+Waves are numbered from 0 everywhere (this heatmap, the application page's
+matrix, the playground): wave `w` is the `w`-th stagger window after the
+ciphertext became decryptable — its own block, or the reveal block for an
+organizer-locked application whose ciphertexts were waiting on it.
 
 **`/operators` Operators.** Virtualised, searchable, sortable over hundreds of
 rows: address, status, registered block, last active, epochs served, claims,
@@ -116,25 +135,61 @@ operator (top 32, the rest grouped) and a status donut.
 (claimed, contributed, finalized, partials, combines per epoch), a
 participation sparkline, and every event with its transaction.
 
-**`/applications` Applications.** Across epochs: epoch, aid, organizer,
-submitter, window, cap, ciphertexts, decrypted, share status, with search.
+**`/applications` Applications.** Across epochs: epoch, aid, mode badge
+(organizer-locked or automatic), organizer, submission policy (registrant
+only, allow-list or open), block window ("any block" when unbounded), pool key
+index with `P_j.x` under it, decryption window as dates ("any time" / "no
+deadline" for an unbounded side) with its open / not yet open / closed state,
+ciphertexts over the cap (`8 / ∞`), decrypted, organizer secret (revealed,
+kept, or none), with search and mode and epoch filters. The header counts the
+organizer-locked applications whose secret is still kept. Both application
+tables fit a 1440 px viewport without a horizontal scroll: every column is a
+fixed track except the decryption window, which takes the slack, and the pool
+key and the two windows stack on two lines rather than widen.
 
-**`/applications/:epoch/:aid` Application.** The record with the organizer,
-`PK_org`, the derived `PK_aid` and the policy; the ciphertext table with
-index, submission block, partials `t/n`, share, combined, plaintext and
+**`/applications/:epoch/:aid` Application.** The record with the mode, the
+pool key index and `P_j`, the organizer, `PK_org` and the reveal state (block
+and transaction) for an organizer-locked application, the derived `PK_aid`
+(`P_j` or `P_j + PK_org`), the submission policy with its addresses, the
+decryption window as dates with its open / not yet open / closed state (the
+coordinate pairs `P_j`, `PK_org`, `PK_aid` always sit side by side in the
+two-column record; the reveal state closes the list); the ciphertext table
+with index, state (`submitted`, `partials`, `awaiting-reveal`, `ready`,
+`combined`), submission block, partials `t/n`, combined, plaintext and
 transaction links; the partial matrix for this application; and the organizer
-tools, which release a share from an index and a secret computed in the
-browser, copy `PK_aid`, and resume the playground here.
+panel: for an organizer-locked application whose secret is kept, the reveal
+tool (the secret is checked against `PK_org` in the browser before the one
+irreversible transaction); once revealed, the block, transaction and the
+public secret; for an automatic application, a note that there is no organizer
+key. The header copies `PK_aid` and resumes the playground here.
+
+`awaiting-reveal` is every ciphertext of an organizer-locked application until
+its organizer reveals: the contract refuses partials and combines before that
+(`OrganizerSecretNotRevealed`), so there is nothing else such a ciphertext can
+be, and the page says so in the state help, the stat card and the organizer
+panel.
 
 **`/playground` Playground.** The organizer walkthrough: connect, choose a
-live epoch, register with a generated or pasted secret, encrypt, submit,
-release or withhold, watch the partials arrive with their waves and blocks
-until the share and the combine land, then verify locally. State lives in the
-URL (`?epoch=&aid=`) and in session storage, so the walkthrough is resumable.
-Every step shows its transaction hash and gas, and an advanced toggle prints
-the transcripts: proof of possession, discrete-logarithm equality (DLEQ)
-words, `e` and `z`. Demo mode drives the same steps from the fixture with a
-fake wallet.
+live epoch (each shows its pool as "2 activated free · 2 claimed · 4 not
+activated"), pick a mode, a cap, a submitter and a decryption window and
+register — claiming the next pool key — with a generated or pasted secret
+(none for an automatic application), encrypt under the key
+`getApplicationKey` returns, submit, reveal the organizer secret or keep it
+for now (the rail marks this step *skipped* for an automatic application),
+watch the partials arrive with their waves and blocks until the combine
+lands, then verify locally. For an organizer-locked application the partials
+only start after the reveal — the contract refuses them before it — and the
+watch step says so while the secret is kept. State lives in the URL
+(`?epoch=&aid=`) and in session storage, so the walkthrough is resumable.
+Every step shows its transaction hash and gas; the activity log records every
+transaction this tab sent and the combine once the committee lands it. An
+advanced toggle prints the transcripts: the proof of possession words, the
+pool key, `PK_org` and `PK_aid`, and the two words of the reveal — as
+decimals, the same form the encrypt step shows `PK_aid.x` in. Demo mode drives
+the same steps from the fixture with a fake wallet and real curve points for
+the pool keys; it does not simulate the decryption window, but it does enforce
+the reveal gate, so a locked application's partials arrive over the seconds
+after the reveal rather than being there already.
 
 **`/docs/protocol`, `/docs/run-a-node`, `/docs/sdk`.** The operator and
 application documentation, under the design system's typography.

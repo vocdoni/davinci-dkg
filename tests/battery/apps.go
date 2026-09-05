@@ -7,7 +7,6 @@ import (
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
-	"github.com/vocdoni/davinci-dkg/crypto/dleq"
 	"github.com/vocdoni/davinci-dkg/crypto/elgamal"
 	"github.com/vocdoni/davinci-dkg/crypto/schnorr"
 	golangtypes "github.com/vocdoni/davinci-dkg/solidity/golang-types"
@@ -15,14 +14,17 @@ import (
 )
 
 // application is one registered (epoch, aid) with the organizer secret the
-// battery holds for it. PKAid = PK_ep + PK_org is what ciphertexts are
-// encrypted under.
+// battery holds for it. PKAid = P_j + PK_org is what ciphertexts are
+// encrypted under, with P_j the pool key the registration claimed; an
+// automatic application has PK_org = identity and SkOrg = nil.
 type application struct {
 	Epoch     [12]byte
 	Aid       [32]byte
 	SkOrg     *big.Int
 	PKOrg     types.CurvePoint
 	PKAid     types.CurvePoint
+	PoolIndex uint8
+	Automatic bool
 	Organizer *actor
 }
 
@@ -42,42 +44,62 @@ func (f *Fleet) registerApplication(
 }
 
 // registerApplicationWith registers a given aid / organizer secret and
-// derives the application key from the epoch's collective key.
+// derives the application key from the pool key the registration claimed.
+// In automatic mode the key and Schnorr words are zero and skOrg is ignored.
 func (f *Fleet) registerApplicationWith(
 	ctx context.Context, a *actor, epoch [12]byte, aid [32]byte, skOrg *big.Int, policy golangtypes.DKGTypesAppPolicy,
 ) (*application, txOutcome, error) {
-	pkX, pkY, proof, err := schnorr.ProveOrganizerRegister(skOrg, epoch, aid)
-	if err != nil {
-		return nil, txOutcome{}, fmt.Errorf("organizer schnorr proof: %w", err)
+	automatic := policy.Mode == uint8(types.AppModeAutomatic)
+	// A registration claims the key at the pool cursor and reverts
+	// PoolKeyNotActive until a node has activated it (one proof per key, a
+	// tick or two after the previous claim); wait for that proof rather than
+	// reporting the race as a failure.
+	if _, err := f.waitPoolKeys(ctx, epoch, 1, activationWait(), 0); err != nil {
+		return nil, txOutcome{}, err
+	}
+	pkX, pkY := new(big.Int), new(big.Int)
+	ax, ay, z := new(big.Int), new(big.Int), new(big.Int)
+	if !automatic {
+		organizerX, organizerY, proof, err := schnorr.ProveOrganizerRegister(skOrg, epoch, aid)
+		if err != nil {
+			return nil, txOutcome{}, fmt.Errorf("organizer schnorr proof: %w", err)
+		}
+		pkX, pkY = organizerX, organizerY
+		ax, ay, z = proof.Ax, proof.Ay, proof.Z
 	}
 	out, err := f.send(ctx, a, func(auth *bind.TransactOpts) (*ethtypes.Transaction, error) {
-		return f.Services.AppManager.RegisterApplication(auth, epoch, aid, policy, pkX, pkY, proof.Ax, proof.Ay, proof.Z)
+		return f.Services.AppManager.RegisterApplication(auth, epoch, aid, policy, pkX, pkY, ax, ay, z)
 	})
 	if err != nil {
 		return nil, out, err
 	}
-	pkEp, err := f.collectiveKey(ctx, epoch)
+
+	record, err := f.Services.AppManager.GetApplication(f.callOpts(ctx), epoch, aid)
 	if err != nil {
-		return nil, out, fmt.Errorf("collective key: %w", err)
+		return nil, out, fmt.Errorf("read application: %w", err)
 	}
-	pkOrg := types.CurvePoint{X: pkX, Y: pkY}
-	pkAid, err := elgamal.ApplicationKey(pkEp, pkOrg)
+	poolKey, err := f.poolKey(ctx, epoch, record.PoolIndex)
+	if err != nil {
+		return nil, out, fmt.Errorf("pool key %d: %w", record.PoolIndex, err)
+	}
+	pkOrg := types.CurvePoint{X: record.OrganizerPK.X, Y: record.OrganizerPK.Y}
+	pkAid, err := elgamal.ApplicationKey(poolKey, pkOrg)
 	if err != nil {
 		return nil, out, fmt.Errorf("application key: %w", err)
 	}
-	return &application{Epoch: epoch, Aid: aid, SkOrg: skOrg, PKOrg: pkOrg, PKAid: pkAid, Organizer: a}, out, nil
+	app := &application{
+		Epoch: epoch, Aid: aid, PKOrg: pkOrg, PKAid: pkAid,
+		PoolIndex: record.PoolIndex, Automatic: automatic, Organizer: a,
+	}
+	if !automatic {
+		app.SkOrg = skOrg
+	}
+	return app, out, nil
 }
 
 // encrypt produces an honest ElGamal ciphertext of m under PK_aid.
 func (app *application) encrypt(m *big.Int) (c1, c2 types.CurvePoint, err error) {
 	return elgamal.Encrypt(app.PKAid, m)
-}
-
-// share derives the organizer words for one ciphertext. The DLEQ nonce is
-// fresh on every call, so the words that land on chain are the only ones a
-// combine may carry.
-func (app *application) share(idx uint16, c1 types.CurvePoint) (types.CurvePoint, dleq.Proof, error) {
-	return dleq.ProveOrganizerShare(app.Epoch, app.Aid, idx, app.SkOrg, c1)
 }
 
 // submitCiphertext posts (c1, c2) and returns the index the contract
@@ -103,29 +125,32 @@ func (f *Fleet) submitCiphertext(
 	return 0, out, fmt.Errorf("CiphertextSubmitted event not found in tx %s", out.Hash.Hex())
 }
 
-// submitShareWords posts arbitrary organizer-share words for a slot. Used
-// both for honest releases and for the adversarial (tampered / replayed /
-// relayed) variants, so it takes the words explicitly.
-func (f *Fleet) submitShareWords(
-	ctx context.Context, a *actor, epoch [12]byte, aid [32]byte, idx uint16,
-	c1, c2, delta types.CurvePoint, proof dleq.Proof,
-) (txOutcome, error) {
+// revealSecret publishes sk_org for an organizer-locked application. The
+// call is permissionless, so `a` need not be the organizer.
+func (f *Fleet) revealSecret(ctx context.Context, a *actor, app *application, secret *big.Int) (txOutcome, error) {
 	return f.send(ctx, a, func(auth *bind.TransactOpts) (*ethtypes.Transaction, error) {
-		return f.Services.AppManager.SubmitOrganizerShare(auth, epoch, aid, idx,
-			c1.X, c1.Y, c2.X, c2.Y, delta.X, delta.Y,
-			proof.A1.X, proof.A1.Y, proof.A2.X, proof.A2.Y, proof.Response)
+		return f.Services.AppManager.RevealOrganizerSecret(auth, app.Epoch, app.Aid, secret)
 	})
 }
 
-// releaseShare proves and posts the honest organizer share from the
-// organizer's own address.
-func (f *Fleet) releaseShare(
-	ctx context.Context, app *application, idx uint16, c1, c2 types.CurvePoint,
-) (types.CurvePoint, dleq.Proof, txOutcome, error) {
-	delta, proof, err := app.share(idx, c1)
-	if err != nil {
-		return delta, proof, txOutcome{}, err
+// releaseSecret reveals the honest organizer secret from the organizer's own
+// address: the one-shot that lets the committee finish every ciphertext of
+// the application, past and future.
+func (f *Fleet) releaseSecret(ctx context.Context, app *application) (txOutcome, error) {
+	if app.Automatic {
+		return txOutcome{}, fmt.Errorf("automatic application %x has no secret to reveal", app.Aid)
 	}
-	out, err := f.submitShareWords(ctx, app.Organizer, app.Epoch, app.Aid, idx, c1, c2, delta, proof)
-	return delta, proof, out, err
+	return f.revealSecret(ctx, app.Organizer, app, app.SkOrg)
+}
+
+// automaticPolicy is the default the battery registers with: no organizer
+// half, so the fleet owns every ciphertext of the application end to end.
+func automaticPolicy() golangtypes.DKGTypesAppPolicy {
+	return golangtypes.DKGTypesAppPolicy{Mode: uint8(types.AppModeAutomatic)}
+}
+
+// automaticPolicyWith forces `policy` into automatic mode.
+func automaticPolicyWith(policy golangtypes.DKGTypesAppPolicy) golangtypes.DKGTypesAppPolicy {
+	policy.Mode = uint8(types.AppModeAutomatic)
+	return policy
 }

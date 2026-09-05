@@ -37,12 +37,14 @@ generate_binding "$OUT_DIR/DKGRegistry.sol/DKGRegistry.json" golangtypes DKGRegi
 generate_binding "$OUT_DIR/DKGManager.sol/DKGManager.json" golangtypes DKGManager "$BINDINGS_DIR/dkgmanager.go"
 generate_binding "$OUT_DIR/DKGAppManager.sol/DKGAppManager.json" golangtypes DKGAppManager "$BINDINGS_DIR/dkgappmanager.go"
 
-# DKGTypesPoint is shared between DKGManager and DKGAppManager bindings.
-# abigen emits it in both files; strip the duplicate from the app-manager
-# binding so the package compiles.
-python3 - "$BINDINGS_DIR/dkgappmanager.go" <<'PY'
+# DKGTypesPoint may be emitted by both the DKGManager and DKGAppManager
+# bindings; strip the duplicate from the app-manager binding only when the
+# manager binding defines it, so the package compiles either way.
+python3 - "$BINDINGS_DIR/dkgappmanager.go" "$BINDINGS_DIR/dkgmanager.go" <<'PY'
 import re, sys
-path = sys.argv[1]
+path, manager = sys.argv[1], sys.argv[2]
+if "type DKGTypesPoint struct" not in open(manager).read():
+    sys.exit(0)
 src = open(path).read()
 pattern = re.compile(
     r"// DKGTypesPoint is an auto generated low-level Go binding around an user-defined struct\.\n"
@@ -52,7 +54,7 @@ new = pattern.sub("", src, count=1)
 open(path, "w").write(new)
 PY
 generate_binding "$OUT_DIR/ContributionVerifier.sol/ContributionVerifier.json" golangtypes ContributionVerifier "$BINDINGS_DIR/contributionverifier.go"
-generate_binding "$OUT_DIR/FinalizeVerifier.sol/FinalizeVerifier.json" golangtypes FinalizeVerifier "$BINDINGS_DIR/finalizeverifier.go"
+generate_binding "$OUT_DIR/PoolKeyVerifier.sol/PoolKeyVerifier.json" golangtypes PoolKeyVerifier "$BINDINGS_DIR/poolkeyverifier.go"
 generate_binding "$OUT_DIR/PartialDecryptVerifier.sol/PartialDecryptVerifier.json" golangtypes PartialDecryptVerifier "$BINDINGS_DIR/partialdecryptverifier.go"
 generate_binding "$OUT_DIR/DecryptCombineVerifier.sol/DecryptCombineVerifier.json" golangtypes DecryptCombineVerifier "$BINDINGS_DIR/decryptcombineverifier.go"
 

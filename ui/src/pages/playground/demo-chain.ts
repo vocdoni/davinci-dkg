@@ -8,13 +8,14 @@
 // clock.
 //
 // The cryptography around it is *not* simulated: the organizer secret, the
-// ElGamal ciphertext and the Chaum-Pedersen DLEQ are computed by the real SDK
-// in both modes. Only the transport is fake.
+// pool key, the ElGamal ciphertext and the plaintext recovery are computed by
+// the real SDK and the real curve in both modes. Only the transport is fake.
 
-import { addPoint, Base8, Fr, mulPointEscalar, type Point } from '@zk-kit/baby-jubjub'
+import { addPoint, Base8, Fr, mulPointEscalar, subOrder, type Point } from '@zk-kit/baby-jubjub'
 import { keccak256, stringToHex, type Address, type Hex } from 'viem'
-import type { ElGamalCiphertext } from '@vocdoni/davinci-dkg-sdk'
+import type { BabyJubPoint, ElGamalCiphertext } from '@vocdoni/davinci-dkg-sdk'
 import { GAS } from '~fixtures/synthetic'
+import type { AppModeName } from '~indexer/types'
 import type { PartialView } from './types'
 
 /** The address the demo wallet claims to be. Fixed, so links stay stable. */
@@ -35,12 +36,24 @@ export interface DemoChainState {
   /** Transactions sent so far — the only entropy the hashes have. */
   seq: number
   register: DemoTx | null
+  /** Mode of the registered application; decides whether a reveal is needed. */
+  mode: AppModeName
+  /** Pool key the registration claimed. */
+  poolIndex: number | null
   ciphertext: { tx: DemoTx; index: number } | null
-  share: DemoTx | null
+  reveal: DemoTx | null
 }
 
 export function initialDemoChain(headBlock: number): DemoChainState {
-  return { block: headBlock, seq: 0, register: null, ciphertext: null, share: null }
+  return {
+    block: headBlock,
+    seq: 0,
+    register: null,
+    mode: 'organizer-locked',
+    poolIndex: null,
+    ciphertext: null,
+    reveal: null,
+  }
 }
 
 /**
@@ -58,6 +71,21 @@ export function demoParticipant(epochId: string, participantIndex: number): Addr
   return `0x${digest.slice(26)}` as Address
 }
 
+/**
+ * The secret behind pool key `j` of a demo epoch. The fixture's pool keys are
+ * decorative bytes; the demo needs real points so the organizer's crypto is
+ * the real crypto, and this is the one place that knows the scalar.
+ */
+export function demoPoolSecret(epochId: string, keyIndex: number): bigint {
+  const digest = keccak256(stringToHex(`davinci-dkg:demo-pool-key:${epochId}:${keyIndex}`))
+  return BigInt(digest) % subOrder || 1n
+}
+
+/** `P_j = sk_j·G` for the demo epoch, TE form. */
+export function demoPoolKey(epochId: string, keyIndex: number): BabyJubPoint {
+  return mulPointEscalar(Base8, demoPoolSecret(epochId, keyIndex)) as BabyJubPoint
+}
+
 export interface DemoSendResult {
   state: DemoChainState
   tx: DemoTx
@@ -71,9 +99,15 @@ export function sendDemoTx(state: DemoChainState, label: string, gasUsed: number
   return { state: { ...state, seq, block }, tx }
 }
 
-export function demoRegister(state: DemoChainState, aid: string): DemoSendResult {
+/** Register `aid`, claiming pool key `poolIndex` — the epoch's next free one. */
+export function demoRegister(
+  state: DemoChainState,
+  aid: string,
+  mode: AppModeName = 'organizer-locked',
+  poolIndex = 0
+): DemoSendResult {
   const sent = sendDemoTx(state, `registerApplication:${aid}`, GAS.registerApplication)
-  return { state: { ...sent.state, register: sent.tx }, tx: sent.tx }
+  return { state: { ...sent.state, register: sent.tx, mode, poolIndex }, tx: sent.tx }
 }
 
 export function demoSubmitCiphertext(
@@ -90,9 +124,11 @@ export function demoSubmitCiphertext(
   }
 }
 
-export function demoReleaseShare(state: DemoChainState, aid: string, index: number): DemoSendResult {
-  const sent = sendDemoTx(state, `submitOrganizerShare:${aid}:${index}`, GAS.submitOrganizerShare)
-  return { state: { ...sent.state, share: sent.tx }, tx: sent.tx }
+/** Reveal the organizer secret — once; a second call is the contract's `AlreadyRevealed()`. */
+export function demoRevealSecret(state: DemoChainState, aid: string): DemoSendResult {
+  if (state.reveal) throw new Error('AlreadyRevealed()')
+  const sent = sendDemoTx(state, `revealOrganizerSecret:${aid}`, GAS.revealOrganizerSecret)
+  return { state: { ...sent.state, reveal: sent.tx }, tx: sent.tx }
 }
 
 /** Advance the simulator by one block without sending anything. */
@@ -113,20 +149,20 @@ export interface DemoDecryptionParams {
 }
 
 /**
- * Partials visible at `head`.
+ * Partials visible at `head`, counting from `openBlock` — the block the
+ * ciphertext became decryptable: its own block for an automatic application,
+ * the later of that and the reveal for an organizer-locked one. The contract
+ * refuses every partial of a locked application before the reveal, so the
+ * caller passes nothing (and gets nothing) until the secret is out.
  *
  * Modelled on what the fixture generates, which is what the node actually
  * does: the seed-derived rotation picks a starting slot, its first `t` members
  * answer inside one stagger window (wave 0, spread over `staggerBlocks`
  * blocks), and a handful of late members follow one window later (wave 1). The
  * wave number is then exactly the indexer's
- * `⌊(partial block − ciphertext block) / staggerBlocks⌋`.
+ * `⌊(partial block − opened block) / staggerBlocks⌋`.
  */
-export function demoPartialsAt(
-  ciphertextBlock: number,
-  head: number,
-  params: DemoDecryptionParams
-): PartialView[] {
+export function demoPartialsAt(openBlock: number, head: number, params: DemoDecryptionParams): PartialView[] {
   const { threshold, committeeSize, staggerBlocks, epochId, ciphertextIndex } = params
   if (threshold <= 0 || committeeSize <= 0) return []
   const stagger = Math.max(1, staggerBlocks)
@@ -136,14 +172,14 @@ export function demoPartialsAt(
   for (let k = 0; k < threshold + late; k++) {
     const isLate = k >= threshold
     const offset = isLate ? k - threshold : k
-    const block = ciphertextBlock + 1 + (isLate ? stagger : 0) + (offset % stagger)
+    const block = openBlock + 1 + (isLate ? stagger : 0) + (offset % stagger)
     if (block > head) continue
     const participantIndex = ((rotation + k) % committeeSize) + 1
     out.push({
       participantIndex,
       participant: demoParticipant(epochId, participantIndex),
       block,
-      wave: Math.floor((block - ciphertextBlock) / stagger),
+      wave: Math.floor((block - openBlock) / stagger),
       tx: demoTxHash(`submitPartialDecryption:${ciphertextIndex}:${participantIndex}`, participantIndex),
     })
   }
@@ -157,21 +193,23 @@ export interface DemoCombine {
 }
 
 /**
- * When the combine lands: one block after both halves are complete — the
- * `t`-th partial *and* the organizer share. Late responders past `t` do not
- * hold it up, and withholding the share stops it forever, which is exactly the
- * point the "withhold" branch is making.
+ * When the combine lands: one block after the application is unlocked *and*
+ * the `t`-th partial is in. `unlockedAt` is 0 for an automatic application
+ * (unlocked from the start), the reveal block for an organizer-locked one,
+ * and null while the organizer keeps its secret — which stops the combine
+ * forever, exactly the point the "keep" branch is making. Late responders
+ * past `t` do not hold it up.
  */
 export function demoCombineAt(
   partials: PartialView[],
-  shareBlock: number | null,
+  unlockedAt: number | null,
   head: number,
   params: DemoDecryptionParams
 ): DemoCombine | null {
-  if (shareBlock == null) return null
+  if (unlockedAt == null) return null
   if (params.threshold <= 0 || partials.length < params.threshold) return null
   const thresholdBlock = partials[params.threshold - 1].block
-  const block = Math.max(thresholdBlock, shareBlock) + 1
+  const block = Math.max(thresholdBlock, unlockedAt) + 1
   if (block > head) return null
   return {
     block,
@@ -182,8 +220,8 @@ export function demoCombineAt(
 
 /**
  * Recover the plaintext the way the committee's combine proof does — from the
- * full application secret `sk_aid = sk_ep + sk_org`, which only the simulator
- * ever holds in one place:
+ * full application secret `sk_aid = sk_j + sk_org` (or just `sk_j` for an
+ * automatic application), which only the simulator ever holds in one place:
  *
  *   m·G = C2 − sk_aid·C1,  then m = dlog(m·G)
  *

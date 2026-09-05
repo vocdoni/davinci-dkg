@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"math/bits"
 	"os"
 	"strconv"
 	"strings"
@@ -24,6 +25,7 @@ import (
 	ethcrypto "github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/rpc"
+	ccommon "github.com/vocdoni/davinci-dkg/circuits/common"
 	"github.com/vocdoni/davinci-dkg/config"
 	golangtypes "github.com/vocdoni/davinci-dkg/solidity/golang-types"
 	"github.com/vocdoni/davinci-dkg/tests/helpers"
@@ -528,12 +530,14 @@ func (f *Fleet) committee(ctx context.Context, id [12]byte) ([]common.Address, e
 	return f.Services.Contracts.SelectedParticipants(ctx, id)
 }
 
-func (f *Fleet) collectiveKey(ctx context.Context, id [12]byte) (types.CurvePoint, error) {
-	pk, err := f.Services.Manager.GetCollectivePublicKey(f.callOpts(ctx), id)
+// poolKey is the activated committee key `P_j` of an epoch. Reverts with
+// PoolKeyNotActive while the key has not been proven.
+func (f *Fleet) poolKey(ctx context.Context, id [12]byte, keyIndex uint8) (types.CurvePoint, error) {
+	x, y, err := f.Services.Manager.GetPoolKey(f.callOpts(ctx), id, keyIndex)
 	if err != nil {
 		return types.CurvePoint{}, err
 	}
-	return types.CurvePoint{X: pk.X, Y: pk.Y}, nil
+	return types.CurvePoint{X: x, Y: y}, nil
 }
 
 func (f *Fleet) nextEpochStart(ctx context.Context) (uint64, error) {
@@ -589,15 +593,32 @@ func (f *Fleet) waitNonceAbove(ctx context.Context, nonce uint64) (uint64, error
 }
 
 // waitLiveEpoch returns the newest Live epoch that still has at least
-// minBlocksLeft blocks before its cadence boundary, waiting for the next one
-// otherwise. Progress is logged so a long wait is readable.
-func (f *Fleet) waitLiveEpoch(ctx context.Context, t *testing.T, minBlocksLeft uint64) ([12]byte, web3.EpochView, error) {
+// minBlocksLeft blocks before its cadence boundary and needKeys unclaimed
+// pool keys, with the first of them activated. Every registration of a
+// scenario claims one key of the epoch it is handed, so a scenario asks for
+// all of them up front and never runs into PoolExhausted half-way; an epoch
+// with too few keys left is waited out (the nodes create the next one early
+// once its pool drains). Progress is logged so a long wait is readable.
+func (f *Fleet) waitLiveEpoch(
+	ctx context.Context, t *testing.T, minBlocksLeft uint64, needKeys int,
+) ([12]byte, web3.EpochView, error) {
 	t.Helper()
 	lastLog := time.Time{}
 	for {
-		id, e, ok, status := f.liveCandidate(ctx, minBlocksLeft)
+		id, e, ok, status := f.liveCandidate(ctx, minBlocksLeft, needKeys)
 		if ok {
-			return id, e, nil
+			if needKeys == 0 {
+				return id, e, nil
+			}
+			_, err := f.waitPoolKeys(ctx, id, 1, activationWait(), 0)
+			switch {
+			case err == nil:
+				return id, e, nil
+			case errors.Is(err, errPoolShort):
+				status = err.Error() // claimed out under us: pick again
+			default:
+				return [12]byte{}, web3.EpochView{}, err
+			}
 		}
 		if time.Since(lastLog) > 20*time.Second {
 			t.Logf("waitLiveEpoch: %s", status)
@@ -612,7 +633,9 @@ func (f *Fleet) waitLiveEpoch(ctx context.Context, t *testing.T, minBlocksLeft u
 }
 
 // liveCandidate inspects the newest epoch and reports whether it is usable.
-func (f *Fleet) liveCandidate(ctx context.Context, minBlocksLeft uint64) ([12]byte, web3.EpochView, bool, string) {
+func (f *Fleet) liveCandidate(
+	ctx context.Context, minBlocksLeft uint64, needKeys int,
+) ([12]byte, web3.EpochView, bool, string) {
 	nonce, err := f.epochNonce(ctx)
 	if err != nil || nonce == 0 {
 		return [12]byte{}, web3.EpochView{}, false, fmt.Sprintf("no epoch yet (err=%v)", err)
@@ -626,13 +649,98 @@ func (f *Fleet) liveCandidate(ctx context.Context, minBlocksLeft uint64) ([12]by
 	if err != nil {
 		return id, e, false, err.Error()
 	}
+	next, activated, err := f.poolStatus(ctx, id)
+	if err != nil {
+		return id, e, false, err.Error()
+	}
+	unclaimed, ready := poolCounts(next, activated)
 	left := int64(f.serviceEnd(e)) - int64(head)
-	status := fmt.Sprintf("epoch nonce=%d status=%d head=%d serviceEnd=%d left=%d liveNotBefore=%d",
-		nonce, e.Status, head, f.serviceEnd(e), left, e.Policy.LiveNotBeforeBlock)
-	if e.Status == statusLive && left >= int64(minBlocksLeft) {
+	status := fmt.Sprintf("epoch nonce=%d status=%d head=%d serviceEnd=%d left=%d liveNotBefore=%d "+
+		"pool: unclaimed=%d ready=%d need=%d",
+		nonce, e.Status, head, f.serviceEnd(e), left, e.Policy.LiveNotBeforeBlock, unclaimed, ready, needKeys)
+	if e.Status == statusLive && left >= int64(minBlocksLeft) && unclaimed >= needKeys {
 		return id, e, true, status
 	}
 	return id, e, false, status
+}
+
+// ─── pool keys ───────────────────────────────────────────────────────────
+
+var (
+	// errPoolShort: the epoch cannot serve that many more applications.
+	errPoolShort = errors.New("not enough unclaimed pool keys")
+	// errPoolSlow: the keys exist but the nodes have not activated them yet.
+	errPoolSlow = errors.New("pool keys not activated in time")
+)
+
+// activationWait is the block budget for the nodes to activate a pool key.
+func activationWait() uint64 { return envUint64("BATTERY_ACTIVATION_WAIT_BLOCKS", 90) }
+
+// poolStatus reads an epoch's pool: the claim cursor (the key the next
+// registration takes) and the activation bitmap.
+func (f *Fleet) poolStatus(ctx context.Context, id [12]byte) (next, activated uint8, err error) {
+	status, err := f.Services.Manager.GetPoolStatus(f.callOpts(ctx), id)
+	if err != nil {
+		return 0, 0, fmt.Errorf("pool status: %w", err)
+	}
+	return status.NextIndex, status.Activated, nil
+}
+
+// poolCounts turns a pool status into the two numbers a registration cares
+// about: how many keys are still unclaimed (the epoch serves at most that
+// many more applications) and how many of those, counted from the cursor,
+// are activated and therefore claimable without waiting for a node's proof.
+func poolCounts(next, activated uint8) (unclaimed, ready int) {
+	unclaimed = ccommon.MaxK - int(next)
+	ready = min(unclaimed, bits.TrailingZeros8(^(activated >> next)))
+	return unclaimed, ready
+}
+
+// waitPoolKeys blocks until `need` keys past the claim cursor are activated
+// and returns how many are. The nodes restock the pool one activation proof
+// per tick, ActivateAhead keys past the cursor, so a fleet with the default
+// ActivateAhead=2 never gets more than two ready: the wait gives up once the
+// count has not grown for `plateau` blocks (0 = keep waiting) and after
+// `budget` blocks in any case, returning errPoolSlow with the count it
+// reached so a burst can shrink to it. An epoch that cannot serve `need`
+// more applications at all returns errPoolShort.
+func (f *Fleet) waitPoolKeys(ctx context.Context, id [12]byte, need int, budget, plateau uint64) (int, error) {
+	start, err := f.head(ctx)
+	if err != nil {
+		return 0, err
+	}
+	lastGrowth, lastReady := start, -1
+	for {
+		next, activated, err := f.poolStatus(ctx, id)
+		if err != nil {
+			return 0, err
+		}
+		unclaimed, ready := poolCounts(next, activated)
+		if unclaimed < need {
+			return ready, fmt.Errorf("%w: epoch %x has %d, need %d", errPoolShort, id, unclaimed, need)
+		}
+		if ready >= need {
+			return ready, nil
+		}
+		head, err := f.head(ctx)
+		if err != nil {
+			return 0, err
+		}
+		if ready != lastReady {
+			lastReady, lastGrowth = ready, head
+		}
+		if head > start+budget || (plateau > 0 && head > lastGrowth+plateau) {
+			return ready, fmt.Errorf("%w: epoch %x has %d of %d keys activated past the claim cursor after %d blocks; "+
+				"nodes activate DAVINCI_DKG_ACTIVATE_AHEAD keys ahead (default 2), the battery fleet needs %d "+
+				"(make battery-testnet-up, or tests/battery/compose.battery.yml)",
+				errPoolSlow, id, ready, need, head-start, ccommon.MaxK)
+		}
+		select {
+		case <-ctx.Done():
+			return ready, fmt.Errorf("waiting for pool keys of epoch %x: %w", id, ctx.Err())
+		case <-time.After(pollInterval):
+		}
+	}
 }
 
 // ─── event scans ─────────────────────────────────────────────────────────

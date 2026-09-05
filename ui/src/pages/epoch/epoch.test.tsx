@@ -67,7 +67,8 @@ describe('EpochPage', () => {
     const epoch = liveEpoch(source)
     renderEpoch(source, epoch.id)
 
-    const table = screen.getByText('D_i').closest('table') as HTMLTableElement
+    // 'Contributed' is a column only the committee table has; 'Slot' is also a lottery column.
+    const table = screen.getByText('Contributed').closest('table') as HTMLTableElement
     const rows = within(table).getAllByRole('row').slice(1)
     expect(rows).toHaveLength(6)
 
@@ -93,25 +94,31 @@ describe('EpochPage', () => {
     expect(screen.getByLabelText('τ / 2²⁵⁶')).toBeInTheDocument()
   })
 
-  it('shows the collective key, the finalizer and the transcript size', () => {
+  it('shows the pool, the finalizer and the activation transcript size', () => {
     const source = makeSource()
     const epoch = liveEpoch(source)
     renderEpoch(source, epoch.id)
 
-    expect(screen.getByText('PK_ep.x')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Pool keys' })).toBeInTheDocument()
     expect(screen.getByText('finalizer')).toBeInTheDocument()
-    // 2·n² + 5·n at n = 6.
-    expect(screen.getByText('102 words')).toBeInTheDocument()
+    // 6·MaxN, fixed by the circuit.
+    expect(screen.getByText('192 words')).toBeInTheDocument()
+    // Eight slots: one claimed by the fixture's application, two activated ahead, five inactive.
+    expect(screen.getAllByLabelText(/^pool key [0-7]$/)).toHaveLength(8)
+    expect(screen.getAllByText('free')).toHaveLength(2)
+    expect(screen.getAllByText('not activated')).toHaveLength(5)
+    expect(screen.getByText('3 / 8')).toBeInTheDocument()
+    expect(screen.getByText('1 / 8')).toBeInTheDocument()
   })
 
-  it('plots the decryption matrix with the share and combined rows', () => {
+  it('plots the decryption matrix with the combined row', () => {
     const source = makeSource()
     const epoch = liveEpoch(source)
     renderEpoch(source, epoch.id)
 
     expect(screen.getByLabelText('Partial decryption matrix')).toBeInTheDocument()
+    expect(screen.queryByText('organizer share')).not.toBeInTheDocument()
     // Once as a matrix row label, once in the legend.
-    expect(screen.getAllByText('organizer share')).toHaveLength(2)
     expect(screen.getAllByText('combined')).toHaveLength(2)
   })
 

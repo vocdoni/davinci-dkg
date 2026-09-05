@@ -47,12 +47,19 @@ func TestFleetStatus(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		poolNext, activated, err := f.poolStatus(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		unclaimed, ready := poolCounts(poolNext, activated)
 		t.Logf("epoch %x: status=%d t=%d n=%d mMin=%d alpha=%d start=%d seed=%d csDeadline=%d kaDeadline=%d "+
-			"liveNotBefore=%d serviceEnd=%d claimed=%d contributions=%d ciphertexts=%d committee=%d",
+			"liveNotBefore=%d serviceEnd=%d claimed=%d contributions=%d ciphertexts=%d committee=%d "+
+			"pool: next=%d activated=%08b unclaimed=%d ready=%d",
 			id, e.Status, e.Policy.Threshold, e.Policy.CommitteeSize, e.Policy.MinValidContributions,
 			e.Policy.LotteryAlphaBps, e.StartBlock, e.SeedBlock, e.Policy.CommitteeSelectionDeadlineBlock,
 			e.Policy.KeyAssemblyDeadlineBlock, e.Policy.LiveNotBeforeBlock, f.serviceEnd(e),
-			e.ClaimedCount, e.ContributionCount, e.CiphertextCount, len(committee))
+			e.ClaimedCount, e.ContributionCount, e.CiphertextCount, len(committee),
+			poolNext, activated, unclaimed, ready)
 	}
 
 	tp := torsionPoint()

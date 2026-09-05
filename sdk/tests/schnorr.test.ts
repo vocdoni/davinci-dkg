@@ -7,6 +7,7 @@ import {
   verifyOperatorSchnorr,
   operatorSchnorrChallenge,
   proveOrganizer,
+  organizerPublicKey,
   verifyOrganizerSchnorr,
   organizerSchnorrChallenge,
   verifyDleq,
@@ -209,5 +210,22 @@ describe('schnorr-helpers smoke', () => {
     // Just verify it's deterministic — we don't pin the constant, the
     // package guarantees correctness.
     expect(addPoint(G, G)).toEqual(G2);
+  });
+});
+
+// ─── organizerPublicKey (Automatic-mode registration) ───────────────────────
+
+describe('organizerPublicKey', () => {
+  it('matches the PK_org proveOrganizer publishes, in RTE form', () => {
+    const sk = 1234567890123456789n;
+    const { pkOrgX, pkOrgY } = organizerPublicKey(sk);
+    const proven = proveOrganizer(sk, '0x0102030405060708090a0b0c', `0x${'1c'.repeat(32)}`, 7n);
+    expect(pkOrgX).toBe(proven.pkOrgX);
+    expect(pkOrgY).toBe(proven.pkOrgY);
+  });
+
+  it('rejects a zero or out-of-range secret', () => {
+    expect(() => organizerPublicKey(0n)).toThrow();
+    expect(() => organizerPublicKey(SUBGROUP_ORDER)).toThrow();
   });
 });

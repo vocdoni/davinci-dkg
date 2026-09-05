@@ -89,33 +89,3 @@ func (c Contribution) Validate() error {
 	}
 	return nil
 }
-
-// FinalizedOutput is the typed result of the contribution aggregation/finalization phase.
-type FinalizedOutput struct {
-	EpochID               string
-	CollectivePublicKey   CurvePoint
-	AggregateCommitments  []CurvePoint
-	SelectedParticipantIX []uint16
-}
-
-// Validate checks that the finalized output is minimally coherent.
-func (o FinalizedOutput) Validate() error {
-	if o.EpochID == "" {
-		return fmt.Errorf("epoch id is required")
-	}
-	if err := o.CollectivePublicKey.Validate(); err != nil {
-		return fmt.Errorf("collective public key: %w", err)
-	}
-	if len(o.AggregateCommitments) == 0 {
-		return fmt.Errorf("aggregate commitments are required")
-	}
-	for i, point := range o.AggregateCommitments {
-		if err := point.Validate(); err != nil {
-			return fmt.Errorf("aggregate commitment %d: %w", i, err)
-		}
-	}
-	if len(o.SelectedParticipantIX) == 0 {
-		return fmt.Errorf("selected participant indices are required")
-	}
-	return nil
-}

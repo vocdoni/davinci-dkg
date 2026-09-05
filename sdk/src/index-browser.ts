@@ -2,11 +2,11 @@
 //
 // Excludes the ElGamal crypto module and the high-level flow helpers; all
 // on-chain read/write, monitoring and proof utilities are included — the
-// organizer's share prover (`proveOrganizerShare`) among them, since the
-// organizer is expected to run in a browser.
+// organizer's registration Schnorr prover (`proveOrganizer`) among them,
+// since the organizer is expected to run in a browser.
 
 export { DKGClient } from './client.js';
-export { DKGWriter, type SubmitCiphertextResult } from './writer.js';
+export { DKGWriter, normalizeAppPolicy, type SubmitCiphertextResult } from './writer.js';
 
 export {
   EpochPhase,
@@ -29,7 +29,11 @@ export {
   type PollOptions,
   type EpochEvent,
   type EpochEntry,
+  AppMode,
+  appModeLabel,
+  type AppModeValue,
   type AppPolicy,
+  type AppPolicyInput,
   type ApplicationRecord,
   type ActivityScanOptions,
   type SlotClaimedEvent,
@@ -38,23 +42,25 @@ export {
   type EpochLiveEvent,
   type DecryptionCombinedEvent,
   type ApplicationRegisteredEvent,
+  type PoolStatus,
+  type PoolKeyActivatedEvent,
+  type PoolKeyClaimedEvent,
+  type OrganizerSecretRevealedEvent,
 } from './types.js';
 
 export { dkgManagerAbi, dkgRegistryAbi, dkgAppManagerAbi } from './abi.js';
-export { proveOrganizer, verifyOrganizerSchnorr, organizerSchnorrChallenge } from './schnorr.js';
 export {
-  organizerShareChallenge,
-  proveOrganizerShare,
-  verifyOrganizerShare,
-  type OrganizerShare,
-  type OrganizerShareProof,
-} from './dleq.js';
-export { DomainOrganizerRegisterV1, DomainOrganizerShareV1 } from './protocol.js';
+  proveOrganizer,
+  organizerPublicKey,
+  verifyOrganizerSchnorr,
+  organizerSchnorrChallenge,
+} from './schnorr.js';
+export { DomainOrganizerRegisterV1 } from './protocol.js';
 export { buildEpochId, parseEpochId } from './utils.js';
 export {
   waitForEpochPhase,
   waitForDecryption,
-  waitForOrganizerShare,
+  waitForPoolKeyActivated,
   decryptionProgress,
   watchNewRounds,
   watchNewEpochs,
