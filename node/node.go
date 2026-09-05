@@ -1104,19 +1104,30 @@ func (n *Node) doContribution(
 	// must not change what contributors encrypt shares to (the on-chain prefix
 	// hash pins the snapshot keys). Operator addresses still come from the
 	// selected list, which the snapshot does not carry.
+	// Deployments that predate the CommitteeSnapshot event never emit it;
+	// fall back to the live registry there, which is exactly what those
+	// contracts hash (no key rotation protection, same as before).
 	snapshot, err := n.contracts.CommitteeSnapshot(ctx, epochID)
 	if err != nil {
-		return fmt.Errorf("committee snapshot: %w", err)
-	}
-	if len(snapshot) != int(committeeSize) {
+		log.Warnw("committee snapshot unavailable, using live registry keys", "epoch", roundHex(epochID), "err", err)
+		snapshot = nil
+	} else if len(snapshot) != int(committeeSize) {
 		return fmt.Errorf("committee snapshot has %d members, want %d", len(snapshot), committeeSize)
 	}
 	recipientIdxs := make([]uint16, committeeSize)
 	recipientKeys := make([]nodetypes.NodeKey, committeeSize)
 	for i := uint16(0); i < committeeSize; i++ {
 		recipientIdxs[i] = i + 1
-		recipientKeys[i] = snapshot[i]
-		recipientKeys[i].Operator = selected[i]
+		if snapshot != nil {
+			recipientKeys[i] = snapshot[i]
+			recipientKeys[i].Operator = selected[i]
+			continue
+		}
+		nd, err := n.contracts.GetNode(ctx, selected[i])
+		if err != nil {
+			return fmt.Errorf("get node key idx=%d: %w", i+1, err)
+		}
+		recipientKeys[i] = nodetypes.NodeKey{Operator: selected[i], PubX: nd.PubX, PubY: nd.PubY}
 	}
 
 	// One fresh hashed-ElGamal nonce per recipient. The nonce is the only
