@@ -39,6 +39,7 @@ func (c *Contracts) GetEpoch(ctx context.Context, epochID [12]byte) (EpochView, 
 	if err != nil {
 		return EpochView{}, fmt.Errorf("pack getEpoch: %w", err)
 	}
+	c.pool.Note("eth_call")
 	output, err := c.pool.Current().CallContract(ctx, ethereum.CallMsg{
 		To:   &c.Addresses.Manager,
 		Data: input,
@@ -104,6 +105,7 @@ func (c *Contracts) SelectedParticipants(ctx context.Context, epochID [12]byte) 
 	if err != nil {
 		return nil, fmt.Errorf("pack selectedParticipants: %w", err)
 	}
+	c.pool.Note("eth_call")
 	output, err := c.pool.Current().CallContract(ctx, ethereum.CallMsg{
 		To:   &c.Addresses.Manager,
 		Data: input,
@@ -131,19 +133,16 @@ func (c *Contracts) SelectedParticipants(ctx context.Context, epochID [12]byte) 
 // event), not the live registry keys: a later updateKey rotation must not
 // change what contributors encrypt shares to. Entry i is committee position
 // i+1; Operator is left zero and must be filled by the caller from the
-// selected-participants list.
-func (c *Contracts) CommitteeSnapshot(ctx context.Context, epochID [12]byte) ([]types.NodeKey, error) {
-	epoch, err := c.GetEpoch(ctx, epochID)
-	if err != nil {
-		return nil, fmt.Errorf("get epoch: %w", err)
-	}
+// selected-participants list. startBlock bounds the event scan: the epoch's
+// StartBlock, which the caller already holds from the epoch record.
+func (c *Contracts) CommitteeSnapshot(ctx context.Context, epochID [12]byte, startBlock uint64) ([]types.NodeKey, error) {
 	filterer, err := gtypes.NewDKGManagerFilterer(c.Addresses.Manager, c.PooledBackend())
 	if err != nil {
 		return nil, fmt.Errorf("bind DKGManager filterer: %w", err)
 	}
-	it, err := filterer.FilterCommitteeSnapshot(&bind.FilterOpts{Context: ctx, Start: epoch.StartBlock}, [][12]byte{epochID})
+	it, err := filterer.FilterCommitteeSnapshot(&bind.FilterOpts{Context: ctx, Start: startBlock}, [][12]byte{epochID})
 	if err != nil {
-		return nil, fmt.Errorf("filter CommitteeSnapshot from block %d: %w", epoch.StartBlock, err)
+		return nil, fmt.Errorf("filter CommitteeSnapshot from block %d: %w", startBlock, err)
 	}
 	defer func() { _ = it.Close() }()
 	if !it.Next() {
@@ -156,7 +155,8 @@ func (c *Contracts) CommitteeSnapshot(ctx context.Context, epochID [12]byte) ([]
 	if len(ev.PubKeys) != int(ev.CommitteeSize)*2 {
 		return nil, fmt.Errorf(
 			"committee snapshot for epoch %x carries %d keys for committeeSize=%d",
-			epochID, len(ev.PubKeys)/2, ev.CommitteeSize)
+			epochID, len(ev.PubKeys)/2, ev.CommitteeSize,
+		)
 	}
 	keys := make([]types.NodeKey, ev.CommitteeSize)
 	for i := range keys {

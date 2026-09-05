@@ -472,38 +472,35 @@ func TestRecheckRefusesAStaleAcceptedSet(t *testing.T) {
 		epoch:   &epoch,
 		records: map[common.Address]gtypes.DKGTypesContributionRecord{a: record(a, 1, 0xa1), d: record(d, 3, 0xd3)},
 	}
-	m, err := gtypes.NewDKGManager(common.Address{}, chain)
-	c.Assert(err, qt.IsNil)
-
-	c.Assert(snap.recheck(ctx, m, epochID), qt.IsNil)
+	c.Assert(snap.recheck(ctx, chain, epochID), qt.IsNil)
 
 	// Same count, one dealer swapped: b took d's place.
 	chain.records = map[common.Address]gtypes.DKGTypesContributionRecord{a: record(a, 1, 0xa1), b: record(b, 2, 0xb2)}
-	err = snap.recheck(ctx, m, epochID)
+	err := snap.recheck(ctx, chain, epochID)
 	c.Assert(errors.Is(err, ErrStale), qt.IsTrue, qt.Commentf("%v", err))
 	c.Assert(err, qt.ErrorMatches, ".*contribution of 0x.*[bB].* \\(member 2\\) changed while proving")
 
 	// Same dealers, d's stored commitmentsHash changed.
 	chain.records = map[common.Address]gtypes.DKGTypesContributionRecord{a: record(a, 1, 0xa1), d: record(d, 3, 0xd4)}
-	c.Assert(errors.Is(snap.recheck(ctx, m, epochID), ErrStale), qt.IsTrue)
+	c.Assert(errors.Is(snap.recheck(ctx, chain, epochID), ErrStale), qt.IsTrue)
 
 	// Fewer accepted records than the statement, count notwithstanding.
 	chain.records = map[common.Address]gtypes.DKGTypesContributionRecord{a: record(a, 1, 0xa1)}
-	c.Assert(errors.Is(snap.recheck(ctx, m, epochID), ErrStale), qt.IsTrue)
+	c.Assert(errors.Is(snap.recheck(ctx, chain, epochID), ErrStale), qt.IsTrue)
 
 	// The accepted count moved.
 	chain.records = map[common.Address]gtypes.DKGTypesContributionRecord{a: record(a, 1, 0xa1), d: record(d, 3, 0xd3)}
 	moved := epoch
 	moved.ContributionCount = 3
 	chain.epoch = &moved
-	c.Assert(errors.Is(snap.recheck(ctx, m, epochID), ErrStale), qt.IsTrue)
+	c.Assert(errors.Is(snap.recheck(ctx, chain, epochID), ErrStale), qt.IsTrue)
 
 	// Someone else finalized meanwhile: a benign race, not staleness.
 	live := epoch
 	live.Status = phaseLive
 	chain.epoch = &live
-	c.Assert(errors.Is(snap.recheck(ctx, m, epochID), ErrAlreadyLive), qt.IsTrue)
+	c.Assert(errors.Is(snap.recheck(ctx, chain, epochID), ErrAlreadyLive), qt.IsTrue)
 
 	chain.epoch = &epoch
-	c.Assert(snap.recheck(ctx, m, epochID), qt.IsNil, qt.Commentf("the unchanged set still passes"))
+	c.Assert(snap.recheck(ctx, chain, epochID), qt.IsNil, qt.Commentf("the unchanged set still passes"))
 }

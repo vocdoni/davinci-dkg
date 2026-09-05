@@ -86,6 +86,10 @@ type Manager struct {
 	chainID  *big.Int
 	from     common.Address
 	config   Config
+	// noter, when set, is told the JSON-RPC method of every request the
+	// manager issues on the raw client, so the caller's per-method request
+	// counters (web3.RPCPool.Note) stay complete.
+	noter func(method string)
 
 	mu            sync.Mutex
 	nextNonce     uint64
@@ -120,6 +124,25 @@ func New(clientFn func() *ethclient.Client, chainID uint64, privateKey string) (
 // Address returns the sender address controlled by this manager.
 func (m *Manager) Address() common.Address {
 	return m.from
+}
+
+// SetRequestNoter registers a callback told the JSON-RPC method of every
+// request the manager sends (receipt polls, nonce and fee reads, balance
+// reads, broadcasts), for request accounting. nil disables it.
+func (m *Manager) SetRequestNoter(noter func(method string)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.noter = noter
+}
+
+// note reports one request to the registered noter, if any.
+func (m *Manager) note(method string) {
+	m.mu.Lock()
+	noter := m.noter
+	m.mu.Unlock()
+	if noter != nil {
+		noter(method)
+	}
 }
 
 // SetGasMultiplier sets the headroom applied to estimated gas limits.
@@ -286,6 +309,7 @@ func (m *Manager) WaitTxByHash(hash common.Hash, timeout time.Duration) error {
 			}
 			return fmt.Errorf("timeout waiting for transaction %s", hash.Hex())
 		case <-ticker.C:
+			m.note("eth_getTransactionReceipt")
 			receipt, err := m.clientFn().TransactionReceipt(ctx, hash)
 			switch {
 			case err == nil:
@@ -307,6 +331,7 @@ func (m *Manager) WaitTxByHash(hash common.Hash, timeout time.Duration) error {
 
 // Balance returns the current ETH balance of the managed account.
 func (m *Manager) Balance(ctx context.Context) (*big.Int, error) {
+	m.note("eth_getBalance")
 	return m.clientFn().BalanceAt(ctx, m.from, nil)
 }
 
@@ -334,10 +359,12 @@ func (m *Manager) recordGasSpent(receipt *gethtypes.Receipt) {
 
 // suggestFees returns (gasTipCap, gasFeeCap) for an EIP-1559 transaction.
 func (m *Manager) suggestFees(ctx context.Context) (*big.Int, *big.Int, error) {
+	m.note("eth_maxPriorityFeePerGas")
 	tipCap, err := m.clientFn().SuggestGasTipCap(ctx)
 	if err != nil {
 		tipCap = big.NewInt(1_000_000_000) // 1 gwei fallback
 	}
+	m.note("eth_getBlockByNumber")
 	header, err := m.clientFn().HeaderByNumber(ctx, nil)
 	if err != nil || header.BaseFee == nil {
 		// Legacy chain or no base fee available — just use a high gas price.
@@ -370,10 +397,12 @@ func (m *Manager) retryStuck(ctx context.Context) error {
 	}
 
 	client := m.clientFn()
+	m.note("eth_getTransactionCount")
 	confirmed, err := withTimeout(ctx, func(c context.Context) (uint64, error) { return client.NonceAt(c, m.from, nil) })
 	if err != nil {
 		return fmt.Errorf("confirmed nonce: %w", err)
 	}
+	m.note("eth_getTransactionCount")
 	chainPending, err := withTimeout(ctx, func(c context.Context) (uint64, error) { return client.PendingNonceAt(c, m.from) })
 	if err != nil {
 		return fmt.Errorf("pending nonce: %w", err)
@@ -411,6 +440,7 @@ func (m *Manager) retryStuck(ctx context.Context) error {
 // plain re-broadcast does not, so a stuck transaction still gets bumped on
 // schedule.
 func (m *Manager) resend(ctx context.Context, ptx pendingTx, tx *gethtypes.Transaction, bumped bool) {
+	m.note("eth_sendRawTransaction")
 	if _, err := withTimeout(ctx, func(c context.Context) (struct{}, error) {
 		return struct{}{}, m.clientFn().SendTransaction(c, tx)
 	}); err != nil {
@@ -481,6 +511,7 @@ func (m *Manager) pruneConfirmed(blockNumber *big.Int) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), rpcCallTimeout)
 	defer cancel()
+	m.note("eth_getTransactionCount")
 	confirmed, err := m.clientFn().NonceAt(ctx, m.from, blockNumber)
 	if err != nil {
 		return
@@ -492,6 +523,7 @@ func (m *Manager) pruneConfirmed(blockNumber *big.Int) {
 // pending set against it. Call this when the nonce counter is suspected to
 // be out of sync.
 func (m *Manager) ResetNonce(ctx context.Context) error {
+	m.note("eth_getTransactionCount")
 	nonce, err := m.clientFn().NonceAt(ctx, m.from, nil)
 	if err != nil {
 		return fmt.Errorf("reset nonce: %w", err)

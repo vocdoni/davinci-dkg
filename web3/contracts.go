@@ -251,6 +251,7 @@ func (c *Contracts) callHash(ctx context.Context, contract common.Address, contr
 		return common.Hash{}, fmt.Errorf("pack %s: %w", method, err)
 	}
 
+	c.pool.Note("eth_call")
 	output, err := c.pool.Current().CallContract(ctx, ethereum.CallMsg{
 		To:   &contract,
 		Data: input,

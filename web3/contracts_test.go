@@ -308,7 +308,7 @@ func TestCommitteeSnapshot(t *testing.T) {
 	var epochID [12]byte
 	copy(epochID[:], []byte("epoch-1"))
 
-	keys, err := contracts.CommitteeSnapshot(context.Background(), epochID)
+	keys, err := contracts.CommitteeSnapshot(context.Background(), epochID, 0)
 	c.Assert(err, qt.IsNil)
 	c.Assert(keys, qt.HasLen, 2)
 	c.Assert(keys[0].PubX.Int64(), qt.Equals, int64(1))

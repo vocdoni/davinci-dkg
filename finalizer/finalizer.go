@@ -84,6 +84,7 @@ type CalldataCache interface {
 // all read at the same block so a contribution landing between two reads
 // cannot turn into a missing dealer.
 type snapshot struct {
+	manager    common.Address
 	block      uint64
 	epoch      gtypes.IDKGManagerEpoch
 	committee  []common.Address
@@ -205,7 +206,7 @@ func ProveAndSubmitFinalize(
 	// the head before paying for the transaction. A statement built over a
 	// different accepted set (a reorg during the proof) is stale and must
 	// be rebuilt, not sent.
-	if err := snap.recheck(ctx, m, epochID); err != nil {
+	if err := snap.recheck(ctx, c.Client(), epochID); err != nil {
 		return nil, err
 	}
 
@@ -250,6 +251,10 @@ func ProveAndSubmitFinalize(
 // decoded commitments and assembles the finalization assignment. Any read or
 // decode failure is an error: a dealer silently dropped would prove a
 // statement the contract rejects, or with a forged count, the wrong keys.
+//
+// The reads are pinned to the head observed first and sent as two JSON-RPC
+// batches (epoch and committee, then every member's record) rather than
+// 2 + n single calls; the pinned block is what makes the batch one snapshot.
 func reconstruct(
 	ctx context.Context,
 	c *web3.Contracts,
@@ -261,10 +266,10 @@ func reconstruct(
 	if err != nil {
 		return nil, fmt.Errorf("read head: %w", err)
 	}
-	callOpts := &bind.CallOpts{Context: ctx, BlockNumber: new(big.Int).SetUint64(head)}
-	epoch, err := m.GetEpoch(callOpts, epochID)
+	block := new(big.Int).SetUint64(head)
+	epoch, committee, err := epochAndCommittee(ctx, c.Client(), c.Addresses.Manager, block, epochID)
 	if err != nil {
-		return nil, fmt.Errorf("get epoch at block %d: %w", head, err)
+		return nil, fmt.Errorf("at block %d: %w", head, err)
 	}
 	if epoch.Organizer == (common.Address{}) {
 		return nil, fmt.Errorf("epoch %x does not exist", epochID)
@@ -280,12 +285,12 @@ func reconstruct(
 	if err != nil {
 		return nil, fmt.Errorf("epoch policy: %w", err)
 	}
-	committee, err := m.SelectedParticipants(callOpts, epochID)
-	if err != nil {
-		return nil, fmt.Errorf("selected participants at block %d: %w", head, err)
-	}
 	if len(committee) != int(n) {
 		return nil, fmt.Errorf("committee has %d members, policy says %d", len(committee), n)
+	}
+	records, err := ContributionRecords(ctx, c.Client(), c.Addresses.Manager, block, epochID, committee)
+	if err != nil {
+		return nil, fmt.Errorf("at block %d: %w", head, err)
 	}
 
 	// Bound the event-log scan to blocks since this epoch was created. The
@@ -306,10 +311,7 @@ func reconstruct(
 		ContributionHashes: make([]*big.Int, 0, n),
 	}
 	for i, addr := range committee {
-		rec, err := m.GetContribution(callOpts, epochID, addr)
-		if err != nil {
-			return nil, fmt.Errorf("get contribution of %s at block %d: %w", addr, head, err)
-		}
+		rec := records[i]
 		if !rec.Accepted {
 			continue
 		}
@@ -336,18 +338,35 @@ func reconstruct(
 	if len(asgn.ParticipantIndexes) < int(t) {
 		return nil, fmt.Errorf("only %d/%d accepted contributions", len(asgn.ParticipantIndexes), t)
 	}
-	return &snapshot{block: head, epoch: epoch, committee: committee, assignment: asgn}, nil
+	return &snapshot{manager: c.Addresses.Manager, block: head, epoch: epoch, committee: committee, assignment: asgn}, nil
 }
 
 // recheck re-reads the epoch and every committee member's contribution record
-// at the head and compares them with the snapshot the statement was built
-// from. A finalization that landed meanwhile is ErrAlreadyLive; a different
-// accepted count, a different set of accepted dealers or a dealer whose
-// stored index or commitmentsHash changed is ErrStale, so a proof over a
-// reorged accepted set is never sent.
-func (s *snapshot) recheck(ctx context.Context, m *gtypes.DKGManager, epochID [12]byte) error {
-	callOpts := &bind.CallOpts{Context: ctx}
-	current, err := m.GetEpoch(callOpts, epochID)
+// at the head — one JSON-RPC batch through a web3.BatchCaller — and compares
+// them with the snapshot the statement was built from. A finalization that
+// landed meanwhile is ErrAlreadyLive; a different accepted count, a different
+// set of accepted dealers or a dealer whose stored index or commitmentsHash
+// changed is ErrStale, so a proof over a reorged accepted set is never sent.
+func (s *snapshot) recheck(ctx context.Context, caller bind.ContractCaller, epochID [12]byte) error {
+	parsed, err := managerABI()
+	if err != nil {
+		return err
+	}
+	epochCall, err := managerCall(parsed, s.manager, "getEpoch", epochID)
+	if err != nil {
+		return err
+	}
+	calls := make([]*web3.Call, 0, 1+len(s.committee))
+	calls = append(calls, epochCall)
+	for _, addr := range s.committee {
+		call, err := managerCall(parsed, s.manager, "getContribution", epochID, addr)
+		if err != nil {
+			return err
+		}
+		calls = append(calls, call)
+	}
+	web3.BatchCall(ctx, caller, nil, calls)
+	current, err := unpackCall[gtypes.IDKGManagerEpoch](parsed, "getEpoch", epochCall)
 	if err != nil {
 		return fmt.Errorf("re-read epoch before sending: %w", err)
 	}
@@ -363,7 +382,7 @@ func (s *snapshot) recheck(ctx context.Context, m *gtypes.DKGManager, epochID [1
 	}
 	accepted := 0
 	for i, addr := range s.committee {
-		rec, err := m.GetContribution(callOpts, epochID, addr)
+		rec, err := unpackCall[gtypes.DKGTypesContributionRecord](parsed, "getContribution", calls[i+1])
 		if err != nil {
 			return fmt.Errorf("re-read contribution of %s before sending: %w", addr, err)
 		}
@@ -436,6 +455,112 @@ func dealerTranscript(
 		cache.Put(epochID, dealer, data)
 	}
 	return tr, nil
+}
+
+// managerABI resolves the DKGManager ABI once, for the batched view calls.
+var managerABI = sync.OnceValues(func() (*abi.ABI, error) {
+	parsed, err := gtypes.DKGManagerMetaData.GetAbi()
+	if err != nil {
+		return nil, fmt.Errorf("parse DKGManager ABI: %w", err)
+	}
+	return parsed, nil
+})
+
+// managerCall packs one DKGManager view call for web3.BatchCall.
+func managerCall(parsed *abi.ABI, manager common.Address, method string, args ...any) (*web3.Call, error) {
+	data, err := parsed.Pack(method, args...)
+	if err != nil {
+		return nil, fmt.Errorf("pack %s: %w", method, err)
+	}
+	return &web3.Call{To: manager, Data: data}, nil
+}
+
+// unpackCall decodes the single return value of a batched view call into
+// the abigen type T, exactly as the generated binding does.
+func unpackCall[T any](parsed *abi.ABI, method string, call *web3.Call) (T, error) {
+	var zero T
+	if call.Err != nil {
+		return zero, fmt.Errorf("call %s: %w", method, call.Err)
+	}
+	out, err := parsed.Unpack(method, call.Output)
+	if err != nil {
+		return zero, fmt.Errorf("unpack %s: %w", method, err)
+	}
+	if len(out) != 1 {
+		return zero, fmt.Errorf("unpack %s: %d return values, want 1", method, len(out))
+	}
+	value, ok := abi.ConvertType(out[0], new(T)).(*T)
+	if !ok {
+		return zero, fmt.Errorf("unpack %s: unexpected return type %T", method, out[0])
+	}
+	return *value, nil
+}
+
+// epochAndCommittee reads an epoch's record and its selected participants at
+// `block` (nil = latest) in one batch.
+func epochAndCommittee(
+	ctx context.Context,
+	caller bind.ContractCaller,
+	manager common.Address,
+	block *big.Int,
+	epochID [12]byte,
+) (gtypes.IDKGManagerEpoch, []common.Address, error) {
+	parsed, err := managerABI()
+	if err != nil {
+		return gtypes.IDKGManagerEpoch{}, nil, err
+	}
+	epochCall, err := managerCall(parsed, manager, "getEpoch", epochID)
+	if err != nil {
+		return gtypes.IDKGManagerEpoch{}, nil, err
+	}
+	committeeCall, err := managerCall(parsed, manager, "selectedParticipants", epochID)
+	if err != nil {
+		return gtypes.IDKGManagerEpoch{}, nil, err
+	}
+	web3.BatchCall(ctx, caller, block, []*web3.Call{epochCall, committeeCall})
+	epoch, err := unpackCall[gtypes.IDKGManagerEpoch](parsed, "getEpoch", epochCall)
+	if err != nil {
+		return gtypes.IDKGManagerEpoch{}, nil, fmt.Errorf("get epoch: %w", err)
+	}
+	committee, err := unpackCall[[]common.Address](parsed, "selectedParticipants", committeeCall)
+	if err != nil {
+		return gtypes.IDKGManagerEpoch{}, nil, fmt.Errorf("selected participants: %w", err)
+	}
+	return epoch, committee, nil
+}
+
+// ContributionRecords reads every committee member's contribution record at
+// `block` (nil = latest): one JSON-RPC batch through a web3.BatchCaller, one
+// eth_call per member otherwise. Entry i is member i+1's record, the zero
+// record (Accepted false) for a member that never contributed, exactly as
+// getContribution returns it. Used by the finalizer to pin the accepted set
+// to one block and by committee members rebuilding their private share.
+func ContributionRecords(
+	ctx context.Context,
+	caller bind.ContractCaller,
+	manager common.Address,
+	block *big.Int,
+	epochID [12]byte,
+	committee []common.Address,
+) ([]gtypes.DKGTypesContributionRecord, error) {
+	parsed, err := managerABI()
+	if err != nil {
+		return nil, err
+	}
+	calls := make([]*web3.Call, len(committee))
+	for i, addr := range committee {
+		if calls[i], err = managerCall(parsed, manager, "getContribution", epochID, addr); err != nil {
+			return nil, err
+		}
+	}
+	web3.BatchCall(ctx, caller, block, calls)
+	records := make([]gtypes.DKGTypesContributionRecord, len(committee))
+	for i, call := range calls {
+		if records[i], err = unpackCall[gtypes.DKGTypesContributionRecord](parsed, "getContribution", call); err != nil {
+			return nil, fmt.Errorf("get contribution of %s: %w", committee[i], err)
+		}
+	}
+	return records, nil
 }
 
 // ContributionHash recomputes the dealer's outer Poseidon commitmentsHash

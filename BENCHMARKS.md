@@ -383,3 +383,94 @@ release; the constraint, proving-time and gas tables above predate it.
   and read `gasUsed` from the receipts, e.g. `cast receipt --json <tx> | jq
   .gasUsed`. `forge test --gas-report` gives the same per-function figures
   against mock verifiers, i.e. without the ~250k pairing check.
+
+## RPC calls per tick
+
+Measured by reading the code on 2026-09-05 (v0.5.0, pool keys v4), before and after the
+RPC diet of the same day. The node now counts every JSON-RPC request it issues per method
+(`web3.RPCPool.Note`, exposed as `Snapshot()`) and logs the per-tick average once every 20
+polls, e.g. `rpc calls per tick: eth_call=2.1 eth_getBlockByNumber=1.0 eth_getLogs=1.0`.
+A JSON-RPC batch counts once as `batch` plus once per method it carries; whether a provider
+meters a batch as one request or as its elements depends on the provider (Alchemy and
+Infura meter the elements), so the `batch` line is the HTTP round trips and the method
+lines are what the provider's quota most likely sees.
+
+Assumptions for the two steady states: Sepolia (12 s blocks) polled every 30 s, so about
+2.5 blocks per tick; auto-create on (the default); more than `epochLookback = 8` epochs
+exist; the epoch is young enough for its partial-decryption log range to fit one 10 k-block
+`eth_getLogs` chunk (`k = 1` below; `k` grows by one per 10 k blocks of epoch age). `P` is
+the number of pending ciphertext slots the node is servicing (its partial posted, waiting
+for the combine), `E` the number of distinct Live epochs they belong to.
+
+### Steady state 1: member of a Live epoch, `P` pending slots, a few parked, nothing in flight
+
+| Step | Before (requests per tick) | After |
+|---|---|---|
+| chain head | `eth_blockNumber` ×3 (liveness, auto-create, scan) + `eth_getBlockByNumber` ×1 (service loop, for the timestamp) | `eth_getBlockByNumber` ×1, shared by every step |
+| `maintainLiveness` | `eth_call` ×2 (`getNode`, `INACTIVITY_WINDOW`) | `eth_call` ×1 every 50 blocks (`getNode`; the window is read once) → 0.05 |
+| `maybeScheduleAutoCreate` | `eth_call` ×5 (`nextEpochStartBlock`, `epochNonce`, `EPOCH_PREFIX`, `getEpoch`, `getPoolStatus`) | `eth_call` ×1 (`getPoolStatus` of the Live newest epoch); `nextEpochStartBlock` once per epoch nonce, the prefix once, the epoch nonce shared with the lifecycle, the epoch record cached |
+| lifecycle (`tick`, `epochsToVisit`, `participate`) | `eth_call` ×3 (`epochNonce`, `EPOCH_PREFIX`, `getEpoch` of the closed epoch just outside the window) | `eth_call` ×1 (`epochNonce`) |
+| event scan | `eth_getLogs` ×2 (CiphertextSubmitted, OrganizerSecretRevealed) | `eth_getLogs` ×1 (one filter over both contracts: CiphertextSubmitted, OrganizerSecretRevealed, PartialDecryptionSubmitted, DecryptionCombined) |
+| service loop, per pending slot | `eth_call` ×2 (`getCombinedDecryption`, `getApplication`) + `eth_call` ×1 per epoch (`getEpoch`) + `eth_getLogs` ×`k` (PartialDecryptionSubmitted from the seed block, in `tryCombine`; ×2`k` while a later-wave member still checks whether to post) | none: the epoch and application records are cached for the life of the process, the partials and the combine come from the scan |
+| wallet balance (`logFunds`) | `eth_getBalance` every 10 min → 0.05 | `eth_getBalance` every 20 ticks → 0.05 |
+| **total** | `10 + 2P + E` `eth_call`, `2 + kP` `eth_getLogs`, 3 `eth_blockNumber`, 1 `eth_getBlockByNumber` — **≈ 26 requests per tick at `P = 3`, `E = 1`, `k = 1`** | 2.1 `eth_call`, 1 `eth_getLogs`, 1 `eth_getBlockByNumber` — **≈ 4.1 requests per tick, independent of `P`** |
+
+When no block arrived since the previous complete tick (a poll interval shorter than the
+block time), the tick now costs the one `eth_getBlockByNumber` plus one
+`eth_getTransactionReceipt` per transaction in flight, and nothing else.
+
+### Steady state 2: KeyAssembly, this node selected and contributed, waiting for its finalize slot
+
+Same fleet, the newest epoch in KeyAssembly (so no pool cursor to read), the previous Live
+epoch idle.
+
+| Step | Before | After |
+|---|---|---|
+| chain head | `eth_blockNumber` ×4 (liveness, auto-create, `tryAutoFinalize`, scan) | `eth_getBlockByNumber` ×1 |
+| `maintainLiveness` | `eth_call` ×2 | 0.05 |
+| `maybeScheduleAutoCreate` | `eth_call` ×4 (`nextEpochStartBlock`, `epochNonce`, `EPOCH_PREFIX`, `getEpoch`) | `eth_call` ×1 (`getEpoch` of the KeyAssembly epoch, the tick's one read of it, shared with `participate` and `tryAutoFinalize`) |
+| lifecycle | `eth_call` ×5 (`epochNonce`, `EPOCH_PREFIX`, the walk's `getEpoch`, `participate`'s `getEpoch`, `tryAutoFinalize`'s `getEpoch`) | `eth_call` ×1 (`epochNonce`) |
+| event scan | `eth_getLogs` ×2 | `eth_getLogs` ×1 |
+| **total** | 11 `eth_call`, 2 `eth_getLogs`, 4 `eth_blockNumber` — **≈ 17 requests per tick** | 2.1 `eth_call`, 1 `eth_getLogs`, 1 `eth_getBlockByNumber` — **≈ 4.1 requests per tick** |
+
+### One-off costs
+
+Unchanged unless noted; a transaction is `eth_getTransactionCount`, `eth_getCode`,
+`eth_estimateGas`, `eth_maxPriorityFeePerGas`, `eth_getBlockByNumber`,
+`eth_sendRawTransaction`, one `eth_getTransactionReceipt` per second until mined and one
+`eth_getTransactionCount` on confirmation (bind and the tx manager; the tx manager's
+requests are now counted too).
+
+* Contribution tick: `getContribution` ×1, the CommitteeSnapshot `eth_getLogs` ×1 (its
+  `getEpoch` is gone: the tick already holds the record), the transaction, then one
+  `eth_getBlockByNumber` and one `getEpoch` to refresh the head and the record the
+  finalize check compares against (they replace the per-tick `getEpoch` +
+  `eth_blockNumber` `tryAutoFinalize` used to spend).
+* Finalization (once per epoch per finalizing node): before, `eth_blockNumber` +
+  `getEpoch` + `selectedParticipants` + `n` × `getContribution` at the pinned block, then
+  `getEpoch` + `n` × `getContribution` for the pre-send recheck — 67 requests at `n = 32`.
+  After, the same 67 `eth_call` travel in three JSON-RPC batches (epoch + committee, the
+  records, the recheck), all still pinned to the block read first; the per-dealer calldata
+  recovery (`eth_blockNumber`, `eth_getLogs` ×`k`, `eth_getTransactionByHash`, skipped on
+  a calldata-cache hit) is unchanged.
+* First partial of a node for one (epoch, pool key): the `n` × `getContribution` of the
+  private-share rebuild are one batch; dealer calldata recovery, `getPoolShareRoot`, the
+  finalization calldata recovery and the `getPartialDecryption` pre-check are unchanged.
+* Restart: the lookback scan costs `ceil(lookback / 10 000)` `eth_getLogs` (half of
+  before) plus one application rescan per reveal in the window (same shape as before; its
+  filter now also carries the application's partials and combines).
+* The tx manager's monitor (every 15 s) sends nothing while no transaction is pending, two
+  `eth_getTransactionCount` otherwise.
+
+### What changed (node, web3, finalizer only; no contract or protocol change)
+
+One head read per tick, shared through a tick context; the tick is skipped when the head
+did not advance; one `eth_getLogs` per range for the four event kinds, dispatched by
+topic 0 to the abigen parsers, with the reorg window rebuilt from the fresh logs (recorded
+partials of those blocks are dropped and replayed); Live / Aborted / Completed epoch
+records, application views (replaced when their reveal is seen) and each tracked slot's
+partials are kept in memory; `EPOCH_PREFIX`, `INACTIVITY_WINDOW` and, per epoch nonce,
+`nextEpochStartBlock` are read once; the liveness row is checked every 50 blocks and the
+balance every 20 ticks; the committee's contribution records and the finalizer's pinned
+reads go through `web3.BatchCall`, which falls back to single calls on a backend without
+batch support.

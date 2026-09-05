@@ -10,7 +10,6 @@ import (
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi"
-	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
 	qt "github.com/frankban/quicktest"
@@ -206,7 +205,6 @@ func TestBuildPrivateShareRefusesAndDoesNotCacheACorruptedContribution(t *testin
 	dealer := selected[dealerIdx-1]
 	epoch := epochView{Policy: web3.EpochPolicy{Threshold: 2, CommitteeSize: 3}, SeedBlock: 100}
 	slot := poolSlot{epoch: epochID, key: 0}
-	callOpts := &bind.CallOpts{Context: ctx}
 
 	pi, words, coeffs := dealtContribution(t, epochID, layout, dealerIdx, myIdx, secret)
 	genuine := packContribution(t, epochID, dealerIdx, pi, words)
@@ -253,7 +251,7 @@ func TestBuildPrivateShareRefusesAndDoesNotCacheACorruptedContribution(t *testin
 	// The genuine calldata yields f_{1,0}(myIdx), is cached and becomes d_{0,myIdx}.
 	chain := chainServing(genuine)
 	n, _ := nodeOn(chain)
-	share, err := n.buildPrivateShare(ctx, chain, epochID, 0, myIdx, selected, epoch, callOpts)
+	share, err := n.buildPrivateShare(ctx, chain, epochID, 0, myIdx, selected, epoch)
 	c.Assert(err, qt.IsNil)
 	c.Assert(share.Cmp(want), qt.Equals, 0)
 	c.Assert(n.privateShares[slot], qt.Not(qt.IsNil))
@@ -266,7 +264,7 @@ func TestBuildPrivateShareRefusesAndDoesNotCacheACorruptedContribution(t *testin
 	for name, bad := range map[string][]byte{"masked share": badShare, "commitments": badCommitments} {
 		chain = chainServing(bad)
 		n, dir := nodeOn(chain)
-		_, err = n.buildPrivateShare(ctx, chain, epochID, 0, myIdx, selected, epoch, callOpts)
+		_, err = n.buildPrivateShare(ctx, chain, epochID, 0, myIdx, selected, epoch)
 		c.Assert(err, qt.IsNotNil, qt.Commentf("%s", name))
 		if name == "masked share" {
 			c.Assert(err, qt.ErrorMatches, ".*share does not match commitments.*")
@@ -285,7 +283,7 @@ func TestBuildPrivateShareRefusesAndDoesNotCacheACorruptedContribution(t *testin
 	chain = chainServing(genuine)
 	n, _ = nodeOn(chain)
 	n.contribCache.Put(epochID, dealer, badShare)
-	share, err = n.buildPrivateShare(ctx, chain, epochID, 0, myIdx, selected, epoch, callOpts)
+	share, err = n.buildPrivateShare(ctx, chain, epochID, 0, myIdx, selected, epoch)
 	c.Assert(err, qt.IsNil)
 	c.Assert(share.Cmp(want), qt.Equals, 0)
 	cached, ok = n.contribCache.Get(epochID, dealer)

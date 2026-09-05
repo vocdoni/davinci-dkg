@@ -11,10 +11,12 @@ import (
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi"
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
 	qt "github.com/frankban/quicktest"
 	gtypes "github.com/vocdoni/davinci-dkg/solidity/golang-types"
+	nodetypes "github.com/vocdoni/davinci-dkg/types"
 )
 
 // A ciphertext event can be reorged out after we saw it; re-scanning the
@@ -71,10 +73,12 @@ func TestTrackCiphertextCapsPendingAndDropsOldest(t *testing.T) {
 }
 
 // fakeLogChain is a bind.ContractBackend whose FilterLogs enforces the
-// provider-style range cap and records every range it was asked for.
+// provider-style range cap and records every query (and range) it was asked
+// for.
 type fakeLogChain struct {
-	logs   []ethtypes.Log
-	ranges [][2]uint64
+	logs    []ethtypes.Log
+	ranges  [][2]uint64
+	queries []ethereum.FilterQuery
 }
 
 var errFakeUnsupported = errors.New("fakeLogChain: unsupported")
@@ -82,6 +86,7 @@ var errFakeUnsupported = errors.New("fakeLogChain: unsupported")
 func (f *fakeLogChain) FilterLogs(_ context.Context, q ethereum.FilterQuery) ([]ethtypes.Log, error) {
 	from, to := q.FromBlock.Uint64(), q.ToBlock.Uint64()
 	f.ranges = append(f.ranges, [2]uint64{from, to})
+	f.queries = append(f.queries, q)
 	if to < from || to-from+1 > logRangeBlocks {
 		return nil, fmt.Errorf("fakeLogChain: log range [%d,%d] too wide", from, to)
 	}
@@ -163,48 +168,72 @@ func partialLog(t *testing.T, key ctKey, participant uint16, block uint64) ethty
 	}
 }
 
-// Partial decryptions are read from the event log between the epoch's seed
-// block and head; that span grows with the epoch's age, so it has to be
-// chunked to stay under provider limits, and the scan stops once threshold
-// distinct partials are in hand.
-func TestAcceptedPartialsScansLogsInBoundedChunks(t *testing.T) {
+// bindTestChain wires a test node to a fake backend: the abigen bindings the
+// event parsers and the getApplication read go through, and the log filterer
+// the scan uses.
+func bindTestChain(t *testing.T, n *Node, chain interface {
+	logFilterer
+	bind.ContractBackend
+},
+) {
+	t.Helper()
+	m, err := gtypes.NewDKGManager(common.Address{}, chain)
+	qt.Assert(t, err, qt.IsNil)
+	am, err := gtypes.NewDKGAppManager(common.Address{}, chain)
+	qt.Assert(t, err, qt.IsNil)
+	n.manager, n.appManager, n.logs = m, am, chain
+}
+
+// Partial decryptions are no longer read with a log query per slot per tick:
+// the scan records every PartialDecryptionSubmitted of a tracked slot as it
+// passes, in chain order, and acceptedPartials answers from that record —
+// the first t distinct participants, exactly as the event log would give
+// them, with the block the last of them landed in. Partials of slots the
+// node does not track are not kept, a re-delivered event is not a second
+// partial, and the re-scanned reorg window is rebuilt from fresh logs.
+func TestAcceptedPartialsComeFromTheScanInChainOrder(t *testing.T) {
 	c := qt.New(t)
 	key := ctKey{epoch: [12]byte{1}, aid: [32]byte{2}, idx: 3}
 	other := ctKey{epoch: [12]byte{1}, aid: [32]byte{2}, idx: 4}
-	const seedBlock, head = uint64(1_000), uint64(36_000)
+	const head = uint64(36_000)
 	chain := &fakeLogChain{logs: []ethtypes.Log{
-		partialLog(t, other, 1, 12_000), // different ciphertext slot
-		partialLog(t, key, 2, 12_500),
-		partialLog(t, key, 2, 12_600), // duplicate participant
+		partialLog(t, other, 1, 12_000), // an untracked slot
 		partialLog(t, key, 5, 23_000),
-		partialLog(t, key, 7, 34_000), // beyond threshold, never needed
+		partialLog(t, key, 2, 12_500), // out of order in the response: sorted by block
+		partialLog(t, key, 2, 12_600), // duplicate participant
+		partialLog(t, key, 7, 35_990), // inside the reorg window of the next scan
 	}}
-	m, err := gtypes.NewDKGManager(common.Address{}, chain)
-	c.Assert(err, qt.IsNil)
-	n := &Node{manager: m}
+	n := newTestNode()
+	bindTestChain(t, n, chain)
+	n.lookback = head // the first scan covers the whole history here
+	n.trackCiphertext(key, &ciphertext{block: 12_000})
 
-	idxs, deltas, readyBlock, err := n.acceptedPartials(context.Background(), key, seedBlock, head, 2)
-	c.Assert(err, qt.IsNil)
+	c.Assert(n.scanCiphertexts(context.Background(), head), qt.IsNil)
+	idxs, deltas, readyBlock := n.acceptedPartials(key, 2)
 	c.Assert(idxs, qt.DeepEquals, []uint16{2, 5})
 	c.Assert(deltas, qt.HasLen, 2)
 	c.Assert(deltas[1].X.Int64(), qt.Equals, int64(50))
 	c.Assert(readyBlock, qt.Equals, uint64(23_000))
-
-	c.Assert(chain.ranges[0][0], qt.Equals, seedBlock-1)
-	for i, r := range chain.ranges {
-		c.Assert(r[1]-r[0]+1 <= logRangeBlocks, qt.IsTrue, qt.Commentf("range %d = %v", i, r))
-		if i > 0 {
-			c.Assert(r[0], qt.Equals, chain.ranges[i-1][1]+1)
-		}
-	}
-	last := chain.ranges[len(chain.ranges)-1]
-	c.Assert(last[1] < 34_000, qt.IsTrue, qt.Commentf("scan should stop once threshold partials are found, got %v", chain.ranges))
-
-	chain.ranges = nil
-	idxs, _, _, err = n.acceptedPartials(context.Background(), key, seedBlock, head, 3)
-	c.Assert(err, qt.IsNil)
+	idxs, _, readyBlock = n.acceptedPartials(key, 3)
 	c.Assert(idxs, qt.DeepEquals, []uint16{2, 5, 7})
-	c.Assert(chain.ranges[len(chain.ranges)-1][1], qt.Equals, head)
+	c.Assert(readyBlock, qt.Equals, uint64(35_990))
+	_, untracked := n.partials[other]
+	c.Assert(untracked, qt.IsFalse, qt.Commentf("partials of untracked slots must not be kept"))
+
+	// The next tick re-scans the reorg window: a partial whose block was
+	// reorged out disappears, the rest (older than the window, or still in
+	// the logs) survive once and only once.
+	chain.logs = chain.logs[:4] // participant 7's block is gone
+	c.Assert(n.scanCiphertexts(context.Background(), head+1), qt.IsNil)
+	c.Assert(chain.ranges[len(chain.ranges)-1][0], qt.Equals, scanStart(head, head+1, n.lookback))
+	idxs, _, _ = n.acceptedPartials(key, 3)
+	c.Assert(idxs, qt.DeepEquals, []uint16{2, 5}, qt.Commentf("the window rebuild must drop the reorged partial"))
+	c.Assert(n.partials[key], qt.HasLen, 2)
+
+	// forget drops the record with the slot.
+	n.forget(key)
+	_, kept := n.partials[key]
+	c.Assert(kept, qt.IsFalse)
 }
 
 func TestLaterWaveDueNeedsBothDelayAndStalledProgress(t *testing.T) {
@@ -229,9 +258,10 @@ func TestLaterWaveDueNeedsBothDelayAndStalledProgress(t *testing.T) {
 
 func newTestNode() *Node {
 	return &Node{
-		pending: map[ctKey]*ciphertext{}, parked: map[ctKey]*parkedSlot{},
+		pending: map[ctKey]*ciphertext{}, parked: map[ctKey]*parkedSlot{}, served: map[ctKey]uint64{},
 		partialDone: map[ctKey]bool{}, backoff: map[ctKey]*serviceBackoff{}, inflight: map[ctKey]inflightTx{},
 		combineJobs: map[ctKey]*combineResult{}, taints: map[taintKey]bool{},
+		epochCache: map[[12]byte]epochView{}, apps: map[appKey]appView{}, partials: map[ctKey][]partialRecord{},
 	}
 }
 
@@ -383,11 +413,29 @@ func ciphertextLog(t *testing.T, key ctKey, block uint64) ethtypes.Log {
 	}
 }
 
+func combinedLog(t *testing.T, key ctKey, block uint64) ethtypes.Log {
+	t.Helper()
+	abiJSON, err := gtypes.DKGManagerMetaData.GetAbi()
+	qt.Assert(t, err, qt.IsNil)
+	ev := abiJSON.Events["DecryptionCombined"]
+	topics, err := abi.MakeTopics([]any{ev.ID}, []any{key.epoch}, []any{key.aid}, []any{key.idx})
+	qt.Assert(t, err, qt.IsNil)
+	data, err := ev.Inputs.NonIndexed().Pack([32]byte{0xc0}, big.NewInt(42))
+	qt.Assert(t, err, qt.IsNil)
+	return ethtypes.Log{
+		Address:     common.Address{0xbb},
+		Topics:      []common.Hash{topics[0][0], topics[1][0], topics[2][0], topics[3][0]},
+		Data:        data,
+		BlockNumber: block,
+		TxHash:      common.HexToHash("0xc0ffee"),
+	}
+}
+
 // A node that restarted after a locked application's ciphertexts were parked
 // holds none of them: the reveal event alone — no parked slot — must still
 // rescan the application from its registration block, and a failed rescan
 // must surface so the scan cursor does not advance past the event.
-func TestWakeParkedRescansApplicationsWithoutParkedSlots(t *testing.T) {
+func TestRevealRescansApplicationsWithoutParkedSlots(t *testing.T) {
 	c := qt.New(t)
 	key := ctKey{epoch: [12]byte{7}, aid: [32]byte{9}, idx: 1}
 	chain := &fakeAppChain{app: gtypes.DKGTypesApplication{
@@ -395,31 +443,114 @@ func TestWakeParkedRescansApplicationsWithoutParkedSlots(t *testing.T) {
 		OrganizerPK:     gtypes.DKGTypesPoint{X: big.NewInt(1), Y: big.NewInt(2)},
 		OrganizerSecret: big.NewInt(0),
 		Policy:          gtypes.DKGTypesAppPolicy{Mode: 1, Submitters: []common.Address{}},
-		CreatedAtBlock:  1_000,
+		CreatedAtBlock:  500,
 		Exists:          true,
 	}}
 	chain.logs = []ethtypes.Log{
 		revealLog(t, key.epoch, key.aid, 1_500),
-		ciphertextLog(t, key, 1_200),            // submitted while locked, before the reveal
+		ciphertextLog(t, key, 800),              // submitted while locked, before this node's scan window
 		revealLog(t, key.epoch, key.aid, 3_500), // a second application's reveal, for the failure case
 	}
-	am, err := gtypes.NewDKGAppManager(common.Address{}, chain)
-	c.Assert(err, qt.IsNil)
-	m, err := gtypes.NewDKGManager(common.Address{}, chain)
-	c.Assert(err, qt.IsNil)
 	n := newTestNode()
-	n.appManager = am
-	n.manager = m
+	bindTestChain(t, n, chain)
 	c.Assert(n.parked, qt.HasLen, 0)
 
-	c.Assert(n.wakeParked(context.Background(), 1_000, 2_000, 2_000), qt.IsNil)
+	c.Assert(n.scanRange(context.Background(), 1_000, 2_000, 2_000), qt.IsNil)
 
 	ct, ok := n.pending[key]
 	c.Assert(ok, qt.IsTrue, qt.Commentf("the reveal must rescan the application even with nothing parked"))
 	c.Assert(ct.wakeBlock, qt.Equals, uint64(1_500), qt.Commentf("rescanned slots anchor on the reveal block"))
 	c.Assert(ct.submitter, qt.Equals, common.HexToAddress("0xfeed"))
+	// The rescan's own filter starts at the registration block, is narrowed
+	// to the application and asks for its ciphertexts, partials and combines
+	// at once.
+	rescan := chain.queries[len(chain.queries)-1]
+	c.Assert(rescan.Topics, qt.HasLen, 3)
+	c.Assert(rescan.Topics[0], qt.HasLen, 3)
+	c.Assert(rescan.FromBlock.Uint64(), qt.Equals, uint64(500))
 
 	chain.failCalls = true
-	err = n.wakeParked(context.Background(), 3_000, 4_000, 4_000)
+	err := n.scanRange(context.Background(), 3_000, 4_000, 4_000)
 	c.Assert(err, qt.Not(qt.IsNil), qt.Commentf("a failed rescan must fail the range so the cursor does not advance"))
+}
+
+// One eth_getLogs per range covers every event kind the node acts on:
+// CiphertextSubmitted, OrganizerSecretRevealed, PartialDecryptionSubmitted
+// and DecryptionCombined, over the manager and the app manager together,
+// dispatched by topic 0 to the abigen parsers. Each kind must land where its
+// dedicated filter used to put it: a new slot in pending, a reveal waking
+// the parked slots of its application (and refreshing its cached view), a
+// partial in the slot's record (this node's own marking the partial done),
+// a combine retiring the slot.
+func TestScanRangeDispatchesEveryEventKindFromOneFilter(t *testing.T) {
+	c := qt.New(t)
+	epoch := [12]byte{7}
+	fresh := ctKey{epoch: epoch, aid: [32]byte{1}, idx: 1}
+	locked := ctKey{epoch: epoch, aid: [32]byte{2}, idx: 1}
+	combined := ctKey{epoch: epoch, aid: [32]byte{3}, idx: 1}
+	me := common.HexToAddress("0x0000000000000000000000000000000000000004")
+	chain := &fakeAppChain{app: gtypes.DKGTypesApplication{ // organizer-locked, secret still withheld
+		Creator:         common.HexToAddress("0x1"),
+		OrganizerPK:     gtypes.DKGTypesPoint{X: big.NewInt(1), Y: big.NewInt(2)},
+		OrganizerSecret: big.NewInt(0),
+		Policy:          gtypes.DKGTypesAppPolicy{Mode: uint8(nodetypes.AppModeOrganizerLocked), Submitters: []common.Address{}},
+		CreatedAtBlock:  9_000,
+		Exists:          true,
+	}}
+	chain.logs = []ethtypes.Log{
+		ciphertextLog(t, fresh, 10_010),
+		partialLog(t, fresh, 4, 10_020), // participant 4 is this node
+		partialLog(t, fresh, 6, 10_030),
+		revealLog(t, locked.epoch, locked.aid, 10_040),
+		combinedLog(t, combined, 10_050),
+	}
+	n := newTestNode()
+	n.address = me
+	n.lookback = 1_000
+	bindTestChain(t, n, chain)
+	n.trackCiphertext(locked, &ciphertext{block: 9_500})
+	n.park(locked, 0)
+	n.apps[appKey{epoch: locked.epoch, aid: locked.aid}] = appView{poolIndex: 1}
+	n.trackCiphertext(combined, &ciphertext{block: 9_600})
+	n.inflight[combined] = inflightTx{combine: true}
+
+	c.Assert(n.scanCiphertexts(context.Background(), 10_100), qt.IsNil)
+
+	// One filter for the range, over both contracts, all four signatures.
+	ids, err := eventIDs()
+	c.Assert(err, qt.IsNil)
+	first := chain.queries[0]
+	c.Assert(first.Addresses, qt.HasLen, 2)
+	c.Assert(first.Topics, qt.HasLen, 1)
+	c.Assert(first.Topics[0], qt.DeepEquals, []common.Hash{ids.ciphertext, ids.reveal, ids.partial, ids.combined})
+	c.Assert(first.FromBlock.Uint64(), qt.Equals, uint64(10_100-1_000))
+	c.Assert(first.ToBlock.Uint64(), qt.Equals, uint64(10_100))
+
+	// CiphertextSubmitted → pending, with its partials recorded behind it.
+	ct, ok := n.pending[fresh]
+	c.Assert(ok, qt.IsTrue)
+	c.Assert(ct.block, qt.Equals, uint64(10_010))
+	idxs, _, ready := n.acceptedPartials(fresh, 2)
+	c.Assert(idxs, qt.DeepEquals, []uint16{4, 6})
+	c.Assert(ready, qt.Equals, uint64(10_030))
+	c.Assert(n.partialDone[fresh], qt.IsTrue, qt.Commentf("this node's own partial marks the slot's partial done"))
+
+	// OrganizerSecretRevealed → the parked slot is back in pending, anchored
+	// on the reveal, and the application view was re-read.
+	woken, ok := n.pending[locked]
+	c.Assert(ok, qt.IsTrue, qt.Commentf("the reveal must wake the parked slot"))
+	c.Assert(woken.wakeBlock, qt.Equals, uint64(10_040))
+	c.Assert(n.apps[appKey{epoch: locked.epoch, aid: locked.aid}].createdAt, qt.Equals, uint64(9_000))
+
+	// DecryptionCombined → the slot is retired, in-flight record and all,
+	// and remembered as served.
+	_, stillPending := n.pending[combined]
+	c.Assert(stillPending, qt.IsFalse, qt.Commentf("a combined slot must be retired"))
+	_, stillInflight := n.inflight[combined]
+	c.Assert(stillInflight, qt.IsFalse)
+	c.Assert(n.served[combined], qt.Equals, uint64(10_050))
+
+	// The scan cursor advanced; the next tick re-covers only the window.
+	c.Assert(n.lastCtScan, qt.Equals, uint64(10_100))
+	c.Assert(scanStart(n.lastCtScan, 10_101, n.lookback), qt.Equals, uint64(10_101-reorgDepthBlocks))
 }

@@ -21,6 +21,7 @@ func (c *Contracts) GetCombinedDecryption(
 	if err != nil {
 		return CombinedDecryptionView{}, fmt.Errorf("pack getCombinedDecryption: %w", err)
 	}
+	c.pool.Note("eth_call")
 	output, err := c.pool.Current().CallContract(ctx, ethereum.CallMsg{
 		To:   &c.Addresses.Manager,
 		Data: input,

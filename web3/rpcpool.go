@@ -33,7 +33,47 @@ type RPCPool struct {
 	mu      sync.Mutex
 	entries []*rpcEntry
 	current int
+	stats   rpcStats
 }
+
+// rpcStats counts the JSON-RPC requests sent through the pool, per method,
+// so a long-running node can tell what one poll cycle costs its provider
+// (the node logs the per-tick histogram; see Snapshot). Requests are counted
+// where they are issued, not on the wire: a batch counts once as "batch"
+// plus once per method it carries.
+type rpcStats struct {
+	mu     sync.Mutex
+	counts map[string]uint64
+}
+
+func (s *rpcStats) note(method string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.counts == nil {
+		s.counts = make(map[string]uint64)
+	}
+	s.counts[method]++
+}
+
+func (s *rpcStats) snapshot() map[string]uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make(map[string]uint64, len(s.counts))
+	for method, count := range s.counts {
+		out[method] = count
+	}
+	return out
+}
+
+// Note records one JSON-RPC request of `method` (e.g. "eth_call") issued
+// through the pool. PooledBackend and the Contracts readers call it for
+// every request they send; callers that reach an endpoint some other way
+// can keep the counters honest by calling it themselves.
+func (p *RPCPool) Note(method string) { p.stats.note(method) }
+
+// Snapshot returns a copy of the per-method request counts since the pool
+// was created. Two snapshots some ticks apart give the cost of a tick.
+func (p *RPCPool) Snapshot() map[string]uint64 { return p.stats.snapshot() }
 
 type rpcEntry struct {
 	url        string

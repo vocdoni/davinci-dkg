@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
@@ -74,6 +75,11 @@ type Node struct {
 	registry   *gtypes.DKGRegistry
 	txm        *txmanager.Manager
 	runtimes   circuitRuntimes // the four pinned circuits, loaded once in New
+	// logs serves the one eth_getLogs of a scan over both contracts (see
+	// decrypt.go); managerAddr and appManagerAddr are its address filter.
+	logs           logFilterer
+	managerAddr    common.Address
+	appManagerAddr common.Address
 
 	// per-epoch local state (key generation lifecycle)
 	signaled      map[[12]byte]bool
@@ -121,6 +127,34 @@ type Node struct {
 	// recent early attempt was fired against, so one attempt is made per
 	// registration that drains the pool (or per aborted epoch).
 	autoCreateEarlyPool poolSlot
+	// nextStart caches nextEpochStartBlock() for the epoch nonce it was read
+	// at: the contract derives it from the newest epoch's start block, which
+	// only moves when a new epoch is created (nextStartNonce == 0 means
+	// unread; with no epoch yet the contract answers the current block, so
+	// that case is never cached).
+	nextStart      uint64
+	nextStartNonce uint64
+
+	// per-tick bookkeeping (see tick.go)
+	ticks    uint64 // poll cycles so far, for the every-N-ticks chores
+	lastHead uint64 // head of the last fully processed tick
+	headSeen bool
+	// immutable chain facts, read once
+	epochPrefix       uint32
+	prefixKnown       bool
+	inactivityWindow  uint64
+	windowKnown       bool
+	livenessCheckedAt uint64 // head at the last liveness check (0 = never)
+	// caches of records that never change once written (see tick.go and
+	// decrypt.go): closed epochs, application views, the partials of every
+	// tracked ciphertext slot
+	epochCache map[[12]byte]epochView
+	apps       map[appKey]appView
+	partials   map[ctKey][]partialRecord
+	// rpcSeen is the pool's request counters at the last histogram, taken
+	// at tick rpcSeenAt
+	rpcSeen   map[string]uint64
+	rpcSeenAt uint64
 }
 
 // New constructs a Node from the daemon config.
@@ -139,6 +173,7 @@ func New(cfg *Config) (*Node, error) {
 		return nil, fmt.Errorf("tx manager: %w", err)
 	}
 	txm.SetGasMultiplier(cfg.Web3.GasMultiplier)
+	txm.SetRequestNoter(c.Pool().Note)
 	manager, err := gtypes.NewDKGManager(c.Addresses.Manager, c.PooledBackend())
 	if err != nil {
 		return nil, fmt.Errorf("manager binding: %w", err)
@@ -173,35 +208,41 @@ func New(cfg *Config) (*Node, error) {
 	}
 
 	n := &Node{
-		address:       txm.Address(),
-		bjjSecret:     bjjSecret,
-		contracts:     c,
-		manager:       manager,
-		appManager:    appManager,
-		registry:      registry,
-		txm:           txm,
-		runtimes:      runtimes,
-		signaled:      make(map[[12]byte]bool),
-		contributed:   make(map[[12]byte]bool),
-		finalized:     make(map[[12]byte]bool),
-		terminal:      make(map[[12]byte]bool),
-		privateShares: make(map[poolSlot]*big.Int),
-		ownContribs:   make(map[[12]byte]*savedContrib),
-		selectedCache: make(map[[12]byte][]common.Address),
-		finalizeRetry: make(map[[12]byte]*serviceBackoff),
-		contribCache:  &contributionCache{dir: contributionCacheDir(cfg.Datadir)},
-		lookback:      cfg.DecryptLookbackBlocks,
-		pending:       make(map[ctKey]*ciphertext),
-		parked:        make(map[ctKey]*parkedSlot),
-		partialDone:   make(map[ctKey]bool),
-		served:        make(map[ctKey]uint64),
-		shareProofs:   make(map[poolSlot][][32]byte),
-		taints:        make(map[taintKey]bool),
-		taintFile:     taintPath(cfg.Datadir),
-		backoff:       make(map[ctKey]*serviceBackoff),
-		inflight:      make(map[ctKey]inflightTx),
-		combineJobs:   make(map[ctKey]*combineResult),
-		combineSem:    make(chan struct{}, 1),
+		address:        txm.Address(),
+		bjjSecret:      bjjSecret,
+		contracts:      c,
+		manager:        manager,
+		appManager:     appManager,
+		registry:       registry,
+		txm:            txm,
+		runtimes:       runtimes,
+		logs:           c.PooledBackend(),
+		managerAddr:    c.Addresses.Manager,
+		appManagerAddr: c.Addresses.AppManager,
+		signaled:       make(map[[12]byte]bool),
+		contributed:    make(map[[12]byte]bool),
+		finalized:      make(map[[12]byte]bool),
+		terminal:       make(map[[12]byte]bool),
+		privateShares:  make(map[poolSlot]*big.Int),
+		ownContribs:    make(map[[12]byte]*savedContrib),
+		selectedCache:  make(map[[12]byte][]common.Address),
+		finalizeRetry:  make(map[[12]byte]*serviceBackoff),
+		contribCache:   &contributionCache{dir: contributionCacheDir(cfg.Datadir)},
+		lookback:       cfg.DecryptLookbackBlocks,
+		pending:        make(map[ctKey]*ciphertext),
+		parked:         make(map[ctKey]*parkedSlot),
+		partialDone:    make(map[ctKey]bool),
+		served:         make(map[ctKey]uint64),
+		shareProofs:    make(map[poolSlot][][32]byte),
+		taints:         make(map[taintKey]bool),
+		taintFile:      taintPath(cfg.Datadir),
+		backoff:        make(map[ctKey]*serviceBackoff),
+		inflight:       make(map[ctKey]inflightTx),
+		combineJobs:    make(map[ctKey]*combineResult),
+		combineSem:     make(chan struct{}, 1),
+		epochCache:     make(map[[12]byte]epochView),
+		apps:           make(map[appKey]appView),
+		partials:       make(map[ctKey][]partialRecord),
 	}
 	n.loadTaints()
 	return n, nil
@@ -440,8 +481,14 @@ func (n *Node) EnsureRegistered(ctx context.Context) error {
 	return nil
 }
 
-// maintainLiveness runs on every tick and keeps the node's on-chain liveness
-// row healthy without any operator action:
+// livenessEveryBlocks is how often maintainLiveness reads the node's registry
+// row. The heartbeat fires at 80 % of INACTIVITY_WINDOW (tens of thousands
+// of blocks), so checking every 50 blocks costs nothing in safety margin and
+// one eth_call per 50 blocks instead of two per tick.
+const livenessEveryBlocks = 50
+
+// maintainLiveness keeps the node's on-chain liveness row healthy without any
+// operator action, checking it once every livenessEveryBlocks:
 //
 //  1. If we have drifted above the heartbeat trigger (80% of
 //     INACTIVITY_WINDOW has elapsed since the last refresh) we call
@@ -450,25 +497,30 @@ func (n *Node) EnsureRegistered(ctx context.Context) error {
 //     — e.g. because the reaper ran before our first lucky epoch —
 //     we call reactivate() to rejoin the active set.
 //
-// The method is tolerant of transient RPC errors: anything unexpected is
-// logged at warn and the next tick retries.
-func (n *Node) maintainLiveness(ctx context.Context) {
+// INACTIVITY_WINDOW is a constructor immutable and is read once. The method
+// is tolerant of transient RPC errors: anything unexpected is logged at warn
+// and the next check retries.
+func (n *Node) maintainLiveness(ctx context.Context, tc *tickCtx) {
+	head := tc.head
+	if n.livenessCheckedAt != 0 && head < n.livenessCheckedAt+livenessEveryBlocks {
+		return
+	}
 	callOpts := &bind.CallOpts{Context: ctx}
+	if !n.windowKnown {
+		window, err := n.registry.INACTIVITYWINDOW(callOpts)
+		if err != nil {
+			log.Warnw("liveness: INACTIVITY_WINDOW read failed", "err", err)
+			return
+		}
+		n.inactivityWindow, n.windowKnown = window, true
+	}
+	window := n.inactivityWindow
 	node, err := n.registry.GetNode(callOpts, n.address)
 	if err != nil {
 		log.Warnw("liveness: getNode failed", "err", err)
 		return
 	}
-	window, err := n.registry.INACTIVITYWINDOW(callOpts)
-	if err != nil {
-		log.Warnw("liveness: INACTIVITY_WINDOW read failed", "err", err)
-		return
-	}
-	head, err := n.contracts.Client().BlockNumber(ctx)
-	if err != nil {
-		log.Warnw("liveness: blockNumber read failed", "err", err)
-		return
-	}
+	n.livenessCheckedAt = head
 
 	// Case: we got reaped while running. Rejoin the active set.
 	if node.Status == nodeStatusInactive {
@@ -557,9 +609,6 @@ func (n *Node) Run(ctx context.Context, cfg *Config) {
 	defer n.txm.Stop()
 	ticker := time.NewTicker(cfg.PollInterval)
 	defer ticker.Stop()
-	// Emit balance and gas-spent info every 10 minutes regardless of poll interval.
-	fundsTicker := time.NewTicker(10 * time.Minute)
-	defer fundsTicker.Stop()
 	log.Infow(
 		"node running",
 		"address", n.address,
@@ -570,20 +619,38 @@ func (n *Node) Run(ctx context.Context, cfg *Config) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-fundsTicker.C:
-			n.logFunds(ctx)
 		case <-ticker.C:
-			// Keep our on-chain liveness row healthy before scanning epochs.
-			// This guarantees heartbeat()/reactivate() fire even when there
-			// are no active epochs to participate in.
-			n.maintainLiveness(ctx)
-			if cfg.AutoCreateEpochs {
-				n.maybeScheduleAutoCreate(ctx, cfg)
-			}
-			if err := n.tick(ctx); err != nil {
-				log.Errorw(err, "participation tick")
-			}
+			n.poll(ctx, cfg)
 		}
+	}
+}
+
+// poll is one iteration of Run. It reads the head once and, when a block has
+// arrived since the last complete iteration, runs every subsystem against
+// that head; otherwise nothing on chain can have changed and only the
+// transactions in flight are settled. The informational chores (wallet
+// balance, RPC histogram) run once every choresEveryTicks polls.
+func (n *Node) poll(ctx context.Context, cfg *Config) {
+	n.ticks++
+	tc, err := n.beginTick(ctx, n.contracts.Client())
+	if err != nil {
+		log.Warnw("poll: cannot read the chain head", "err", err)
+	} else if tc == nil {
+		n.settleInflights(ctx)
+	} else {
+		// Keep our on-chain liveness row healthy before scanning epochs.
+		// This guarantees heartbeat()/reactivate() fire even when there
+		// are no active epochs to participate in.
+		n.maintainLiveness(ctx, tc)
+		if err := n.tick(ctx, cfg, tc); err != nil {
+			tc.failed = true
+			log.Errorw(err, "participation tick")
+		}
+		n.endTick(tc)
+	}
+	if n.ticks%choresEveryTicks == 0 {
+		n.logFunds(ctx)
+		n.logRPCStats()
 	}
 }
 
@@ -596,25 +663,23 @@ func (n *Node) Run(ctx context.Context, cfg *Config) {
 // Idempotent within a cadence window: we cache the nextEpochStartBlock()
 // value the most-recent attempt was scheduled against, and skip
 // re-scheduling for the same threshold.
-func (n *Node) maybeScheduleAutoCreate(ctx context.Context, cfg *Config) {
-	callOpts := &bind.CallOpts{Context: ctx}
-	next, err := n.manager.NextEpochStartBlock(callOpts)
+//
+// nextEpochStartBlock() is the newest epoch's start block plus the immutable
+// epoch duration, so it is read once per epoch nonce, not once per tick.
+func (n *Node) maybeScheduleAutoCreate(ctx context.Context, cfg *Config, tc *tickCtx, epochNonce uint64) {
+	next, err := n.nextEpochStart(ctx, epochNonce)
 	if err != nil {
 		log.Warnw("auto-create: read nextEpochStartBlock failed", "err", err)
 		return
 	}
-	currentBlock, err := n.contracts.Pool().Current().BlockNumber(ctx)
-	if err != nil {
-		log.Warnw("auto-create: read block number failed", "err", err)
-		return
-	}
+	currentBlock := tc.head
 	early := false
 	if currentBlock < next {
 		// Not due by the cadence, but the newest epoch may be nearly claimed
 		// out (or dead): the next epoch has to exist before the last key
 		// goes, and the contract allows createEpoch early in exactly those
 		// two cases (docs/pool-keys-v4.md §9).
-		slot, allowed := n.earlyCreateAllowed(ctx)
+		slot, allowed := n.earlyCreateAllowed(ctx, tc, epochNonce)
 		if !allowed || n.autoCreateEarlyPool == slot {
 			return
 		}
@@ -716,23 +781,42 @@ func (n *Node) adaptivePolicy(ctx context.Context, alphaBps uint16) (EpochPolicy
 // Aborted newest epoch (which has no pool cursor to key it by).
 const abortedEpochSlot = 0xff
 
+// nextEpochStart returns nextEpochStartBlock(), cached per epoch nonce: the
+// contract derives it from the newest epoch's start block, which only moves
+// when the nonce does. With no epoch yet the contract answers the current
+// block, so nothing is cached then.
+func (n *Node) nextEpochStart(ctx context.Context, epochNonce uint64) (uint64, error) {
+	if epochNonce != 0 && n.nextStartNonce == epochNonce {
+		return n.nextStart, nil
+	}
+	next, err := n.manager.NextEpochStartBlock(&bind.CallOpts{Context: ctx})
+	if err != nil {
+		return 0, err
+	}
+	if epochNonce != 0 {
+		n.nextStart, n.nextStartNonce = next, epochNonce
+	}
+	return next, nil
+}
+
 // earlyCreateAllowed mirrors the contract's early-creation rule: before the
 // cadence, createEpoch only succeeds when the newest epoch is Live with at
 // most one unclaimed pool key (poolNext ≥ MaxK − 1) or Aborted. It returns
 // the (epoch, poolNext) observation the decision was made against so the
-// early trigger fires once per drain, not once per tick.
-func (n *Node) earlyCreateAllowed(ctx context.Context) (poolSlot, bool) {
-	callOpts := &bind.CallOpts{Context: ctx}
-	nonce, err := n.manager.EpochNonce(callOpts)
-	if err != nil || nonce == 0 {
+// early trigger fires once per drain, not once per tick. The newest epoch's
+// record comes from the tick's reads (or the immutable cache once closed);
+// the only read of its own is the pool cursor of a Live newest epoch, which
+// a registration can move at any time.
+func (n *Node) earlyCreateAllowed(ctx context.Context, tc *tickCtx, nonce uint64) (poolSlot, bool) {
+	if nonce == 0 {
 		return poolSlot{}, false
 	}
-	prefix, err := n.manager.EPOCHPREFIX(callOpts)
+	prefix, err := n.epochPrefixValue(ctx)
 	if err != nil {
 		return poolSlot{}, false
 	}
 	epochID := web3.EpochID(prefix, nonce)
-	epoch, err := n.manager.GetEpoch(callOpts, epochID)
+	epoch, err := n.epoch(ctx, tc, n.contracts, epochID)
 	if err != nil {
 		return poolSlot{}, false
 	}
@@ -740,7 +824,7 @@ func (n *Node) earlyCreateAllowed(ctx context.Context) (poolSlot, bool) {
 	case epochAborted:
 		return poolSlot{epoch: epochID, key: abortedEpochSlot}, true
 	case epochLive:
-		next, err := n.manager.GetPoolStatus(callOpts, epochID)
+		next, err := n.manager.GetPoolStatus(&bind.CallOpts{Context: ctx}, epochID)
 		if err != nil {
 			return poolSlot{}, false
 		}
@@ -799,33 +883,42 @@ type epochReader interface {
 	GetEpoch(ctx context.Context, epochID [12]byte) (web3.EpochView, error)
 }
 
-// tick runs one poll cycle: key-generation lifecycle for the newest epochs,
-// then decryption service for every pending ciphertext.
+// tick runs the chain-facing work of one poll cycle against the tick's
+// head: the auto-create check, the key-generation lifecycle for the newest
+// epochs, the event scan and the decryption service for every pending
+// ciphertext. The epoch nonce is the one read of its own: it is what tells
+// the node a new epoch exists.
 //
 // Live is key-generation-terminal: every pool key and share root is stored
 // by finalizeEpoch, so a Live epoch needs no further lifecycle work and is
 // dropped from the scan at once. Decryption work is discovered from
 // CiphertextSubmitted events instead of by walking epochs, because
-// applications outlive epochs by design.
-func (n *Node) tick(ctx context.Context) error {
-	callOpts := &bind.CallOpts{Context: ctx}
-	epochNonce, err := n.manager.EpochNonce(callOpts)
+// applications outlive epochs by design. Any failed step marks the tick
+// failed so it is repeated at the same head rather than skipped.
+func (n *Node) tick(ctx context.Context, cfg *Config, tc *tickCtx) error {
+	epochNonce, err := n.manager.EpochNonce(&bind.CallOpts{Context: ctx})
 	if err != nil {
 		return fmt.Errorf("epoch nonce: %w", err)
 	}
-	prefix, err := n.manager.EPOCHPREFIX(callOpts)
-	if err != nil {
-		return fmt.Errorf("epoch prefix: %w", err)
+	if cfg.AutoCreateEpochs {
+		n.maybeScheduleAutoCreate(ctx, cfg, tc, epochNonce)
 	}
-	for _, epochID := range n.epochsToVisit(ctx, n.contracts, prefix, epochNonce) {
-		if err := n.participate(ctx, epochID); err != nil {
+	prefix, err := n.epochPrefixValue(ctx)
+	if err != nil {
+		return err
+	}
+	reader := cachingEpochReader{n: n, tc: tc, chain: n.contracts}
+	for _, epochID := range n.epochsToVisit(ctx, reader, prefix, epochNonce) {
+		if err := n.participate(ctx, tc, reader, epochID); err != nil {
+			tc.failed = true
 			log.Warnw("participate failed", "epoch", roundHex(epochID), "err", decodeContractError(err))
 		}
 	}
-	if err := n.scanCiphertexts(ctx); err != nil {
+	if err := n.scanCiphertexts(ctx, tc.head); err != nil {
+		tc.failed = true
 		log.Warnw("ciphertext scan failed", "err", err)
 	}
-	n.serviceCiphertexts(ctx)
+	n.serviceCiphertexts(ctx, tc)
 	return nil
 }
 
@@ -875,8 +968,8 @@ func (n *Node) finish(epochID [12]byte) {
 	delete(n.finalizeRetry, epochID)
 }
 
-func (n *Node) participate(ctx context.Context, epochID [12]byte) error {
-	epoch, err := n.contracts.GetEpoch(ctx, epochID)
+func (n *Node) participate(ctx context.Context, tc *tickCtx, chain epochReader, epochID [12]byte) error {
+	epoch, err := chain.GetEpoch(ctx, epochID)
 	if err != nil {
 		return fmt.Errorf("get epoch: %w", err)
 	}
@@ -885,7 +978,7 @@ func (n *Node) participate(ctx context.Context, epochID [12]byte) error {
 		return nil
 
 	case epochCommitteeSelection: // try to claim a slot in the lottery
-		return n.doClaimSlot(ctx, epochID, epoch)
+		return n.doClaimSlot(ctx, epochID, epoch, tc.head)
 
 	case epochKeyAssembly: // selected participants submit ZK shares,
 		//                  then race on a deterministic stagger to prove and call finalizeEpoch.
@@ -902,13 +995,22 @@ func (n *Node) participate(ctx context.Context, epochID [12]byte) error {
 			n.finish(epochID)
 			return nil
 		}
-		if err := n.doContribution(ctx, epochID, idx, epoch, selected); err != nil {
+		submitted, err := n.doContribution(ctx, epochID, idx, epoch, selected, tc.head)
+		if err != nil {
 			return err
+		}
+		if submitted {
+			// Our own contribution just landed: the record read at the start
+			// of the tick predates it, and so does the head.
+			n.refreshHead(ctx, tc)
+			if epoch, err = n.contracts.GetEpoch(ctx, epochID); err != nil {
+				return fmt.Errorf("get epoch: %w", err)
+			}
 		}
 		// After contributing, every selected participant rotates through a
 		// deterministic finalize stagger so normally one node proves and
 		// submits at a time (any race-loser sees AlreadyLive and stops).
-		if err := n.tryAutoFinalize(ctx, epochID, idx, selected); err != nil {
+		if err := n.tryAutoFinalize(ctx, epochID, idx, selected, epoch, tc.head); err != nil {
 			log.Warnw("auto-finalize attempt failed",
 				"epoch", roundHex(epochID), "err", err)
 		}
@@ -943,19 +1045,16 @@ func (n *Node) participate(ctx context.Context, epochID [12]byte) error {
 // resolved yet (block.number < epoch.SeedBlock), the call will revert with
 // SeedNotReady and we'll retry on the next poll. If the node is not eligible we
 // silently no-op for the rest of the epoch.
-func (n *Node) doClaimSlot(ctx context.Context, epochID [12]byte, epoch web3.EpochView) error {
+func (n *Node) doClaimSlot(ctx context.Context, epochID [12]byte, epoch web3.EpochView, head uint64) error {
 	if n.signaled[epochID] {
 		return nil
 	}
-
-	// Read the current head once; used by all pre-flight checks below.
-	head, headErr := n.contracts.Client().BlockNumber(ctx)
 
 	// Pre-flight: if the seed block hasn't been reached yet, skip this tick silently.
 	// The slot lottery cannot be resolved before the seed is committed; the contract
 	// reverts with SeedNotReady when block.number <= seedBlock. We mirror that
 	// condition exactly (<=) so we never simulate or broadcast at seedBlock itself.
-	if headErr == nil && head > 0 && epoch.SeedBlock > 0 && head <= epoch.SeedBlock {
+	if head > 0 && epoch.SeedBlock > 0 && head <= epoch.SeedBlock {
 		log.Debugw("claim slot: seed block not yet reached — waiting",
 			"epoch", roundHex(epochID),
 			"head", head,
@@ -974,15 +1073,13 @@ func (n *Node) doClaimSlot(ctx context.Context, epochID [12]byte, epoch web3.Epo
 	}
 
 	// Pre-flight: check registration deadline before sending any tx.
-	if headErr == nil {
-		if head >= epoch.Policy.CommitteeSelectionDeadlineBlock {
-			log.Infow("registration deadline already passed — skipping slot claim",
-				"epoch", roundHex(epochID),
-				"head", head,
-				"deadline", epoch.Policy.CommitteeSelectionDeadlineBlock)
-			n.signaled[epochID] = true
-			return nil
-		}
+	if head >= epoch.Policy.CommitteeSelectionDeadlineBlock {
+		log.Infow("registration deadline already passed — skipping slot claim",
+			"epoch", roundHex(epochID),
+			"head", head,
+			"deadline", epoch.Policy.CommitteeSelectionDeadlineBlock)
+		n.signaled[epochID] = true
+		return nil
 	}
 
 	auth, err := n.txm.NewTransactOpts(ctx)
@@ -1031,15 +1128,20 @@ func (n *Node) doClaimSlot(ctx context.Context, epochID [12]byte, epoch web3.Epo
 
 // ---- Contribution ----
 
+// doContribution deals this node's contribution to the epoch unless it
+// already has (locally or on chain). It reports whether a contribution
+// transaction was submitted and mined in this call, so the caller knows the
+// epoch record and head it holds predate it.
 func (n *Node) doContribution(
 	ctx context.Context,
 	epochID [12]byte,
 	idx uint16,
 	epoch web3.EpochView,
 	selected []common.Address,
-) error {
+	head uint64,
+) (bool, error) {
 	if n.contributed[epochID] {
-		return nil
+		return false, nil
 	}
 	n.critical.Add(1)
 	defer n.critical.Add(-1)
@@ -1048,21 +1150,17 @@ func (n *Node) doContribution(
 	if err == nil && rec.Accepted {
 		log.Infow("contribution already accepted on-chain", "epoch", roundHex(epochID))
 		n.contributed[epochID] = true
-		return nil
+		return false, nil
 	}
 
 	// Pre-flight: check contribution deadline before burning time on ZK proof.
-	head, err := n.contracts.Client().BlockNumber(ctx)
-	if err != nil {
-		log.Warnw("doContribution: failed to read block number", "epoch", roundHex(epochID), "err", err)
-		// Proceed optimistically; worst case the tx reverts and we catch it below.
-	} else if head >= epoch.Policy.KeyAssemblyDeadlineBlock {
+	if head >= epoch.Policy.KeyAssemblyDeadlineBlock {
 		log.Warnw("contribution deadline already passed — skipping epoch",
 			"epoch", roundHex(epochID),
 			"head", head,
 			"deadline", epoch.Policy.KeyAssemblyDeadlineBlock)
 		n.contributed[epochID] = true
-		return nil
+		return false, nil
 	}
 
 	// Pre-flight: skip when the epoch already has enough contributions to
@@ -1085,7 +1183,7 @@ func (n *Node) doContribution(
 			"required", epoch.Policy.MinValidContributions,
 		)
 		n.contributed[epochID] = true
-		return nil
+		return false, nil
 	}
 
 	threshold := epoch.Policy.Threshold
@@ -1099,7 +1197,7 @@ func (n *Node) doContribution(
 	for j := range coeffs {
 		keyCoeffs, err := randomScalars(int(threshold))
 		if err != nil {
-			return err
+			return false, err
 		}
 		coeffs[j] = keyCoeffs
 	}
@@ -1112,12 +1210,12 @@ func (n *Node) doContribution(
 	// Deployments that predate the CommitteeSnapshot event never emit it;
 	// fall back to the live registry there, which is exactly what those
 	// contracts hash (no key rotation protection, same as before).
-	snapshot, err := n.contracts.CommitteeSnapshot(ctx, epochID)
+	snapshot, err := n.contracts.CommitteeSnapshot(ctx, epochID, epoch.StartBlock)
 	if err != nil {
 		log.Warnw("committee snapshot unavailable, using live registry keys", "epoch", roundHex(epochID), "err", err)
 		snapshot = nil
 	} else if len(snapshot) != int(committeeSize) {
-		return fmt.Errorf("committee snapshot has %d members, want %d", len(snapshot), committeeSize)
+		return false, fmt.Errorf("committee snapshot has %d members, want %d", len(snapshot), committeeSize)
 	}
 	recipientIdxs := make([]uint16, committeeSize)
 	recipientKeys := make([]nodetypes.NodeKey, committeeSize)
@@ -1130,7 +1228,7 @@ func (n *Node) doContribution(
 		}
 		nd, err := n.contracts.GetNode(ctx, selected[i])
 		if err != nil {
-			return fmt.Errorf("get node key idx=%d: %w", i+1, err)
+			return false, fmt.Errorf("get node key idx=%d: %w", i+1, err)
 		}
 		recipientKeys[i] = nodetypes.NodeKey{Operator: selected[i], PubX: nd.PubX, PubY: nd.PubY}
 	}
@@ -1140,7 +1238,7 @@ func (n *Node) doContribution(
 	// anyone unmask every share from calldata.
 	nonces, err := randomScalars(int(committeeSize))
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	log.Infow(
@@ -1165,32 +1263,32 @@ func (n *Node) doContribution(
 	}
 	witness, pi, err := contribution.BuildWitness(asgn)
 	if err != nil {
-		return fmt.Errorf("build contribution witness: %w", err)
+		return false, fmt.Errorf("build contribution witness: %w", err)
 	}
 	proof, err := n.runtimes.contribution.ProveAndVerify(witness)
 	if err != nil {
-		return fmt.Errorf("prove contribution: %w", err)
+		return false, fmt.Errorf("prove contribution: %w", err)
 	}
 	proofBytes, err := marshalSolidityProof(proof)
 	if err != nil {
-		return fmt.Errorf("marshal contribution proof: %w", err)
+		return false, fmt.Errorf("marshal contribution proof: %w", err)
 	}
 	inputBytes, err := encodePublicWitness(pi.PublicWitness())
 	if err != nil {
-		return fmt.Errorf("encode contribution public witness: %w", err)
+		return false, fmt.Errorf("encode contribution public witness: %w", err)
 	}
 	transcriptScalars, err := pi.TranscriptScalars()
 	if err != nil {
-		return fmt.Errorf("contribution transcript scalars: %w", err)
+		return false, fmt.Errorf("contribution transcript scalars: %w", err)
 	}
 	transcriptBytes, err := encodeWords(transcriptScalars...)
 	if err != nil {
-		return fmt.Errorf("encode contribution transcript: %w", err)
+		return false, fmt.Errorf("encode contribution transcript: %w", err)
 	}
 
 	auth, err := n.txm.NewTransactOpts(ctx)
 	if err != nil {
-		return fmt.Errorf("tx opts for contribution: %w", err)
+		return false, fmt.Errorf("tx opts for contribution: %w", err)
 	}
 	tx, err := n.manager.SubmitContribution(
 		auth, epochID, idx,
@@ -1205,14 +1303,14 @@ func (n *Node) doContribution(
 			log.Infow("contribution already on-chain (benign race) — skipping",
 				"epoch", roundHex(epochID))
 			n.contributed[epochID] = true
-			return nil
+			return false, nil
 		}
 		if isPermanentRevert(err) {
 			log.Warnw("contribution tx permanently rejected — will not retry this epoch",
 				"epoch", roundHex(epochID), "err", decodeContractError(err))
 			n.contributed[epochID] = true
 		}
-		return fmt.Errorf("submit contribution: %w", err)
+		return false, fmt.Errorf("submit contribution: %w", err)
 	}
 	n.txm.RecordPending(tx)
 	if err := n.txm.WaitTxByHash(tx.Hash(), 120*time.Second); err != nil {
@@ -1220,14 +1318,14 @@ func (n *Node) doContribution(
 			log.Infow("contribution already on-chain (benign race) — skipping",
 				"epoch", roundHex(epochID))
 			n.contributed[epochID] = true
-			return nil
+			return false, nil
 		}
 		if isPermanentRevert(err) {
 			log.Warnw("contribution tx reverted on-chain — will not retry this epoch",
 				"epoch", roundHex(epochID), "err", decodeContractError(err))
 			n.contributed[epochID] = true
 		}
-		return fmt.Errorf("wait contribution tx: %w", err)
+		return false, fmt.Errorf("wait contribution tx: %w", err)
 	}
 	n.contributed[epochID] = true
 	n.ownContribs[epochID] = &savedContrib{
@@ -1240,7 +1338,7 @@ func (n *Node) doContribution(
 		gasUsed = rec.GasUsed
 	}
 	log.Infow("contribution submitted", "epoch", roundHex(epochID), "index", idx, "tx", tx.Hash().Hex(), "gas", gasUsed)
-	return nil
+	return true, nil
 }
 
 // ---- Auto-finalize (deterministic stagger across selected participants) ----
@@ -1265,22 +1363,21 @@ const staggerBlocks = 3
 // to the next tick. A failed attempt (anything but a lost race) is retried
 // with an exponential per-epoch backoff: the proof is expensive, so a
 // persistent fault must not cost one per tick, while a transient RPC or
-// transaction hiccup is retried soon.
+// transaction hiccup is retried soon. epoch and head are the tick's reads
+// (the caller refreshes both when its own contribution landed in this tick).
 func (n *Node) tryAutoFinalize(
 	ctx context.Context,
 	epochID [12]byte,
 	myIdx uint16,
 	selected []common.Address,
+	epoch web3.EpochView,
+	head uint64,
 ) error {
 	if n.finalized[epochID] {
 		return nil
 	}
 	if b := n.finalizeRetry[epochID]; b != nil && !b.due() {
 		return nil
-	}
-	epoch, err := n.contracts.GetEpoch(ctx, epochID)
-	if err != nil {
-		return fmt.Errorf("get epoch: %w", err)
 	}
 	if epoch.Status != epochKeyAssembly { // not in KeyAssembly any more — Live, aborted, etc.
 		n.finalized[epochID] = true
@@ -1296,11 +1393,6 @@ func (n *Node) tryAutoFinalize(
 	}
 	mySlot := staggerSlot(epoch.Seed, 0, myIdx, committeeSize)
 	waitUntil := epoch.Policy.LiveNotBeforeBlock + mySlot*staggerBlocks
-
-	head, err := n.contracts.Client().BlockNumber(ctx)
-	if err != nil {
-		return fmt.Errorf("read head: %w", err)
-	}
 	if head < waitUntil {
 		return nil // not our turn yet; another tick will retry
 	}
@@ -1364,16 +1456,16 @@ func (n *Node) tryAutoFinalize(
 // The calldata scan starts at the epoch's seed block, which keeps it tight
 // while still capturing contributions that arrive during the registration
 // phase (nodes can contribute immediately after claiming a slot, which is
-// only possible from seedBlock onward).
+// only possible from seedBlock onward). The committee's contribution records
+// are read in one JSON-RPC batch.
 func (n *Node) buildPrivateShare(
 	ctx context.Context,
-	client calldataReader,
+	client shareChain,
 	epochID [12]byte,
 	keyIndex uint8,
 	myIdx uint16,
 	selected []common.Address,
 	epoch epochView,
-	callOpts *bind.CallOpts,
 ) (*big.Int, error) {
 	slot := poolSlot{epoch: epochID, key: keyIndex}
 	if s, ok := n.privateShares[slot]; ok {
@@ -1386,14 +1478,15 @@ func (n *Node) buildPrivateShare(
 		return nil, fmt.Errorf("epoch policy: %w", err)
 	}
 
+	records, err := finalizer.ContributionRecords(ctx, client, n.managerAddr, nil, epochID, selected)
+	if err != nil {
+		return nil, err
+	}
 	shares := make([]*big.Int, 0, len(selected))
 	expected := 0
 	for i, addr := range selected {
 		contribIdx := uint16(i + 1)
-		rec, err := n.manager.GetContribution(callOpts, epochID, addr)
-		if err != nil {
-			return nil, fmt.Errorf("get contribution of %s: %w", addr.Hex(), err)
-		}
+		rec := records[i]
 		if !rec.Accepted {
 			continue
 		}
@@ -1469,6 +1562,20 @@ func sumRecoveredShares(shares []*big.Int, expected int) (*big.Int, error) {
 type calldataReader interface {
 	BlockNumber(ctx context.Context) (uint64, error)
 	TransactionByHash(ctx context.Context, hash common.Hash) (*ethtypes.Transaction, bool, error)
+}
+
+// logFilterer is the slice of the chain client the event scan needs;
+// *web3.PooledBackend implements it.
+type logFilterer interface {
+	FilterLogs(ctx context.Context, q ethereum.FilterQuery) ([]ethtypes.Log, error)
+}
+
+// shareChain is what rebuilding a private share needs from the chain: the
+// committee's contribution records (one batched eth_call through
+// web3.BatchCall) and each dealer's calldata; *web3.PooledBackend implements it.
+type shareChain interface {
+	calldataReader
+	bind.ContractCaller
 }
 
 // recoverShareFrom fetches the submitContribution tx calldata for `contributor`

@@ -5,10 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ethereum/go-ethereum"
+	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	gethtypes "github.com/ethereum/go-ethereum/core/types"
@@ -19,6 +22,7 @@ import (
 	"github.com/vocdoni/davinci-dkg/crypto/group"
 	"github.com/vocdoni/davinci-dkg/finalizer"
 	"github.com/vocdoni/davinci-dkg/log"
+	gtypes "github.com/vocdoni/davinci-dkg/solidity/golang-types"
 	nodetypes "github.com/vocdoni/davinci-dkg/types"
 )
 
@@ -117,20 +121,17 @@ func scanStart(lastScan, head, lookback uint64) uint64 {
 	return 0
 }
 
-// scanCiphertexts pulls every CiphertextSubmitted event since the last scan
-// (or since head-lookback on first run) into the pending set.
-func (n *Node) scanCiphertexts(ctx context.Context) error {
-	head, err := n.contracts.Client().BlockNumber(ctx)
-	if err != nil {
-		return fmt.Errorf("head: %w", err)
-	}
+// scanCiphertexts pulls every event the decryption service acts on since the
+// last scan (or since head−lookback on first run): CiphertextSubmitted,
+// OrganizerSecretRevealed, PartialDecryptionSubmitted and DecryptionCombined,
+// with one eth_getLogs per range over both contracts (see scanRange). The
+// tail of the previous scan is re-covered by reorgDepthBlocks and rebuilt
+// from the fresh logs, so every kind of event is reorg-checked the same way.
+func (n *Node) scanCiphertexts(ctx context.Context, head uint64) error {
 	from := scanStart(n.lastCtScan, head, n.lookback)
 	for start := from; start <= head; start += logRangeBlocks {
 		end := min(start+logRangeBlocks-1, head)
-		if err := n.discoverCiphertexts(ctx, nil, nil, start, end); err != nil {
-			return err
-		}
-		if err := n.wakeParked(ctx, start, end, head); err != nil {
+		if err := n.scanRange(ctx, start, end, head); err != nil {
 			return err
 		}
 		n.lastCtScan = end
@@ -144,39 +145,244 @@ func (n *Node) scanCiphertexts(ctx context.Context) error {
 	return nil
 }
 
-// discoverCiphertexts pulls the CiphertextSubmitted events of [start, end]
-// (optionally narrowed to one epoch / application) into the pending set,
-// skipping slots the node already tracks or has finished.
-func (n *Node) discoverCiphertexts(ctx context.Context, epochs [][12]byte, aids [][32]byte, start, end uint64) error {
-	it, err := n.manager.FilterCiphertextSubmitted(&bind.FilterOpts{Context: ctx, Start: start, End: &end}, epochs, aids, nil)
+// scanEventIDs are the topic-0 hashes of the four events the scan reads.
+type scanEventIDs struct {
+	ciphertext, reveal, partial, combined common.Hash
+}
+
+var eventIDs = sync.OnceValues(func() (scanEventIDs, error) {
+	managerABI, err := gtypes.DKGManagerMetaData.GetAbi()
 	if err != nil {
-		return fmt.Errorf("filter CiphertextSubmitted [%d,%d]: %w", start, end, err)
+		return scanEventIDs{}, fmt.Errorf("parse DKGManager ABI: %w", err)
 	}
-	defer func() { _ = it.Close() }()
-	for it.Next() {
-		ev := it.Event
-		key := ctKey{ev.EpochId, ev.Aid, ev.CiphertextIndex}
-		if _, seen := n.pending[key]; seen {
-			continue
-		}
-		if _, parked := n.parked[key]; parked {
-			continue
-		}
-		if _, done := n.served[key]; done {
-			continue
-		}
-		n.trackCiphertext(key, &ciphertext{
-			c1:        nodetypes.CurvePoint{X: new(big.Int).Set(ev.C1x), Y: new(big.Int).Set(ev.C1y)},
-			c2:        nodetypes.CurvePoint{X: new(big.Int).Set(ev.C2x), Y: new(big.Int).Set(ev.C2y)},
-			submitter: ev.Submitter,
-			block:     ev.Raw.BlockNumber,
-		})
-		log.Infow("ciphertext discovered", "ct", key.String(), "block", ev.Raw.BlockNumber)
+	appABI, err := gtypes.DKGAppManagerMetaData.GetAbi()
+	if err != nil {
+		return scanEventIDs{}, fmt.Errorf("parse DKGAppManager ABI: %w", err)
 	}
-	if err := it.Error(); err != nil {
-		return fmt.Errorf("iterate CiphertextSubmitted: %w", err)
+	return scanEventIDs{
+		ciphertext: managerABI.Events["CiphertextSubmitted"].ID,
+		reveal:     appABI.Events["OrganizerSecretRevealed"].ID,
+		partial:    managerABI.Events["PartialDecryptionSubmitted"].ID,
+		combined:   managerABI.Events["DecryptionCombined"].ID,
+	}, nil
+})
+
+// scanRange reads every scan event of [start, end] in one eth_getLogs — one
+// filter over the manager and the app manager with the four signatures as
+// alternatives in topic 0 — drops the partials the range held (it is the
+// re-scanned reorg window, or a range never seen) and replays the fresh
+// logs. An error leaves the cursor where it was, so the range is retried.
+func (n *Node) scanRange(ctx context.Context, start, end, head uint64) error {
+	ids, err := eventIDs()
+	if err != nil {
+		return err
+	}
+	logs, err := n.filterEvents(ctx, start, end, nil, nil, ids.ciphertext, ids.reveal, ids.partial, ids.combined)
+	if err != nil {
+		return err
+	}
+	n.dropPartialsFrom(start)
+	return n.applyEvents(ctx, logs, head)
+}
+
+// filterEvents is the one eth_getLogs of a scan: the events whose signatures
+// are given, from either contract, in [start, end], optionally narrowed to
+// one epoch and application (the first two indexed arguments every scanned
+// manager event shares). Logs come back in chain order.
+func (n *Node) filterEvents(
+	ctx context.Context,
+	start, end uint64,
+	epochs [][12]byte,
+	aids [][32]byte,
+	signatures ...common.Hash,
+) ([]gethtypes.Log, error) {
+	query := make([][]any, 0, 3)
+	sigs := make([]any, len(signatures))
+	for i, sig := range signatures {
+		sigs[i] = sig
+	}
+	query = append(query, sigs)
+	if len(epochs) > 0 || len(aids) > 0 {
+		epochTopics := make([]any, len(epochs))
+		for i, e := range epochs {
+			epochTopics[i] = e
+		}
+		aidTopics := make([]any, len(aids))
+		for i, a := range aids {
+			aidTopics[i] = a
+		}
+		query = append(query, epochTopics, aidTopics)
+	}
+	topics, err := abi.MakeTopics(query...)
+	if err != nil {
+		return nil, fmt.Errorf("event topics: %w", err)
+	}
+	logs, err := n.logs.FilterLogs(ctx, ethereum.FilterQuery{
+		Addresses: []common.Address{n.managerAddr, n.appManagerAddr},
+		Topics:    topics,
+		FromBlock: new(big.Int).SetUint64(start),
+		ToBlock:   new(big.Int).SetUint64(end),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("filter events [%d,%d]: %w", start, end, err)
+	}
+	sort.SliceStable(logs, func(i, j int) bool {
+		if logs[i].BlockNumber != logs[j].BlockNumber {
+			return logs[i].BlockNumber < logs[j].BlockNumber
+		}
+		return logs[i].Index < logs[j].Index
+	})
+	return logs, nil
+}
+
+// applyEvents dispatches one range's logs by topic 0, a kind at a time in
+// chain order: every ciphertext is tracked first, then the partials are
+// recorded (their slots are tracked by now) and the combines retire theirs,
+// and last every reveal wakes and rescans its application — last because a
+// rescan is the one step that can fail, and the range's partials must be
+// back in the record before it does (the rescan fetches its own
+// application's history, so nothing it would have found is lost to the
+// order). Logs of a kind the node does not read are ignored.
+func (n *Node) applyEvents(ctx context.Context, logs []gethtypes.Log, head uint64) error {
+	ids, err := eventIDs()
+	if err != nil {
+		return err
+	}
+	byKind := func(kind common.Hash) []gethtypes.Log {
+		var out []gethtypes.Log
+		for _, l := range logs {
+			if len(l.Topics) > 0 && l.Topics[0] == kind {
+				out = append(out, l)
+			}
+		}
+		return out
+	}
+	for _, l := range byKind(ids.ciphertext) {
+		ev, err := n.manager.ParseCiphertextSubmitted(l)
+		if err != nil {
+			return fmt.Errorf("parse CiphertextSubmitted: %w", err)
+		}
+		n.discoverCiphertext(ev)
+	}
+	for _, l := range byKind(ids.partial) {
+		ev, err := n.manager.ParsePartialDecryptionSubmitted(l)
+		if err != nil {
+			return fmt.Errorf("parse PartialDecryptionSubmitted: %w", err)
+		}
+		n.notePartial(ev)
+	}
+	for _, l := range byKind(ids.combined) {
+		ev, err := n.manager.ParseDecryptionCombined(l)
+		if err != nil {
+			return fmt.Errorf("parse DecryptionCombined: %w", err)
+		}
+		n.retire(ctKey{ev.EpochId, ev.Aid, ev.CiphertextIndex}, ev.Plaintext, ev.Raw)
+	}
+	for _, l := range byKind(ids.reveal) {
+		ev, err := n.appManager.ParseOrganizerSecretRevealed(l)
+		if err != nil {
+			return fmt.Errorf("parse OrganizerSecretRevealed: %w", err)
+		}
+		if err := n.organizerRevealed(ctx, ev, head); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+// discoverCiphertext adds a CiphertextSubmitted event's slot to the pending
+// set unless the node already tracks it or has finished with it.
+func (n *Node) discoverCiphertext(ev *gtypes.DKGManagerCiphertextSubmitted) {
+	key := ctKey{ev.EpochId, ev.Aid, ev.CiphertextIndex}
+	if n.tracked(key) {
+		return
+	}
+	if _, done := n.served[key]; done {
+		return
+	}
+	n.trackCiphertext(key, &ciphertext{
+		c1:        nodetypes.CurvePoint{X: new(big.Int).Set(ev.C1x), Y: new(big.Int).Set(ev.C1y)},
+		c2:        nodetypes.CurvePoint{X: new(big.Int).Set(ev.C2x), Y: new(big.Int).Set(ev.C2y)},
+		submitter: ev.Submitter,
+		block:     ev.Raw.BlockNumber,
+	})
+	log.Infow("ciphertext discovered", "ct", key.String(), "block", ev.Raw.BlockNumber)
+}
+
+// tracked reports whether the slot is pending or parked: the slots whose
+// partials the node records.
+func (n *Node) tracked(key ctKey) bool {
+	if _, ok := n.pending[key]; ok {
+		return true
+	}
+	_, ok := n.parked[key]
+	return ok
+}
+
+// partialRecord is one PartialDecryptionSubmitted event of a tracked slot,
+// kept in chain order so the first t of them are the same t the contract's
+// event log would give.
+type partialRecord struct {
+	index uint16
+	delta nodetypes.CurvePoint
+	block uint64
+}
+
+// notePartial records a partial for a tracked slot (a slot the node does not
+// track has no use for it; a participant seen before is a re-delivered
+// event). A partial of this node's own marks the slot's partial as done,
+// which after a restart spares the on-chain lookup.
+func (n *Node) notePartial(ev *gtypes.DKGManagerPartialDecryptionSubmitted) {
+	key := ctKey{ev.EpochId, ev.Aid, ev.CiphertextIndex}
+	if !n.tracked(key) {
+		return
+	}
+	for _, rec := range n.partials[key] {
+		if rec.index == ev.ParticipantIndex {
+			return
+		}
+	}
+	n.partials[key] = append(n.partials[key], partialRecord{
+		index: ev.ParticipantIndex,
+		delta: nodetypes.CurvePoint{X: new(big.Int).Set(ev.DeltaX), Y: new(big.Int).Set(ev.DeltaY)},
+		block: ev.Raw.BlockNumber,
+	})
+	if ev.Participant == n.address {
+		n.partialDone[key] = true
+	}
+}
+
+// dropPartialsFrom forgets every recorded partial from `block` on: the scan
+// is about to replay those blocks, and a partial in a block that was reorged
+// out must not survive the replay.
+func (n *Node) dropPartialsFrom(block uint64) {
+	for key, recs := range n.partials {
+		kept := recs[:0]
+		for _, rec := range recs {
+			if rec.block < block {
+				kept = append(kept, rec)
+			}
+		}
+		if len(kept) == 0 {
+			delete(n.partials, key)
+			continue
+		}
+		n.partials[key] = kept
+	}
+}
+
+// retire drops a slot the chain reports combined (its DecryptionCombined
+// event), remembering it as served so the re-scan window does not rediscover
+// it. Slots the node never tracked are remembered too; the outcome is logged
+// for the slots this node worked on (posted a partial, or has a combine in
+// flight), so a restart replaying a week of other committees' combines
+// stays quiet.
+func (n *Node) retire(key ctKey, plaintext *big.Int, raw gethtypes.Log) {
+	if _, inflight := n.inflight[key]; inflight || n.partialDone[key] {
+		log.Infow("decryption combined on chain", "ct", key.String(), "plaintext", plaintext.String(), "tx", raw.TxHash.Hex())
+	}
+	n.forget(key)
+	n.served[key] = raw.BlockNumber
 }
 
 // trackCiphertext adds a slot to the pending set, evicting the oldest entry
@@ -242,51 +448,52 @@ func (n *Node) wake(key ctKey, p *parkedSlot, wakeBlock uint64) {
 	n.pending[key] = p.ct
 }
 
-// wakeParked processes every OrganizerSecretRevealed event of [start, end]:
-// it returns to the pending set every parked slot of the revealed
-// application and rescans the application's ciphertexts from its
-// registration block. The rescan runs whether or not a slot of that
-// application is parked — a node restarted since the ciphertexts were parked
-// holds none of them, and they may be older than its lookback window. A
-// failed rescan is returned as an error so scanCiphertexts does not advance
-// its cursor past the range: the next tick retries the same events.
-func (n *Node) wakeParked(ctx context.Context, start, end, head uint64) error {
-	it, err := n.appManager.FilterOrganizerSecretRevealed(&bind.FilterOpts{Context: ctx, Start: start, End: &end}, nil, nil)
-	if err != nil {
-		return fmt.Errorf("filter OrganizerSecretRevealed [%d,%d]: %w", start, end, err)
-	}
-	defer func() { _ = it.Close() }()
-	for it.Next() {
-		ev := it.Event
-		for key, p := range n.parked {
-			if key.epoch != ev.EpochId || key.aid != ev.Aid {
-				continue
-			}
-			n.wake(key, p, ev.Raw.BlockNumber)
-			log.Infow("organizer secret revealed — resuming the slot", "ct", key.String(), "block", ev.Raw.BlockNumber)
+// organizerRevealed processes one OrganizerSecretRevealed event: it returns
+// to the pending set every parked slot of the revealed application and
+// rescans the application's ciphertexts from its registration block. The
+// rescan runs whether or not a slot of that application is parked — a node
+// restarted since the ciphertexts were parked holds none of them, and they
+// may be older than its lookback window. A failed rescan is returned as an
+// error so scanCiphertexts does not advance its cursor past the range: the
+// next tick retries the same events.
+func (n *Node) organizerRevealed(ctx context.Context, ev *gtypes.DKGAppManagerOrganizerSecretRevealed, head uint64) error {
+	for key, p := range n.parked {
+		if key.epoch != ev.EpochId || key.aid != ev.Aid {
+			continue
 		}
-		if err := n.rescanApplication(ctx, ev.EpochId, ev.Aid, ev.Raw.BlockNumber, head); err != nil {
-			return fmt.Errorf("rescan of the revealed application %x: %w", ev.Aid[:4], err)
-		}
+		n.wake(key, p, ev.Raw.BlockNumber)
+		log.Infow("organizer secret revealed — resuming the slot", "ct", key.String(), "block", ev.Raw.BlockNumber)
 	}
-	if err := it.Error(); err != nil {
-		return fmt.Errorf("iterate OrganizerSecretRevealed: %w", err)
+	if err := n.rescanApplication(ctx, ev.EpochId, ev.Aid, ev.Raw.BlockNumber, head); err != nil {
+		return fmt.Errorf("rescan of the revealed application %x: %w", ev.Aid[:4], err)
 	}
 	return nil
 }
 
 // rescanApplication pulls every ciphertext of (epoch, aid) since the
 // application's registration block into the pending set, anchored on
-// wakeBlock, so nothing submitted while the slot was parked is missed.
+// wakeBlock, so nothing submitted while the slot was parked is missed —
+// along with the partials and combines of those slots, so their history is
+// as complete as that of a slot found by the running scan. The application
+// record is re-read (the reveal just changed it) and cached for the service
+// loop.
 func (n *Node) rescanApplication(ctx context.Context, epochID [12]byte, aid [32]byte, wakeBlock, head uint64) error {
-	rec, err := n.appManager.GetApplication(&bind.CallOpts{Context: ctx}, epochID, aid)
+	app, err := n.readApplication(ctx, appKey{epoch: epochID, aid: aid})
 	if err != nil {
-		return fmt.Errorf("get application: %w", err)
+		return err
+	}
+	ids, err := eventIDs()
+	if err != nil {
+		return err
 	}
 	seqBefore := n.ctSeq
-	for start := rec.CreatedAtBlock; start <= head; start += logRangeBlocks {
+	for start := app.createdAt; start <= head; start += logRangeBlocks {
 		end := min(start+logRangeBlocks-1, head)
-		if err := n.discoverCiphertexts(ctx, [][12]byte{epochID}, [][32]byte{aid}, start, end); err != nil {
+		logs, err := n.filterEvents(ctx, start, end, [][12]byte{epochID}, [][32]byte{aid}, ids.ciphertext, ids.partial, ids.combined)
+		if err != nil {
+			return err
+		}
+		if err := n.applyEvents(ctx, logs, head); err != nil {
 			return err
 		}
 	}
@@ -327,6 +534,7 @@ func (n *Node) forget(key ctKey) {
 	delete(n.backoff, key)
 	delete(n.inflight, key)
 	delete(n.parked, key)
+	delete(n.partials, key)
 	n.jobsMu.Lock()
 	delete(n.combineJobs, key)
 	n.jobsMu.Unlock()
@@ -399,21 +607,12 @@ func (n *Node) settleInflight(ctx context.Context, key ctKey, fl inflightTx) (pe
 	return false, false, nil
 }
 
-// tickCache memoises the chain reads shared by every pending ciphertext
-// within one tick: one head and one getEpoch per epoch instead of one per
-// slot.
-type tickCache struct {
-	head     uint64
-	headTime uint64 // timestamp of head, for decryption deadlines
-	headErr  error
-	epochs   map[[12]byte]epochView
-	apps     map[appKey]appView
-}
-
 // appView is what the decrypt loop needs from an application record: which
 // pool key the application encrypts under, its organizer key and — once the
 // organizer has revealed it, or trivially for an Automatic application — the
-// secret the combine circuit needs.
+// secret the combine circuit needs. Everything in it is written once (the
+// secret exactly once, by the reveal the scan watches for), so a view is
+// kept across ticks and replaced when its application's reveal is seen.
 type appView struct {
 	poolIndex        uint8
 	pkOrg            nodetypes.CurvePoint
@@ -421,6 +620,7 @@ type appView struct {
 	openSubmission   bool     // anyone may submit: taint per submitter, not per application
 	decryptNotBefore uint64   // unix seconds, 0 = none
 	decryptNotAfter  uint64   // unix seconds, 0 = never
+	createdAt        uint64   // registration block, where an application rescan starts
 }
 
 // appKey identifies one application: (epoch, aid).
@@ -429,79 +629,85 @@ type appKey struct {
 	aid   [32]byte
 }
 
-func (n *Node) newTickCache(ctx context.Context) *tickCache {
-	tc := &tickCache{epochs: make(map[[12]byte]epochView), apps: make(map[appKey]appView)}
-	hdr, err := n.contracts.Client().HeaderByNumber(ctx, nil)
-	if err != nil {
-		tc.headErr = err
-		return tc
+// maxCachedApps bounds the application cache; past it an arbitrary entry is
+// dropped and costs one read if it is needed again.
+const maxCachedApps = 1024
+
+// settleInflights checks the receipt of every transaction in flight. It is
+// what a tick still does when no block has arrived since the previous one.
+func (n *Node) settleInflights(ctx context.Context) {
+	for key, fl := range n.inflight {
+		ct, ok := n.pending[key]
+		if !ok {
+			delete(n.inflight, key)
+			continue
+		}
+		_, done, err := n.settleInflight(ctx, key, fl)
+		if err != nil {
+			n.failSlot(key, err)
+		}
+		if done {
+			n.finishSlot(key, ct)
+		}
 	}
-	tc.head, tc.headTime = hdr.Number.Uint64(), hdr.Time
-	return tc
 }
 
-func (n *Node) cachedEpoch(ctx context.Context, tc *tickCache, epochID [12]byte) (epochView, error) {
-	if e, ok := tc.epochs[epochID]; ok {
-		return e, nil
+// failSlot backs a slot off after a failed attempt (1, 2, 4 … ticks).
+func (n *Node) failSlot(key ctKey, err error) {
+	b := n.backoff[key]
+	if b == nil {
+		b = &serviceBackoff{}
+		n.backoff[key] = b
 	}
-	e, err := n.contracts.GetEpoch(ctx, epochID)
-	if err != nil {
-		return e, fmt.Errorf("get epoch: %w", err)
-	}
-	tc.epochs[epochID] = e
-	return e, nil
+	b.fail()
+	log.Warnw("ciphertext service failed", "ct", key.String(), "retryInTicks", b.wait, "err", err)
+}
+
+// finishSlot drops a slot that needs no further work, remembering it as
+// served until it ages out of the re-scan window.
+func (n *Node) finishSlot(key ctKey, ct *ciphertext) {
+	n.forget(key)
+	n.served[key] = ct.block
 }
 
 // serviceCiphertexts advances every pending ciphertext and drops the ones
 // that need no further work. Slots whose last attempt failed are skipped
-// for an exponentially growing number of ticks.
-func (n *Node) serviceCiphertexts(ctx context.Context) {
-	if len(n.pending) == 0 && !n.timeParked() {
-		return
-	}
-	tc := n.newTickCache(ctx)
-	if tc.headErr == nil {
-		n.wakeDue(tc.head, tc.headTime)
-	}
+// for an exponentially growing number of ticks. Everything it needs from the
+// chain — the head, the epoch, the application, the partials — is in the
+// tick's context or the node's caches; only a partial submission, a combine
+// and an in-flight receipt cost a request.
+func (n *Node) serviceCiphertexts(ctx context.Context, tc *tickCtx) {
+	n.wakeDue(tc.head, tc.headTime)
 	for key, ct := range n.pending {
 		if b := n.backoff[key]; b != nil && !b.due() {
 			continue
 		}
 		done, err := n.serviceCiphertext(ctx, tc, key, ct)
 		if err != nil {
-			b := n.backoff[key]
-			if b == nil {
-				b = &serviceBackoff{}
-				n.backoff[key] = b
-			}
-			b.fail()
-			log.Warnw("ciphertext service failed", "ct", key.String(), "retryInTicks", b.wait, "err", err)
+			n.failSlot(key, err)
 		} else {
 			delete(n.backoff, key)
 		}
 		if done {
-			n.forget(key)
-			n.served[key] = ct.block
+			n.finishSlot(key, ct)
 		}
 	}
 }
 
 // serviceCiphertext submits this node's partial decryption (if it sits on
 // the committee) and then tries to combine. Returns done=true once the slot
-// is combined on-chain, can never be, or is none of this node's business.
-func (n *Node) serviceCiphertext(ctx context.Context, tc *tickCache, key ctKey, ct *ciphertext) (bool, error) {
-	if rec, err := n.contracts.GetCombinedDecryption(ctx, key.epoch, key.aid, key.idx); err == nil && rec.Completed {
-		return true, nil
-	}
+// can never be combined or is none of this node's business; a slot combined
+// on chain is retired by its DecryptionCombined event in the scan.
+func (n *Node) serviceCiphertext(ctx context.Context, tc *tickCtx, key ctKey, ct *ciphertext) (bool, error) {
 	if fl, ok := n.inflight[key]; ok {
 		pending, done, err := n.settleInflight(ctx, key, fl)
 		if pending || done || err != nil {
 			return done, err
 		}
 	}
-	epoch, err := n.cachedEpoch(ctx, tc, key.epoch)
+	epoch, err := n.epoch(ctx, tc, n.contracts, key.epoch)
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("get epoch: %w", err)
 	}
 	if epoch.Status != epochLive {
 		// Partials and combines are only accepted while the epoch is Live;
@@ -522,14 +728,11 @@ func (n *Node) serviceCiphertext(ctx context.Context, tc *tickCache, key ctKey, 
 		log.Debugw("ciphertext belongs to an epoch this node is not a member of — ignoring", "ct", key.String())
 		return true, nil
 	}
-	app, err := n.application(ctx, tc, key)
+	app, err := n.application(ctx, appKey{epoch: key.epoch, aid: key.aid})
 	if err != nil {
 		return false, err
 	}
 	if app.decryptNotBefore != 0 || app.decryptNotAfter != 0 {
-		if tc.headErr != nil {
-			return false, fmt.Errorf("read head: %w", tc.headErr)
-		}
 		if app.decryptNotAfter != 0 && tc.headTime > app.decryptNotAfter {
 			// The contract rejects partials and combines from here on.
 			log.Infow("decryption deadline passed — dropping the slot", "ct", key.String(), "deadline", app.decryptNotAfter)
@@ -560,18 +763,12 @@ func (n *Node) serviceCiphertext(ctx context.Context, tc *tickCache, key ctKey, 
 		threshold := uint64(epoch.Policy.Threshold)
 		wave := staggerSlot(epoch.Seed, uint64(key.idx), idx, uint16(len(selected))) / max(threshold, 1)
 		if wave > 0 {
-			if tc.headErr != nil {
-				return false, fmt.Errorf("read head: %w", tc.headErr)
-			}
 			if tc.head < ct.anchor()+wave*staggerBlocks {
 				return false, nil
 			}
-			// With fewer than t partials the scan sees all of them, so
+			// With fewer than t partials the record holds all of them, so
 			// lastBlock is the newest partial for this slot.
-			idxs, _, lastBlock, err := n.acceptedPartials(ctx, key, epoch.SeedBlock, tc.head, epoch.Policy.Threshold)
-			if err != nil {
-				return false, err
-			}
+			idxs, _, lastBlock := n.acceptedPartials(key, epoch.Policy.Threshold)
 			if uint64(len(idxs)) >= threshold {
 				n.partialDone[key] = true
 			} else if !laterWaveDue(tc.head, ct.anchor(), lastBlock, wave) {
@@ -587,9 +784,6 @@ func (n *Node) serviceCiphertext(ctx context.Context, tc *tickCache, key ctKey, 
 		if toxic {
 			return true, nil
 		}
-	}
-	if tc.headErr != nil {
-		return false, fmt.Errorf("read head: %w", tc.headErr)
 	}
 	return n.tryCombine(ctx, key, ct, epoch, app, idx, uint16(len(selected)), tc.head)
 }
@@ -636,7 +830,7 @@ func (n *Node) submitPartial(
 		return true, nil
 	}
 
-	dShare, err := n.buildPrivateShare(ctx, n.contracts.Client(), key.epoch, app.poolIndex, idx, selected, epoch, callOpts)
+	dShare, err := n.buildPrivateShare(ctx, n.contracts.Client(), key.epoch, app.poolIndex, idx, selected, epoch)
 	if err != nil {
 		return false, fmt.Errorf("build private share: %w", err)
 	}
@@ -701,66 +895,47 @@ func (n *Node) submitPartial(
 	return false, nil
 }
 
-// acceptedPartials reads up to `threshold` distinct partials for the slot
-// from the event log (the contract only stores their hashes), scanning
-// [seedBlock−1, head] in logRangeBlocks chunks and stopping as soon as
-// enough are in hand. readyBlock is the block the last of them landed in.
-func (n *Node) acceptedPartials(
-	ctx context.Context,
-	key ctKey,
-	seedBlock, head uint64,
-	threshold uint16,
-) (idxs []uint16, deltas []nodetypes.CurvePoint, readyBlock uint64, err error) {
-	start := uint64(0)
-	if seedBlock > 0 {
-		start = seedBlock - 1
+// acceptedPartials returns up to `threshold` distinct partials recorded for
+// the slot, in chain order (the same first t the event log would give), and
+// the block the last of them landed in. The record is fed by the scan: every
+// PartialDecryptionSubmitted of a tracked slot since the slot's ciphertext,
+// which the scan covers contiguously — so no per-slot log query is needed.
+func (n *Node) acceptedPartials(key ctKey, threshold uint16) (idxs []uint16, deltas []nodetypes.CurvePoint, readyBlock uint64) {
+	for _, rec := range n.partials[key] {
+		if len(idxs) >= int(threshold) {
+			break
+		}
+		idxs = append(idxs, rec.index)
+		deltas = append(deltas, rec.delta)
+		readyBlock = max(readyBlock, rec.block)
 	}
-	seen := map[uint16]bool{}
-	for from := start; from <= head && len(idxs) < int(threshold); from += logRangeBlocks {
-		end := min(from+logRangeBlocks-1, head)
-		it, err := n.manager.FilterPartialDecryptionSubmitted(
-			&bind.FilterOpts{Context: ctx, Start: from, End: &end},
-			[][12]byte{key.epoch}, [][32]byte{key.aid}, nil,
-		)
-		if err != nil {
-			return nil, nil, 0, fmt.Errorf("filter PartialDecryptionSubmitted [%d,%d]: %w", from, end, err)
-		}
-		for it.Next() && len(idxs) < int(threshold) {
-			e := it.Event
-			if e.CiphertextIndex != key.idx || seen[e.ParticipantIndex] {
-				continue
-			}
-			seen[e.ParticipantIndex] = true
-			idxs = append(idxs, e.ParticipantIndex)
-			deltas = append(deltas, nodetypes.CurvePoint{X: new(big.Int).Set(e.DeltaX), Y: new(big.Int).Set(e.DeltaY)})
-			readyBlock = max(readyBlock, e.Raw.BlockNumber)
-		}
-		err = it.Error()
-		_ = it.Close()
-		if err != nil {
-			return nil, nil, 0, fmt.Errorf("iterate PartialDecryptionSubmitted: %w", err)
-		}
-	}
-	return idxs, deltas, readyBlock, nil
+	return idxs, deltas, readyBlock
 }
 
-// application reads (and memoises for the tick) what the decrypt loop needs
-// from the application record: its pool key, PK_org, the organizer secret
-// once it is knowable and the decryption window. Only registered
-// applications can own a ciphertext — the contract rejects submitCiphertext
-// for an unknown aid — so a missing record here means the chain is lying or
-// we are looking at the wrong contract.
-func (n *Node) application(ctx context.Context, tc *tickCache, key ctKey) (appView, error) {
-	ak := appKey{epoch: key.epoch, aid: key.aid}
-	if app, ok := tc.apps[ak]; ok {
+// application returns what the decrypt loop needs from the application
+// record — its pool key, PK_org, the organizer secret once it is knowable
+// and the decryption window — from the cache, reading it once otherwise.
+func (n *Node) application(ctx context.Context, ak appKey) (appView, error) {
+	if app, ok := n.apps[ak]; ok {
 		return app, nil
 	}
-	rec, err := n.appManager.GetApplication(&bind.CallOpts{Context: ctx}, key.epoch, key.aid)
+	return n.readApplication(ctx, ak)
+}
+
+// readApplication reads the application record from the chain and caches
+// the view when it is settled: an automatic application, a locked one whose
+// secret is still zero (the reveal event replaces the entry) or one whose
+// revealed secret opens PK_org. Only registered applications can own a
+// ciphertext — the contract rejects submitCiphertext for an unknown aid — so
+// a missing record here means the chain is lying or we are looking at the
+// wrong contract.
+func (n *Node) readApplication(ctx context.Context, ak appKey) (appView, error) {
+	rec, err := n.appManager.GetApplication(&bind.CallOpts{Context: ctx}, ak.epoch, ak.aid)
 	if err != nil {
 		return appView{}, fmt.Errorf("get application: %w", err)
 	}
 	if !rec.Exists {
-		return appView{}, fmt.Errorf("application %x is not registered", key.aid)
+		return appView{}, fmt.Errorf("application %x is not registered", ak.aid)
 	}
 	app := appView{
 		poolIndex:        rec.PoolIndex,
@@ -768,24 +943,39 @@ func (n *Node) application(ctx context.Context, tc *tickCache, key ctKey) (appVi
 		openSubmission:   rec.Policy.OpenSubmission,
 		decryptNotBefore: rec.Policy.DecryptNotBefore,
 		decryptNotAfter:  rec.Policy.DecryptNotAfter,
+		createdAt:        rec.CreatedAtBlock,
 	}
 	// An automatic application stores the identity key and a zero secret, a
 	// locked one a zero secret until revealOrganizerSecret lands. Either way
 	// the combine needs sk_org with PK_org = sk_org·G, so one scalar
 	// multiplication settles both cases and keeps a lying RPC from making us
 	// burn a proof that can never verify.
+	settled := true
 	if rec.Policy.Mode == uint8(nodetypes.AppModeAutomatic) || rec.OrganizerSecret.Sign() != 0 {
 		pk := group.NewPoint()
 		pk.ScalarBaseMult(rec.OrganizerSecret)
 		if enc := group.Encode(pk); enc.X.Cmp(app.pkOrg.X) == 0 && enc.Y.Cmp(app.pkOrg.Y) == 0 {
 			app.secret = new(big.Int).Set(rec.OrganizerSecret)
 		} else {
+			settled = false
 			log.Warnw("organizer secret does not match PK_org — waiting for a correct reveal",
-				"aid", fmt.Sprintf("%x", key.aid[:4]))
+				"aid", fmt.Sprintf("%x", ak.aid[:4]))
 		}
 	}
-	tc.apps[ak] = app
+	if settled {
+		n.cacheApp(ak, app)
+	}
 	return app, nil
+}
+
+func (n *Node) cacheApp(ak appKey, app appView) {
+	if _, ok := n.apps[ak]; !ok && len(n.apps) >= maxCachedApps {
+		for victim := range n.apps {
+			delete(n.apps, victim)
+			break
+		}
+	}
+	n.apps[ak] = app
 }
 
 // shareProof returns this node's Merkle path into the share-commitment root
@@ -921,10 +1111,7 @@ func (n *Node) tryCombine(
 	head uint64,
 ) (bool, error) {
 	threshold := epoch.Policy.Threshold
-	idxs, deltas, readyBlock, err := n.acceptedPartials(ctx, key, epoch.SeedBlock, head, threshold)
-	if err != nil {
-		return false, err
-	}
+	idxs, deltas, readyBlock := n.acceptedPartials(key, threshold)
 	if len(idxs) < int(threshold) {
 		return false, nil
 	}

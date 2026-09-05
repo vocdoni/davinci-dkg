@@ -7,15 +7,18 @@ import (
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/rpc"
 )
 
 // PooledBackend implements bind.ContractBackend (= ContractCaller + ContractTransactor +
 // ContractFilterer) by delegating every call to the pool's current active client.
 // The ethclient-style reads callers need beyond that interface (BlockNumber,
-// TransactionByHash, TransactionReceipt) are here too. Every endpoint error is
-// routed through RPCPool.NoteError, so an endpoint that is rate-limiting us or
-// unreachable rotates instead of being hammered until the caller's next retry;
-// contract reverts and other call errors change nothing.
+// TransactionByHash, TransactionReceipt) are here too, as is BatchCallContext,
+// which lets BatchCall send several reads in one round trip. Every endpoint
+// error is routed through RPCPool.NoteError, so an endpoint that is
+// rate-limiting us or unreachable rotates instead of being hammered until the
+// caller's next retry; contract reverts and other call errors change nothing.
+// Every request is also counted per JSON-RPC method (RPCPool.Note).
 type PooledBackend struct {
 	pool *RPCPool
 }
@@ -27,6 +30,7 @@ func NewPooledBackend(pool *RPCPool) *PooledBackend {
 
 // CodeAt implements ContractCaller.
 func (p *PooledBackend) CodeAt(ctx context.Context, contract common.Address, blockNumber *big.Int) ([]byte, error) {
+	p.pool.Note("eth_getCode")
 	code, err := p.pool.Current().CodeAt(ctx, contract, blockNumber)
 	p.pool.NoteError(err)
 	return code, err
@@ -34,13 +38,39 @@ func (p *PooledBackend) CodeAt(ctx context.Context, contract common.Address, blo
 
 // CallContract implements ContractCaller.
 func (p *PooledBackend) CallContract(ctx context.Context, call ethereum.CallMsg, blockNumber *big.Int) ([]byte, error) {
+	p.pool.Note("eth_call")
 	output, err := p.pool.Current().CallContract(ctx, call, blockNumber)
 	p.pool.NoteError(err)
 	return output, err
 }
 
+// BatchCallContext sends every element of the batch to the current endpoint
+// in one JSON-RPC batch request (one HTTP round trip). A transport failure
+// is returned and noted against the endpoint; per-element errors (a revert,
+// a rate-limit answer for one element) are left in the elements, and the
+// first one that looks like the endpoint's fault is noted too.
+func (p *PooledBackend) BatchCallContext(ctx context.Context, batch []rpc.BatchElem) error {
+	p.pool.Note("batch")
+	for _, elem := range batch {
+		p.pool.Note(elem.Method)
+	}
+	err := p.pool.Current().Client().BatchCallContext(ctx, batch)
+	p.pool.NoteError(err)
+	if err != nil {
+		return err
+	}
+	for _, elem := range batch {
+		if IsRPCTransportError(elem.Error) {
+			p.pool.NoteError(elem.Error)
+			break
+		}
+	}
+	return nil
+}
+
 // EstimateGas implements GasEstimator (part of ContractTransactor).
 func (p *PooledBackend) EstimateGas(ctx context.Context, call ethereum.CallMsg) (uint64, error) {
+	p.pool.Note("eth_estimateGas")
 	gas, err := p.pool.Current().EstimateGas(ctx, call)
 	p.pool.NoteError(err)
 	return gas, err
@@ -48,6 +78,7 @@ func (p *PooledBackend) EstimateGas(ctx context.Context, call ethereum.CallMsg) 
 
 // SuggestGasPrice implements GasPricer (part of ContractTransactor).
 func (p *PooledBackend) SuggestGasPrice(ctx context.Context) (*big.Int, error) {
+	p.pool.Note("eth_gasPrice")
 	price, err := p.pool.Current().SuggestGasPrice(ctx)
 	p.pool.NoteError(err)
 	return price, err
@@ -55,6 +86,7 @@ func (p *PooledBackend) SuggestGasPrice(ctx context.Context) (*big.Int, error) {
 
 // SuggestGasTipCap implements GasPricer1559 (part of ContractTransactor).
 func (p *PooledBackend) SuggestGasTipCap(ctx context.Context) (*big.Int, error) {
+	p.pool.Note("eth_maxPriorityFeePerGas")
 	tip, err := p.pool.Current().SuggestGasTipCap(ctx)
 	p.pool.NoteError(err)
 	return tip, err
@@ -62,6 +94,7 @@ func (p *PooledBackend) SuggestGasTipCap(ctx context.Context) (*big.Int, error) 
 
 // SendTransaction implements TransactionSender (part of ContractTransactor).
 func (p *PooledBackend) SendTransaction(ctx context.Context, tx *types.Transaction) error {
+	p.pool.Note("eth_sendRawTransaction")
 	err := p.pool.Current().SendTransaction(ctx, tx)
 	p.pool.NoteError(err)
 	return err
@@ -69,6 +102,7 @@ func (p *PooledBackend) SendTransaction(ctx context.Context, tx *types.Transacti
 
 // BlockNumber returns the head height of the current endpoint.
 func (p *PooledBackend) BlockNumber(ctx context.Context) (uint64, error) {
+	p.pool.Note("eth_blockNumber")
 	head, err := p.pool.Current().BlockNumber(ctx)
 	p.pool.NoteError(err)
 	return head, err
@@ -76,6 +110,7 @@ func (p *PooledBackend) BlockNumber(ctx context.Context) (uint64, error) {
 
 // HeaderByNumber implements ContractTransactor.
 func (p *PooledBackend) HeaderByNumber(ctx context.Context, number *big.Int) (*types.Header, error) {
+	p.pool.Note("eth_getBlockByNumber")
 	header, err := p.pool.Current().HeaderByNumber(ctx, number)
 	p.pool.NoteError(err)
 	return header, err
@@ -83,6 +118,7 @@ func (p *PooledBackend) HeaderByNumber(ctx context.Context, number *big.Int) (*t
 
 // TransactionByHash fetches a transaction from the current endpoint.
 func (p *PooledBackend) TransactionByHash(ctx context.Context, hash common.Hash) (*types.Transaction, bool, error) {
+	p.pool.Note("eth_getTransactionByHash")
 	tx, pending, err := p.pool.Current().TransactionByHash(ctx, hash)
 	p.pool.NoteError(err)
 	return tx, pending, err
@@ -90,6 +126,7 @@ func (p *PooledBackend) TransactionByHash(ctx context.Context, hash common.Hash)
 
 // TransactionReceipt fetches a receipt from the current endpoint.
 func (p *PooledBackend) TransactionReceipt(ctx context.Context, hash common.Hash) (*types.Receipt, error) {
+	p.pool.Note("eth_getTransactionReceipt")
 	receipt, err := p.pool.Current().TransactionReceipt(ctx, hash)
 	p.pool.NoteError(err)
 	return receipt, err
@@ -97,6 +134,7 @@ func (p *PooledBackend) TransactionReceipt(ctx context.Context, hash common.Hash
 
 // PendingCodeAt implements ContractTransactor.
 func (p *PooledBackend) PendingCodeAt(ctx context.Context, account common.Address) ([]byte, error) {
+	p.pool.Note("eth_getCode")
 	code, err := p.pool.Current().PendingCodeAt(ctx, account)
 	p.pool.NoteError(err)
 	return code, err
@@ -104,6 +142,7 @@ func (p *PooledBackend) PendingCodeAt(ctx context.Context, account common.Addres
 
 // PendingNonceAt implements ContractTransactor.
 func (p *PooledBackend) PendingNonceAt(ctx context.Context, account common.Address) (uint64, error) {
+	p.pool.Note("eth_getTransactionCount")
 	nonce, err := p.pool.Current().PendingNonceAt(ctx, account)
 	p.pool.NoteError(err)
 	return nonce, err
@@ -111,6 +150,7 @@ func (p *PooledBackend) PendingNonceAt(ctx context.Context, account common.Addre
 
 // FilterLogs implements ContractFilterer.
 func (p *PooledBackend) FilterLogs(ctx context.Context, q ethereum.FilterQuery) ([]types.Log, error) {
+	p.pool.Note("eth_getLogs")
 	logs, err := p.pool.Current().FilterLogs(ctx, q)
 	p.pool.NoteError(err)
 	return logs, err
@@ -118,6 +158,7 @@ func (p *PooledBackend) FilterLogs(ctx context.Context, q ethereum.FilterQuery) 
 
 // SubscribeFilterLogs implements ContractFilterer.
 func (p *PooledBackend) SubscribeFilterLogs(ctx context.Context, q ethereum.FilterQuery, ch chan<- types.Log) (ethereum.Subscription, error) {
+	p.pool.Note("eth_subscribe")
 	sub, err := p.pool.Current().SubscribeFilterLogs(ctx, q, ch)
 	p.pool.NoteError(err)
 	return sub, err
