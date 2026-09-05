@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"math/big"
 
-	ccommon "github.com/vocdoni/davinci-dkg/circuits/common"
 	"github.com/vocdoni/davinci-dkg/config"
 	golangtypes "github.com/vocdoni/davinci-dkg/solidity/golang-types"
 	"github.com/vocdoni/davinci-dkg/types"
@@ -79,13 +78,12 @@ func NewTestServicesFromExternal(
 }
 
 // CreateSDKTestFixture creates a Live single-participant epoch on the given
-// testnet with `keys` of its pool activated (at least key 0). Useful as a
-// fixture for TypeScript SDK tests that need a Live epoch with a claimable
-// pool key without generating ZK proofs themselves.
+// testnet; finalizeEpoch stores every key of its pool, so all MaxK are
+// claimable. Useful as a fixture for TypeScript SDK tests that need a Live
+// epoch with claimable pool keys without generating ZK proofs themselves.
 func CreateSDKTestFixture(
 	ctx context.Context,
 	services *TestServices,
-	keys int,
 ) (*FinalizedRoundResult, error) {
 	head, err := services.Contracts.Client().BlockNumber(ctx)
 	if err != nil {
@@ -102,19 +100,7 @@ func CreateSDKTestFixture(
 	}
 	coefficients := []*big.Int{big.NewInt(FixtureShare)}
 
-	result, err := CreateFinalizedSingleParticipantRound(ctx, services, policy, coefficients)
-	if err != nil {
-		return nil, err
-	}
-	for keyIndex := 1; keyIndex < keys; keyIndex++ {
-		if keyIndex >= ccommon.MaxK {
-			return nil, fmt.Errorf("cannot activate %d keys, the pool holds %d", keys, ccommon.MaxK)
-		}
-		if _, err := ActivateRoundPoolKey(ctx, services, result, uint8(keyIndex)); err != nil {
-			return nil, err
-		}
-	}
-	return result, nil
+	return CreateFinalizedSingleParticipantRound(ctx, services, policy, coefficients)
 }
 
 // FixtureShare is the single contribution coefficient CreateSDKTestFixture

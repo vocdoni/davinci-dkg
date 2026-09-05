@@ -128,7 +128,7 @@ export function EpochStep({ controller, epochs }: StepProps) {
     return (
       <StepPanel
         step='epoch'
-        intro='An application can only be registered against an epoch whose pool keys are being activated — an epoch in the Live phase. There is none right now.'
+        intro='An application can only be registered against an epoch whose pool keys are stored — an epoch in the Live phase. There is none right now.'
       >
         {newest ? (
           <Record
@@ -170,7 +170,7 @@ export function EpochStep({ controller, epochs }: StepProps) {
       intro={
         locked
           ? 'The application is registered against this epoch, so it is pinned: it claimed one of this epoch’s pool keys, and a newer epoch going Live changes nothing below.'
-          : `The newest Live epoch is selected by default. Any Live epoch with a free pool key works — each epoch deals ${POOL_SIZE} keys, one per application, and its nodes keep a couple activated ahead of demand.`
+          : `The newest Live epoch is selected by default. Any Live epoch with a free pool key works — each epoch deals ${POOL_SIZE} keys, one per application, all stored the moment it went Live.`
       }
       actions={<NextButton onClick={controller.actions.confirmEpoch}>Register an application →</NextButton>}
     >
@@ -216,14 +216,10 @@ export function EpochStep({ controller, epochs }: StepProps) {
                   live since {option.liveSinceBlock != null ? `#${option.liveSinceBlock}` : '—'}
                 </span>
                 <span
-                  className={cn(
-                    'min-w-0 font-mono text-[11px]',
-                    option.poolActivated > option.poolClaimed ? 'text-ash' : 'text-amber'
-                  )}
-                  title={`${POOL_SIZE} keys per epoch: ${option.poolActivated} activated (${option.poolActivated - option.poolClaimed} still free), ${option.poolClaimed} claimed by applications, ${POOL_SIZE - option.poolActivated} not activated yet`}
+                  className={cn('min-w-0 font-mono text-[11px]', option.poolFree > 0 ? 'text-ash' : 'text-amber')}
+                  title={`${POOL_SIZE} keys per epoch, all stored at finalization: ${option.poolFree} still free, ${option.poolClaimed} claimed by applications`}
                 >
-                  {option.poolActivated - option.poolClaimed} activated free · {option.poolClaimed} claimed ·{' '}
-                  {POOL_SIZE - option.poolActivated} not activated
+                  {option.poolFree} free · {option.poolClaimed} claimed · {POOL_SIZE} keys
                 </span>
               </button>
             </li>
@@ -257,7 +253,7 @@ export function RegisterStep({ controller, chain }: StepProps) {
       intro={
         <>
           <p>
-            Registration claims the epoch’s next activated pool key{' '}
+            Registration claims the epoch’s next unclaimed pool key{' '}
             <code className='font-mono text-emerald'>P_j</code> — one key per application, {POOL_SIZE} per epoch — and
             the <strong className='text-silver'>mode</strong> decides whether an organizer key sits on top of it.
           </p>

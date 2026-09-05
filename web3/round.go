@@ -23,9 +23,9 @@ func (c *Contracts) GetPartialDecryptVerifierVKeyHash(ctx context.Context) (comm
 	return c.callHash(ctx, c.Addresses.Manager, c.managerABI, "getPartialDecryptVerifierVKeyHash")
 }
 
-// GetPoolKeyVerifierVKeyHash returns the configured pool-key proving key hash.
-func (c *Contracts) GetPoolKeyVerifierVKeyHash(ctx context.Context) (common.Hash, error) {
-	return c.callHash(ctx, c.Addresses.Manager, c.managerABI, "getPoolKeyVerifierVKeyHash")
+// GetFinalizeVerifierVKeyHash returns the configured finalization proving key hash.
+func (c *Contracts) GetFinalizeVerifierVKeyHash(ctx context.Context) (common.Hash, error) {
+	return c.callHash(ctx, c.Addresses.Manager, c.managerABI, "getFinalizeVerifierVKeyHash")
 }
 
 // GetDecryptCombineVerifierVKeyHash returns the configured decrypt-combine proving key hash.

@@ -104,7 +104,7 @@ docker compose --profile node logs -f node`}</Code>
             </>,
             <>
               From then on it reacts to every phase it is eligible for: claim a slot when the lottery admits it, submit
-              a contribution, finalize, activate pool keys ahead of demand, answer ciphertexts with partial decryptions,
+              a contribution, finalize the whole key pool with one proof, answer ciphertexts with partial decryptions,
               and combine when its turn comes in the seed-derived rotation. It heartbeats and reactivates by itself
               before the inactivity window expires.
             </>,

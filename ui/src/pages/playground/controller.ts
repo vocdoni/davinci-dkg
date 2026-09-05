@@ -50,9 +50,9 @@ export interface EpochOption {
   threshold: number
   committeeSize: number
   liveSinceBlock: number | null
-  /** How far the pool has been dealt, for the "is there a key for me" column. */
-  poolActivated: number
+  /** How much of the pool is left, for the "is there a key for me" column. */
   poolClaimed: number
+  poolFree: number
 }
 
 /** The exact words each write signed, for the "advanced" panels. */

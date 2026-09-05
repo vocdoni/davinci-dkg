@@ -10,7 +10,9 @@
 //   • getEpochLiveEvents returns the expected event
 //   • waitForEpochPhase resolves immediately for an already-Live epoch
 //   • getContribution returns the accepted record
-//   • getPoolStatus / getPoolKey / getPoolShareRoot expose the activated pool key
+//   • getPoolStatus / getPoolKey / getPoolShareRoot expose the whole pool the
+//     proof-carrying finalizeEpoch stored, and getFinalizeTranscript /
+//     getShareProof read it back from the finalization calldata
 //   • ElGamal encrypt/decrypt roundtrip using a synthetic key pair
 //   • buildEpochId / parseEpochId roundtrip on the fixture epoch ID
 
@@ -22,10 +24,13 @@ import { fileURLToPath } from 'node:url';
 import {
   DKGClient,
   EpochPhase,
+  MAX_K,
+  MERKLE_DEPTH,
   buildElGamal,
   waitForEpochPhase,
   parseEpochId,
   buildEpochId,
+  verifyMerklePath,
 } from '../src/index.js';
 import { fromRTEtoTE } from '../src/crypto/babyjub-form.js';
 import { makePublicClient } from './helpers/accounts.js';
@@ -47,6 +52,7 @@ interface FixtureResult {
   share: string;
   /** P_0 in the contract's RTE form, decimal coordinates. */
   poolKey: { x: string; y: string };
+  /** Keys the fixture reports shares for (`--keys`); the pool itself is always whole. */
   activatedKeys: number;
 }
 
@@ -165,11 +171,12 @@ describe('Full DKG flow (via Go fixture)', () => {
     const events = await client.getEpochLiveEvents(fixture.epochId);
     expect(events.length).toBeGreaterThan(0);
 
-    // finalizeEpoch is proof-less now: the event only freezes the accepted
-    // contributor set (one participant here).
+    // One accepted contributor here; the finalization proof covers it and the
+    // whole pool is stored in the same block.
     const ev = events[0];
     expect(ev.epochId.toLowerCase()).toBe(fixture.epochId.toLowerCase());
     expect(ev.contributionCount).toBe(1);
+    expect(ev.transactionHash).toMatch(/^0x[0-9a-f]{64}$/i);
   });
 
   it('selectedParticipants returns one participant', async () => {
@@ -191,33 +198,59 @@ describe('Full DKG flow (via Go fixture)', () => {
     expect(contrib.commitmentsHash).toMatch(/^0x[0-9a-f]{64}$/i);
   });
 
-  it('pool key 0 is activated and matches the fixture', async () => {
+  it('the whole pool is stored at Live and key 0 matches the fixture', async () => {
     const { enabled } = useHarness();
     if (!enabled || !fixture) return;
 
+    // The claim cursor is the only pool status left: nothing claimed yet.
     const status = await client.getPoolStatus(fixture.epochId);
     expect(status.nextIndex).toBe(0);
-    expect(status.activated & 1).toBe(1);
 
     // The fixture reports P_0 in RTE; the client hands out TE.
     const p0 = await client.getPoolKey(fixture.epochId, 0);
     expect(p0).toEqual(fromRTEtoTE(BigInt(fixture.poolKey.x), BigInt(fixture.poolKey.y)));
 
-    // The Merkle root of the members' share commitments under key 0 backs
+    // Every one of the MAX_K keys exists from the finalization block on, and
+    // each is a distinct point (independent polynomials).
+    const keys = await client.getPoolKeys(fixture.epochId);
+    expect(keys).toHaveLength(MAX_K);
+    expect(keys[0]).toEqual(p0);
+    expect(new Set(keys.map(([x, y]) => `${x}:${y}`)).size).toBe(MAX_K);
+    expect(keys.every(([x, y]) => !(x === 0n && y === 1n))).toBe(true);
+
+    // The Merkle root of the members' share commitments under each key backs
     // every submitPartialDecryption path.
     const root = await client.getPoolShareRoot(fixture.epochId, 0);
     expect(root).not.toBe('0x' + '0'.repeat(64));
-
-    const activated = await client.getPoolKeyActivatedEvents(fixture.epochId);
-    expect(activated.map((e) => e.keyIndex)).toContain(0);
+    expect(await client.getPoolShareRoot(fixture.epochId, MAX_K - 1)).not.toBe(root);
   });
 
-  it('getPoolKey reverts for a key that is not activated', async () => {
+  it('getFinalizeTranscript and getShareProof read the pool back from the finalization calldata', async () => {
     const { enabled } = useHarness();
     if (!enabled || !fixture) return;
 
-    // MAX_K = 8; the fixture activates only the keys it was asked for.
-    await expect(client.getPoolKey(fixture.epochId, 7)).rejects.toThrow();
+    const finalize = await client.getFinalizeTranscript(fixture.epochId);
+    expect(finalize).not.toBeNull();
+    expect(finalize!.acceptedCount).toBe(1);
+    expect(finalize!.finalizer).toMatch(/^0x[0-9a-fA-F]{40}$/);
+    // The transcript's P_0 is the contract's P_0 (both RTE).
+    expect(finalize!.transcript.poolKeys[0].x.toString()).toBe(fixture.poolKey.x);
+    expect(finalize!.transcript.poolKeys[0].y.toString()).toBe(fixture.poolKey.y);
+
+    // Member 1's path under key 0 folds to the stored root.
+    const proof = await client.getShareProof(fixture.epochId, 0, 1);
+    expect(proof.path).toHaveLength(MERKLE_DEPTH);
+    expect(proof.root).toBe(await client.getPoolShareRoot(fixture.epochId, 0));
+    expect(verifyMerklePath(proof.root, proof.leaf, 0, proof.path)).toBe(true);
+    // Committee of one: member 2 does not exist.
+    await expect(client.getShareProof(fixture.epochId, 0, 2)).rejects.toThrow(/out of range/);
+  });
+
+  it('getPoolKey reverts for a key index beyond the pool', async () => {
+    const { enabled } = useHarness();
+    if (!enabled || !fixture) return;
+
+    await expect(client.getPoolKey(fixture.epochId, MAX_K)).rejects.toThrow();
   });
 
   it('parseEpochId on fixture epoch ID roundtrips through buildEpochId', async () => {

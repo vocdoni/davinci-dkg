@@ -10,8 +10,8 @@ import { resolve } from 'node:path';
 import {
   DomainOperatorRegisterV1,
   DomainOrganizerRegisterV1,
-  DomainContributionTranscriptV1,
-  DomainPoolKeyTranscriptV1,
+  DomainContributionTranscriptV2,
+  DomainFinalizeTranscriptV2,
   DomainDecryptCombineTranscriptV1,
 } from '../src/protocol';
 import {
@@ -25,7 +25,53 @@ import {
   BN254_Q,
   SUBGROUP_ORDER,
 } from '../src/schnorr';
-import type { Hex } from 'viem';
+import {
+  MAX_K,
+  MAX_N,
+  MERKLE_DEPTH,
+  ContributionLayout,
+  contributionTranscriptWords,
+  FINALIZE_KEY_WORDS,
+  FINALIZE_TRANSCRIPT_WORDS,
+  FINALIZE_INDEXES_START,
+  FINALIZE_HASHES_START,
+  FINALIZE_KEYS_START,
+  finalizePoolKeyOffset,
+  finalizeShareCommitmentOffset,
+} from '../src/sizes';
+import {
+  FR_MODULUS,
+  brlcCommit,
+  bytes32,
+  challengeAnchor,
+  contributionChallenge,
+  contributionCommitmentsHash,
+  contributionEncryptedSharesHash,
+  decodeContributionCalldata,
+  decodeContributionTranscript,
+  decodeFinalizeCalldata,
+  decodeFinalizeTranscript,
+  deriveChallenge,
+  encodeContributionTranscript,
+  encodeFinalizeTranscript,
+  finalizeChallenge,
+  finalizeTranscriptDigest,
+  keccakWords,
+  wordsFromBytes,
+  wordsToBytes,
+} from '../src/transcript';
+import {
+  MERKLE_EMPTY_LEAF,
+  merklePath,
+  merkleRoot,
+  merkleRootFromPath,
+  shareCommitmentLeaf,
+  shareCommitmentLeaves,
+  shareProof,
+  verifyMerklePath,
+} from '../src/merkle';
+import { dkgManagerAbi } from '../src/abi';
+import { encodeFunctionData, type Hex } from 'viem';
 import type { Point } from '@zk-kit/baby-jubjub';
 
 const VECTORS_DIR = resolve(__dirname, '../../tests/vectors');
@@ -33,6 +79,9 @@ const VECTORS_DIR = resolve(__dirname, '../../tests/vectors');
 function load<T>(name: string): T {
   return JSON.parse(readFileSync(resolve(VECTORS_DIR, name), 'utf8')) as T;
 }
+
+const big = (s: string): bigint => BigInt(s);
+const bigs = (a: string[]): bigint[] => a.map(big);
 
 // ─── protocol.json ─────────────────────────────────────────────────────────
 
@@ -48,9 +97,21 @@ describe('vectors / protocol.json', () => {
   it('domain digests match', () => {
     expect(DomainOperatorRegisterV1).toBe(f.domains.OperatorRegisterV1.keccak256);
     expect(DomainOrganizerRegisterV1).toBe(f.domains.OrganizerRegisterV1.keccak256);
-    expect(DomainContributionTranscriptV1).toBe(f.domains.ContributionTranscriptV1.keccak256);
-    expect(DomainPoolKeyTranscriptV1).toBe(f.domains.PoolKeyTranscriptV1.keccak256);
+    expect(DomainContributionTranscriptV2).toBe(f.domains.ContributionTranscriptV2.keccak256);
+    expect(DomainFinalizeTranscriptV2).toBe(f.domains.FinalizeTranscriptV2.keccak256);
     expect(DomainDecryptCombineTranscriptV1).toBe(f.domains.DecryptCombineTranscriptV1.keccak256);
+    expect(f.domains.ContributionTranscriptV2.preimage).toBe('davinci-dkg:contribution:v2');
+    expect(f.domains.FinalizeTranscriptV2.preimage).toBe('davinci-dkg:finalize:v2');
+    // The v1 contribution domain and the per-key activation domain are gone.
+    expect(f.domains.ContributionTranscriptV1).toBeUndefined();
+    expect(f.domains.PoolKeyTranscriptV1).toBeUndefined();
+  });
+
+  it('domain reductions into the scalar field match', () => {
+    for (const [name, row] of Object.entries(f.domains)) {
+      if (!row.keccak256) continue; // PartialDecryptCircuit is consumed via SetBytes, not keccak'd
+      expect(BigInt(row.keccak256) % FR_MODULUS, name).toBe(BigInt(row.bn254Reduced));
+    }
   });
 
   it('PartialDecrypt domain reduction matches', () => {
@@ -61,6 +122,7 @@ describe('vectors / protocol.json', () => {
 
   it('BN254 Q matches', () => {
     expect(BN254_Q.toString()).toBe(f.bn254Q);
+    expect(FR_MODULUS.toString()).toBe(f.bn254Q);
   });
 
   it('BabyJubJub subgroup order matches', () => {
@@ -187,5 +249,388 @@ describe('vectors / dleq.json', () => {
     const c = dleqChallenge(transcript);
     expect(c.toString()).toBe(v.challenge);
     expect(verifyDleq(transcript, BigInt(v.response))).toBe(true);
+  });
+});
+
+// ─── contribution_compact.json (docs/pool-keys-v4.md §3–§5) ────────────────
+
+interface ContributionCompactFile {
+  domain: { preimage: string; keccak256: string; bn254Reduced: string };
+  maxN: number;
+  maxK: number;
+  vectors: Array<{
+    label: string;
+    epochId: string;
+    threshold: number;
+    committeeSize: number;
+    contributorIndex: number;
+    recipientSecrets: string[];
+    encryptionNonces: string[];
+    coefficients: string[][];
+    shares: string[][];
+    offsets: {
+      commitments: number;
+      recipientIndexes: number;
+      recipientKeys: number;
+      ephemerals: number;
+      maskedShares: number;
+      words: number;
+    };
+    transcript: string[];
+    committeeSnapshotKeccak: string;
+    transcriptKeccak: string;
+    commitmentsHash: string;
+    encryptedSharesHash: string;
+    anchor: string;
+    challenge: string;
+    transcriptCommitment: string;
+    publicInputs: string[];
+  }>;
+}
+
+describe('vectors / contribution_compact.json', () => {
+  const f = load<ContributionCompactFile>('contribution_compact.json');
+
+  it('is generated for the bounds this SDK is compiled for', () => {
+    expect(f.maxN).toBe(MAX_N);
+    expect(f.maxK).toBe(MAX_K);
+    expect(f.domain.preimage).toBe('davinci-dkg:contribution:v2');
+    expect(f.domain.keccak256).toBe(DomainContributionTranscriptV2);
+  });
+
+  it.each(f.vectors)('"$label" — layout offsets and length', (v) => {
+    const layout = new ContributionLayout(v.threshold, v.committeeSize);
+    expect(layout.words).toBe(v.offsets.words);
+    expect(contributionTranscriptWords(v.threshold, v.committeeSize)).toBe(v.offsets.words);
+    expect(layout.bytes).toBe(32 * v.offsets.words);
+    expect(layout.commitmentOffset(0, 0)).toBe(v.offsets.commitments);
+    expect(layout.recipientIndexesStart).toBe(v.offsets.recipientIndexes);
+    expect(layout.recipientKeysStart).toBe(v.offsets.recipientKeys);
+    expect(layout.ephemeralsStart).toBe(v.offsets.ephemerals);
+    expect(layout.maskedSharesStart).toBe(v.offsets.maskedShares);
+    expect(v.transcript).toHaveLength(v.offsets.words);
+    // The last masked share is the last word: no padding travels in calldata.
+    expect(layout.maskedShareOffset(MAX_K - 1, v.committeeSize - 1)).toBe(v.offsets.words - 1);
+    // Region order: commitments, indexes, keys, ephemerals, masked shares.
+    expect(layout.commitmentOffset(MAX_K - 1, v.threshold - 1) + 2).toBe(layout.recipientIndexesStart);
+    expect(layout.recipientIndexOffset(v.committeeSize - 1) + 1).toBe(layout.recipientKeysStart);
+    expect(layout.recipientKeyOffset(v.committeeSize - 1) + 2).toBe(layout.ephemeralsStart);
+    expect(layout.ephemeralOffset(v.committeeSize - 1) + 2).toBe(layout.maskedSharesStart);
+  });
+
+  it.each(f.vectors)('"$label" — decode/encode round-trip and committee region', (v) => {
+    const words = bigs(v.transcript);
+    const t = decodeContributionTranscript(words, v.threshold, v.committeeSize);
+    expect(t.commitments).toHaveLength(MAX_K);
+    expect(t.commitments.every((row) => row.length === v.threshold)).toBe(true);
+    expect(t.recipientIndexes.map(Number)).toEqual(Array.from({ length: v.committeeSize }, (_, i) => i + 1));
+    expect(t.recipientKeys).toHaveLength(v.committeeSize);
+    expect(t.ephemerals).toHaveLength(v.committeeSize);
+    expect(t.maskedShares).toHaveLength(MAX_K);
+    expect(t.maskedShares.every((row) => row.length === v.committeeSize)).toBe(true);
+    // The generator's masked shares differ per key: every key has its own polynomial.
+    if (v.committeeSize > 0) expect(t.maskedShares[0][0]).not.toBe(t.maskedShares[1][0]);
+    expect(encodeContributionTranscript(t, v.threshold, v.committeeSize)).toEqual(words);
+
+    // What `_snapshotCommittee` must equal: keccak over [2Kt, 2Kt+3n).
+    const layout = new ContributionLayout(v.threshold, v.committeeSize);
+    const { start, end } = layout.committeeRegion;
+    expect(end - start).toBe(3 * v.committeeSize);
+    expect(keccakWords(words.slice(start, end))).toBe(v.committeeSnapshotKeccak);
+  });
+
+  it.each(f.vectors)('"$label" — Poseidon digests, anchor, challenge and BRLC', (v) => {
+    const words = bigs(v.transcript);
+    const t = decodeContributionTranscript(words, v.threshold, v.committeeSize);
+    const commitmentsHash = contributionCommitmentsHash(v.epochId as Hex, v.contributorIndex, v.threshold, t.commitments);
+    expect(commitmentsHash.toString()).toBe(v.commitmentsHash);
+    const encryptedSharesHash = contributionEncryptedSharesHash(v.epochId as Hex, v.contributorIndex, v.committeeSize, t);
+    expect(encryptedSharesHash.toString()).toBe(v.encryptedSharesHash);
+
+    expect(keccakWords(words)).toBe(v.transcriptKeccak);
+    expect(challengeAnchor(words, commitmentsHash, encryptedSharesHash)).toBe(v.anchor);
+    const rho = deriveChallenge(v.epochId as Hex, DomainContributionTranscriptV2, v.anchor as Hex);
+    expect(rho.toString()).toBe(v.challenge);
+    expect(brlcCommit(rho, words).toString()).toBe(v.transcriptCommitment);
+
+    const derived = contributionChallenge(v.epochId as Hex, words, commitmentsHash, encryptedSharesHash);
+    expect(derived.anchor).toBe(v.anchor);
+    expect(derived.challenge.toString()).toBe(v.challenge);
+    expect(derived.transcriptCommitment.toString()).toBe(v.transcriptCommitment);
+
+    // Public inputs in verifier order.
+    expect(bigs(v.publicInputs)).toEqual([
+      BigInt(v.epochId),
+      BigInt(v.threshold),
+      BigInt(v.committeeSize),
+      BigInt(v.contributorIndex),
+      commitmentsHash,
+      encryptedSharesHash,
+      rho,
+      derived.transcriptCommitment,
+    ]);
+  });
+
+  it.each(f.vectors)('"$label" — decodes submitContribution calldata', (v) => {
+    const words = bigs(v.transcript);
+    const data = encodeFunctionData({
+      abi: dkgManagerAbi,
+      functionName: 'submitContribution',
+      args: [
+        v.epochId as Hex,
+        v.contributorIndex,
+        bytes32(big(v.commitmentsHash)),
+        bytes32(big(v.encryptedSharesHash)),
+        wordsToBytes(words),
+        ('0x' + '00'.repeat(256)) as Hex,
+        wordsToBytes(bigs(v.publicInputs)),
+      ],
+    });
+    const call = decodeContributionCalldata(data, v.threshold, v.committeeSize);
+    expect(call.epochId.toLowerCase()).toBe(v.epochId.toLowerCase());
+    expect(call.contributorIndex).toBe(v.contributorIndex);
+    expect(call.words).toEqual(words);
+    expect(call.publicInputs.map(String)).toEqual(v.publicInputs);
+    // Recipients read ephemerals at 2Kt+3n+2i and masked shares at 2Kt+5n+jn+i.
+    const layout = new ContributionLayout(v.threshold, v.committeeSize);
+    for (let i = 0; i < v.committeeSize; i++) {
+      expect(call.transcript.ephemerals[i].x).toBe(words[layout.ephemeralOffset(i)]);
+      for (let j = 0; j < MAX_K; j++) {
+        expect(call.transcript.maskedShares[j][i]).toBe(words[layout.maskedShareOffset(j, i)]);
+      }
+    }
+    // A different policy makes the same calldata undecodable rather than misread.
+    expect(() => decodeContributionCalldata(data, v.threshold, v.committeeSize + 1)).toThrow(/expected/);
+  });
+
+  it('rejects non-canonical words and a wrong recipient index', () => {
+    const v = f.vectors[1]!;
+    const words = bigs(v.transcript);
+    const layout = new ContributionLayout(v.threshold, v.committeeSize);
+    for (const bad of [FR_MODULUS, FR_MODULUS + 1n, (1n << 256n) - 1n]) {
+      const tampered = [...words];
+      tampered[0] = bad;
+      expect(() => decodeContributionTranscript(tampered, v.threshold, v.committeeSize)).toThrow(/canonical/);
+      expect(() => wordsToBytes(tampered)).toThrow(/canonical/);
+    }
+    // A word encoded as p + w decodes to nothing rather than to w.
+    const hex = wordsToBytes(words).slice(2);
+    const shifted = ('0x' + bytes32(words[0] + FR_MODULUS).slice(2) + hex.slice(64)) as Hex;
+    expect(() => wordsFromBytes(shifted)).toThrow(/canonical/);
+    const reordered = [...words];
+    reordered[layout.recipientIndexOffset(0)] = 2n;
+    expect(() => decodeContributionTranscript(reordered, v.threshold, v.committeeSize)).toThrow(/expected 1/);
+    expect(() => decodeContributionTranscript(words.slice(1), v.threshold, v.committeeSize)).toThrow(/expected/);
+  });
+
+  it('BRLC skips nothing and starts at ρ¹', () => {
+    // Boundaries: ρ ∈ {0, 1, p−1} against the definition Σ ρ^(q+1)·w[q].
+    const words = [3n, 5n, 7n];
+    expect(brlcCommit(0n, words)).toBe(0n);
+    expect(brlcCommit(1n, words)).toBe(15n);
+    const pm1 = FR_MODULUS - 1n; // (−1)^1·3 + (−1)^2·5 + (−1)^3·7 = −5
+    expect(brlcCommit(pm1, words)).toBe(FR_MODULUS - 5n);
+    // A reordered transcript commits to a different value.
+    expect(brlcCommit(12345n, words)).not.toBe(brlcCommit(12345n, [5n, 3n, 7n]));
+  });
+});
+
+// ─── finalize_transcript.json (docs/pool-keys-v4.md §6–§9) ─────────────────
+
+interface PointJSON {
+  x: string;
+  y: string;
+}
+
+interface FinalizeFile {
+  domain: { preimage: string; keccak256: string; bn254Reduced: string };
+  maxN: number;
+  maxK: number;
+  transcriptWords: number;
+  keyWords: number;
+  offsets: { participantIndexes: number; contributionHashes: number; keys: number };
+  merkleEmptyLeaf: string;
+  vectors: Array<{
+    label: string;
+    epochId: string;
+    threshold: number;
+    committeeSize: number;
+    acceptedCount: number;
+    dealers: Array<{ index: number; coefficients: string[][]; commitmentsHash: string }>;
+    poolKeys: PointJSON[];
+    shareCommitments: PointJSON[][];
+    transcript: string[];
+    rowsDigest: string;
+    keyDigests: string[];
+    transcriptDigest: string;
+    transcriptKeccak: string;
+    anchor: string;
+    challenge: string;
+    transcriptCommitment: string;
+    publicInputs: string[];
+    shareRoots: string[];
+  }>;
+}
+
+const pt = (p: PointJSON) => ({ x: big(p.x), y: big(p.y) });
+
+describe('vectors / finalize_transcript.json', () => {
+  const f = load<FinalizeFile>('finalize_transcript.json');
+
+  it('is generated for the bounds this SDK is compiled for', () => {
+    expect(f.maxN).toBe(MAX_N);
+    expect(f.maxK).toBe(MAX_K);
+    expect(f.transcriptWords).toBe(FINALIZE_TRANSCRIPT_WORDS);
+    expect(FINALIZE_TRANSCRIPT_WORDS).toBe(1120);
+    expect(f.keyWords).toBe(FINALIZE_KEY_WORDS);
+    expect(f.offsets.participantIndexes).toBe(FINALIZE_INDEXES_START);
+    expect(f.offsets.contributionHashes).toBe(FINALIZE_HASHES_START);
+    expect(f.offsets.keys).toBe(FINALIZE_KEYS_START);
+    expect(f.merkleEmptyLeaf).toBe(MERKLE_EMPTY_LEAF);
+    expect(f.domain.preimage).toBe('davinci-dkg:finalize:v2');
+    expect(f.domain.keccak256).toBe(DomainFinalizeTranscriptV2);
+    expect(1 << MERKLE_DEPTH).toBe(MAX_N);
+  });
+
+  it.each(f.vectors)('"$label" — layout: keys at 64+66j, D_{j,i} at 64+66j+2+2i', (v) => {
+    const words = bigs(v.transcript);
+    expect(words).toHaveLength(FINALIZE_TRANSCRIPT_WORDS);
+    const t = decodeFinalizeTranscript(words);
+    // Dealer rows: the accepted indexes in the order emitted, zero beyond.
+    expect(t.participantIndexes.slice(0, v.acceptedCount).map(Number)).toEqual(v.dealers.map((d) => d.index));
+    expect(t.participantIndexes.slice(v.acceptedCount).every((w) => w === 0n)).toBe(true);
+    expect(t.contributionHashes.slice(0, v.acceptedCount).map(String)).toEqual(v.dealers.map((d) => d.commitmentsHash));
+    expect(t.contributionHashes.slice(v.acceptedCount).every((w) => w === 0n)).toBe(true);
+    for (let j = 0; j < MAX_K; j++) {
+      expect(finalizePoolKeyOffset(j)).toBe(64 + 66 * j);
+      expect(t.poolKeys[j]).toEqual(pt(v.poolKeys[j]));
+      expect(words[finalizePoolKeyOffset(j)]).toBe(big(v.poolKeys[j].x));
+      for (let i = 0; i < MAX_N; i++) {
+        expect(finalizeShareCommitmentOffset(j, i)).toBe(64 + 66 * j + 2 + 2 * i);
+        const expected = i < v.committeeSize ? pt(v.shareCommitments[j][i]) : { x: 0n, y: 1n };
+        expect(t.shareCommitments[j][i]).toEqual(expected);
+      }
+    }
+    // Every key is a distinct point: independent polynomials.
+    expect(new Set(t.poolKeys.map((p) => `${p.x}:${p.y}`)).size).toBe(MAX_K);
+    expect(encodeFinalizeTranscript(t)).toEqual(words);
+  });
+
+  it.each(f.vectors)('"$label" — Poseidon digest levels, anchor, challenge and BRLC', (v) => {
+    const words = bigs(v.transcript);
+    const parts = finalizeTranscriptDigest(v.epochId as Hex, v.threshold, v.committeeSize, v.acceptedCount, words);
+    expect(parts.rows.toString()).toBe(v.rowsDigest);
+    expect(parts.keys.map(String)).toEqual(v.keyDigests);
+    expect(parts.digest.toString()).toBe(v.transcriptDigest);
+
+    expect(keccakWords(words)).toBe(v.transcriptKeccak);
+    expect(challengeAnchor(words, parts.digest)).toBe(v.anchor);
+    const rho = deriveChallenge(v.epochId as Hex, DomainFinalizeTranscriptV2, v.anchor as Hex);
+    expect(rho.toString()).toBe(v.challenge);
+    expect(brlcCommit(rho, words).toString()).toBe(v.transcriptCommitment);
+
+    const derived = finalizeChallenge(v.epochId as Hex, words, parts.digest);
+    expect(derived.anchor).toBe(v.anchor);
+    expect(derived.challenge.toString()).toBe(v.challenge);
+    expect(derived.transcriptCommitment.toString()).toBe(v.transcriptCommitment);
+
+    expect(bigs(v.publicInputs)).toEqual([
+      BigInt(v.epochId),
+      BigInt(v.threshold),
+      BigInt(v.committeeSize),
+      BigInt(v.acceptedCount),
+      parts.digest,
+      rho,
+      derived.transcriptCommitment,
+    ]);
+    // The digest depends on the words: a swapped share commitment changes it.
+    const swapped = [...words];
+    const a = finalizeShareCommitmentOffset(0, 0);
+    const b = finalizeShareCommitmentOffset(0, 1);
+    [swapped[a], swapped[b]] = [swapped[b], swapped[a]];
+    expect(finalizeTranscriptDigest(v.epochId as Hex, v.threshold, v.committeeSize, v.acceptedCount, swapped).digest)
+      .not.toBe(parts.digest);
+  });
+
+  it.each(f.vectors)('"$label" — Merkle roots and every member\'s path', (v) => {
+    const t = decodeFinalizeTranscript(bigs(v.transcript));
+    for (let j = 0; j < MAX_K; j++) {
+      const leaves = shareCommitmentLeaves(t.shareCommitments[j], v.committeeSize);
+      expect(leaves).toHaveLength(MAX_N);
+      expect(leaves.slice(v.committeeSize).every((leaf) => leaf === MERKLE_EMPTY_LEAF)).toBe(true);
+      const root = merkleRoot(leaves);
+      expect(root).toBe(v.shareRoots[j]);
+      // Every committee member — contributor or not — has a leaf and a path.
+      for (let p = 1; p <= v.committeeSize; p++) {
+        const proof = shareProof(t.shareCommitments[j], v.committeeSize, p);
+        expect(proof.root).toBe(v.shareRoots[j]);
+        expect(proof.path).toHaveLength(MERKLE_DEPTH);
+        expect(proof.leaf).toBe(shareCommitmentLeaf(pt(v.shareCommitments[j][p - 1])));
+        expect(proof.path).toEqual(merklePath(leaves, p - 1));
+        expect(merkleRootFromPath(proof.leaf, p - 1, proof.path)).toBe(root);
+        expect(verifyMerklePath(root, proof.leaf, p - 1, proof.path)).toBe(true);
+        // The path is bound to its index and to its leaf.
+        expect(verifyMerklePath(root, proof.leaf, p % MAX_N, proof.path)).toBe(p - 1 === p % MAX_N);
+        expect(verifyMerklePath(root, MERKLE_EMPTY_LEAF, p - 1, proof.path)).toBe(false);
+      }
+      // A slot beyond the committee proves only the empty leaf.
+      if (v.committeeSize < MAX_N) {
+        const empty = merklePath(leaves, v.committeeSize);
+        expect(verifyMerklePath(root, MERKLE_EMPTY_LEAF, v.committeeSize, empty)).toBe(true);
+        expect(() => shareProof(t.shareCommitments[j], v.committeeSize, v.committeeSize + 1)).toThrow(/out of range/);
+      }
+    }
+    // Distinct keys have distinct roots.
+    expect(new Set(v.shareRoots).size).toBe(MAX_K);
+  });
+
+  it.each(f.vectors)('"$label" — decodes finalizeEpoch calldata', (v) => {
+    const words = bigs(v.transcript);
+    const data = encodeFunctionData({
+      abi: dkgManagerAbi,
+      functionName: 'finalizeEpoch',
+      args: [
+        v.epochId as Hex,
+        bytes32(big(v.transcriptDigest)),
+        wordsToBytes(words),
+        ('0x' + '00'.repeat(256)) as Hex,
+        wordsToBytes(bigs(v.publicInputs)),
+      ],
+    });
+    const call = decodeFinalizeCalldata(data);
+    expect(call.epochId.toLowerCase()).toBe(v.epochId.toLowerCase());
+    expect(call.transcriptDigest.toString()).toBe(v.transcriptDigest);
+    expect(call.acceptedCount).toBe(v.acceptedCount);
+    expect(call.words).toEqual(words);
+    expect(call.transcript.poolKeys.map((p) => [p.x.toString(), p.y.toString()]))
+      .toEqual(v.poolKeys.map((p) => [p.x, p.y]));
+    // The partial's shareProof for member i under key j comes straight from here.
+    for (let j = 0; j < MAX_K; j++) {
+      for (let i = 0; i < v.committeeSize; i++) {
+        expect(call.transcript.shareCommitments[j][i]).toEqual(pt(v.shareCommitments[j][i]));
+      }
+      expect(shareProof(call.transcript.shareCommitments[j], v.committeeSize, 1).root).toBe(v.shareRoots[j]);
+    }
+    // A digest argument that disagrees with public input 4 is rejected.
+    const inconsistent = encodeFunctionData({
+      abi: dkgManagerAbi,
+      functionName: 'finalizeEpoch',
+      args: [
+        v.epochId as Hex,
+        bytes32(big(v.transcriptDigest) + 1n),
+        wordsToBytes(words),
+        ('0x' + '00'.repeat(256)) as Hex,
+        wordsToBytes(bigs(v.publicInputs)),
+      ],
+    });
+    expect(() => decodeFinalizeCalldata(inconsistent)).toThrow(/public input 4/);
+  });
+
+  it('rejects a short transcript and a non-canonical word', () => {
+    const words = bigs(f.vectors[0]!.transcript);
+    expect(() => decodeFinalizeTranscript(words.slice(0, -1))).toThrow(/expected 1120/);
+    const tampered = [...words];
+    tampered[FINALIZE_KEYS_START] = FR_MODULUS;
+    expect(() => decodeFinalizeTranscript(tampered)).toThrow(/canonical/);
   });
 });

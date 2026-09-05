@@ -10,6 +10,12 @@ import {DKGProtocol} from "../src/libraries/DKGProtocol.sol";
 ///         strings below are copied verbatim from `tests/vectors/protocol.json`;
 ///         updating the vector is the canonical way to evolve the protocol —
 ///         all three layers (Solidity, Go, TS) MUST agree on every value.
+///
+///         v4 note: the contribution domain moved to `:v2` (compact
+///         transcript) and the poolkey domain was replaced by
+///         `finalize:v2`. The v2 hashes below were computed with
+///         `cast keccak` and will be cross-checked against the regenerated
+///         `protocol.json` once the circuit-side vectors land.
 contract DKGProtocolTest is Test {
     function test_DomainOperatorRegisterV1_MatchesGoVector() public pure {
         assertEq(
@@ -25,17 +31,17 @@ contract DKGProtocolTest is Test {
         );
     }
 
-    function test_DomainContributionTranscriptV1_MatchesGoVector() public pure {
+    function test_DomainContributionTranscriptV2_MatchesGoVector() public pure {
         assertEq(
-            uint256(DKGProtocol.DOMAIN_CONTRIBUTION_TRANSCRIPT_V1),
-            uint256(0x29aa19fbd94aef15994e2f585c00bbd3e7aa5aefc9372efb2ce55433ca0c6a72)
+            uint256(DKGProtocol.DOMAIN_CONTRIBUTION_TRANSCRIPT_V2),
+            uint256(0x4b37311b22cd0f09ae11d49f42ab65dce8fccf2600e6e2e7d41f51dc3d44b752)
         );
     }
 
-    function test_DomainPoolKeyTranscriptV1_MatchesGoVector() public pure {
+    function test_DomainFinalizeTranscriptV2_MatchesGoVector() public pure {
         assertEq(
-            uint256(DKGProtocol.DOMAIN_POOLKEY_TRANSCRIPT_V1),
-            uint256(0xae031fc261aed61242596185b006e57bdcba774d6ea39d3348a9a570b38d9ff4)
+            uint256(DKGProtocol.DOMAIN_FINALIZE_TRANSCRIPT_V2),
+            uint256(0xe28959afa6ea38549c61aff75344fc2c9f148f1259fcef44fdd297a1d9a39d0f)
         );
     }
 

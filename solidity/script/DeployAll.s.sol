@@ -6,7 +6,7 @@ import {DKGRegistry} from "../src/DKGRegistry.sol";
 import {DKGManager} from "../src/DKGManager.sol";
 import {DKGAppManager} from "../src/DKGAppManager.sol";
 import {ContributionVerifier} from "../src/verifiers/ContributionVerifier.sol";
-import {PoolKeyVerifier} from "../src/verifiers/PoolKeyVerifier.sol";
+import {FinalizeVerifier} from "../src/verifiers/FinalizeVerifier.sol";
 import {PartialDecryptVerifier} from "../src/verifiers/PartialDecryptVerifier.sol";
 import {DecryptCombineVerifier} from "../src/verifiers/DecryptCombineVerifier.sol";
 
@@ -46,8 +46,8 @@ contract DeployAllScript is Script {
         ContributionVerifier contributionVerifier = new ContributionVerifier();
         console.log("ContributionVerifier deployed at:", address(contributionVerifier));
 
-        PoolKeyVerifier poolKeyVerifier = new PoolKeyVerifier();
-        console.log("PoolKeyVerifier deployed at:", address(poolKeyVerifier));
+        FinalizeVerifier finalizeVerifier = new FinalizeVerifier();
+        console.log("FinalizeVerifier deployed at:", address(finalizeVerifier));
 
         PartialDecryptVerifier partialDecryptVerifier = new PartialDecryptVerifier();
         console.log("PartialDecryptVerifier deployed at:", address(partialDecryptVerifier));
@@ -64,7 +64,7 @@ contract DeployAllScript is Script {
             address(registry),
             address(contributionVerifier),
             address(partialDecryptVerifier),
-            address(poolKeyVerifier),
+            address(finalizeVerifier),
             address(decryptCombineVerifier),
             epochDurationBlocks,
             committeeSelectionBlocks,

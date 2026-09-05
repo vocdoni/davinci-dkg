@@ -17,8 +17,8 @@ import (
 )
 
 // TestApplicationRegistration exercises `DKGAppManager.registerApplication`
-// in organizer-locked mode: bring an epoch to Live with pool key 0
-// activated, register an application with an organizer key and a Schnorr
+// in organizer-locked mode: bring an epoch to Live (every pool key stored),
+// register an application with an organizer key and a Schnorr
 // proof of possession, and assert the cached on-chain record — including the
 // pool key it claimed. The test fails if the Solidity-side
 // `_organizerSchnorrChallenge` disagrees with the Go-side prover by even one
@@ -56,26 +56,24 @@ func TestApplicationRegistration(t *testing.T) {
 	c.Assert(app.Policy.Mode, qt.Equals, uint8(types.AppModeOrganizerLocked))
 	c.Assert(app.OrganizerSecret.Sign(), qt.Equals, 0, qt.Commentf("sk_org is only published by revealOrganizerSecret"))
 
-	// The registration claimed the epoch's first (and only activated) key.
+	// The registration claimed the epoch's first key.
 	c.Assert(app.PoolIndex, qt.Equals, uint8(0))
 	poolIndex, err := services.Manager.GetAppPoolIndex(services.CallOpts(ctx), res.EpochID, aid)
 	c.Assert(err, qt.IsNil)
 	c.Assert(poolIndex, qt.Equals, uint8(0))
 
-	status, err := services.Manager.GetPoolStatus(services.CallOpts(ctx), res.EpochID)
+	next, err := services.Manager.GetPoolStatus(services.CallOpts(ctx), res.EpochID)
 	c.Assert(err, qt.IsNil)
-	c.Assert(status.NextIndex, qt.Equals, uint8(1), qt.Commentf("the pool cursor moved forward"))
-	c.Assert(status.Activated, qt.Equals, uint8(1), qt.Commentf("only key 0 was activated"))
+	c.Assert(next, qt.Equals, uint8(1), qt.Commentf("the pool cursor moved forward"))
 
 	poolX, poolY, err := services.Manager.GetPoolKey(services.CallOpts(ctx), res.EpochID, 0)
 	c.Assert(err, qt.IsNil)
-	activation := res.Activation(0)
-	c.Assert(poolX.Cmp(activation.PoolKey.X), qt.Equals, 0)
-	c.Assert(poolY.Cmp(activation.PoolKey.Y), qt.Equals, 0)
+	c.Assert(poolX.Cmp(res.PoolKey(0).X), qt.Equals, 0)
+	c.Assert(poolY.Cmp(res.PoolKey(0).Y), qt.Equals, 0)
 
 	root, err := services.Manager.GetPoolShareRoot(services.CallOpts(ctx), res.EpochID, 0)
 	c.Assert(err, qt.IsNil)
-	c.Assert(root, qt.Equals, activation.Shares.Root())
+	c.Assert(root, qt.Equals, res.Shares(0).Root())
 
 	// Identical re-registration must revert (aid is a one-shot binding).
 	c.Assert(
@@ -164,10 +162,10 @@ func TestApplicationRegistrationRejectsTamperedProof(t *testing.T) {
 	c.Assert(err, qt.IsNotNil, qt.Commentf("tampered Schnorr response must revert"))
 }
 
-// TestApplicationRegistrationRequiresAnActivatedKey asserts the pool gate:
-// the fixture epoch only has key 0 activated, so the second registration
-// reverts with PoolKeyNotActive until another key is proven.
-func TestApplicationRegistrationRequiresAnActivatedKey(t *testing.T) {
+// TestApplicationRegistrationClaimsKeysInOrder asserts that a second
+// registration claims the next key of the pool straight away: finalizeEpoch
+// stored every key, so nothing has to be proven between two registrations.
+func TestApplicationRegistrationClaimsKeysInOrder(t *testing.T) {
 	if !helpers.IsIntegrationEnabled() {
 		t.Skip("integration tests disabled")
 	}
@@ -183,30 +181,25 @@ func TestApplicationRegistrationRequiresAnActivatedKey(t *testing.T) {
 		golangtypes.DKGTypesAppPolicy{Mode: uint8(types.AppModeAutomatic)},
 	), qt.IsNil)
 
-	// Key 1 is not activated yet: the claim reverts.
-	blocked := randomAid(c)
+	second := randomAid(c)
 	c.Assert(helpers.RegisterApplication(
-		ctx, self, services.AppManager, res.EpochID, blocked, nil,
-		golangtypes.DKGTypesAppPolicy{Mode: uint8(types.AppModeAutomatic)},
-	), qt.IsNotNil, qt.Commentf("registration must revert with PoolKeyNotActive"))
-
-	// Activate it and the very same registration goes through.
-	_, err := helpers.ActivateRoundPoolKey(ctx, services, res, 1)
-	c.Assert(err, qt.IsNil)
-	c.Assert(helpers.RegisterApplication(
-		ctx, self, services.AppManager, res.EpochID, blocked, nil,
+		ctx, self, services.AppManager, res.EpochID, second, nil,
 		golangtypes.DKGTypesAppPolicy{Mode: uint8(types.AppModeAutomatic)},
 	), qt.IsNil)
 
-	app, err := services.AppManager.GetApplication(services.CallOpts(ctx), res.EpochID, blocked)
+	app, err := services.AppManager.GetApplication(services.CallOpts(ctx), res.EpochID, second)
 	c.Assert(err, qt.IsNil)
 	c.Assert(app.PoolIndex, qt.Equals, uint8(1))
+	x, y, err := services.Manager.GetPoolKey(services.CallOpts(ctx), res.EpochID, 1)
+	c.Assert(err, qt.IsNil)
+	c.Assert(x.Cmp(res.PoolKey(1).X), qt.Equals, 0)
+	c.Assert(y.Cmp(res.PoolKey(1).Y), qt.Equals, 0)
 }
 
-// TestApplicationRegistrationExhaustsThePool activates every key of one
-// epoch, registers MaxK applications and asserts the next one reverts with
-// PoolExhausted. This is the epoch's hard capacity: after it, the only way
-// to register is a new epoch.
+// TestApplicationRegistrationExhaustsThePool registers MaxK applications
+// against one epoch and asserts the next one reverts with PoolExhausted. This
+// is the epoch's hard capacity: after it, the only way to register is a new
+// epoch.
 func TestApplicationRegistrationExhaustsThePool(t *testing.T) {
 	if !helpers.IsIntegrationEnabled() {
 		t.Skip("integration tests disabled")
@@ -219,14 +212,6 @@ func TestApplicationRegistrationExhaustsThePool(t *testing.T) {
 	self := selfActor()
 	policy := golangtypes.DKGTypesAppPolicy{Mode: uint8(types.AppModeAutomatic)}
 
-	for keyIndex := 1; keyIndex < ccommon.MaxK; keyIndex++ {
-		_, err := helpers.ActivateRoundPoolKey(ctx, services, res, uint8(keyIndex))
-		c.Assert(err, qt.IsNil)
-	}
-	status, err := services.Manager.GetPoolStatus(services.CallOpts(ctx), res.EpochID)
-	c.Assert(err, qt.IsNil)
-	c.Assert(status.Activated, qt.Equals, uint8(0xff), qt.Commentf("every key of the pool is activated"))
-
 	for i := range ccommon.MaxK {
 		aid := randomAid(c)
 		c.Assert(helpers.RegisterApplication(ctx, self, services.AppManager, res.EpochID, aid, nil, policy), qt.IsNil)
@@ -235,13 +220,13 @@ func TestApplicationRegistrationExhaustsThePool(t *testing.T) {
 		c.Assert(app.PoolIndex, qt.Equals, uint8(i), qt.Commentf("keys are claimed in order"))
 	}
 
-	status, err = services.Manager.GetPoolStatus(services.CallOpts(ctx), res.EpochID)
+	next, err := services.Manager.GetPoolStatus(services.CallOpts(ctx), res.EpochID)
 	c.Assert(err, qt.IsNil)
-	c.Assert(status.NextIndex, qt.Equals, uint8(ccommon.MaxK))
+	c.Assert(next, qt.Equals, uint8(ccommon.MaxK))
 
-	c.Assert(helpers.RegisterApplication(
-		ctx, self, services.AppManager, res.EpochID, randomAid(c), nil, policy,
-	), qt.IsNotNil, qt.Commentf("the %d+1-th registration must revert with PoolExhausted", ccommon.MaxK))
+	err = helpers.RegisterApplication(ctx, self, services.AppManager, res.EpochID, randomAid(c), nil, policy)
+	ok, got := helpers.RevertsWith(err, "PoolExhausted")
+	c.Assert(ok, qt.IsTrue, qt.Commentf("the %d+1-th registration must revert with PoolExhausted, got %s", ccommon.MaxK, got))
 }
 
 // TestRevealOrganizerSecret covers the one-shot reveal: a secret that does
@@ -282,8 +267,6 @@ func TestRevealOrganizerSecret(t *testing.T) {
 		qt.Commentf("a second reveal must revert with AlreadyRevealed"))
 
 	// An automatic application has nothing to reveal.
-	_, err = helpers.ActivateRoundPoolKey(ctx, services, res, 1)
-	c.Assert(err, qt.IsNil)
 	auto := randomAid(c)
 	c.Assert(helpers.RegisterApplication(
 		ctx, self, services.AppManager, res.EpochID, auto, nil,
@@ -314,8 +297,8 @@ func TestSubmitCiphertextRequiresRegisteredApplication(t *testing.T) {
 	c.Assert(err, qt.IsNotNil, qt.Commentf("submitCiphertext with aid = 0 must revert"))
 }
 
-// finalizedEpochForApps drives a single-participant epoch to Live with pool
-// key 0 activated, so the application tests don't have to re-implement that
+// finalizedEpochForApps drives a single-participant epoch to Live with its
+// whole pool stored, so the application tests don't have to re-implement that
 // flow. Built on top of the existing helper used by the SDK e2e tests.
 func finalizedEpochForApps(ctx context.Context, c *qt.C) *helpers.FinalizedRoundResult {
 	head, err := services.Contracts.Client().BlockNumber(ctx)

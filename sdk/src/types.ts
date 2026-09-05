@@ -239,12 +239,14 @@ export interface ApplicationRecord {
   exists: boolean;
 }
 
-/** `DKGManager.getPoolStatus(epochId)` — how far the pool has been dealt. */
+/**
+ * `DKGManager.getPoolStatus(epochId)` — the claim cursor. Every key of a Live
+ * epoch is proven and stored by `finalizeEpoch`, so the only thing left to
+ * track is how many of the `MaxK` keys registrations have claimed.
+ */
 export interface PoolStatus {
-  /** Index of the next unclaimed key. */
+  /** Index of the next unclaimed key; `MAX_K` once the pool is spent. */
   nextIndex: number;
-  /** Bitmap of activated keys: bit `j` set means key `j` is activated. */
-  activated: number;
 }
 
 // ── SDK config ────────────────────────────────────────────────────────────────
@@ -356,24 +358,17 @@ export interface PartialDecryptionEvent {
 
 /**
  * `DKGManager.EpochLive` — emitted once per epoch by whoever finalized it.
- * `finalizeEpoch` is now proof-less; no key material is available yet, it
- * only marks the accepted-contributor set frozen and opens the epoch for
- * `activatePoolKey`. The event carries no submitter, so attribution needs
- * the transaction sender (see `DKGClient.getTransactionSenders`).
+ * `finalizeEpoch` is proof-carrying and atomic: from this block on every one
+ * of the epoch's `MaxK` pool keys and share-commitment Merkle roots is stored
+ * and readable (`getPoolKey`, `getPoolShareRoot`). The event carries no
+ * submitter, so attribution needs the transaction sender (see
+ * `DKGClient.getTransactionSenders`); the transaction's calldata is where the
+ * whole transcript — keys and every member's share commitment — lives (see
+ * `DKGClient.getFinalizeTranscript`).
  */
 export interface EpochLiveEvent {
   epochId: Hex;
   contributionCount: number;
-  blockNumber: bigint;
-  transactionHash: Hex | null;
-}
-
-/** `DKGManager.PoolKeyActivated` — key `keyIndex` of the epoch's pool is live. */
-export interface PoolKeyActivatedEvent {
-  epochId: Hex;
-  keyIndex: number;
-  x: bigint;
-  y: bigint;
   blockNumber: bigint;
   transactionHash: Hex | null;
 }

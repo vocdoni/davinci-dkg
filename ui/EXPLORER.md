@@ -32,9 +32,11 @@ the SDK's chunked `getLogs`; normalises them into an entity store; persists
 that store in IndexedDB keyed by `chainId:managerAddress`; and keeps it
 current by polling from the last indexed block. Contract state that events do
 not carry is fetched with viem `multicall` in batches and cached per block
-height: epoch structs and pool status, node records, application records,
-ciphertext and combine records, plaintexts. Pool keys themselves arrive with
-`PoolKeyActivated`, which carries the coordinates.
+height: epoch structs and the pool claim cursor, node records, application
+records, ciphertext and combine records, plaintexts. The pool keys themselves
+are not in any event — the proof-carrying `finalizeEpoch` stores all of them
+at once — so a Live epoch's `POOL_SIZE` keys are read with `getPoolKey` once,
+right after `EpochLive`.
 
 Pages never call `getLogs` themselves. They read a snapshot of the store
 through a pure selector. [`src/data/README.md`](src/data/README.md) is the
@@ -47,7 +49,7 @@ event:
 | Entity | Key | Holds |
 |---|---|---|
 | `operators` | address | public key, status, registered block, last active, event history |
-| `epochs` | epoch id | nonce, creator, start and seed blocks, seed, policy, status, committee in slot order, contributions, finalization (block, tx, frozen contribution count), the pool (`POOL_SIZE = 8` slots: `P_j` once activated, the aid that claimed it), next pool index, applications |
+| `epochs` | epoch id | nonce, creator, start and seed blocks, seed, policy, status, committee in slot order, contributions, finalization (block, tx, proven contribution count), the pool (`POOL_SIZE = 16` slots: `P_j` once read from the Live epoch, the aid that claimed it), next pool index, applications |
 | `slots` | epoch, slot | operator, block, tx |
 | `applications` | epoch, aid | creator, mode, pool index, `PK_org` (the identity when automatic), `sk_org` once revealed with the reveal block and tx, policy (submission, block window, cap, decryption window), created block, ciphertexts |
 | `ciphertexts` | epoch, aid, index | submitter, `C1`, `C2`, partials, combined record and plaintext |
@@ -65,8 +67,8 @@ block).
 generated event stream through the real reducers, so the fixture store has the
 same shape as a live one: 300 operators including reaped and reactivated rows,
 8 epochs with 64-member committees at `t = 33`, one aborted epoch and one
-still in key assembly, four pool keys activated per live epoch (two claimed,
-two ahead), 2 applications per live epoch with 8 ciphertexts each (one
+still in key assembly, the whole pool of 16 keys stored at finalization (two
+claimed), 2 applications per live epoch with 8 ciphertexts each (one
 organizer-locked with a one-address allow-list and a decryption window that
 opened in 2023 — closed in 2025 on even epochs — and one automatic with open
 submission and a deadline in 2033), partials arriving in waves of `t`, every
@@ -96,7 +98,7 @@ application id, address or transaction hash to its page.
 
 **`/epochs` Epochs.** Virtualised table: id, nonce, phase, `t` of `n`, claim
 and contribution progress bars, ciphertexts, live since, creator, finalizer
-(the proof-less `finalizeEpoch` sender).
+(the `finalizeEpoch` sender).
 Filter by phase, search, click through to the epoch.
 
 **`/epochs/:id` Epoch.** The header carries the id, nonce, phase badge,
@@ -107,10 +109,10 @@ admission probability and the claims in slot order; when the epoch aborted it
 shows why. The committee panel is a grid of `n` members that stays readable at
 64, with claim block, contribution block, transaction and gas, over a
 contributions summary bar. The pool panel has the finalizer, the finalization
-transaction and gas, the frozen contribution count, and the eight pool slots —
-each activated (copyable `P_j` coordinates, block, transaction, gas, activator),
-claimed by which application ("activated by" the operator, "claimed by" the
-application), or not activated yet — with the activation transcript size.
+transaction and gas, the proven contribution count, and the sixteen pool
+slots — each free (copyable `P_j` coordinates) or claimed by which application
+("claimed by" the application, with the block) — with the finalize transcript
+size.
 Below that: the applications table (the same compact columns as
 `/applications`, with the pool key and the reveal state per row), a members by
 ciphertexts heatmap of partials coloured by wave with a combined row, the
@@ -170,8 +172,8 @@ be, and the page says so in the state help, the stat card and the organizer
 panel.
 
 **`/playground` Playground.** The organizer walkthrough: connect, choose a
-live epoch (each shows its pool as "2 activated free · 2 claimed · 4 not
-activated"), pick a mode, a cap, a submitter and a decryption window and
+live epoch (each shows its pool as "14 free · 2 claimed · 16 keys"), pick a
+mode, a cap, a submitter and a decryption window and
 register — claiming the next pool key — with a generated or pasted secret
 (none for an automatic application), encrypt under the key
 `getApplicationKey` returns, submit, reveal the organizer secret or keep it

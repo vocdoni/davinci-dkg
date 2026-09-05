@@ -3,7 +3,6 @@ package tests
 import (
 	"context"
 	"math/big"
-	"math/bits"
 	"testing"
 	"time"
 
@@ -18,8 +17,8 @@ import (
 
 // TestNodesServiceApplicationCiphertexts runs three real node instances
 // against the harness chain and checks the whole production path: lottery
-// claim, contribution, the proof-less finalize, pool-key activation, then
-// partial decryption + combine for ciphertexts submitted under two
+// claim, contribution, the proof-carrying finalize that stores every pool
+// key, then partial decryption + combine for ciphertexts submitted under two
 // applications. One is automatic — the committee owns it end to end — and
 // one is organizer-locked: the contract refuses every partial of it until
 // the organizer calls revealOrganizerSecret, so the nodes park its slots and
@@ -40,7 +39,6 @@ func TestNodesServiceApplicationCiphertexts(t *testing.T) {
 			ManagerAddr:           services.Addresses.Manager.Hex(),
 			PollInterval:          time.Second,
 			AutoCreateEpochs:      false,
-			ActivateAhead:         2,
 			DecryptLookbackBlocks: 5,
 		}
 		n, err := node.New(cfg)
@@ -75,12 +73,11 @@ func TestNodesServiceApplicationCiphertexts(t *testing.T) {
 		return err == nil && e.Status == 3
 	}), qt.IsNil, qt.Commentf("nodes must claim, contribute and finalize on their own"))
 
-	// The nodes activate pool keys as soon as the epoch is Live and keep a
-	// couple of unclaimed ones ahead; two are enough for this test.
-	c.Assert(helpers.WaitUntilCondition(ctx, time.Second, func() bool {
-		status, err := services.Manager.GetPoolStatus(services.CallOpts(ctx), epochID)
-		return err == nil && bits.OnesCount8(status.Activated) >= 2
-	}), qt.IsNil, qt.Commentf("nodes must activate the epoch's pool keys on their own"))
+	// Live means every pool key is stored: the two registrations below claim
+	// keys 0 and 1 without any further node work.
+	next, err := services.Manager.GetPoolStatus(services.CallOpts(ctx), epochID)
+	c.Assert(err, qt.IsNil)
+	c.Assert(next, qt.Equals, uint8(0))
 
 	// ── two applications: one automatic, one organizer-locked ─────────────
 	self := selfActor()

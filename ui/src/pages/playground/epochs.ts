@@ -30,8 +30,8 @@ export function useEpochStepData(): EpochStepInputs {
       threshold: row.threshold,
       committeeSize: row.committeeSize,
       liveSinceBlock: row.liveSinceBlock,
-      poolActivated: row.poolActivated,
       poolClaimed: row.poolClaimed,
+      poolFree: row.poolFree,
     }))
     const head = newest[0] ?? null
     const headBlock = resolveHeadBlock(store)

@@ -11,7 +11,7 @@ import {Verifier as BaseDecryptCombineVerifier} from "./decryptcombine_vkey.sol"
 ///         and the partials travel in the BRLC-bound transcript.
 contract DecryptCombineVerifier is BaseDecryptCombineVerifier, IZKVerifier {
     bytes32 internal constant PROVING_KEY_HASH =
-        hex"d70de162a56ac4801077f857f9491015916bb238db7fb9b0cfe5061eceae5305";
+        hex"580a117c037fe7ca3465d9e87421e09eec03f7f9dc5d4965369bedd4ec6fad10";
 
     error InvalidProofEncoding();
 

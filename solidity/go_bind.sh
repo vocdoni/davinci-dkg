@@ -54,7 +54,7 @@ new = pattern.sub("", src, count=1)
 open(path, "w").write(new)
 PY
 generate_binding "$OUT_DIR/ContributionVerifier.sol/ContributionVerifier.json" golangtypes ContributionVerifier "$BINDINGS_DIR/contributionverifier.go"
-generate_binding "$OUT_DIR/PoolKeyVerifier.sol/PoolKeyVerifier.json" golangtypes PoolKeyVerifier "$BINDINGS_DIR/poolkeyverifier.go"
+generate_binding "$OUT_DIR/FinalizeVerifier.sol/FinalizeVerifier.json" golangtypes FinalizeVerifier "$BINDINGS_DIR/finalizeverifier.go"
 generate_binding "$OUT_DIR/PartialDecryptVerifier.sol/PartialDecryptVerifier.json" golangtypes PartialDecryptVerifier "$BINDINGS_DIR/partialdecryptverifier.go"
 generate_binding "$OUT_DIR/DecryptCombineVerifier.sol/DecryptCombineVerifier.json" golangtypes DecryptCombineVerifier "$BINDINGS_DIR/decryptcombineverifier.go"
 

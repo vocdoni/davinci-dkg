@@ -609,7 +609,7 @@ func (n *Node) selected(ctx context.Context, epochID [12]byte) ([]common.Address
 
 // submitPartial posts δ_i = e_{j,i}·C1 — the share of the application's pool
 // key j — with its proof and the Merkle path that pins the share commitment
-// to the root activatePoolKey stored. Returns toxic=true when the ciphertext
+// to the root finalizeEpoch stored. Returns toxic=true when the ciphertext
 // is malformed and must never be decrypted.
 func (n *Node) submitPartial(
 	ctx context.Context,
@@ -636,11 +636,11 @@ func (n *Node) submitPartial(
 		return true, nil
 	}
 
-	dShare, err := n.buildPrivateShare(ctx, key.epoch, app.poolIndex, idx, selected, epoch, callOpts)
+	dShare, err := n.buildPrivateShare(ctx, n.contracts.Client(), key.epoch, app.poolIndex, idx, selected, epoch, callOpts)
 	if err != nil {
 		return false, fmt.Errorf("build private share: %w", err)
 	}
-	shareProof, err := n.shareProof(ctx, key.epoch, app.poolIndex, idx, epoch, selected)
+	shareProof, err := n.shareProof(ctx, key.epoch, app.poolIndex, idx, epoch)
 	if err != nil {
 		return false, fmt.Errorf("share inclusion proof: %w", err)
 	}
@@ -789,21 +789,20 @@ func (n *Node) application(ctx context.Context, tc *tickCache, key ctKey) (appVi
 }
 
 // shareProof returns this node's Merkle path into the share-commitment root
-// activatePoolKey stored for (epoch, pool key). The leaves are derived from
-// the accepted contributions' calldata — the same reconstruction the
-// activator proved — and checked against the stored root, so the node never
-// depends on the activation transaction's outer calldata (an activation
-// relayed through a contract carries a different selector and would strand
-// every member). Reading that calldata is only a fast path, taken when it
-// decodes and matches the root. The path is fixed for the life of the epoch,
-// so it is built once per key and cached.
+// finalizeEpoch stored for (epoch, pool key). The fast path reads the share
+// commitments back from the finalization transaction's calldata (located
+// through the EpochLive event) and checks them against the stored root; if
+// that calldata is unusable — a finalization relayed through a contract
+// carries a different selector — the leaves are rebuilt from the accepted
+// contributions' calldata, the very reconstruction the finalizer proved, and
+// checked against the root the same way. The path is fixed for the life of
+// the epoch, so it is built once per key and cached.
 func (n *Node) shareProof(
 	ctx context.Context,
 	epochID [12]byte,
 	keyIndex uint8,
 	myIdx uint16,
 	epoch epochView,
-	selected []common.Address,
 ) ([][32]byte, error) {
 	slot := poolSlot{epoch: epochID, key: keyIndex}
 	if path, ok := n.shareProofs[slot]; ok {
@@ -814,13 +813,13 @@ func (n *Node) shareProof(
 		return nil, fmt.Errorf("get pool share root: %w", err)
 	}
 	if root == ([32]byte{}) {
-		return nil, fmt.Errorf("pool key %d is not activated yet", keyIndex)
+		return nil, fmt.Errorf("pool key %d has no share root: epoch not finalized", keyIndex)
 	}
 	leaves, err := n.shareLeavesFromCalldata(ctx, epochID, keyIndex, epoch.SeedBlock, root)
 	if err != nil {
-		log.Debugw("share commitments: activation calldata unusable, rebuilding from the contributions",
+		log.Debugw("share commitments: finalization calldata unusable, rebuilding from the contributions",
 			"epoch", roundHex(epochID), "key", keyIndex, "err", err)
-		leaves, err = n.shareLeavesFromContributions(ctx, epochID, keyIndex, epoch, selected, root)
+		leaves, err = n.shareLeavesFromContributions(ctx, epochID, keyIndex, epoch, root)
 		if err != nil {
 			return nil, err
 		}
@@ -835,10 +834,11 @@ func (n *Node) shareProof(
 	return path, nil
 }
 
-// shareLeavesFromCalldata is the fast path: decode the share commitments from
-// the activatePoolKey transaction found through the PoolKeyActivated event.
-// Anything that does not decode as a direct call or does not fold into the
-// stored root is an error, and the caller falls back to the contributions.
+// shareLeavesFromCalldata is the fast path: decode key `keyIndex`'s share
+// commitments from the finalizeEpoch transaction found through the EpochLive
+// event. Anything that does not decode as a direct call or does not fold
+// into the stored root is an error, and the caller falls back to the
+// contributions.
 func (n *Node) shareLeavesFromCalldata(
 	ctx context.Context,
 	epochID [12]byte,
@@ -850,42 +850,41 @@ func (n *Node) shareLeavesFromCalldata(
 	if seedBlock > 0 {
 		start = seedBlock - 1
 	}
-	data, err := finalizer.ActivationCalldata(ctx, n.contracts.Client(), n.manager, epochID, keyIndex, start)
+	data, err := finalizer.FinalizeCalldata(ctx, n.contracts.Client(), n.manager, epochID, start)
 	if err != nil {
 		return [ccommon.MaxN][32]byte{}, err
 	}
-	idxs, commitments, err := finalizer.PoolKeyShareCommitments(data)
+	idxs, commitments, err := finalizer.FinalizeShareCommitments(data, keyIndex)
 	if err != nil {
-		return [ccommon.MaxN][32]byte{}, fmt.Errorf("decode activation transcript: %w", err)
+		return [ccommon.MaxN][32]byte{}, fmt.Errorf("decode finalization transcript: %w", err)
 	}
 	return shareLeaves(idxs, commitments, root)
 }
 
 // shareLeavesFromContributions rebuilds D_p for every committee member from
-// the accepted contributions' calldata, exactly as the activation proof did.
+// the accepted contributions' calldata, exactly as the finalization proof
+// did, through the on-disk calldata cache when it already holds them.
 func (n *Node) shareLeavesFromContributions(
 	ctx context.Context,
 	epochID [12]byte,
 	keyIndex uint8,
 	epoch epochView,
-	selected []common.Address,
 	root [32]byte,
 ) ([ccommon.MaxN][32]byte, error) {
-	pi, err := finalizer.PoolKeyStatement(ctx, n.contracts, n.manager, epochID,
-		epoch.Policy.Threshold, epoch.Policy.CommitteeSize, selected, keyIndex, n.contribCache)
+	pi, err := finalizer.FinalizeStatement(ctx, n.contracts, n.manager, epochID, n.contribCache)
 	if err != nil {
-		return [ccommon.MaxN][32]byte{}, fmt.Errorf("reconstruct pool key %d: %w", keyIndex, err)
+		return [ccommon.MaxN][32]byte{}, fmt.Errorf("reconstruct finalization: %w", err)
 	}
 	size := int(epoch.Policy.CommitteeSize)
-	if len(pi.ShareCommitments) < size {
-		return [ccommon.MaxN][32]byte{}, fmt.Errorf("pool key statement has %d share commitments for a committee of %d",
-			len(pi.ShareCommitments), size)
+	if int(keyIndex) >= len(pi.ShareCommitments) || len(pi.ShareCommitments[keyIndex]) < size {
+		return [ccommon.MaxN][32]byte{}, fmt.Errorf("finalization statement has no %d share commitments for key %d",
+			size, keyIndex)
 	}
 	idxs := make([]uint16, size)
 	for i := range idxs {
 		idxs[i] = uint16(i + 1)
 	}
-	return shareLeaves(idxs, pi.ShareCommitments[:size], root)
+	return shareLeaves(idxs, pi.ShareCommitments[keyIndex][:size], root)
 }
 
 // shareLeaves lays the member-indexed commitments out as tree leaves and

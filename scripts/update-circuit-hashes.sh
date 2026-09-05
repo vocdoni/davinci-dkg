@@ -68,9 +68,9 @@ update_go_hash ContributionCircuitHash         "$(jq -r '.contribution.circuit_h
 update_go_hash ContributionProvingKeyHash      "$(jq -r '.contribution.proving_key_hash'         "${JSON}")"
 update_go_hash ContributionVerificationKeyHash "$(jq -r '.contribution.verifying_key_hash'       "${JSON}")"
 
-update_go_hash PoolKeyCircuitHash         "$(jq -r '.poolkey.circuit_hash'            "${JSON}")"
-update_go_hash PoolKeyProvingKeyHash      "$(jq -r '.poolkey.proving_key_hash'         "${JSON}")"
-update_go_hash PoolKeyVerificationKeyHash "$(jq -r '.poolkey.verifying_key_hash'       "${JSON}")"
+update_go_hash FinalizeCircuitHash         "$(jq -r '.finalize.circuit_hash'            "${JSON}")"
+update_go_hash FinalizeProvingKeyHash      "$(jq -r '.finalize.proving_key_hash'         "${JSON}")"
+update_go_hash FinalizeVerificationKeyHash "$(jq -r '.finalize.verifying_key_hash'       "${JSON}")"
 
 update_go_hash PartialDecryptCircuitHash         "$(jq -r '.partialdecrypt.circuit_hash'        "${JSON}")"
 update_go_hash PartialDecryptProvingKeyHash      "$(jq -r '.partialdecrypt.proving_key_hash'     "${JSON}")"
@@ -85,7 +85,7 @@ echo "Updated ${CONFIG} with hashes from ${JSON}"
 # ── Solidity verifier wrapper contracts ────────────────────────────────────
 
 update_sol_pk_hash "${VERIFIERS_DIR}/ContributionVerifier.sol"  "$(jq -r '.contribution.proving_key_hash'   "${JSON}")"
-update_sol_pk_hash "${VERIFIERS_DIR}/PoolKeyVerifier.sol"      "$(jq -r '.poolkey.proving_key_hash'       "${JSON}")"
+update_sol_pk_hash "${VERIFIERS_DIR}/FinalizeVerifier.sol"     "$(jq -r '.finalize.proving_key_hash'       "${JSON}")"
 update_sol_pk_hash "${VERIFIERS_DIR}/PartialDecryptVerifier.sol" "$(jq -r '.partialdecrypt.proving_key_hash' "${JSON}")"
 update_sol_pk_hash "${VERIFIERS_DIR}/DecryptCombineVerifier.sol" "$(jq -r '.decryptcombine.proving_key_hash' "${JSON}")"
 

@@ -1,4 +1,4 @@
-package poolkey
+package finalize
 
 import (
 	"encoding/hex"
@@ -10,17 +10,17 @@ import (
 	"github.com/vocdoni/davinci-dkg/config"
 )
 
-// Artifacts contains the pool-key circuit artifact configuration.
+// Artifacts contains the finalization circuit artifact configuration.
 var Artifacts = circuits.NewCircuitArtifacts(
-	"poolkey",
+	"finalize",
 	ecc.BN254,
 	[]backend.ProverOption{solidity.WithProverTargetSolidityVerifier(backend.GROTH16)},
 	[]backend.VerifierOption{solidity.WithVerifierTargetSolidityVerifier(backend.GROTH16)},
-	&circuits.Artifact{RemoteURL: config.PoolKeyCircuitURL, Hash: mustArtifactHash(config.PoolKeyCircuitHash)},
-	&circuits.Artifact{RemoteURL: config.PoolKeyProvingKeyURL, Hash: mustArtifactHash(config.PoolKeyProvingKeyHash)},
+	&circuits.Artifact{RemoteURL: config.FinalizeCircuitURL, Hash: mustArtifactHash(config.FinalizeCircuitHash)},
+	&circuits.Artifact{RemoteURL: config.FinalizeProvingKeyURL, Hash: mustArtifactHash(config.FinalizeProvingKeyHash)},
 	&circuits.Artifact{
-		RemoteURL: config.PoolKeyVerificationKeyURL,
-		Hash:      mustArtifactHash(config.PoolKeyVerificationKeyHash),
+		RemoteURL: config.FinalizeVerificationKeyURL,
+		Hash:      mustArtifactHash(config.FinalizeVerificationKeyHash),
 	},
 )
 

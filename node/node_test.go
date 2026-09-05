@@ -1,6 +1,7 @@
 package node
 
 import (
+	"context"
 	"errors"
 	"math/big"
 	"sort"
@@ -60,68 +61,116 @@ func TestStaggerSlotIsAPermutationOfTheCommittee(t *testing.T) {
 	c.Assert(staggerSlot(seed, 7, 1, 1), qt.Equals, uint64(0))
 }
 
-// The activation reserve is the contiguous run of activated keys from the
-// pool's next index: registration claims in order and reverts on the first
-// gap, so an activated key past a gap counts for nothing. The key to activate
-// is always the first gap at or after nextIndex.
-func TestNextKeyToActivateUsesContiguityNotPopcount(t *testing.T) {
-	c := qt.New(t)
-	pick := func(next, activated, ahead uint8) (int, bool) {
-		k, ok := nextKeyToActivate(next, activated, ahead)
-		return int(k), ok
-	}
-	// Fresh Live epoch: key 0 first.
-	k, ok := pick(0, 0b0000_0000, 2)
-	c.Assert(ok, qt.IsTrue)
-	c.Assert(k, qt.Equals, 0)
-	// Keys 0 and 1 up, nothing claimed, ahead=2: reserve satisfied.
-	_, ok = pick(0, 0b0000_0011, 2)
-	c.Assert(ok, qt.IsFalse)
-	// Keys 0 and 2 up but 1 missing: popcount says two, contiguity says one.
-	k, ok = pick(0, 0b0000_0101, 2)
-	c.Assert(ok, qt.IsTrue)
-	c.Assert(k, qt.Equals, 1)
-	// Key 0 claimed (next=1), keys 0,1 up: need key 2.
-	k, ok = pick(1, 0b0000_0011, 2)
-	c.Assert(ok, qt.IsTrue)
-	c.Assert(k, qt.Equals, 2)
-	// Near the end of the pool the window clips at MaxK.
-	k, ok = pick(7, 0b0111_1111, 2)
-	c.Assert(ok, qt.IsTrue)
-	c.Assert(k, qt.Equals, 7)
-	_, ok = pick(7, 0b1111_1111, 2)
-	c.Assert(ok, qt.IsFalse)
-	_, ok = pick(8, 0b1111_1111, 2)
-	c.Assert(ok, qt.IsFalse)
+// fakeEpochReader answers getEpoch from an epoch → status map (missing =
+// None) and counts the reads the lifecycle scan spends past its window.
+type fakeEpochReader struct {
+	status map[[12]byte]uint8
+	err    error
+	calls  int
 }
 
-// Older Live epochs whose pools still need activations stay on the visiting
-// list next to the newest two, oldest first, until they turn terminal; the
-// list is bounded by dropping the oldest tracked epoch.
-func TestEpochsToVisitCoversTrackedLiveEpochsAndIsBounded(t *testing.T) {
+func (f *fakeEpochReader) GetEpoch(_ context.Context, id [12]byte) (web3.EpochView, error) {
+	f.calls++
+	if f.err != nil {
+		return web3.EpochView{}, f.err
+	}
+	return web3.EpochView{Status: f.status[id]}, nil
+}
+
+// The lifecycle scan covers the newest epochLookback epochs minus the ones
+// already seen terminal, oldest first, so an epoch that qualified but was
+// never finalized stays discoverable across cadences and restarts. Past the
+// window it spends exactly one getEpoch per tick when the epoch just outside
+// it is closed.
+func TestEpochsToVisitCoversTheLookbackMinusTerminal(t *testing.T) {
 	c := qt.New(t)
-	n := &Node{terminal: map[[12]byte]bool{}, liveEpochs: map[[12]byte]uint64{}}
+	ctx := context.Background()
+	n := &Node{terminal: map[[12]byte]bool{}, finalizeRetry: map[[12]byte]*serviceBackoff{}}
 	const prefix = uint32(0xdead)
 	id := func(nonce uint64) [12]byte { return web3.EpochID(prefix, nonce) }
+	chain := &fakeEpochReader{status: map[[12]byte]uint8{id(20 - epochLookback): epochLive}}
 
-	c.Assert(n.epochsToVisit(prefix, 1), qt.DeepEquals, [][12]byte{id(1)})
-	c.Assert(n.epochsToVisit(prefix, 5), qt.DeepEquals, [][12]byte{id(4), id(5)})
+	c.Assert(n.epochsToVisit(ctx, chain, prefix, 1), qt.DeepEquals, [][12]byte{id(1)})
+	c.Assert(n.epochsToVisit(ctx, chain, prefix, 3), qt.DeepEquals, [][12]byte{id(1), id(2), id(3)})
+	c.Assert(chain.calls, qt.Equals, 0, qt.Commentf("nothing older than nonce 1 to look at"))
 
-	n.trackLive(id(2), 2)
-	n.trackLive(id(4), 4) // already among the newest two: no duplicate
-	c.Assert(n.epochsToVisit(prefix, 5), qt.DeepEquals, [][12]byte{id(2), id(4), id(5)})
+	visited := n.epochsToVisit(ctx, chain, prefix, 20)
+	c.Assert(visited, qt.HasLen, epochLookback)
+	c.Assert(visited[0], qt.Equals, id(20-epochLookback+1))
+	c.Assert(visited[len(visited)-1], qt.Equals, id(20))
+	c.Assert(chain.calls, qt.Equals, 1, qt.Commentf("the Live epoch just outside the window ends the walk"))
 
-	n.finish(id(2))
-	c.Assert(n.epochsToVisit(prefix, 5), qt.DeepEquals, [][12]byte{id(4), id(5)})
-	_, tracked := n.liveEpochs[id(2)]
-	c.Assert(tracked, qt.IsFalse)
-
-	for nonce := uint64(10); nonce < 10+maxTrackedLiveEpochs+3; nonce++ {
-		n.trackLive(id(nonce), nonce)
+	n.finalizeRetry[id(19)] = &serviceBackoff{}
+	n.finish(id(19))
+	n.finish(id(13))
+	visited = n.epochsToVisit(ctx, chain, prefix, 20)
+	c.Assert(visited, qt.HasLen, epochLookback-2)
+	for _, v := range visited {
+		c.Assert(v, qt.Not(qt.Equals), id(19))
+		c.Assert(v, qt.Not(qt.Equals), id(13))
 	}
-	c.Assert(n.liveEpochs, qt.HasLen, maxTrackedLiveEpochs)
-	_, tracked = n.liveEpochs[id(10)]
-	c.Assert(tracked, qt.IsFalse, qt.Commentf("the oldest tracked epoch is dropped first"))
+	_, retrying := n.finalizeRetry[id(19)]
+	c.Assert(retrying, qt.IsFalse, qt.Commentf("a terminal epoch drops its finalize backoff"))
+}
+
+// Past the fixed window the scan keeps stepping back while the chain still
+// reports unfinished epochs and stops at the first closed one (or nonce 1),
+// so an epoch that qualified but was never finalized stays discoverable
+// however many cadences have passed (docs/pool-keys-v4.md §10); a Live epoch
+// right outside the window ends the walk at once.
+func TestEpochsToVisitWalksPastTheWindowWhileEpochsAreUnfinished(t *testing.T) {
+	c := qt.New(t)
+	ctx := context.Background()
+	const prefix = uint32(0xdead)
+	const nonce = uint64(20)
+	id := func(n uint64) [12]byte { return web3.EpochID(prefix, n) }
+	// The window is [first, nonce]; out1 is the epoch right outside it.
+	const first = nonce - epochLookback + 1
+	const out1, out2, out3, out4 = first - 1, first - 2, first - 3, first - 4
+	window := make([][12]byte, 0, epochLookback)
+	for k := first; k <= nonce; k++ {
+		window = append(window, id(k))
+	}
+	withOlder := func(older ...[12]byte) [][12]byte { return append(older, window...) }
+	fresh := func() *Node {
+		return &Node{terminal: map[[12]byte]bool{}, finalizeRetry: map[[12]byte]*serviceBackoff{}}
+	}
+
+	// Two unfinished epochs outside the window are visited, oldest first;
+	// the Live epoch behind them ends the walk and hides everything older.
+	chain := &fakeEpochReader{status: map[[12]byte]uint8{
+		id(out1): epochKeyAssembly, id(out2): epochKeyAssembly, id(out3): epochLive, id(out4): epochKeyAssembly,
+	}}
+	n := fresh()
+	c.Assert(n.epochsToVisit(ctx, chain, prefix, nonce), qt.DeepEquals, withOlder(id(out2), id(out1)))
+	c.Assert(chain.calls, qt.Equals, 3)
+
+	// Live right outside the window: nothing older is visited or even read.
+	chain = &fakeEpochReader{status: map[[12]byte]uint8{id(out1): epochLive, id(out2): epochKeyAssembly}}
+	c.Assert(fresh().epochsToVisit(ctx, chain, prefix, nonce), qt.DeepEquals, window)
+	c.Assert(chain.calls, qt.Equals, 1)
+
+	// An unfinished epoch this node already finished with (not selected) is
+	// skipped but does not end the walk, and neither does a dead
+	// CommitteeSelection epoch: the KeyAssembly epoch behind them is found.
+	chain = &fakeEpochReader{status: map[[12]byte]uint8{
+		id(out1): epochKeyAssembly, id(out2): epochCommitteeSelection,
+		id(out3): epochKeyAssembly, id(out4): epochAborted,
+	}}
+	n = fresh()
+	n.finish(id(out1))
+	c.Assert(n.epochsToVisit(ctx, chain, prefix, nonce), qt.DeepEquals, withOlder(id(out3), id(out2)))
+	c.Assert(chain.calls, qt.Equals, 4)
+
+	// The walk ends at nonce 1 when every older epoch is unfinished.
+	chain = &fakeEpochReader{status: map[[12]byte]uint8{id(1): epochKeyAssembly}}
+	c.Assert(fresh().epochsToVisit(ctx, chain, prefix, epochLookback+1), qt.HasLen, epochLookback+1)
+	c.Assert(chain.calls, qt.Equals, 1)
+
+	// A read failure ends the walk for this tick without dropping the window.
+	chain = &fakeEpochReader{err: errors.New("rpc down")}
+	c.Assert(fresh().epochsToVisit(ctx, chain, prefix, nonce), qt.DeepEquals, window)
+	c.Assert(chain.calls, qt.Equals, 1)
 }
 
 // A finalize attempt only stops when the race is really lost: AlreadyLive

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Deploy the full davinci-dkg smart-contract suite: 6 Groth16 verifier
+# Deploy the full davinci-dkg smart-contract suite: 4 Groth16 verifier
 # wrappers + DKGRegistry + DKGManager. The addresses of the deployed
 # contracts are extracted from the Foundry script output and written to
 # <repo-root>/solidity/.last_deployed_addresses.env so that node and
@@ -149,7 +149,7 @@ extract() {
 }
 
 CONTRIBUTION_VERIFIER=$(extract ContributionVerifier)
-POOL_KEY_VERIFIER=$(extract PoolKeyVerifier)
+FINALIZE_VERIFIER=$(extract FinalizeVerifier)
 PARTIAL_DECRYPT_VERIFIER=$(extract PartialDecryptVerifier)
 DECRYPT_COMBINE_VERIFIER=$(extract DecryptCombineVerifier)
 REGISTRY=$(extract DKGRegistry)
@@ -159,7 +159,7 @@ APP_MANAGER=$(extract DKGAppManager)
 missing=0
 for pair in \
     "ContributionVerifier=$CONTRIBUTION_VERIFIER" \
-    "PoolKeyVerifier=$POOL_KEY_VERIFIER" \
+    "FinalizeVerifier=$FINALIZE_VERIFIER" \
     "PartialDecryptVerifier=$PARTIAL_DECRYPT_VERIFIER" \
     "DecryptCombineVerifier=$DECRYPT_COMBINE_VERIFIER" \
     "DKGRegistry=$REGISTRY" \
@@ -186,7 +186,7 @@ REGISTRY=$REGISTRY
 MANAGER=$MANAGER
 APP_MANAGER=$APP_MANAGER
 CONTRIBUTION_VERIFIER=$CONTRIBUTION_VERIFIER
-POOL_KEY_VERIFIER=$POOL_KEY_VERIFIER
+FINALIZE_VERIFIER=$FINALIZE_VERIFIER
 PARTIAL_DECRYPT_VERIFIER=$PARTIAL_DECRYPT_VERIFIER
 DECRYPT_COMBINE_VERIFIER=$DECRYPT_COMBINE_VERIFIER
 EOF
@@ -200,7 +200,7 @@ printf '  DKGRegistry               : %s\n' "$REGISTRY"
 printf '  DKGManager                : %s\n' "$MANAGER"
 printf '  DKGAppManager             : %s\n' "$APP_MANAGER"
 printf '  ContributionVerifier      : %s\n' "$CONTRIBUTION_VERIFIER"
-printf '  PoolKeyVerifier           : %s\n' "$POOL_KEY_VERIFIER"
+printf '  FinalizeVerifier          : %s\n' "$FINALIZE_VERIFIER"
 printf '  PartialDecryptVerifier    : %s\n' "$PARTIAL_DECRYPT_VERIFIER"
 printf '  DecryptCombineVerifier    : %s\n' "$DECRYPT_COMBINE_VERIFIER"
 printf '\n'

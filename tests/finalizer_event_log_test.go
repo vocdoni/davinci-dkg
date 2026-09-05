@@ -2,20 +2,20 @@ package tests
 
 import (
 	"context"
+	"errors"
 	"math/big"
 	"testing"
 
-	"github.com/ethereum/go-ethereum/common"
 	qt "github.com/frankban/quicktest"
+	ccommon "github.com/vocdoni/davinci-dkg/circuits/common"
 	"github.com/vocdoni/davinci-dkg/finalizer"
 	"github.com/vocdoni/davinci-dkg/tests/helpers"
 	"github.com/vocdoni/davinci-dkg/types"
 )
 
-// TestFinalizerEventLogPath exercises finalizer.FinalizeEpoch +
-// BuildAndSubmitActivation end-to-end over the ContributionSubmitted
-// event-log scan that replaced the prior 2000-block serial BlockByNumber
-// walk.
+// TestFinalizerEventLogPath exercises finalizer.BuildAndSubmitFinalize
+// end-to-end over the ContributionSubmitted event-log scan that replaced the
+// prior 2000-block serial BlockByNumber walk.
 //
 // The previous implementation could spend 5–10 minutes on a public RPC
 // while the node was inside the auto-finalize stagger window — the
@@ -25,10 +25,10 @@ import (
 // against Anvil (no observable latency locally), but a regression that
 // breaks the event filter / calldata parse will fail here.
 //
-// It also pins the pool-key reconstruction: the activation is proven purely
-// from the contributions' calldata, so a divergence between the transcript
-// layout the node writes and the one it reads back shows up as an
-// activatePoolKey revert.
+// It also pins the pool-key reconstruction: the finalization is proven purely
+// from the contributions' calldata, so a divergence between the compact
+// transcript layout the node writes and the one it reads back shows up as a
+// finalizeEpoch revert.
 func TestFinalizerEventLogPath(t *testing.T) {
 	if !helpers.IsIntegrationEnabled() {
 		t.Skip("integration tests disabled")
@@ -68,11 +68,6 @@ func TestFinalizerEventLogPath(t *testing.T) {
 	c.Assert(err, qt.IsNil)
 	c.Assert(epoch.Policy.CommitteeSize, qt.Equals, uint16(3))
 
-	committee := []common.Address{
-		services.TxManager.Address(),
-		actor1.Address(),
-		actor2.Address(),
-	}
 	actors := []*helpers.TestActor{selfActor(), actor1, actor2}
 	contributions := [][][]*big.Int{
 		helpers.DealPoolCoefficients([]*big.Int{big.NewInt(3), big.NewInt(1)}),
@@ -91,30 +86,37 @@ func TestFinalizerEventLogPath(t *testing.T) {
 
 	c.Assert(helpers.WaitForFinalizeGate(ctx, services, epochID), qt.IsNil)
 
-	_, err = finalizer.FinalizeEpoch(ctx, services.Contracts, services.Manager, services.TxManager, epochID)
+	res, err := finalizer.BuildAndSubmitFinalize(ctx, services.Contracts, services.Manager, services.TxManager, epochID, nil)
 	c.Assert(err, qt.IsNil)
+	c.Assert(res, qt.IsNotNil)
+	c.Assert(res.ParticipantIndexes, qt.DeepEquals, participantIndexes)
+	c.Assert(res.PoolKeys, qt.HasLen, ccommon.MaxK)
+	c.Assert(res.ShareCommitments, qt.HasLen, ccommon.MaxK)
+	c.Assert(res.ShareCommitments[0], qt.HasLen, 3)
 	finalized, err := services.Contracts.GetEpoch(ctx, epochID)
 	c.Assert(err, qt.IsNil)
 	c.Assert(finalized.Status, qt.Equals, uint8(3)) // Live
 
-	const keyIndex uint8 = 0
-	res, err := finalizer.BuildAndSubmitActivation(
-		ctx, services.Contracts, services.Manager, services.TxManager, epochID, 2, 3, committee, keyIndex,
-	)
+	// The keys the finalizer reconstructed from calldata must be the ones the
+	// local witness builder produces from the same coefficients, and the
+	// contract must have stored exactly them.
+	expected, err := helpers.BuildFinalizeSubmission(ctx, epochID, 2, 3, participantIndexes, contributions)
 	c.Assert(err, qt.IsNil)
-	c.Assert(res, qt.IsNotNil)
-	c.Assert(res.ShareCommitments, qt.HasLen, 3)
+	for key := range uint8(ccommon.MaxK) {
+		x, y, err := services.Manager.GetPoolKey(services.CallOpts(ctx), epochID, key)
+		c.Assert(err, qt.IsNil)
+		c.Assert(x.Cmp(expected.PoolKey(key).X), qt.Equals, 0, qt.Commentf("key %d", key))
+		c.Assert(y.Cmp(expected.PoolKey(key).Y), qt.Equals, 0)
+		c.Assert(res.PoolKeys[key].X.Cmp(x), qt.Equals, 0)
 
-	// The key the finalizer reconstructed from calldata must be the one the
-	// local witness builder produces from the same coefficients.
-	expected, err := helpers.BuildPoolKeyActivation(ctx, epochID, 2, 3, participantIndexes, contributions, keyIndex)
-	c.Assert(err, qt.IsNil)
-	x, y, err := services.Manager.GetPoolKey(services.CallOpts(ctx), epochID, keyIndex)
-	c.Assert(err, qt.IsNil)
-	c.Assert(x.Cmp(expected.PoolKey.X), qt.Equals, 0)
-	c.Assert(y.Cmp(expected.PoolKey.Y), qt.Equals, 0)
+		root, err := services.Manager.GetPoolShareRoot(services.CallOpts(ctx), epochID, key)
+		c.Assert(err, qt.IsNil)
+		c.Assert(root, qt.Equals, expected.ShareTree(key).Root(), qt.Commentf("key %d", key))
+		c.Assert(res.ShareRoots[key], qt.Equals, root)
+	}
 
-	root, err := services.Manager.GetPoolShareRoot(services.CallOpts(ctx), epochID, keyIndex)
-	c.Assert(err, qt.IsNil)
-	c.Assert(root, qt.Equals, expected.Shares.Root())
+	// A second finalization is the benign race the node treats as a win for
+	// someone else.
+	_, err = finalizer.BuildAndSubmitFinalize(ctx, services.Contracts, services.Manager, services.TxManager, epochID, nil)
+	c.Assert(errors.Is(err, finalizer.ErrAlreadyLive), qt.IsTrue, qt.Commentf("got %v", err))
 }

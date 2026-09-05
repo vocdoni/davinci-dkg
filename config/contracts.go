@@ -44,7 +44,7 @@ func ParseContractAddressesEnv(data []byte) (types.ContractAddresses, error) {
 		Manager:                common.HexToAddress(values["MANAGER"]),
 		AppManager:             appManager,
 		ContributionVerifier:   common.HexToAddress(values["CONTRIBUTION_VERIFIER"]),
-		PoolKeyVerifier:        common.HexToAddress(values["POOL_KEY_VERIFIER"]),
+		FinalizeVerifier:       common.HexToAddress(values["FINALIZE_VERIFIER"]),
 		PartialDecryptVerifier: common.HexToAddress(values["PARTIAL_DECRYPT_VERIFIER"]),
 		DecryptCombineVerifier: common.HexToAddress(values["DECRYPT_COMBINE_VERIFIER"]),
 	}

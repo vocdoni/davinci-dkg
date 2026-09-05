@@ -39,15 +39,10 @@ interface IDKGManager {
         bytes32 commitmentsHash,
         bytes32 encryptedSharesHash
     );
-    /// @notice The epoch froze its accepted contributor set and entered
-    ///         Service. No key is published here — each of the epoch's
-    ///         `MAX_K` pool keys is proven separately by `activatePoolKey`.
+    /// @notice The epoch's whole key pool was proven, stored and the epoch
+    ///         entered Service: all `MAX_K` pool keys and share-commitment
+    ///         Merkle roots are live from this block on.
     event EpochLive(bytes12 indexed epochId, uint16 contributionCount);
-    /// @notice Pool key `keyIndex` of `epochId` was proven and stored.
-    ///         `(x, y)` is `P_j = Σ_d A_{d,j,0}` over the accepted
-    ///         contributors; the matching share-commitment Merkle root is
-    ///         readable through `getPoolShareRoot`.
-    event PoolKeyActivated(bytes12 indexed epochId, uint8 indexed keyIndex, uint256 x, uint256 y);
     /// @notice Application `aid` claimed pool key `keyIndex` of `epochId`.
     event PoolKeyClaimed(bytes12 indexed epochId, bytes32 indexed aid, uint8 keyIndex);
     event PartialDecryptionSubmitted(
@@ -110,15 +105,10 @@ interface IDKGManager {
     /// @dev All `MAX_K` pool keys of the epoch have already been claimed by
     ///      applications. Register against a newer epoch.
     error PoolExhausted();
-    /// @dev The pool key has not been activated yet (`activatePoolKey` never
-    ///      ran for it), so it cannot be claimed or read.
-    error PoolKeyNotActive();
-    /// @dev A pool key may be activated exactly once per epoch.
-    error PoolKeyAlreadyActive();
-    /// @dev submitContribution / activatePoolKey must be direct EOA calls.
+    /// @dev submitContribution / finalizeEpoch must be direct EOA calls.
     ///      Their transcripts only exist in the outer transaction calldata,
     ///      which is where nodes and the SDK reconstruct contributions and
-    ///      activations from; a call relayed through a contract would be
+    ///      the epoch's keys from; a call relayed through a contract would be
     ///      valid on chain yet unrecoverable. The `code.length` clause also
     ///      excludes EIP-7702 delegated accounts, whose outer calldata is a
     ///      batch rather than the DKG call itself.
@@ -171,27 +161,27 @@ interface IDKGManager {
         bytes calldata proof,
         bytes calldata input
     ) external;
-    /// @notice Freeze the accepted contributor set and open the Service
-    ///         window. Proof-less: the epoch key material is proven per pool
-    ///         key by `activatePoolKey`.
-    function finalizeEpoch(bytes12 epochId) external;
-    /// @notice Prove and store one of the epoch's `MAX_K` pool keys.
-    ///         Permissionless, one call per key, any order, only while Live.
+    /// @notice Prove the epoch's whole key pool and flip the epoch Live.
+    ///         Atomic and proof-carrying: one Groth16 proof over the
+    ///         accepted contributor set binds all `MAX_K` aggregate keys
+    ///         `P_j` and their share-commitment Merkle roots, which this
+    ///         call stores before setting `Live`. Permissionless (direct EOA
+    ///         calls only) once the epoch reached `liveNotBeforeBlock` with
+    ///         at least `policy.minValidContributions` contributions.
     ///         `transcriptDigest` is the prover's digest of the witness
-    ///         transcript (public input 5): the BRLC challenge is derived
+    ///         transcript (public input 4): the BRLC challenge is derived
     ///         from it and from the calldata, so the transcript is fixed
     ///         before the challenge exists.
-    function activatePoolKey(
+    function finalizeEpoch(
         bytes12 epochId,
-        uint8 keyIndex,
         bytes32 transcriptDigest,
         bytes calldata transcript,
         bytes calldata proof,
         bytes calldata input
     ) external;
-    /// @notice Assign the next unclaimed (and already activated) pool key to
-    ///         `aid`. Callable only by the sibling app manager, from
-    ///         `registerApplication`.
+    /// @notice Assign the next unclaimed pool key to `aid`. Callable only by
+    ///         the sibling app manager, from `registerApplication`; every
+    ///         unclaimed key of a Live epoch is proven and stored.
     function claimPoolKey(bytes12 epochId, bytes32 aid) external returns (uint8 keyIndex);
     function submitPartialDecryption(
         bytes12 epochId,
@@ -229,26 +219,27 @@ interface IDKGManager {
         external
         view
         returns (DKGTypes.CombinedDecryptionRecord memory);
-    /// @notice The activated pool key `P_j`. Reverts `PoolKeyNotActive` when
-    ///         key `keyIndex` has not been proven yet.
+    /// @notice The pool key `P_j` of a Live epoch. Reverts `InvalidPhase`
+    ///         before the epoch is Live and `InvalidProofInput` for
+    ///         `keyIndex >= MAX_K` — `finalizeEpoch` stores all `MAX_K` keys.
     function getPoolKey(bytes12 epochId, uint8 keyIndex) external view returns (uint256 x, uint256 y);
-    /// @notice `nextIndex` is the pool key the next registration claims;
-    ///         `activated` is a `MAX_K`-wide bitmap of the proven keys.
-    function getPoolStatus(bytes12 epochId) external view returns (uint8 nextIndex, uint8 activated);
+    /// @notice `nextIndex` is the pool key the next registration claims
+    ///         (`MAX_K` once the pool is spent).
+    function getPoolStatus(bytes12 epochId) external view returns (uint8 nextIndex);
     /// @notice keccak Merkle root over the `MAX_N` share commitments of pool
-    ///         key `keyIndex`: leaf `i` (participant `i + 1`) is
-    ///         `keccak256(0x00 ‖ D.x ‖ D.y)` for every committee member and
+    ///         key `keyIndex` of a Live epoch: leaf `i` (participant `i + 1`)
+    ///         is `keccak256(0x00 ‖ D.x ‖ D.y)` for every committee member and
     ///         `MERKLE_EMPTY_LEAF` beyond `committeeSize`; internal nodes are
-    ///         `keccak256(0x01 ‖ left ‖ right)`. `bytes32(0)` when not activated.
+    ///         `keccak256(0x01 ‖ left ‖ right)`.
     function getPoolShareRoot(bytes12 epochId, uint8 keyIndex) external view returns (bytes32);
-    /// @notice The pool key claimed by `aid`. Reverts `PoolKeyNotActive` when
-    ///         the application never claimed one.
+    /// @notice The pool key claimed by `aid`. Reverts `InvalidProofInput`
+    ///         when the application never claimed one.
     function getAppPoolIndex(bytes12 epochId, bytes32 aid) external view returns (uint8);
     function getCiphertextHash(bytes12 epochId, bytes32 aid, uint16 ciphertextIndex) external view returns (bytes32);
     function ciphertextCount(bytes12 epochId, bytes32 aid) external view returns (uint16);
     function getPlaintext(bytes12 epochId, bytes32 aid, uint16 ciphertextIndex) external view returns (uint256);
     function getContributionVerifierVKeyHash() external view returns (bytes32);
     function getPartialDecryptVerifierVKeyHash() external view returns (bytes32);
-    function getPoolKeyVerifierVKeyHash() external view returns (bytes32);
+    function getFinalizeVerifierVKeyHash() external view returns (bytes32);
     function getDecryptCombineVerifierVKeyHash() external view returns (bytes32);
 }

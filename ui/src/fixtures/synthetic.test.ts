@@ -87,22 +87,24 @@ describe('synthetic fixture', () => {
     expect(Object.keys(store.ciphertexts)).toHaveLength(96)
   })
 
-  it('activates pool keys ahead of demand and claims one per application', () => {
+  it('stores the whole pool at finalization and claims one key per application', () => {
     for (const id of meta.epochIds) {
       const epoch = store.epochs[id]
-      expect(epoch.poolKeys).toHaveLength(8)
+      expect(epoch.poolKeys).toHaveLength(16)
       if (epoch.status !== 'live') {
         expect(epoch.poolKeys.every((slot) => slot.key == null && slot.claimedBy == null)).toBe(true)
         continue
       }
-      expect(epoch.poolKeys.filter((slot) => slot.key != null)).toHaveLength(4)
+      // Every key exists from the finalization block on, and each is distinct.
+      expect(epoch.poolKeys.every((slot) => slot.key != null)).toBe(true)
+      expect(new Set(epoch.poolKeys.map((slot) => `${slot.key!.x}:${slot.key!.y}`)).size).toBe(16)
       expect(epoch.poolKeys.filter((slot) => slot.claimedBy != null)).toHaveLength(2)
       expect(epoch.poolNext).toBe(2)
       epoch.applications.forEach((key, i) => {
         const app = store.applications[key]
         expect(app.poolIndex).toBe(i)
         expect(epoch.poolKeys[i].claimedBy).toBe(app.aid)
-        expect(epoch.poolKeys[i].activatedBlock).toBeLessThanOrEqual(app.createdBlock)
+        expect(epoch.finalization!.block).toBeLessThanOrEqual(app.createdBlock)
       })
     }
   })
@@ -157,8 +159,6 @@ describe('synthetic fixture', () => {
     const finalization = store.epochs[meta.epochIds[0]].finalization
     expect(finalization?.tx).toBeTruthy()
     expect(store.txMeta[finalization?.tx as string].gasUsed).toBe(GAS.finalizeEpoch)
-    const activation = store.epochs[meta.epochIds[0]].poolKeys[0].activatedTx
-    expect(store.txMeta[activation as string].gasUsed).toBe(GAS.activatePoolKey)
     const combine = Object.values(store.ciphertexts).find((ct) => ct.combined)?.combined
     expect(store.txMeta[combine?.tx as string].gasUsed).toBe(GAS.combineDecryption)
   })

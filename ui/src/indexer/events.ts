@@ -40,7 +40,6 @@ const KNOWN_EVENTS = new Set<string>([
   'CommitteeFilled',
   'ContributionSubmitted',
   'EpochLive',
-  'PoolKeyActivated',
   'PoolKeyClaimed',
   'CiphertextSubmitted',
   'PartialDecryptionSubmitted',
@@ -218,18 +217,6 @@ export function normalizeLog(log: RawLog): IndexedEvent | null {
         actor: null,
         data: { epochId: epochId as Hex, contributionCount: num(a.contributionCount) },
       }
-    case 'PoolKeyActivated': {
-      // On-chain (RTE) words in the log; TE in the store, like every key.
-      const [x, y] = fromRTEtoTE(big(a.x), big(a.y))
-      return {
-        ...envelope,
-        name,
-        epoch: epochId,
-        aid: null,
-        actor: null,
-        data: { epochId: epochId as Hex, keyIndex: num(a.keyIndex), key: { x, y } },
-      }
-    }
     case 'PoolKeyClaimed':
       return {
         ...envelope,

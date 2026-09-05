@@ -9,13 +9,13 @@ import { keccak256, toHex } from 'viem';
 import {
   DomainOperatorRegisterV1,
   DomainOrganizerRegisterV1,
-  DomainContributionTranscriptV1,
-  DomainPoolKeyTranscriptV1,
+  DomainContributionTranscriptV2,
+  DomainFinalizeTranscriptV2,
   DomainDecryptCombineTranscriptV1,
   DomainOperatorRegisterV1Str,
   DomainOrganizerRegisterV1Str,
-  DomainContributionTranscriptV1Str,
-  DomainPoolKeyTranscriptV1Str,
+  DomainContributionTranscriptV2Str,
+  DomainFinalizeTranscriptV2Str,
   DomainDecryptCombineTranscriptV1Str,
 } from '../src/protocol';
 import { SUBGROUP_ORDER } from '../src/schnorr';
@@ -33,12 +33,27 @@ describe('protocol constants', () => {
     );
   });
 
+  it('the v4 BRLC domains are the v2 strings, not the v1 / poolkey ones', () => {
+    expect(DomainContributionTranscriptV2Str).toBe('davinci-dkg:contribution:v2');
+    expect(DomainFinalizeTranscriptV2Str).toBe('davinci-dkg:finalize:v2');
+    expect(DomainDecryptCombineTranscriptV1Str).toBe('davinci-dkg:decrypt-combine:v1');
+    expect(DomainContributionTranscriptV2).toBe(
+      '0x4b37311b22cd0f09ae11d49f42ab65dce8fccf2600e6e2e7d41f51dc3d44b752',
+    );
+    expect(DomainFinalizeTranscriptV2).toBe(
+      '0xe28959afa6ea38549c61aff75344fc2c9f148f1259fcef44fdd297a1d9a39d0f',
+    );
+    // A v3.1 contribution or activation transcript must not verify under v4.
+    expect(DomainContributionTranscriptV2).not.toBe(keccak256(toHex('davinci-dkg:contribution:v1')));
+    expect(DomainFinalizeTranscriptV2).not.toBe(keccak256(toHex('davinci-dkg:poolkey:v1')));
+  });
+
   it('every digest is keccak256 of its documented preimage', () => {
     const pairs: Array<[string, `0x${string}`]> = [
       [DomainOperatorRegisterV1Str, DomainOperatorRegisterV1],
       [DomainOrganizerRegisterV1Str, DomainOrganizerRegisterV1],
-      [DomainContributionTranscriptV1Str, DomainContributionTranscriptV1],
-      [DomainPoolKeyTranscriptV1Str, DomainPoolKeyTranscriptV1],
+      [DomainContributionTranscriptV2Str, DomainContributionTranscriptV2],
+      [DomainFinalizeTranscriptV2Str, DomainFinalizeTranscriptV2],
       [DomainDecryptCombineTranscriptV1Str, DomainDecryptCombineTranscriptV1],
     ];
     for (const [preimage, digest] of pairs) {

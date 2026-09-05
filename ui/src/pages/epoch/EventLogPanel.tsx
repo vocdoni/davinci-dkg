@@ -24,7 +24,7 @@ export function EventLogPanel({ events }: { events: IndexedEvent[] }) {
     <Panel
       label='Log'
       title={`${events.length.toLocaleString()} events`}
-      description='Claims, contributions, finalization, pool-key activations and claims, ciphertexts, partials, reveals and combines, in block order.'
+      description='Claims, contributions, finalization, pool-key claims, ciphertexts, partials, reveals and combines, in block order.'
       bodyClassName='p-0'
     >
       <EventTable

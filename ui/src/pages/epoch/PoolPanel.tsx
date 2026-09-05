@@ -5,36 +5,37 @@ import { POOL_SIZE } from '~indexer/types'
 import { bigIntToHex } from '~lib/format'
 import { cn } from '~lib/cn'
 import { paths } from '~routes/paths'
-import { POOLKEY_TRANSCRIPT_WORDS, blockOrNull } from '~pages/epochs/cadence'
+import { FINALIZE_TRANSCRIPT_WORDS, blockOrNull } from '~pages/epochs/cadence'
 
 const SLOT_TONE: Record<PoolSlotState, BadgeTone> = {
-  inactive: 'neutral',
-  activated: 'accent',
+  pending: 'neutral',
+  free: 'accent',
   claimed: 'ok',
 }
 
 const SLOT_LABEL: Record<PoolSlotState, string> = {
-  inactive: 'not activated',
-  activated: 'free',
+  pending: 'reading…',
+  free: 'free',
   claimed: 'claimed',
 }
 
 /**
- * The epoch's pool of `POOL_SIZE` keys. `finalizeEpoch` proves nothing any
- * more — it freezes the accepted contributions — and every key `P_j` is then
- * activated by its own `activatePoolKey` proof and claimed by exactly one
- * application at registration, so this panel is the epoch's key material.
+ * The epoch's pool of `POOL_SIZE` keys. One proof-carrying `finalizeEpoch`
+ * proves and stores every key `P_j` together with the Merkle root of the
+ * committee's share commitments, so the whole pool exists from the block the
+ * epoch went Live; each key is then claimed by exactly one application at
+ * registration. This panel is the epoch's key material.
  */
 export function PoolPanel({ detail }: { detail: EpochDetail }) {
-  const { finalization, pool, poolNext, poolActivated, poolClaimed, row } = detail
+  const { finalization, pool, poolNext, poolKnown, poolClaimed, row } = detail
 
   if (!finalization) {
     return (
-      <Panel label='Pool' title='Pool keys' description={`${POOL_SIZE} keys per epoch, each activated by its own proof.`}>
+      <Panel label='Pool' title='Pool keys' description={`${POOL_SIZE} keys per epoch, all proven by one finalization.`}>
         <Callout tone='info' title='No pool yet'>
-          The epoch has not been finalized. finalizeEpoch (no proof) may run once the key-assembly window has closed,
-          the finalize gap has passed, and at least m_min = {row.minValidContributions} contributions are on chain;
-          only then can a committee member activate a key.
+          The epoch has not been finalized. finalizeEpoch — one Groth16 proof over the accepted contributions — may
+          run once the key-assembly window has closed, the finalize gap has passed, and at least m_min ={' '}
+          {row.minValidContributions} contributions are on chain; it stores every key and share root at once.
         </Callout>
       </Panel>
     )
@@ -58,9 +59,10 @@ export function PoolPanel({ detail }: { detail: EpochDetail }) {
           {finalization.tx ? <TxCell hash={finalization.tx} /> : null}
         </span>
       ),
+      hint: 'every key below exists from this block on',
     },
     {
-      label: 'contributions frozen',
+      label: 'contributions proven',
       value: finalization.contributionCount,
       mono: true,
       hint: `accepted contributors the pool keys are dealt from · m_min = ${row.minValidContributions}`,
@@ -69,13 +71,7 @@ export function PoolPanel({ detail }: { detail: EpochDetail }) {
       label: 'finalize gas',
       value: finalization.gasUsed != null ? finalization.gasUsed.toLocaleString() : '—',
       mono: true,
-      hint: 'no proof: the verification moved to each activatePoolKey',
-    },
-    {
-      label: 'keys activated',
-      value: `${poolActivated} / ${POOL_SIZE}`,
-      mono: true,
-      hint: 'one Groth16 proof each, permissionless, any order',
+      hint: `one verifier, ${POOL_SIZE} Merkle trees and ${2 * POOL_SIZE} key/root writes`,
     },
     {
       label: 'keys claimed',
@@ -84,10 +80,10 @@ export function PoolPanel({ detail }: { detail: EpochDetail }) {
       hint: poolNext >= POOL_SIZE ? 'pool exhausted — the next epoch may open early' : `next index ${poolNext}`,
     },
     {
-      label: 'activation transcript',
-      value: `${POOLKEY_TRANSCRIPT_WORDS.toLocaleString()} words`,
+      label: 'finalize transcript',
+      value: `${FINALIZE_TRANSCRIPT_WORDS.toLocaleString()} words`,
       mono: true,
-      hint: `6·MaxN — ${(POOLKEY_TRANSCRIPT_WORDS * 32).toLocaleString()} bytes of calldata per key`,
+      hint: `2·MaxN + MaxK·(2 + 2·MaxN) — ${(FINALIZE_TRANSCRIPT_WORDS * 32).toLocaleString()} bytes of calldata, holding every P_j and every member's share commitment`,
     },
   ]
 
@@ -95,7 +91,11 @@ export function PoolPanel({ detail }: { detail: EpochDetail }) {
     <Panel
       label='Pool'
       title='Pool keys'
-      description='finalizeEpoch froze the accepted contributions without a proof. Each key P_j below is activated by its own activatePoolKey proof over those contributions and claimed by one application at registration.'
+      description={
+        poolKnown < POOL_SIZE
+          ? `finalizeEpoch proved and stored all ${POOL_SIZE} keys at once; the explorer is still reading them from the manager.`
+          : `finalizeEpoch proved and stored all ${POOL_SIZE} keys at once. Each key P_j below is claimed by one application at registration.`
+      }
     >
       <KeyValue items={items} columns={2} />
       <ul className='m-0 mt-5 grid list-none gap-2 p-0 sm:grid-cols-2 xl:grid-cols-4' aria-label='Pool keys'>
@@ -114,7 +114,7 @@ function PoolSlot({ slot, epoch }: { slot: PoolSlotRow; epoch: string }) {
       aria-label={`pool key ${slot.index}`}
       className={cn(
         'flex flex-col gap-2 rounded-sm border px-3 py-2.5',
-        claimed ? 'border-emerald/30 bg-emerald/5' : slot.state === 'activated' ? 'border-charcoal' : 'border-charcoal/60'
+        claimed ? 'border-emerald/30 bg-emerald/5' : slot.state === 'free' ? 'border-charcoal' : 'border-charcoal/60'
       )}
     >
       <div className='flex items-center justify-between gap-2'>
@@ -134,25 +134,9 @@ function PoolSlot({ slot, epoch }: { slot: PoolSlotRow; epoch: string }) {
             </span>
           </span>
         ) : (
-          <span>P_{slot.index} not on chain</span>
+          <span>P_{slot.index} not read yet</span>
         )}
       </div>
-      {slot.activatedBlock != null ? (
-        <div className='flex flex-wrap items-center gap-x-2 text-[11px] text-ash'>
-          {slot.activatedBy ? (
-            <span className='inline-flex items-center gap-1'>
-              activated by <Address value={slot.activatedBy} chars={4} to={paths.operator(slot.activatedBy)} />
-            </span>
-          ) : (
-            <span>activated</span>
-          )}
-          <BlockCell block={slot.activatedBlock} />
-          {slot.activatedTx ? <TxCell hash={slot.activatedTx} chars={4} /> : null}
-          {slot.activatedGas != null ? (
-            <span className='font-mono tnum'>{slot.activatedGas.toLocaleString()} gas</span>
-          ) : null}
-        </div>
-      ) : null}
       {slot.claimedBy ? (
         <div className='flex flex-wrap items-center gap-x-2 text-[11px] text-ash'>
           <span>claimed by</span>

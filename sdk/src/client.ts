@@ -30,13 +30,36 @@ import {
   type BabyJubPoint,
   type Hex,
   type PoolStatus,
-  type PoolKeyActivatedEvent,
   type PoolKeyClaimedEvent,
   type OrganizerSecretRevealedEvent,
 } from './types.js';
 import { buildEpochId } from './utils.js';
 import { fromRTEtoTE } from './crypto/babyjub-form.js';
 import { applicationKey } from './crypto/elgamal.js';
+import { MAX_K } from './sizes.js';
+import { decodeFinalizeCalldata, type FinalizeCall } from './transcript.js';
+import { shareProof } from './merkle.js';
+
+/** `DKGClient.getFinalizeTranscript`: the decoded `finalizeEpoch` call and where it landed. */
+export interface FinalizeRecord extends FinalizeCall {
+  blockNumber: bigint;
+  transactionHash: Hex;
+  /** The finalizer — the transaction sender. */
+  finalizer: Address;
+}
+
+/** `DKGClient.getShareProof`: one member's Merkle proof under one pool key. */
+export interface ShareProofRecord {
+  keyIndex: number;
+  participantIndex: number;
+  /** `D_{j,i}` in the on-chain (RTE) form the leaf hashes. */
+  shareCommitment: { x: bigint; y: bigint };
+  leaf: Hex;
+  /** `MERKLE_DEPTH` siblings, bottom-up — the `shareProof` argument of `submitPartialDecryption`. */
+  path: Hex[];
+  /** The root the path folds to; equals `getPoolShareRoot(epochId, keyIndex)`. */
+  root: Hex;
+}
 
 type ManagerContract = GetContractReturnType<typeof dkgManagerAbi, PublicClient>;
 type RegistryContract = GetContractReturnType<typeof dkgRegistryAbi, PublicClient>;
@@ -452,9 +475,10 @@ export class DKGClient {
   }
 
   /**
-   * Fetch pool key `P_j` (`keyIndex = j`) of `(epochId)` in TE form, or the
-   * identity `[0n, 1n]` if it has not been activated yet — check
-   * `getPoolStatus` first if that distinction matters.
+   * Fetch pool key `P_j` (`keyIndex = j`) of `(epochId)` in TE form. Every
+   * key of a Live epoch is stored by `finalizeEpoch`; the call reverts
+   * `InvalidPhase` before the epoch is Live and `InvalidProofInput` for
+   * `keyIndex >= MAX_K`.
    */
   async getPoolKey(
     epochId: `0x${string}`,
@@ -464,20 +488,109 @@ export class DKGClient {
     return fromRTEtoTE(x, y);
   }
 
-  /** How far `(epochId)`'s pool of `MaxK` keys has been dealt. */
-  async getPoolStatus(epochId: `0x${string}`): Promise<PoolStatus> {
-    const [nextIndex, activated] = (await this._manager.read.getPoolStatus([
-      epochId as any,
-    ])) as [number, number];
-    return { nextIndex: Number(nextIndex), activated: Number(activated) };
+  /**
+   * All `MAX_K` pool keys of a Live epoch in TE form, by key index. Reverts
+   * like `getPoolKey` before the epoch is Live.
+   */
+  async getPoolKeys(epochId: `0x${string}`): Promise<BabyJubPoint[]> {
+    return Promise.all(Array.from({ length: MAX_K }, (_, j) => this.getPoolKey(epochId, j)));
   }
 
-  /** Merkle root committing pool key `keyIndex`'s per-node shares. */
+  /**
+   * The pool's claim cursor: `nextIndex` is the key the next registration
+   * claims (`MAX_K` once the pool is spent). There is no activation state any
+   * more — a Live epoch has every key.
+   */
+  async getPoolStatus(epochId: `0x${string}`): Promise<PoolStatus> {
+    const nextIndex = await this._manager.read.getPoolStatus([epochId as any]);
+    return { nextIndex: Number(nextIndex) };
+  }
+
+  /**
+   * keccak Merkle root over the `MAX_N` share commitments of pool key
+   * `keyIndex`: leaf `i` (participant `i + 1`) is `keccak256(0x00 ‖ D.x ‖ D.y)`
+   * for every committee member and the empty leaf beyond `committeeSize`.
+   * Stored by `finalizeEpoch`; see `getShareProof` to build a path against it.
+   */
   async getPoolShareRoot(
     epochId: `0x${string}`,
     keyIndex: number,
   ): Promise<`0x${string}`> {
     return this._manager.read.getPoolShareRoot([epochId as any, keyIndex]) as Promise<`0x${string}`>;
+  }
+
+  /**
+   * The epoch's finalization, read back from the `finalizeEpoch` transaction
+   * the `EpochLive` event points at: the decoded transcript with all `MAX_K`
+   * pool keys (RTE form) and every committee member's share commitment
+   * `D_{j,i}` (word `64 + 66·j + 2 + 2·i`), the digest, the public inputs and
+   * the finalizer. This calldata is the only place the share commitments
+   * exist — the contract stores only their Merkle roots — which is why the
+   * contract insists the call is a direct EOA transaction. Returns null
+   * before the epoch is Live, or when the `EpochLive` event is outside the
+   * scan window — pass the manager's deployment block as `opts.fromBlock` to
+   * scan from there instead of the recent-block fallback.
+   */
+  async getFinalizeTranscript(
+    epochId: `0x${string}`,
+    opts?: { fromBlock?: bigint },
+  ): Promise<FinalizeRecord | null> {
+    const events = await this.getAllEpochLiveEvents({ epochId: epochId as Hex, fromBlock: opts?.fromBlock });
+    const live = events.find((e) => e.transactionHash != null);
+    if (!live || !live.transactionHash) return null;
+    const tx = await this.publicClient.getTransaction({ hash: live.transactionHash });
+    const call = decodeFinalizeCalldata(tx.input as Hex);
+    if (call.epochId.toLowerCase() !== epochId.toLowerCase()) {
+      throw new Error(`getFinalizeTranscript: transaction ${live.transactionHash} finalizes ${call.epochId}, not ${epochId}`);
+    }
+    return {
+      ...call,
+      blockNumber: tx.blockNumber ?? live.blockNumber,
+      transactionHash: live.transactionHash,
+      finalizer: tx.from as Address,
+    };
+  }
+
+  /**
+   * Build the `shareProof` of committee member `participantIndex` (1-based)
+   * under pool key `keyIndex` from the finalization calldata, and check it
+   * against the root the contract stores — the path
+   * `submitPartialDecryption` verifies. Throws when the epoch is not Live,
+   * the index is outside the committee, or the recomputed root disagrees
+   * with `getPoolShareRoot` (a divergence in leaf order, tag byte or hash
+   * order between this SDK and the contract).
+   */
+  async getShareProof(
+    epochId: `0x${string}`,
+    keyIndex: number,
+    participantIndex: number,
+    opts?: { fromBlock?: bigint },
+  ): Promise<ShareProofRecord> {
+    if (!Number.isInteger(keyIndex) || keyIndex < 0 || keyIndex >= MAX_K) {
+      throw new Error(`getShareProof: key index ${keyIndex} out of range [0, ${MAX_K})`);
+    }
+    const [finalize, epoch, onChainRoot] = await Promise.all([
+      this.getFinalizeTranscript(epochId, opts),
+      this.getEpoch(epochId),
+      this.getPoolShareRoot(epochId, keyIndex),
+    ]);
+    if (!finalize) throw new Error(`getShareProof: epoch ${epochId} has no finalization on chain`);
+    const committeeSize = Number(epoch.policy.committeeSize);
+    const row = finalize.transcript.shareCommitments[keyIndex];
+    const proof = shareProof(row, committeeSize, participantIndex);
+    if (proof.root.toLowerCase() !== onChainRoot.toLowerCase()) {
+      throw new Error(
+        `getShareProof: recomputed share root ${proof.root} for key ${keyIndex} does not match the stored ${onChainRoot}`,
+      );
+    }
+    return {
+      keyIndex,
+      participantIndex,
+      shareCommitment: row[participantIndex - 1],
+      leaf: proof.leaf,
+      path: proof.path,
+      root: proof.root,
+    };
   }
 
   /** Index of the pool key `aid` claimed at registration. */
@@ -564,8 +677,8 @@ export class DKGClient {
     return this._manager.read.getPartialDecryptVerifierVKeyHash();
   }
 
-  async getPoolKeyVerifierVKeyHash(): Promise<`0x${string}`> {
-    return this._manager.read.getPoolKeyVerifierVKeyHash();
+  async getFinalizeVerifierVKeyHash(): Promise<`0x${string}`> {
+    return this._manager.read.getFinalizeVerifierVKeyHash();
   }
 
   async getDecryptCombineVerifierVKeyHash(): Promise<`0x${string}`> {
@@ -662,9 +775,11 @@ export class DKGClient {
   }
 
   /**
-   * Fetch all EpochLive events for a specific epoch. `finalizeEpoch` is now
-   * proof-less: this only marks the accepted-contributor set frozen and
-   * opens the epoch for `activatePoolKey` — no key material is available yet.
+   * Fetch all EpochLive events for a specific epoch — at most one exists.
+   * `finalizeEpoch` is proof-carrying and atomic: the block it lands in is
+   * the block every pool key and share root of the epoch becomes readable,
+   * and its transaction calldata carries the whole transcript
+   * (`getFinalizeTranscript`).
    */
   async getEpochLiveEvents(epochId: `0x${string}`): Promise<EpochLiveEvent[]> {
     const logs = await getLogsChunked(
@@ -733,41 +848,6 @@ export class DKGClient {
         submitter: a.submitter as Address,
         c1: { x: a.c1x as bigint, y: a.c1y as bigint },
         c2: { x: a.c2x as bigint, y: a.c2y as bigint },
-        blockNumber: l.blockNumber ?? 0n,
-        transactionHash: (l.transactionHash ?? null) as `0x${string}` | null,
-      };
-    });
-  }
-
-  /**
-   * Fetch `PoolKeyActivated` events for `(epochId)`, optionally narrowed to
-   * one `keyIndex`. `activatePoolKey` is permissionless, so this is the way
-   * to discover when key `j` of the pool becomes usable.
-   */
-  async getPoolKeyActivatedEvents(
-    epochId: `0x${string}`,
-    opts?: { keyIndex?: number },
-  ): Promise<PoolKeyActivatedEvent[]> {
-    const args: Record<string, unknown> = { epochId: epochId as any };
-    if (opts?.keyIndex != null) args.keyIndex = opts.keyIndex;
-    const logs = await getLogsChunked(
-      this.publicClient,
-      {
-        address: this.managerAddress,
-        event: getAbiItem({ abi: dkgManagerAbi, name: 'PoolKeyActivated' }),
-        args,
-        fromBlock: 0n,
-        toBlock: 'latest',
-      },
-      { fallbackWindow: 50_000n },
-    );
-    return logs.map((l) => {
-      const a = l.args as any;
-      return {
-        epochId: a.epochId as Hex,
-        keyIndex: Number(a.keyIndex),
-        x: a.x as bigint,
-        y: a.y as bigint,
         blockNumber: l.blockNumber ?? 0n,
         transactionHash: (l.transactionHash ?? null) as `0x${string}` | null,
       };

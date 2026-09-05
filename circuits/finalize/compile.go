@@ -1,4 +1,4 @@
-package poolkey
+package finalize
 
 import (
 	"fmt"
@@ -9,12 +9,12 @@ import (
 	"github.com/vocdoni/davinci-dkg/log"
 )
 
-// Compile compiles the pool-key circuit definition.
+// Compile compiles the finalization circuit definition.
 func Compile() (constraint.ConstraintSystem, error) {
 	log.Infow("compiling circuit definition", "circuit", Artifacts.Name())
-	ccs, err := frontend.Compile(Artifacts.Curve().ScalarField(), r1cs.NewBuilder, &PoolKeyCircuit{})
+	ccs, err := frontend.Compile(Artifacts.Curve().ScalarField(), r1cs.NewBuilder, &FinalizeCircuit{})
 	if err != nil {
-		return nil, fmt.Errorf("compile pool key circuit: %w", err)
+		return nil, fmt.Errorf("compile finalize circuit: %w", err)
 	}
 	return ccs, nil
 }

@@ -1,15 +1,20 @@
 {
-  "description": "Cross-impl protocol constants. Domain digests are bound into the Schnorr registration transcripts; the *TranscriptV1 rows are the BRLC domains every proof-carrying call binds into its challenge (keccak(eid || domain || anchor) mod p).",
+  "description": "Cross-impl protocol constants. Domain digests are bound into the Schnorr registration transcripts; the *Transcript rows are the BRLC domains every proof-carrying call binds into its challenge (keccak(eid || domain || anchor) mod p).",
   "domains": {
-    "ContributionTranscriptV1": {
-      "preimage": "davinci-dkg:contribution:v1",
-      "keccak256": "0x29aa19fbd94aef15994e2f585c00bbd3e7aa5aefc9372efb2ce55433ca0c6a72",
-      "bn254Reduced": "18845370126415123798398829353992047261114873017990329947742196337939088960114"
+    "ContributionTranscriptV2": {
+      "preimage": "davinci-dkg:contribution:v2",
+      "keccak256": "0x4b37311b22cd0f09ae11d49f42ab65dce8fccf2600e6e2e7d41f51dc3d44b752",
+      "bn254Reduced": "12132736277623041984699257464977236812065785307917467927570955069300500903761"
     },
     "DecryptCombineTranscriptV1": {
       "preimage": "davinci-dkg:decrypt-combine:v1",
       "keccak256": "0xb22315ced73b8ff8bb301780e4a47d6c7771b0e8a551a02a7c0df167eca08dcb",
       "bn254Reduced": "14908948592659776204530907801158602691901526040850577917587467403684246228424"
+    },
+    "FinalizeTranscriptV2": {
+      "preimage": "davinci-dkg:finalize:v2",
+      "keccak256": "0xe28959afa6ea38549c61aff75344fc2c9f148f1259fcef44fdd297a1d9a39d0f",
+      "bn254Reduced": "14912409331329465601302868021768828361624631179174081120492294221364451319051"
     },
     "OperatorRegisterV1": {
       "preimage": "davinci-dkg:operator-register:v1",
@@ -25,11 +30,6 @@
       "preimage": "davinci-dkg/partial-decrypt/v1",
       "keccak256": "",
       "bn254Reduced": "692802219728068707113763234345020870183256372282275487814116979707442737"
-    },
-    "PoolKeyTranscriptV1": {
-      "preimage": "davinci-dkg:poolkey:v1",
-      "keccak256": "0xae031fc261aed61242596185b006e57bdcba774d6ea39d3348a9a570b38d9ff4",
-      "bn254Reduced": "13043226773818480737359165691060390180398636442695574397376620483726661230577"
     }
   },
   "bn254Q": "21888242871839275222246405745257275088548364400416034343698204186575808495617",

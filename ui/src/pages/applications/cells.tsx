@@ -134,7 +134,7 @@ export function PoolKeyCell({ row }: { row: ApplicationRow }) {
       {row.poolKey ? (
         <Hash value={bigIntToHex(row.poolKey.x)} chars={3} copy={false} className='text-[11px]' />
       ) : (
-        <span className='text-[11px] text-ash' title='activation not indexed yet'>
+        <span className='text-[11px] text-ash' title='pool key not read yet'>
           …
         </span>
       )}

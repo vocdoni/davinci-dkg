@@ -80,12 +80,10 @@ export function describeEvent(event: IndexedEvent, nonceOf?: NonceLookup): Event
     case 'EpochLive':
       return {
         title: `Finalized ${where}`,
-        detail: `${event.data.contributionCount} contributions frozen — the pool opens`,
+        detail: `${event.data.contributionCount} contributions proven — every pool key stored`,
         tone: 'ok',
         href,
       }
-    case 'PoolKeyActivated':
-      return { title: `Activated pool key ${event.data.keyIndex} in ${where}`, tone: 'ok', href }
     case 'PoolKeyClaimed':
       return {
         title: `Pool key ${event.data.keyIndex} claimed in ${where}`,

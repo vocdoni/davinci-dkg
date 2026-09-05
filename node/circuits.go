@@ -9,8 +9,8 @@ import (
 	"github.com/vocdoni/davinci-dkg/circuits"
 	"github.com/vocdoni/davinci-dkg/circuits/contribution"
 	"github.com/vocdoni/davinci-dkg/circuits/decryptcombine"
+	"github.com/vocdoni/davinci-dkg/circuits/finalize"
 	"github.com/vocdoni/davinci-dkg/circuits/partialdecrypt"
-	"github.com/vocdoni/davinci-dkg/circuits/poolkey"
 	"github.com/vocdoni/davinci-dkg/log"
 )
 
@@ -21,7 +21,7 @@ import (
 // proving key, seconds of work that would otherwise repeat on every proof.
 type circuitRuntimes struct {
 	contribution   *circuits.CircuitRuntime
-	poolKey        *circuits.CircuitRuntime
+	finalize       *circuits.CircuitRuntime
 	partialDecrypt *circuits.CircuitRuntime
 	combine        *circuits.CircuitRuntime
 }
@@ -43,7 +43,7 @@ var loadRuntimes = sync.OnceValues(func() (circuitRuntimes, error) {
 	if rts.contribution, err = load("contribution", contribution.Artifacts, &contribution.ContributionCircuit{}); err != nil {
 		return circuitRuntimes{}, err
 	}
-	if rts.poolKey, err = load("poolkey", poolkey.Artifacts, &poolkey.PoolKeyCircuit{}); err != nil {
+	if rts.finalize, err = load("finalize", finalize.Artifacts, &finalize.FinalizeCircuit{}); err != nil {
 		return circuitRuntimes{}, err
 	}
 	if rts.partialDecrypt, err = load("partialdecrypt", partialdecrypt.Artifacts, &partialdecrypt.PartialDecryptCircuit{}); err != nil {

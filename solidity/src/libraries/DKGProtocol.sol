@@ -30,10 +30,14 @@ library DKGProtocol {
     // The Fiat-Shamir domain every proof-carrying call binds into its
     // challenge: `keccak(eid || domain || anchor) mod p` (see BRLC.sol). One
     // per circuit whose transcript the contract streams.
-    bytes32 internal constant DOMAIN_CONTRIBUTION_TRANSCRIPT_V1 =
-        keccak256("davinci-dkg:contribution:v1");
-    bytes32 internal constant DOMAIN_POOLKEY_TRANSCRIPT_V1 =
-        keccak256("davinci-dkg:poolkey:v1");
+    //
+    // v4: the contribution transcript became compact (`L_C = K·(2t+n)+5n`
+    // words, unpadded) and per-key activation was replaced by one
+    // proof-carrying `finalizeEpoch`, so both of their domains were bumped.
+    bytes32 internal constant DOMAIN_CONTRIBUTION_TRANSCRIPT_V2 =
+        keccak256("davinci-dkg:contribution:v2");
+    bytes32 internal constant DOMAIN_FINALIZE_TRANSCRIPT_V2 =
+        keccak256("davinci-dkg:finalize:v2");
     bytes32 internal constant DOMAIN_DECRYPT_COMBINE_TRANSCRIPT_V1 =
         keccak256("davinci-dkg:decrypt-combine:v1");
 }

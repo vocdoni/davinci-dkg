@@ -94,9 +94,10 @@ describe('applyEvents', () => {
         { epoch: EPOCH, actor: BOB },
       ),
       ev('EpochLive', 360, { epochId: EPOCH, contributionCount: 1 }, { epoch: EPOCH, tx: ('0x' + 'fe'.repeat(32)) as Hex }),
-      ev('PoolKeyActivated', 361, { epochId: EPOCH, keyIndex: 0, key: { x: 5n, y: 6n } }, { epoch: EPOCH }),
-      ev('PoolKeyActivated', 362, { epochId: EPOCH, keyIndex: 2, key: { x: 7n, y: 8n } }, { epoch: EPOCH }),
     ])
+    // The keys are not in any event: the indexer reads them once the epoch is
+    // Live. A partial read fills only what it got.
+    applyEpochState(s, EPOCH, { poolKeys: [{ x: 5n, y: 6n }, null, { x: 7n, y: 8n }], stateBlock: 361 })
 
     const epoch = s.epochs[EPOCH]
     expect(epoch.nonce).toBe(7)
@@ -112,20 +113,26 @@ describe('applyEvents', () => {
     expect(epoch.finalization?.block).toBe(360)
     expect(epoch.finalization?.contributionCount).toBe(1)
     expect(epoch.finalization?.by).toBeNull()
-    // The pool always has eight slots; two are activated, none claimed.
-    expect(epoch.poolKeys).toHaveLength(8)
+    // The pool always has sixteen slots; two keys are known so far, none claimed.
+    expect(epoch.poolKeys).toHaveLength(16)
     expect(epoch.poolKeys[0].key).toEqual({ x: 5n, y: 6n })
-    expect(epoch.poolKeys[0].activatedBlock).toBe(361)
     expect(epoch.poolKeys[1].key).toBeNull()
     expect(epoch.poolKeys[2].key).toEqual({ x: 7n, y: 8n })
     expect(epoch.poolKeys.every((slot) => slot.claimedBy == null)).toBe(true)
     expect(epoch.poolNext).toBe(0)
+    // A full read settles every slot, and a later read never clears one.
+    applyEpochState(s, EPOCH, {
+      poolKeys: Array.from({ length: 16 }, (_, j) => ({ x: BigInt(100 + j), y: 1n })),
+      stateBlock: 362,
+    })
+    expect(epoch.poolKeys.every((slot) => slot.key != null)).toBe(true)
+    applyEpochState(s, EPOCH, { poolKeys: [null], stateBlock: 363 })
+    expect(epoch.poolKeys[0].key).toEqual({ x: 100n, y: 1n })
   })
 
   it('threads a ciphertext through partials, the reveal and the combine', () => {
     const s = store()
     applyEvents(s, [
-      ev('PoolKeyActivated', 399, { epochId: EPOCH, keyIndex: 0, key: { x: 9n, y: 9n } }, { epoch: EPOCH }),
       ev('PoolKeyClaimed', 400, { epochId: EPOCH, aid: AID, keyIndex: 0 }, { epoch: EPOCH, aid: AID }),
       ev(
         'ApplicationRegistered',

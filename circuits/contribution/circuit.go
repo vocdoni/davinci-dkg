@@ -15,12 +15,6 @@ const (
 	MaxKeys         = ccommon.MaxK
 )
 
-// TranscriptWords is the fixed word count of the contribution calldata
-// transcript (3·MaxK·MaxN + 5·MaxN, see docs/pool-keys.md): the commitments of
-// every key, the recipient indexes, their public keys, the shared ephemerals
-// and the masked shares of every key.
-const TranscriptWords = 3*MaxKeys*MaxRecipients + 5*MaxRecipients
-
 // ContributionCircuit proves the DKG dealing statement for the whole pool at
 // once: MaxK independent polynomials, their coefficient commitments, Feldman
 // consistency of every share, and hashed share encryption under one ECDH
@@ -55,12 +49,14 @@ func (c *ContributionCircuit) Define(api frontend.API) error {
 	// PrefixMask returns all-active when count > size, so
 	// without these the statement could prove a partial set while
 	// claiming a larger one.
+	// 1 ≤ t ≤ n ≤ MaxN and 1 ≤ contributorIndex ≤ n (docs/pool-keys-v4.md
+	// §3). The compact transcript length is a function of t and n, so the
+	// zero cases are excluded here and not left to the contract alone.
+	api.AssertIsDifferent(c.Threshold, 0)
 	api.AssertIsLessOrEqual(c.Threshold, MaxCoefficients)
 	api.AssertIsLessOrEqual(c.CommitteeSize, MaxRecipients)
 	api.AssertIsLessOrEqual(c.Threshold, c.CommitteeSize)
-	// Honest contributor index is one-based in [1, CommitteeSize]. Asserting
-	// the upper bound here closes a future-composition gap; the contract
-	// already enforces non-zero.
+	api.AssertIsDifferent(c.ContributorIndex, 0)
 	api.AssertIsLessOrEqual(c.ContributorIndex, c.CommitteeSize)
 
 	coeffMask := ccommon.PrefixMask(api, c.Threshold, MaxCoefficients)
@@ -219,22 +215,39 @@ func (c *ContributionCircuit) Define(api frontend.API) error {
 	}
 	api.AssertIsEqual(c.ShareHash, shareHash)
 
-	transcript := make([]frontend.Variable, 0, TranscriptWords)
+	// Compact BRLC (docs/pool-keys-v4.md §4): the same fixed-size region
+	// order as before, but every word is gated by the public counts — a
+	// commitment coordinate by [m < t], everything else by [i < n] — so an
+	// inactive slot neither contributes nor advances the exponent. The fold
+	// therefore equals the contract's canonical BRLC over the L_C calldata
+	// words, which carry no padding, and the word count pins the gates to
+	// the public t and n.
+	fold := ccommon.NewGatedFold(api, c.Challenge)
 	for j := range MaxKeys {
 		for m := range MaxCoefficients {
-			transcript = append(transcript, maskedCommitments[j][m].X, maskedCommitments[j][m].Y)
+			fold.Absorb(coeffMask[m], maskedCommitments[j][m].X, maskedCommitments[j][m].Y)
 		}
 	}
-	transcript = append(transcript, maskedIndexes...)
 	for i := range MaxRecipients {
-		transcript = append(transcript, maskedKeys[i].X, maskedKeys[i].Y)
+		fold.Absorb(recipientMask[i], maskedIndexes[i])
 	}
 	for i := range MaxRecipients {
-		transcript = append(transcript, maskedEphemerals[i].X, maskedEphemerals[i].Y)
+		fold.Absorb(recipientMask[i], maskedKeys[i].X, maskedKeys[i].Y)
+	}
+	for i := range MaxRecipients {
+		fold.Absorb(recipientMask[i], maskedEphemerals[i].X, maskedEphemerals[i].Y)
 	}
 	for j := range MaxKeys {
-		transcript = append(transcript, maskedShares[j][:]...)
+		for i := range MaxRecipients {
+			fold.Absorb(recipientMask[i], maskedShares[j][i])
+		}
 	}
-	api.AssertIsEqual(c.TranscriptCommitment, ccommon.BRLC(api, c.Challenge, transcript))
+	// L_C = MaxK·(2t + n) + 5n, linear in the public inputs.
+	expectedWords := api.Add(
+		api.Mul(MaxKeys, api.Add(api.Mul(2, c.Threshold), c.CommitteeSize)),
+		api.Mul(5, c.CommitteeSize),
+	)
+	api.AssertIsEqual(fold.Count(), expectedWords)
+	api.AssertIsEqual(c.TranscriptCommitment, fold.Commitment())
 	return nil
 }

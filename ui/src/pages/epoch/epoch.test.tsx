@@ -94,21 +94,21 @@ describe('EpochPage', () => {
     expect(screen.getByLabelText('τ / 2²⁵⁶')).toBeInTheDocument()
   })
 
-  it('shows the pool, the finalizer and the activation transcript size', () => {
+  it('shows the pool, the finalizer and the finalize transcript size', () => {
     const source = makeSource()
     const epoch = liveEpoch(source)
     renderEpoch(source, epoch.id)
 
     expect(screen.getByRole('heading', { name: 'Pool keys' })).toBeInTheDocument()
     expect(screen.getByText('finalizer')).toBeInTheDocument()
-    // 6·MaxN, fixed by the circuit.
-    expect(screen.getByText('192 words')).toBeInTheDocument()
-    // Eight slots: one claimed by the fixture's application, two activated ahead, five inactive.
-    expect(screen.getAllByLabelText(/^pool key [0-7]$/)).toHaveLength(8)
-    expect(screen.getAllByText('free')).toHaveLength(2)
-    expect(screen.getAllByText('not activated')).toHaveLength(5)
-    expect(screen.getByText('3 / 8')).toBeInTheDocument()
-    expect(screen.getByText('1 / 8')).toBeInTheDocument()
+    // 2·MaxN + MaxK·(2 + 2·MaxN), fixed by the circuit.
+    expect(screen.getByText('1,120 words')).toBeInTheDocument()
+    // Sixteen slots, every key stored at finalization: one claimed by the
+    // fixture's application, fifteen free, none pending.
+    expect(screen.getAllByLabelText(/^pool key ([0-9]|1[0-5])$/)).toHaveLength(16)
+    expect(screen.getAllByText('free')).toHaveLength(15)
+    expect(screen.queryByText('reading…')).not.toBeInTheDocument()
+    expect(screen.getByText('1 / 16')).toBeInTheDocument()
   })
 
   it('plots the decryption matrix with the combined row', () => {

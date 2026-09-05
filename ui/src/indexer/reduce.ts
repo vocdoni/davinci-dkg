@@ -99,8 +99,6 @@ function emptyPool(): PoolKeyEntity[] {
   return Array.from({ length: POOL_SIZE }, (_, index) => ({
     index,
     key: null,
-    activatedBlock: null,
-    activatedTx: null,
     claimedBy: null,
     claimedBlock: null,
     claimedTx: null,
@@ -402,16 +400,6 @@ function applyEvent(store: IndexerStore, ev: IndexedEvent): void {
       if (epoch.status !== 'aborted') epoch.status = 'live'
       break
     }
-    case 'PoolKeyActivated': {
-      const epoch = ensureEpoch(store, ev.data.epochId, ev.block)
-      const slot = epoch.poolKeys[ev.data.keyIndex]
-      if (slot && slot.key == null) {
-        slot.key = ev.data.key
-        slot.activatedBlock = ev.block
-        slot.activatedTx = ev.tx
-      }
-      break
-    }
     case 'PoolKeyClaimed':
       claimPoolKey(store, ev.data.epochId, ev.data.aid, ev.data.keyIndex, ev.block, ev.tx)
       break
@@ -542,6 +530,11 @@ export interface EpochStateUpdate {
   committee?: Address[]
   /** `getPoolStatus(eid).nextIndex`. */
   poolNext?: number
+  /**
+   * `getPoolKey(eid, j)` for `j < POOL_SIZE`, TE form, once the epoch is Live.
+   * A partial list only fills the leading slots; a null entry leaves its slot.
+   */
+  poolKeys?: Array<Point | null>
   claimedCount?: number
   contributionCount?: number
   partialDecryptionCount?: number
@@ -549,7 +542,7 @@ export interface EpochStateUpdate {
   stateBlock: number
 }
 
-/** Fold a `getEpoch` / `selectedParticipants` / `getPoolStatus` read into the store. */
+/** Fold a `getEpoch` / `selectedParticipants` / `getPoolStatus` / `getPoolKey` read into the store. */
 export function applyEpochState(store: IndexerStore, id: EpochId, update: EpochStateUpdate): void {
   const epoch = ensureEpoch(store, id, update.stateBlock)
   if (update.status != null) epoch.status = phaseFromStatus(update.status)
@@ -558,6 +551,12 @@ export function applyEpochState(store: IndexerStore, id: EpochId, update: EpochS
     epoch.committee = update.committee.map((a) => a.toLowerCase() as Address)
   }
   if (update.poolNext != null) epoch.poolNext = Math.max(epoch.poolNext, update.poolNext)
+  if (update.poolKeys) {
+    update.poolKeys.forEach((key, index) => {
+      const slot = epoch.poolKeys[index]
+      if (slot && key) slot.key = key
+    })
+  }
   if (update.claimedCount != null) epoch.counts.claims = Math.max(epoch.counts.claims, update.claimedCount)
   if (update.contributionCount != null) {
     epoch.counts.contributions = Math.max(epoch.counts.contributions, update.contributionCount)

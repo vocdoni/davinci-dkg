@@ -123,33 +123,18 @@ func SubmitPartialDecryptionAs(
 	return actor.TxManager.WaitTxByHash(tx.Hash(), DefaultTxTimeout)
 }
 
-// FinalizeEpochAs closes the key-assembly phase. There is no proof any more:
-// the contract only checks the phase, the liveNotBeforeBlock gate and the
-// accepted contribution count.
-func FinalizeEpochAs(ctx context.Context, actor *TestActor, epochID [12]byte) error {
+// FinalizeEpochAs closes the key-assembly phase with the batched finalization
+// proof: the contract checks the phase, the liveNotBeforeBlock gate, the
+// accepted contribution count, every dealer row against storage and the
+// proof, then stores all pool keys and share roots. Permissionless.
+func FinalizeEpochAs(ctx context.Context, actor *TestActor, epochID [12]byte, sub *FinalizeSubmission) error {
 	auth, err := actor.TxManager.NewTransactOpts(ctx)
 	if err != nil {
 		return err
 	}
-	tx, err := actor.Manager.FinalizeEpoch(auth, epochID)
+	tx, err := actor.Manager.FinalizeEpoch(auth, epochID, sub.TranscriptDigest, sub.Transcript, sub.Proof, sub.Input)
 	if err != nil {
 		return fmt.Errorf("finalize epoch: %w", err)
-	}
-	return actor.TxManager.WaitTxByHash(tx.Hash(), DefaultTxTimeout)
-}
-
-// ActivatePoolKeyAs proves one key of a Live epoch's pool. Permissionless.
-func ActivatePoolKeyAs(ctx context.Context, actor *TestActor, epochID [12]byte, activation *PoolKeyActivation) error {
-	auth, err := actor.TxManager.NewTransactOpts(ctx)
-	if err != nil {
-		return err
-	}
-	tx, err := actor.Manager.ActivatePoolKey(
-		auth, epochID, activation.KeyIndex, activation.TranscriptDigest,
-		activation.Transcript, activation.Proof, activation.Input,
-	)
-	if err != nil {
-		return fmt.Errorf("activate pool key %d: %w", activation.KeyIndex, err)
 	}
 	return actor.TxManager.WaitTxByHash(tx.Hash(), DefaultTxTimeout)
 }
@@ -189,7 +174,7 @@ func CombineDecryptionAs(
 	return actor.TxManager.WaitTxByHash(tx.Hash(), DefaultTxTimeout)
 }
 
-// RegisterApplication claims the epoch's next activated pool key for `aid`.
+// RegisterApplication claims the epoch's next unclaimed pool key for `aid`.
 // An organizer-locked registration publishes PK_org = skOrg·G with its
 // Schnorr proof of possession; an automatic one passes zero key and proof
 // words (the contract stores the identity and ignores them), so `skOrg` may
@@ -385,33 +370,15 @@ func SubmitContributionMeasured(
 
 // FinalizeEpochMeasured finalizes and returns the gas used.
 func FinalizeEpochMeasured(
-	ctx context.Context, services *TestServices, actor *TestActor, epochID [12]byte,
+	ctx context.Context, services *TestServices, actor *TestActor, epochID [12]byte, sub *FinalizeSubmission,
 ) (uint64, error) {
 	auth, err := actor.TxManager.NewTransactOpts(ctx)
 	if err != nil {
 		return 0, err
 	}
-	tx, err := actor.Manager.FinalizeEpoch(auth, epochID)
+	tx, err := actor.Manager.FinalizeEpoch(auth, epochID, sub.TranscriptDigest, sub.Transcript, sub.Proof, sub.Input)
 	if err != nil {
 		return 0, fmt.Errorf("finalize epoch: %w", err)
-	}
-	return gasOf(ctx, services, actor, tx.Hash())
-}
-
-// ActivatePoolKeyMeasured activates one pool key and returns the gas used.
-func ActivatePoolKeyMeasured(
-	ctx context.Context, services *TestServices, actor *TestActor, epochID [12]byte, activation *PoolKeyActivation,
-) (uint64, error) {
-	auth, err := actor.TxManager.NewTransactOpts(ctx)
-	if err != nil {
-		return 0, err
-	}
-	tx, err := actor.Manager.ActivatePoolKey(
-		auth, epochID, activation.KeyIndex, activation.TranscriptDigest,
-		activation.Transcript, activation.Proof, activation.Input,
-	)
-	if err != nil {
-		return 0, fmt.Errorf("activate pool key %d: %w", activation.KeyIndex, err)
 	}
 	return gasOf(ctx, services, actor, tx.Hash())
 }

@@ -46,7 +46,8 @@ describe('docs/protocol', () => {
   it('states the organizer model accurately', () => {
     renderWithProviders(<DocsProtocolPage />, { config: CONFIG })
     expect(screen.getByText(/PK_aid = P_j \+ PK_org/)).toBeInTheDocument()
-    expect(screen.getByText(/finalizeEpoch \(no proof\)/)).toBeInTheDocument()
+    expect(screen.getByText(/finalizeEpoch \(one Groth16 proof\)/)).toBeInTheDocument()
+    expect(screen.queryByText(/activatePoolKey/)).not.toBeInTheDocument()
     expect(screen.getAllByText(/revealOrganizerSecret/).length).toBeGreaterThan(0)
     expect(screen.getByText(/permanently undecryptable/i)).toBeInTheDocument()
     expect(screen.queryByText(/organizer share/i)).not.toBeInTheDocument()

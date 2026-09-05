@@ -7,8 +7,9 @@ import {
     MAX_N,
     MAX_K,
     MERKLE_DEPTH,
-    CONTRIB_TRANSCRIPT_WORDS,
-    POOLKEY_TRANSCRIPT_WORDS,
+    FINALIZE_TRANSCRIPT_WORDS,
+    FINALIZE_KEY_WORDS_STRIDE,
+    contribTranscriptWords,
     COMBINE_TRANSCRIPT_WORDS
 } from "../src/libraries/Sizes.sol";
 import {BabyJubJub} from "../src/libraries/BabyJubJub.sol";
@@ -21,7 +22,7 @@ import {TestInputs} from "./TestInputs.t.sol";
 ///         documented in `src/libraries/Sizes.sol` word for word: the mocks
 ///         wave the pairing check through, so the transcript bindings the
 ///         contract *does* enforce (committee prefix hash, participant rows,
-///         Fiat–Shamir challenge, BRLC commitment, Merkle paths) are exactly
+///         Fiat-Shamir challenge, BRLC commitment, Merkle paths) are exactly
 ///         what these tests exercise.
 ///
 ///         All builders derive the calldata bytes AND the BRLC commitment
@@ -44,9 +45,9 @@ abstract contract TestHelpers is TestInputs {
     ///      reproducibility.
     uint256 internal constant TEST_ORG_POP_NONCE = 67890;
 
-    bytes32 internal constant CONTRIBUTION_TRANSCRIPT_DOMAIN = keccak256("davinci-dkg:contribution:v1");
+    bytes32 internal constant CONTRIBUTION_TRANSCRIPT_DOMAIN = keccak256("davinci-dkg:contribution:v2");
     bytes32 internal constant DECRYPT_COMBINE_TRANSCRIPT_DOMAIN = keccak256("davinci-dkg:decrypt-combine:v1");
-    bytes32 internal constant POOLKEY_TRANSCRIPT_DOMAIN = keccak256("davinci-dkg:poolkey:v1");
+    bytes32 internal constant FINALIZE_TRANSCRIPT_DOMAIN = keccak256("davinci-dkg:finalize:v2");
 
     function testOrganizerPK() internal view returns (uint256 x, uint256 y) {
         return BabyJubJub.scalarMulBase(TEST_ORG_SK);
@@ -76,7 +77,7 @@ abstract contract TestHelpers is TestInputs {
     /// @dev The first two committee slots use real on-curve BabyJubJub keys
     ///      (ALICE and BEEF Schnorr vectors from cmd/operator-schnorr-vectors).
     ///      Both are plain addresses with no code, which the fixtures need:
-    ///      submitContribution / activatePoolKey must be direct EOA calls,
+    ///      submitContribution / finalizeEpoch must be direct EOA calls,
     ///      so committee member 1 can never be the (contract) test address.
     ///      Slots 3+ stay at zero and are padded with the identity (0,1).
     ///      This matches what the DKGManager test fixtures register at setUp,
@@ -104,28 +105,28 @@ abstract contract TestHelpers is TestInputs {
         return abi.encode([uint256(1), 2, 3, 4, 5, 6, 7, 8]);
     }
 
-    /// @dev The `3KN + 5N` contribution transcript words, in the order the
-    ///      contract reads them from calldata:
-    ///        [0, 2KN)          commitments, key-major (identity padded)
-    ///        [2KN, 2KN+N)      recipientIndexes
-    ///        [2KN+N, 2KN+3N)   recipientPubKeys
-    ///        [2KN+3N, 2KN+5N)  ephemerals
-    ///        [2KN+5N, 3KN+5N)  maskedShares, key-major
+    /// @dev The compact `L_C = K·(2t+n)+5n` contribution transcript words, in
+    ///      the order the contract reads them from calldata (no padding — the
+    ///      regions are truncated at the live counts):
+    ///        [0, 2Kt)          commitments, key-major
+    ///        [2Kt, 2Kt+n)      recipientIndexes (word i is i+1)
+    ///        [2Kt+n, 2Kt+3n)   recipientPubKeys
+    ///        [2Kt+3n, 2Kt+5n)  ephemerals
+    ///        [2Kt+5n, L_C)     maskedShares, key-major
     ///      Only the committee section is bound to on-chain state; the rest
     ///      just has to be internally consistent with the BRLC commitment.
-    function contributionWords(uint16 committeeSize) internal pure returns (uint256[] memory v) {
-        v = new uint256[](CONTRIB_TRANSCRIPT_WORDS);
-        uint256 idxBase = 2 * MAX_K * MAX_N;
-        uint256 keyBase = idxBase + MAX_N;
-        uint256 ephBase = idxBase + 3 * MAX_N;
-        uint256 msBase  = idxBase + 5 * MAX_N;
-        // Identity padding: every commitment and every unused point is (0, 1).
-        for (uint256 i = 0; i < MAX_K * MAX_N; i++) {
-            v[i * 2 + 1] = 1;
-        }
-        for (uint256 i = 0; i < MAX_N; i++) {
-            v[keyBase + i * 2 + 1] = 1;
-            v[ephBase + i * 2 + 1] = 1;
+    function contributionWords(uint16 threshold, uint16 committeeSize) internal pure returns (uint256[] memory v) {
+        v = new uint256[](contribTranscriptWords(threshold, committeeSize));
+        uint256 idxBase = 2 * MAX_K * uint256(threshold);
+        uint256 keyBase = idxBase + committeeSize;
+        uint256 ephBase = idxBase + 3 * uint256(committeeSize);
+        uint256 msBase  = idxBase + 5 * uint256(committeeSize);
+        // Commitments: K keys × t coefficients, distinct per (j, m).
+        for (uint256 j = 0; j < MAX_K; j++) {
+            for (uint256 m = 0; m < threshold; m++) {
+                v[2 * (j * threshold + m)] = 100 + j * 10 + m;
+                v[2 * (j * threshold + m) + 1] = 200 + j * 10 + m;
+            }
         }
         for (uint256 i = 0; i < committeeSize; i++) {
             v[idxBase + i] = i + 1;
@@ -135,13 +136,13 @@ abstract contract TestHelpers is TestInputs {
             v[ephBase + i * 2] = 300 + i + 1;
             v[ephBase + i * 2 + 1] = 400 + i + 1;
             for (uint256 j = 0; j < MAX_K; j++) {
-                v[msBase + j * MAX_N + i] = 500 + j * 100 + i + 1;
+                v[msBase + j * committeeSize + i] = 500 + j * 100 + i + 1;
             }
         }
     }
 
-    function contributionTranscript(uint16 committeeSize) internal pure returns (bytes memory) {
-        return abi.encodePacked(contributionWords(committeeSize));
+    function contributionTranscript(uint16 threshold, uint16 committeeSize) internal pure returns (bytes memory) {
+        return abi.encodePacked(contributionWords(threshold, committeeSize));
     }
 
     function contributionInput(
@@ -154,7 +155,7 @@ abstract contract TestHelpers is TestInputs {
     ) internal pure returns (bytes memory) {
         return contributionInputForWords(
             epochId, threshold, committeeSize, contributorIndex, commitmentsHash, encryptedSharesHash,
-            contributionWords(committeeSize)
+            contributionWords(threshold, committeeSize)
         );
     }
 
@@ -201,26 +202,27 @@ abstract contract TestHelpers is TestInputs {
         return bytes32(uint256(CONTRIBUTION_ENCRYPTED_SHARES_HASH) + contributorIndex - 1);
     }
 
-    // ─── Pool-key activation ──────────────────────────────────────────────────
+    // ─── Finalize (proof-carrying, whole pool at once) ────────────────────────
 
-    function poolKeyProof() internal pure returns (bytes memory) {
+    function finalizeProof() internal pure returns (bytes memory) {
         return abi.encode([uint256(21), 22, 23, 24, 25, 26, 27, 28]);
     }
 
-    /// @dev The prover's transcript digest (public input 5). Any
+    /// @dev The prover's transcript digest (public input 4). Any
     ///      deterministic value will do: the mock verifier accepts the proof
     ///      and the contract only checks it against the call argument and
-    ///      feeds it into the challenge anchor.
-    function testTranscriptDigest(uint8 keyIndex) internal pure returns (bytes32) {
-        return keccak256(abi.encodePacked("test-poolkey-transcript-digest", keyIndex));
+    ///      feeds it into the challenge anchor. Kept below the BN254 scalar
+    ///      modulus like a real Poseidon digest would be.
+    function testFinalizeDigest() internal pure returns (bytes32) {
+        return bytes32(uint256(0x1234));
     }
 
     /// @dev `P_j` of the fixtures: a distinct value per key so a test can tell
-    ///      the epoch's keys apart. `activatePoolKey` stores
-    ///      `aggregateCommitments[0]` verbatim — proving it is a real group
-    ///      element is the circuit's job, not the contract's — so the fixture
-    ///      does not need an on-curve point, and staying `pure` keeps every
-    ///      builder safe to evaluate as an argument after `vm.expectRevert`.
+    ///      the epoch's keys apart. `finalizeEpoch` stores the transcript
+    ///      row's head verbatim — proving it is a real group element is the
+    ///      circuit's job, not the contract's — so the fixture does not need
+    ///      an on-curve point, and staying `pure` keeps every builder safe to
+    ///      evaluate as an argument after `vm.expectRevert`.
     function testPoolKey(uint8 keyIndex) internal pure returns (uint256 x, uint256 y) {
         return (0xB0071 + uint256(keyIndex), 0xB0072 + uint256(keyIndex));
     }
@@ -238,92 +240,89 @@ abstract contract TestHelpers is TestInputs {
         return (1000 + offset, 2000 + offset);
     }
 
-    /// @dev The `6N` pool-key activation transcript words:
-    ///        [0, N)    participantIndexes   (rows < acceptedCount, 0 beyond)
-    ///        [N, 2N)   contributionHashes   (rows < acceptedCount, 0 beyond)
-    ///        [2N, 4N)  aggregateCommitments (aggregate[0] = P_j)
-    ///        [4N, 6N)  shareCommitments     (slot i = member i + 1 for
-    ///                                        i < committeeSize, else (0, 1))
-    ///      The accepted contributors are members 1..acceptedCount.
-    function poolKeyWords(uint8 keyIndex, uint16 acceptedCount, uint16 committeeSize)
+    /// @dev The `2N + K·(2+2N)` finalize transcript words:
+    ///        [0, N)         participantIndexes  (rows < acceptedCount, 0 beyond)
+    ///        [N, 2N)        contributionHashes  (rows < acceptedCount, 0 beyond)
+    ///        per key j:     P[j].x,y ‖ D[j][0..N).x,y
+    ///                       (D[j][i] = identity for i >= committeeSize)
+    ///      The accepted contributors are members 1..acceptedCount. All
+    ///      MAX_K keys travel in one transcript — finalizeEpoch stores them
+    ///      all.
+    function finalizeWords(uint16 acceptedCount, uint16 committeeSize)
         internal
         pure
         returns (uint256[] memory v)
     {
-        v = new uint256[](POOLKEY_TRANSCRIPT_WORDS);
-        uint256 aggBase = 2 * MAX_N;
-        uint256 scBase = 4 * MAX_N;
-        for (uint256 i = 0; i < MAX_N; i++) {
-            v[aggBase + i * 2 + 1] = 1; // identity padding for m >= t
-            v[scBase + i * 2 + 1] = 1;  // identity padding beyond the committee
+        v = new uint256[](FINALIZE_TRANSCRIPT_WORDS);
+        for (uint256 i = 0; i < acceptedCount; i++) {
+            v[i] = i + 1;
+            v[MAX_N + i] = uint256(contributorCommitmentsHash(uint16(i + 1)));
         }
-        (uint256 pkx, uint256 pky) = testPoolKey(keyIndex);
-        v[aggBase] = pkx;
-        v[aggBase + 1] = pky;
-        for (uint16 i = 0; i < acceptedCount; i++) {
-            v[i] = uint256(i) + 1;
-            v[MAX_N + i] = uint256(contributorCommitmentsHash(i + 1));
-        }
-        for (uint16 i = 0; i < committeeSize; i++) {
-            (uint256 scx, uint256 scy) = testShareCommitment(keyIndex, i + 1);
-            v[scBase + uint256(i) * 2] = scx;
-            v[scBase + uint256(i) * 2 + 1] = scy;
+        for (uint8 j = 0; j < MAX_K; j++) {
+            uint256 keyBase = 2 * MAX_N + uint256(j) * FINALIZE_KEY_WORDS_STRIDE;
+            (uint256 pkx, uint256 pky) = testPoolKey(j);
+            v[keyBase] = pkx;
+            v[keyBase + 1] = pky;
+            for (uint256 i = 0; i < MAX_N; i++) {
+                if (i < committeeSize) {
+                    (uint256 scx, uint256 scy) = testShareCommitment(j, uint16(i + 1));
+                    v[keyBase + 2 + i * 2] = scx;
+                    v[keyBase + 2 + i * 2 + 1] = scy;
+                } else {
+                    v[keyBase + 2 + i * 2 + 1] = 1; // identity masking
+                }
+            }
         }
     }
 
-    function poolKeyTranscript(uint8 keyIndex, uint16 acceptedCount, uint16 committeeSize)
-        internal
-        pure
-        returns (bytes memory)
-    {
-        return abi.encodePacked(poolKeyWords(keyIndex, acceptedCount, committeeSize));
+    function finalizeTranscript(uint16 acceptedCount, uint16 committeeSize) internal pure returns (bytes memory) {
+        return abi.encodePacked(finalizeWords(acceptedCount, committeeSize));
     }
 
-    /// @dev 8-element public-input vector: eid, t, n, acceptedCount, keyIndex,
-    ///      transcriptDigest, challenge, transcriptCommitment.
-    function poolKeyInput(
+    /// @dev 7-element public-input vector: eid, threshold, committeeSize,
+    ///      acceptedCount, transcriptDigest, challenge, transcriptCommitment.
+    function finalizeInput(
         bytes12 epochId,
         uint16 threshold,
         uint16 committeeSize,
-        uint16 acceptedCount,
-        uint8 keyIndex
+        uint16 acceptedCount
     ) internal pure returns (bytes memory) {
-        return poolKeyInputForWords(epochId, threshold, committeeSize, acceptedCount, keyIndex,
-            poolKeyWords(keyIndex, acceptedCount, committeeSize));
+        return finalizeInputForDigest(
+            epochId, threshold, committeeSize, acceptedCount, testFinalizeDigest(),
+            finalizeWords(acceptedCount, committeeSize)
+        );
     }
 
     /// @dev Same, over an arbitrary (possibly tampered) word vector so a test
     ///      can hand the contract a transcript whose challenge and BRLC
     ///      commitment are internally consistent and still watch the on-chain
     ///      row bindings reject it.
-    function poolKeyInputForWords(
+    function finalizeInputForWords(
         bytes12 epochId,
         uint16 threshold,
         uint16 committeeSize,
         uint16 acceptedCount,
-        uint8 keyIndex,
         uint256[] memory words
     ) internal pure returns (bytes memory) {
-        return poolKeyInputForDigest(
-            epochId, threshold, committeeSize, acceptedCount, keyIndex, testTranscriptDigest(keyIndex), words
+        return finalizeInputForDigest(
+            epochId, threshold, committeeSize, acceptedCount, testFinalizeDigest(), words
         );
     }
 
     /// @dev Same, with an explicit transcript digest. The challenge anchor is
     ///      `keccak(digest ‖ keccak(transcript))`, exactly as the contract
     ///      derives it.
-    function poolKeyInputForDigest(
+    function finalizeInputForDigest(
         bytes12 epochId,
         uint16 threshold,
         uint16 committeeSize,
         uint16 acceptedCount,
-        uint8 keyIndex,
         bytes32 transcriptDigest,
         uint256[] memory words
     ) internal pure returns (bytes memory) {
         uint256 challenge = BRLC.deriveChallenge(
             epochId,
-            POOLKEY_TRANSCRIPT_DOMAIN,
+            FINALIZE_TRANSCRIPT_DOMAIN,
             keccak256(abi.encodePacked(transcriptDigest, keccak256(abi.encodePacked(words))))
         );
         return abi.encode(
@@ -332,7 +331,6 @@ abstract contract TestHelpers is TestInputs {
                 uint256(threshold),
                 uint256(committeeSize),
                 uint256(acceptedCount),
-                uint256(keyIndex),
                 uint256(transcriptDigest),
                 challenge,
                 BRLC.commit(challenge, words)
@@ -357,7 +355,7 @@ abstract contract TestHelpers is TestInputs {
 
     /// @dev The `MAX_N` leaves of pool key `keyIndex`: the tagged leaf of
     ///      `D_{i+1}` for every committee slot `i < committeeSize`, the empty
-    ///      leaf everywhere else. Mirrors `DKGManager._verifyPoolKeyRows`.
+    ///      leaf everywhere else. Mirrors `DKGManager._storeFinalizedKey`.
     function shareLeaves(uint8 keyIndex, uint16 committeeSize)
         internal
         pure
@@ -627,16 +625,6 @@ contract MockPartialDecryptVerifier is IZKVerifier, TestInputs {
 
     function provingKeyHash() external pure override returns (bytes32) {
         return PARTIAL_DECRYPTION_PROVING_KEY_HASH;
-    }
-}
-
-contract MockPoolKeyVerifier is IZKVerifier, TestInputs {
-    function verifyProof(bytes calldata proof, bytes calldata) external pure override {
-        if (proof.length == 0) revert();
-    }
-
-    function provingKeyHash() external pure override returns (bytes32) {
-        return POOLKEY_PROVING_KEY_HASH;
     }
 }
 

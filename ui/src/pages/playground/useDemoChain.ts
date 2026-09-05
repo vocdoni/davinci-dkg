@@ -78,7 +78,6 @@ export function useDemoChain(target: PlaygroundTarget): PlaygroundChain {
   const threshold = epoch?.policy?.threshold ?? 0
   const committeeSize = epoch?.policy?.committeeSize ?? epoch?.committee.length ?? 0
   const staggerBlocks = store.chain.staggerBlocks || 3
-  const poolActivated = epoch?.poolKeys.filter((slot) => slot.key != null).length ?? 0
   const poolClaimed = epoch?.poolKeys.filter((slot) => slot.claimedBy != null).length ?? 0
   /** The key a registration claims: the fixture's cursor, exactly like `claimPoolKey`. */
   const nextPoolIndex = epoch?.poolNext ?? 0
@@ -193,9 +192,7 @@ export function useDemoChain(target: PlaygroundTarget): PlaygroundChain {
     () => ({
       kind: 'demo',
       headBlock: chain.block,
-      pool: epoch?.finalization
-        ? { activated: poolActivated, claimed: poolClaimed + (registered ? 1 : 0), size: POOL_SIZE }
-        : null,
+      pool: epoch?.finalization ? { claimed: poolClaimed + (registered ? 1 : 0), size: POOL_SIZE } : null,
       wallet: {
         connected,
         address: connected ? DEMO_ACCOUNT : null,
@@ -213,7 +210,6 @@ export function useDemoChain(target: PlaygroundTarget): PlaygroundChain {
     [
       chain.block,
       epoch?.finalization,
-      poolActivated,
       poolClaimed,
       registered,
       connected,

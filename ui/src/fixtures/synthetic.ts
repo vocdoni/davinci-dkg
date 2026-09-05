@@ -8,7 +8,7 @@
 //   8 epochs, committee 64, t = 33, m_min = 40, α = 1.5
 //     · one aborted (committee never filled)
 //     · one still in KeyAssembly (the newest)
-//   pool keys activated ahead of demand, 2 applications per Live epoch
+//   the whole pool stored at finalization, 2 applications per Live epoch
 //     (one organizer-locked, one automatic), 8 ciphertexts each
 //   partials in waves of t; every organizer reveals its secret right after
 //     registering except the newest Live epoch's, whose ciphertexts sit at
@@ -103,9 +103,9 @@ export const DEFAULT_FIXTURE: Required<
 
 /**
  * Gas figures measured on the Sepolia deployment (see ../BENCHMARKS.md). The
- * proof-less `finalizeEpoch`, `activatePoolKey` and `revealOrganizerSecret`
- * are estimates until the pool-key deployment is re-measured: activation
- * costs what the old proof-carrying finalize did.
+ * v4 proof-carrying `finalizeEpoch` (one verifier, 16 Merkle trees, 48
+ * key/root writes — docs/pool-keys-v4.md §13) and `revealOrganizerSecret`
+ * are estimates until the v4 deployment is re-measured.
  */
 export const GAS = {
   registerKey: 322_112,
@@ -113,8 +113,7 @@ export const GAS = {
   claimSlotFirst: 175_520,
   claimSlot: 103_725,
   submitContribution: 462_523,
-  finalizeEpoch: 91_204,
-  activatePoolKey: 1_112_337,
+  finalizeEpoch: 2_800_000,
   registerApplication: 407_793,
   revealOrganizerSecret: 61_870,
   submitCiphertextFirst: 96_001,
@@ -136,9 +135,6 @@ export const GAS = {
 export const FIXTURE_DECRYPT_OPEN = 1_700_000_000
 export const FIXTURE_DECRYPT_CLOSED = 1_750_000_000
 export const FIXTURE_DECRYPT_DEADLINE = 2_000_000_000
-
-/** Pool keys the fixture activates per Live epoch: one per application plus two ahead. */
-export const FIXTURE_ACTIVATE_AHEAD = 2
 
 // ── deterministic bytes ──────────────────────────────────────────────────────
 
@@ -452,7 +448,9 @@ export function buildFixture(options: FixtureOptions = {}): Fixture {
 
     const liveBlock = startBlock + o.committeeSelectionBlocks + o.keyAssemblyBlocks + o.finalizeGapBlocks
     const finalizer = claimants[pick(`finalizer:${nonce}`, seed, 0, claimants.length - 1)]
-    // Proof-less: finalize only freezes the contributor set and opens the pool.
+    // One proof-carrying finalize: every pool key and share root is stored in
+    // this block. The keys themselves are not in the event — the state read
+    // below fills them, exactly as the live indexer's `getPoolKey` reads do.
     builder.emit(
       'EpochLive',
       liveBlock,
@@ -461,21 +459,6 @@ export function buildFixture(options: FixtureOptions = {}): Fixture {
       { epoch: epochId },
     )
     phases[epochId] = 'live'
-
-    // ── pool keys: one per application plus two ahead, one block apart ──────
-    const activated = Math.min(POOL_SIZE, o.applicationsPerEpoch + FIXTURE_ACTIVATE_AHEAD)
-    const activatorOffset = pick(`activator:${nonce}`, seed, 0, claimants.length - 1)
-    for (let j = 0; j < activated; j++) {
-      const block = liveBlock + 1 + j
-      const activator = claimants[(activatorOffset + j) % claimants.length]
-      builder.emit(
-        'PoolKeyActivated',
-        block,
-        builder.tx(`activate:${nonce}:${j}`, block, GAS.activatePoolKey, activator),
-        { epochId, keyIndex: j, key: pseudoPoint(`pool:${nonce}:${j}`, seed) },
-        { epoch: epochId },
-      )
-    }
 
     // ── applications and their ciphertexts ──────────────────────────────────
     for (let a = 0; a < Math.min(o.applicationsPerEpoch, POOL_SIZE); a++) {
@@ -667,6 +650,11 @@ export function buildFixture(options: FixtureOptions = {}): Fixture {
       },
       committee,
       poolNext: phase === 'live' ? Math.min(o.applicationsPerEpoch, POOL_SIZE) : 0,
+      // A Live epoch's whole pool, as `getPoolKey` would return it.
+      poolKeys:
+        phase === 'live'
+          ? Array.from({ length: POOL_SIZE }, (_, j) => pseudoPoint(`pool:${epoch.nonce}:${j}`, seed))
+          : undefined,
       claimedCount: committee.length,
       contributionCount: epoch.contributions.length,
       stateBlock: headBlock,

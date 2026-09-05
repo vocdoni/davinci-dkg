@@ -137,7 +137,9 @@ func TestTranscriptScalarsRoundTrip(t *testing.T) {
 
 	transcript, err := publicInputs.TranscriptScalars()
 	c.Assert(err, qt.IsNil)
-	c.Assert(len(transcript), qt.Equals, TranscriptWords)
+	layout, err := publicInputs.Layout()
+	c.Assert(err, qt.IsNil)
+	c.Assert(len(transcript), qt.Equals, layout.Words())
 
 	commitment, err := publicInputs.BRLCCommitment(publicInputs.Challenge)
 	c.Assert(err, qt.IsNil)

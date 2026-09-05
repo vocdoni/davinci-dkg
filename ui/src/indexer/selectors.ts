@@ -237,9 +237,10 @@ export interface EpochRow {
   finalizer: Address | null
   finalizationTx: Hex | null
   finalizationGas: number | null
-  /** Pool keys activated / claimed so far, out of `POOL_SIZE`. */
-  poolActivated: number
+  /** Pool keys claimed by applications so far, out of `POOL_SIZE`. */
   poolClaimed: number
+  /** Pool keys still unclaimed — `POOL_SIZE − poolClaimed` for a Live epoch, 0 before. */
+  poolFree: number
   /** 0…1 over the committee. */
   claimProgress: number
   contributionProgress: number
@@ -266,6 +267,7 @@ function epochRow(store: IndexerStore, epoch: EpochEntity): EpochRow {
     }
   }
   const duration = store.chain.epochDurationBlocks
+  const poolClaimed = epoch.poolKeys.filter((slot) => slot.claimedBy != null).length
   return {
     id: epoch.id,
     nonce: epoch.nonce,
@@ -286,8 +288,8 @@ function epochRow(store: IndexerStore, epoch: EpochEntity): EpochRow {
     finalizer: epoch.finalization?.by ?? senderOf(store, epoch.finalization?.tx),
     finalizationTx: epoch.finalization?.tx ?? null,
     finalizationGas: gasOf(store, epoch.finalization?.tx),
-    poolActivated: epoch.poolKeys.filter((slot) => slot.key != null).length,
-    poolClaimed: epoch.poolKeys.filter((slot) => slot.claimedBy != null).length,
+    poolClaimed,
+    poolFree: epoch.status === 'live' ? epoch.poolKeys.length - poolClaimed : 0,
     claimProgress: n > 0 ? Math.min(1, claims / n) : 0,
     contributionProgress: n > 0 ? Math.min(1, contributions / n) : 0,
   }
@@ -375,7 +377,7 @@ export interface ApplicationRow {
   mode: AppModeName
   /** Pool key claimed at registration; null until seen. */
   poolIndex: number | null
-  /** `P_j`, TE form; null until the key's activation has been indexed. */
+  /** `P_j`, TE form; null until the Live epoch's keys have been read. */
   poolKey: Point | null
   /** Policy fields are null until the record has been read on chain. */
   openSubmission: boolean | null
@@ -402,13 +404,16 @@ export interface ApplicationRow {
   decrypted: number
 }
 
-export type PoolSlotState = 'inactive' | 'activated' | 'claimed'
+/**
+ * `pending`: the key is not in the store yet (the epoch is not Live, or its
+ * keys have not been read since it went Live); `free`: stored and unclaimed;
+ * `claimed`: held by an application.
+ */
+export type PoolSlotState = 'pending' | 'free' | 'claimed'
 
 /** One of the `POOL_SIZE` keys of an epoch, as the pool panel draws it. */
 export interface PoolSlotRow extends PoolKeyEntity {
   state: PoolSlotState
-  activatedBy: Address | null
-  activatedGas: number | null
 }
 
 export interface EpochDetail {
@@ -428,14 +433,15 @@ export interface EpochDetail {
   /** The pool, by key index. */
   pool: PoolSlotRow[]
   poolNext: number
-  poolActivated: number
+  /** Slots whose key is in the store — all of them once a Live epoch has been read. */
+  poolKnown: number
   poolClaimed: number
   events: IndexedEvent[]
   /** Contributions in submission order. */
   contributions: CommitteeRow[]
 }
 
-/** `P_j` of the key `app` claimed, once its activation is in the store. */
+/** `P_j` of the key `app` claimed, once the Live epoch's keys are in the store. */
 export function poolKeyOf(store: IndexerStore, app: ApplicationEntity): Point | null {
   if (app.poolIndex == null) return null
   return store.epochs[epochKey(app.epoch)]?.poolKeys[app.poolIndex]?.key ?? null
@@ -478,12 +484,10 @@ function applicationRow(store: IndexerStore, app: ApplicationEntity): Applicatio
   }
 }
 
-function poolSlotRow(store: IndexerStore, slot: PoolKeyEntity): PoolSlotRow {
+function poolSlotRow(slot: PoolKeyEntity): PoolSlotRow {
   return {
     ...slot,
-    state: slot.claimedBy != null ? 'claimed' : slot.key != null ? 'activated' : 'inactive',
-    activatedBy: senderOf(store, slot.activatedTx),
-    activatedGas: gasOf(store, slot.activatedTx),
+    state: slot.claimedBy != null ? 'claimed' : slot.key != null ? 'free' : 'pending',
   }
 }
 
@@ -566,7 +570,7 @@ export function epochDetail(store: IndexerStore, id: EpochId | string): EpochDet
     endBlock: duration != null ? epoch.startBlock + duration : null,
   }
 
-  const pool = epoch.poolKeys.map((slot) => poolSlotRow(store, slot))
+  const pool = epoch.poolKeys.map(poolSlotRow)
 
   return {
     epoch,
@@ -586,7 +590,7 @@ export function epochDetail(store: IndexerStore, id: EpochId | string): EpochDet
       : null,
     pool,
     poolNext: epoch.poolNext,
-    poolActivated: pool.filter((slot) => slot.key != null).length,
+    poolKnown: pool.filter((slot) => slot.key != null).length,
     poolClaimed: pool.filter((slot) => slot.claimedBy != null).length,
     events: epoch.events.map((i) => store.events[i]),
     contributions: epoch.contributions

@@ -10,9 +10,9 @@ uint256 constant MAX_N = 32;
 ///      Must equal `circuits/common.MaxK` on the Go side. Each registered
 ///      application claims exactly one of them, so an epoch serves at most
 ///      `MAX_K` applications; unused keys cost only calldata at contribution
-///      time. Bounded by 8 because the per-epoch activation bitmap is a
-///      `uint8`.
-uint256 constant MAX_K = 8;
+///      time. All of them are proven and stored by the single proof-carrying
+///      `finalizeEpoch`, and the pool cursor plus key indexes fit a `uint8`.
+uint256 constant MAX_K = 16;
 
 /// @dev Depth of the per-pool-key Merkle tree over the committee's share
 ///      commitments `D_i`. Must equal `log2(MAX_N)` (and
@@ -34,47 +34,63 @@ bytes32 constant MERKLE_EMPTY_LEAF = keccak256("davinci-dkg:merkle-empty:v1");
 // witness builders emit the identical layout, so a one-word divergence makes
 // the BRLC commitment (and therefore the proof) fail.
 //
-// ── submitContribution ──────────────────────────────────────────────────────
+// ── submitContribution (compact, v4) ────────────────────────────────────────
 //
-//   words [0, 2KN)              commitments, key-major:
-//                               for j in [0, K): for m in [0, N): A[j][m].x, A[j][m].y
-//   words [2KN, 2KN+N)          recipientIndexes           (0 in inactive slots)
-//   words [2KN+N, 2KN+3N)       recipientPubKeys (x, y)    (identity when inactive)
-//   words [2KN+3N, 2KN+5N)      ephemerals (x, y)          (identity when inactive)
-//   words [2KN+5N, 3KN+5N)      maskedShares, key-major:
-//                               for j in [0, K): for i in [0, N): ms[j][i]
+// With `t` = threshold, `n` = committeeSize and `L_C = K·(2t+n)+5n` words
+// (`contribTranscriptWords` below): no inactive padding travels in calldata,
+// the fixed-width regions are simply truncated at the live counts.
+//
+//   words [0, 2Kt)              commitments, key-major:
+//                               for j in [0, K): for m in [0, t): A[j][m].x, A[j][m].y
+//   words [2Kt, 2Kt+n)          recipientIndexes   (word i MUST be i+1)
+//   words [2Kt+n, 2Kt+3n)       recipientPubKeys (x, y)
+//   words [2Kt+3n, 2Kt+5n)      ephemerals (x, y)
+//   words [2Kt+5n, L_C)         maskedShares, key-major:
+//                               for j in [0, K): for i in [0, n): ms[j][i]
 //
 // Must equal `len(contribution.TranscriptScalars())` on the Go side.
-uint256 constant CONTRIB_TRANSCRIPT_WORDS = 3 * MAX_K * MAX_N + 5 * MAX_N;
-/// @dev Byte offset of the committee section (recipientIndexes ‖ recipientPubKeys)
-///      inside the contribution transcript. `submitContribution` hashes
-///      `[CONTRIB_COMMITTEE_BYTES_OFFSET, CONTRIB_COMMITTEE_BYTES_END)` in one
-///      keccak and compares it against the snapshot taken when the lottery filled.
-uint256 constant CONTRIB_COMMITTEE_BYTES_OFFSET = (2 * MAX_K * MAX_N) * 32;
-uint256 constant CONTRIB_COMMITTEE_BYTES_END    = (2 * MAX_K * MAX_N + 3 * MAX_N) * 32;
 
-// ── activatePoolKey ─────────────────────────────────────────────────────────
+/// @dev `L_C = MAX_K·(2t+n) + 5n` — the compact contribution transcript
+///      length in words, derived from the epoch policy (t = threshold,
+///      n = committeeSize). Mirrors `ContributionTranscriptWords(t, n)` in
+///      `circuits/common/sizes.go` on the Go side.
+function contribTranscriptWords(uint256 t, uint256 n) pure returns (uint256) {
+    return MAX_K * (2 * t + n) + 5 * n;
+}
+
+/// @dev Byte offset of the committee section (recipientIndexes ‖
+///      recipientPubKeys) inside the compact contribution transcript.
+///      `submitContribution` hashes
+///      `[contribCommitteeBytesOffset(t), contribCommitteeBytesEnd(t, n))`
+///      in one keccak and compares it against the unpadded `3n`-word
+///      snapshot taken when the lottery filled.
+function contribCommitteeBytesOffset(uint256 t) pure returns (uint256) {
+    return 2 * MAX_K * t * 32;
+}
+
+function contribCommitteeBytesEnd(uint256 t, uint256 n) pure returns (uint256) {
+    return (2 * MAX_K * t + 3 * n) * 32;
+}
+
+// ── finalizeEpoch (proof-carrying, v4) ──────────────────────────────────────
 //
-//   words [0, N)      participantIndexes           (0 for i >= acceptedCount)
-//   words [N, 2N)     contributionHashes           (0 for i >= acceptedCount)
-//   words [2N, 4N)    aggregateCommitments (x, y)  (identity for m >= t)
-//   words [4N, 6N)    shareCommitments D_p (x, y)  (identity for i >= committeeSize)
+//   words [0, N)        participantIndexes           (0 for rows >= acceptedCount)
+//   words [N, 2N)       contributionHashes           (0 for rows >= acceptedCount)
+//   then per key j in [0, K), a (2 + 2N)-word row:
+//     P[j].x, P[j].y, D[j][0].x, D[j][0].y, …, D[j][N-1].x, D[j][N-1].y
+//                       (D[j][i] = identity (0, 1) for i >= committeeSize)
 //
 // Rows `i < acceptedCount` of the first two regions name the accepted
-// contributors, in any order. Slot `i` of `shareCommitments` is the share
-// commitment of committee member `p = i + 1` — contributor or not — so every
-// member's leaf exists in the tree.
-// Must equal `len(poolkey.TranscriptScalars())` on the Go side.
-uint256 constant POOLKEY_TRANSCRIPT_WORDS = 6 * MAX_N;
-/// @dev Byte offset of `contributionHashes` (the per-contributor Poseidon
-///      `commitmentsHash` the contract re-checks against storage).
-uint256 constant POOLKEY_HASHES_BYTES_OFFSET = MAX_N * 32;
-/// @dev Word offset of `aggregateCommitments`; `aggregateCommitments[0]` is the
-///      pool key `P_j` itself.
-uint256 constant POOLKEY_AGG_WORDS_OFFSET = 2 * MAX_N;
-/// @dev Word offset of `shareCommitments`; leaf `i` of the share Merkle tree
-///      is `keccak256(0x00 ‖ D_{i+1}.x ‖ D_{i+1}.y)`.
-uint256 constant POOLKEY_SHARE_WORDS_OFFSET = 4 * MAX_N;
+// contributors, in any order (builders SHOULD emit ascending indexes). Slot
+// `i` of each key's share commitments is the share commitment of committee
+// member `p = i + 1` — contributor or not — so every member's leaf exists in
+// the tree. `finalizeEpoch` verifies one Groth16 proof over the whole vector,
+// stores all MAX_K keys and Merkle roots, and flips the epoch Live.
+// Must equal `len(finalize.TranscriptScalars())` on the Go side.
+uint256 constant FINALIZE_TRANSCRIPT_WORDS = 2 * MAX_N + MAX_K * (2 + 2 * MAX_N);
+/// @dev Byte offset of the per-key rows: key `j`'s `P[j]` sits at word
+///      `2·MAX_N + j·(2 + 2·MAX_N)` of the finalize transcript.
+uint256 constant FINALIZE_KEY_WORDS_STRIDE = 2 + 2 * MAX_N;
 
 // ── combineDecryption ───────────────────────────────────────────────────────
 //

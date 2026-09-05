@@ -7,6 +7,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	qt "github.com/frankban/quicktest"
+	ccommon "github.com/vocdoni/davinci-dkg/circuits/common"
 	"github.com/vocdoni/davinci-dkg/tests/helpers"
 	"github.com/vocdoni/davinci-dkg/types"
 )
@@ -28,9 +29,9 @@ func TestContractsSmoke(t *testing.T) {
 	c.Assert(err, qt.IsNil)
 	c.Assert(partialHash, qt.Not(qt.Equals), common.Hash{})
 
-	poolKeyHash, err := services.Manager.GetPoolKeyVerifierVKeyHash(services.CallOpts(ctx))
+	finalizeHash, err := services.Manager.GetFinalizeVerifierVKeyHash(services.CallOpts(ctx))
 	c.Assert(err, qt.IsNil)
-	c.Assert(common.Hash(poolKeyHash), qt.Not(qt.Equals), common.Hash{})
+	c.Assert(common.Hash(finalizeHash), qt.Not(qt.Equals), common.Hash{})
 }
 
 func TestDKGRoundHappyPath(t *testing.T) {
@@ -61,20 +62,22 @@ func TestDKGRoundHappyPath(t *testing.T) {
 	c.Assert(result.Epoch.Status, qt.Equals, uint8(3)) // Live
 	c.Assert(result.Epoch.ContributionCount, qt.Equals, uint16(1))
 
-	// finalizeEpoch carries no proof; the key material only lands with the
-	// per-key activations.
-	status, err := services.Manager.GetPoolStatus(services.CallOpts(ctx), result.EpochID)
+	// finalizeEpoch carries the batched proof: every pool key and share root
+	// is stored the moment the epoch is Live, nothing is claimed yet.
+	next, err := services.Manager.GetPoolStatus(services.CallOpts(ctx), result.EpochID)
 	c.Assert(err, qt.IsNil)
-	c.Assert(status.Activated, qt.Equals, uint8(1), qt.Commentf("pool key 0 is activated"))
-	c.Assert(status.NextIndex, qt.Equals, uint8(0), qt.Commentf("nothing claimed it yet"))
+	c.Assert(next, qt.Equals, uint8(0), qt.Commentf("nothing claimed yet"))
 
-	x, y, err := services.Manager.GetPoolKey(services.CallOpts(ctx), result.EpochID, 0)
-	c.Assert(err, qt.IsNil)
-	activation := result.Activation(0)
-	c.Assert(x.Cmp(activation.PoolKey.X), qt.Equals, 0)
-	c.Assert(y.Cmp(activation.PoolKey.Y), qt.Equals, 0)
-
-	// Key 1 was never proven: reading it reverts with PoolKeyNotActive.
-	_, _, err = services.Manager.GetPoolKey(services.CallOpts(ctx), result.EpochID, 1)
+	for key := range uint8(ccommon.MaxK) {
+		x, y, err := services.Manager.GetPoolKey(services.CallOpts(ctx), result.EpochID, key)
+		c.Assert(err, qt.IsNil, qt.Commentf("key %d", key))
+		c.Assert(x.Cmp(result.PoolKey(key).X), qt.Equals, 0, qt.Commentf("key %d", key))
+		c.Assert(y.Cmp(result.PoolKey(key).Y), qt.Equals, 0)
+		root, err := services.Manager.GetPoolShareRoot(services.CallOpts(ctx), result.EpochID, key)
+		c.Assert(err, qt.IsNil)
+		c.Assert(root, qt.Equals, result.Shares(key).Root(), qt.Commentf("key %d", key))
+	}
+	// The pool ends at MaxK.
+	_, _, err = services.Manager.GetPoolKey(services.CallOpts(ctx), result.EpochID, uint8(ccommon.MaxK))
 	c.Assert(err, qt.IsNotNil)
 }

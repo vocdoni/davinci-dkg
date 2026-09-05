@@ -3,15 +3,17 @@
 // bootstraps the default Anvil node keys, and provides three actions:
 //
 //	--action=create  (default) creates a Live single-participant DKG epoch
-//	                 with `--keys` pool keys activated and writes JSON to
-//	                 stdout:
+//	                 (finalizeEpoch stores all MaxK pool keys at once) and
+//	                 writes JSON to stdout:
 //	                   {"epochId":"0x…","share":"<decimal>",
 //	                    "shares":["<decimal>",…],
 //	                    "poolKey":{"x":"<decimal>","y":"<decimal>"},
 //	                    "activatedKeys":1}
 //	                 `shares[j]` is the polynomial share value held by
-//	                 participant 1 under pool key j, one entry per activated
-//	                 key; `share` is `shares[0]`. Every key of the pool is
+//	                 participant 1 under pool key j, one entry per key the
+//	                 caller asked for with `--keys` (every key of a Live
+//	                 epoch is claimable; the flag only sizes the output);
+//	                 `share` is `shares[0]`. Every key of the pool is
 //	                 dealt from its own polynomial, so the test must pass the
 //	                 share of the key its application claimed back to the
 //	                 decrypt actions for the helper to drive partial
@@ -68,6 +70,7 @@ import (
 	"time"
 
 	flag "github.com/spf13/pflag"
+	ccommon "github.com/vocdoni/davinci-dkg/circuits/common"
 	"github.com/vocdoni/davinci-dkg/log"
 	"github.com/vocdoni/davinci-dkg/tests/helpers"
 )
@@ -81,10 +84,13 @@ type fixtureResult struct {
 	EpochID string `json:"epochId"`
 	// Share is participant 1's share of pool key 0, i.e. Shares[0].
 	Share string `json:"share"`
-	// Shares[j] is participant 1's share of pool key j, for every activated key.
-	Shares        []string `json:"shares"`
-	PoolKey       point    `json:"poolKey"`
-	ActivatedKeys int      `json:"activatedKeys"`
+	// Shares[j] is participant 1's share of pool key j, one per key the
+	// caller asked for; every key of a Live epoch is claimable.
+	Shares  []string `json:"shares"`
+	PoolKey point    `json:"poolKey"`
+	// ActivatedKeys is len(Shares): the keys the output describes. The name
+	// predates batched finalization, when keys were proven one at a time.
+	ActivatedKeys int `json:"activatedKeys"`
 }
 
 type decryptResult struct {
@@ -120,7 +126,7 @@ func main() {
 	flag.StringVar(&action, "action", "create",
 		"action to perform: 'create' (default), 'decrypt' or 'prepare-combine'")
 	flag.IntVar(&keys, "keys", 1,
-		"(create) how many of the epoch's pool keys to activate")
+		"(create) how many of the epoch's pool keys to emit shares for (1..MaxK; every key is claimable once Live)")
 	flag.StringVar(&roundIDHex, "epoch-id", "",
 		"(decrypt) epoch id as a 0x-prefixed 12-byte hex string")
 	flag.IntVar(&ciphertextIndex, "ciphertext-index", 0,
@@ -164,17 +170,17 @@ func main() {
 
 	switch action {
 	case "create":
-		if keys < 1 {
-			fmt.Fprintln(os.Stderr, "error: --keys must be at least 1")
+		if keys < 1 || keys > ccommon.MaxK {
+			fmt.Fprintf(os.Stderr, "error: --keys must be in [1, %d]\n", ccommon.MaxK)
 			os.Exit(1)
 		}
-		result, err := helpers.CreateSDKTestFixture(ctx, services, keys)
+		result, err := helpers.CreateSDKTestFixture(ctx, services)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: create fixture: %v\n", err)
 			os.Exit(1)
 		}
-		poolKey := result.Activation(0).PoolKey
-		shares := make([]string, len(result.Activations))
+		poolKey := result.PoolKey(0)
+		shares := make([]string, keys)
 		for keyIndex := range shares {
 			share, err := result.ParticipantShare(uint8(keyIndex), 1)
 			if err != nil {
@@ -188,7 +194,7 @@ func main() {
 			Share:         shares[0],
 			Shares:        shares,
 			PoolKey:       point{X: poolKey.X.String(), Y: poolKey.Y.String()},
-			ActivatedKeys: len(result.Activations),
+			ActivatedKeys: len(shares),
 		})
 
 	case "decrypt":

@@ -26,7 +26,7 @@ describe('applicationPublicKey', () => {
     expect(applicationPublicKey({ x: poolKey[0], y: poolKey[1] })).toEqual({ x: poolKey[0], y: poolKey[1] })
   })
 
-  it('is null until the pool key is activated', () => {
+  it('is null until the pool key has been read', () => {
     expect(applicationPublicKey(null, { x: pkOrg[0], y: pkOrg[1] })).toBeNull()
     expect(applicationPublicKey(undefined)).toBeNull()
   })

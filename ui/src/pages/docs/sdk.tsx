@@ -46,8 +46,9 @@ export function DocsSdkPage() {
       <Section id='roles' title='Who does what'>
         <P>
           Two roles, and the SDK is aimed squarely at the second. <Em>Operators</Em> run the node binary: they open each
-          epoch on the contract&rsquo;s block cadence, win committee slots by lottery, publish contributions, finalize,
-          activate the pool keys, and later answer ciphertexts with partial decryptions. <Em>Organizers</Em> never
+          epoch on the contract&rsquo;s block cadence, win committee slots by lottery, publish contributions, finalize
+          the whole key pool with one proof, and later answer ciphertexts with partial decryptions.{' '}
+          <Em>Organizers</Em> never
           create or schedule an epoch. They register an application against whichever epoch is already Live — claiming
           one of its pool keys <C>P_j</C> — encrypt under <C>PK_aid</C>, submit ciphertexts, and, for an{' '}
           <Em>organizer-locked</Em> application, reveal <C>sk_org</C> once, when they decide the plaintexts may exist. An{' '}
@@ -84,9 +85,9 @@ export const dkg = new DKGClient({
         <P>
           Epoch identifiers are 12-byte values: a 4-byte chain prefix and an 8-byte nonce. Build one with{' '}
           <C>buildEpochId</C>, or pass a known one as a hex string. Most applications do not choose at all. They take
-          the newest epoch whose status is <C>Live</C> and whose pool still has an activated, unclaimed key.
+          the newest epoch whose status is <C>Live</C> and whose pool still has an unclaimed key.
         </P>
-        <Code caption='epoch.ts'>{`import { buildEpochId, EpochPhase, roundStatusLabel } from '@vocdoni/davinci-dkg-sdk'
+        <Code caption='epoch.ts'>{`import { buildEpochId, EpochPhase, MAX_K, roundStatusLabel } from '@vocdoni/davinci-dkg-sdk'
 
 const nonce   = await dkg.epochNonce()
 const prefix  = await dkg.roundPrefix()
@@ -95,13 +96,14 @@ const epochId = buildEpochId(prefix, nonce - 1n)
 const epoch = await dkg.getEpoch(epochId)
 console.log(roundStatusLabel(epoch.status), epoch.policy.threshold, epoch.policy.committeeSize)
 
-// Once Live, the pool is dealt one key at a time.
+// Once Live, every one of the MAX_K keys is stored; only the claim cursor moves.
 if (epoch.status === EpochPhase.Live) {
-  const { nextIndex, activated } = await dkg.getPoolStatus(epochId)
-  const free = (activated >> nextIndex) & 1        // is the next key activated?
+  const { nextIndex } = await dkg.getPoolStatus(epochId)
+  const free = nextIndex < MAX_K                           // is there a key left to claim?
   // Twisted-Edwards (TE) coordinates, the form the SDK works in.
   const pj = await dkg.getPoolKey(epochId, nextIndex)      // [x, y]
   const root = await dkg.getPoolShareRoot(epochId, nextIndex)
+  const all = await dkg.getPoolKeys(epochId)               // all MAX_K keys
 }`}</Code>
       </Section>
 
@@ -113,17 +115,17 @@ if (epoch.status === EpochPhase.Live) {
         <Code caption='watch.ts'>{`import {
   watchNewEpochs,
   watchEpochLive,
-  waitForPoolKeyActivated,
+  waitForPoolKey,
   watchCiphertextSubmitted,
 } from '@vocdoni/davinci-dkg-sdk'
 
 const stop = watchNewEpochs(dkg, (epochId, organizer) => { /* … */ })
 
-// Fires once per epoch, before any key is activated.
+// Fires once per epoch: from this block every pool key is stored.
 watchEpochLive(dkg, epochId, (contributionCount) => { /* … */ })
 
-// Polls getPoolStatus until key j is activated (registration needs it).
-await waitForPoolKeyActivated(dkg, epochId, 0)
+// Polls until the epoch is Live, then returns P_j (TE form).
+const p0 = await waitForPoolKey(dkg, epochId, 0)
 
 // Ciphertexts as they land. c1/c2 come back in TE form.
 watchCiphertextSubmitted(dkg, epochId, (event) => {
@@ -136,8 +138,8 @@ stop()`}</Code>
       <Section id='register' title='Registering an application'>
         <P>
           Every ciphertext belongs to a registered application, and an unregistered <C>aid</C> reverts. Registration
-          claims the epoch&rsquo;s next activated pool key (<C>PoolExhausted()</C> / <C>PoolKeyNotActive()</C>{' '}
-          otherwise) and, in the default <Em>organizer-locked</Em> mode, binds an organizer key on top of it so the
+          claims the epoch&rsquo;s next unclaimed pool key (<C>PoolExhausted()</C> once all <C>MAX_K</C> are taken)
+          and, in the default <Em>organizer-locked</Em> mode, binds an organizer key on top of it so the
           encryption key becomes <C>PK_aid = P_j + PK_org</C>. Only <C>PK_org</C> and the Schnorr proof of possession
           go on chain — <C>sk_org</C> never leaves the process that drew it until you choose to reveal it. Every policy
           field is optional; the defaults are organizer-locked, registrant-only submission, no cap, no block window and
@@ -237,7 +239,7 @@ const same = await encryptForApplication(42n, pj, app.policy.mode === AppMode.Au
         <P>
           <C>DKGWriter</C> extends <C>DKGClient</C> with the three organizer writes, plus calls an organizer normally
           never makes: <C>createEpoch</C> (permissionless but cadence-gated; the nodes fire it themselves),{' '}
-          <C>activatePoolKey</C> (the nodes do that too) and <C>abortEpoch</C> (only accepted for a provably dead
+          <C>finalizeEpoch</C> (the nodes build that proof) and <C>abortEpoch</C> (only accepted for a provably dead
           epoch). The contract assigns the ciphertext index, so <C>submitCiphertext</C> waits for the receipt and reads
           it back out of the event.
         </P>
