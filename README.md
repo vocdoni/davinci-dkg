@@ -329,9 +329,9 @@ Sepolia deployment below is open, so anyone can join the committee.
 
 You need an Ethereum key with a little Sepolia ETH (about 0.05 ETH covers weeks of
 participation, and any Sepolia faucet works), Docker, and a machine sized for the proofs: at
-least 4 cores and 8 GB of RAM. The node keeps the four proving keys resident (about 1 GB, the
-contribution key alone is 410 MB) and a contribution proof takes about 1.6 s on 32 threads; more
-cores shorten the proofs, less RAM is not an option.
+least 4 cores and 8 GB of RAM. The node keeps the four circuits and proving keys resident, about
+3 GB at rest, and a contribution proof takes about 1.6 s on 32 threads; more cores shorten the
+proofs, less RAM is not an option.
 
 ```bash
 git clone https://github.com/vocdoni/davinci-dkg.git

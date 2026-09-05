@@ -35,9 +35,6 @@ jobs:
     timeout-minutes: 120
     env:
       LOG_LEVEL: debug
-      # Keep the compile JSON out of /tmp: the integration and battery jobs
-      # on the same box write /tmp/circuit-artifacts.json too.
-      CIRCUIT_ARTIFACTS_JSON: ${{ runner.temp }}/circuit-artifacts.json
 
     steps:
       - name: Remove PR label
@@ -56,9 +53,14 @@ jobs:
             }
 
       # Some self-hosted runners export no HOME (z5 runs as root under
-      # systemd); go needs one and ~/.davinci/artifacts lives under it.
+      # systemd); go needs one and ~/.davinci/artifacts lives under it. The
+      # compile JSON stays out of /tmp too: the integration and battery jobs
+      # on the same box write /tmp/circuit-artifacts.json.
       - name: Give the run a home
-        run: mkdir -p "$RUNNER_TEMP/home" && echo "HOME=$RUNNER_TEMP/home" >> "$GITHUB_ENV"
+        run: |
+          mkdir -p "$RUNNER_TEMP/home"
+          echo "HOME=$RUNNER_TEMP/home" >> "$GITHUB_ENV"
+          echo "CIRCUIT_ARTIFACTS_JSON=$RUNNER_TEMP/circuit-artifacts.json" >> "$GITHUB_ENV"
 
       - uses: actions/checkout@v4
         with:
