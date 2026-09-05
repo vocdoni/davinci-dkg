@@ -55,13 +55,10 @@ help: ## Show this help message
 	@echo ""
 	@echo "Testnet Commands:"
 	@echo "  testnet-up      Start the local DKG testnet: Anvil + deployer +"
-	@echo "                  N dkg-node replicas + the standalone UI service."
+	@echo "                  N dkg-node replicas (no UI service — browse the"
+	@echo "                  chain with `make ui-dev`, see testnet/)."
 	@echo "                  DKG_NODE_COUNT     (default 3, max 32 containers)"
 	@echo "                  DKG_THRESHOLD      (default 2)"
-	@echo "                  UI_PORT            (default 8081, host binding)"
-	@echo "                  UI_PUBLIC_RPC      RPC URL advertised to browsers"
-	@echo "                                     — set to http://<host-ip>:8545"
-	@echo "                                     when accessing from another host."
 	@echo "                  Note: committee size is capped by the circuit"
 	@echo "                  bound MaxN (see circuits/common/sizes.go, currently 32)."
 	@echo "  testnet-run     Run the full DKG scenario (create round → encrypt → decrypt)"
@@ -71,8 +68,9 @@ help: ## Show this help message
 	@echo "                                         reveal-share disclosure phase"
 	@echo "  testnet-logs    Tail logs of the dkg-node containers"
 	@echo "  testnet-down    Stop the testnet and wipe Docker volumes"
-	@echo "  battery-testnet-up  Start the testnet tuned for tests/battery: the nodes"
-	@echo "                  activate the whole MAX_K pool of every epoch"
+	@echo "  battery-testnet-up  Start the testnet tuned for tests/battery: batched"
+	@echo "                  finalization — one proof-carrying finalizeEpoch stores"
+	@echo "                  all MAX_K pool keys at once, so no activation step"
 	@echo "  battery         Run the battery against a running testnet (BATTERY_RUN)"
 	@echo ""
 	@echo "UI Commands:"
@@ -187,14 +185,14 @@ testnet-run: ## (Deprecated alias) Wait for the running dkg-node fleet to auto-c
 	@echo "Bring the fleet up with 'make testnet-up' and tail logs with"
 	@echo "'make testnet-logs' to watch the schedule."
 
-# tests/battery/compose.battery.yml layers DAVINCI_DKG_ACTIVATE_AHEAD=8 on the
-# nodes: every epoch deals MAX_K = 8 pool keys, a registration claims the next
-# *activated* one, and the swarm registers up to MAX_K organizers at once, so
-# the fleet has to activate the whole pool instead of the default two ahead.
+# tests/battery/compose.battery.yml is an empty override in v4: with
+# batched finalization (one proof-carrying finalizeEpoch stores all
+# MAX_K = 16 keys at once) every key of a Live epoch is usable at once —
+# the v3.1 DAVINCI_DKG_ACTIVATE_AHEAD=8 node env is gone (v3.1, superseded).
 BATTERY_COMPOSE := -f docker-compose.yml -f ../tests/battery/compose.battery.yml
 
 battery-testnet-up: ## Start the testnet tuned for the battery (see tests/battery/README.md)
-	@echo "Starting battery testnet with $(DKG_NODE_COUNT) nodes (DAVINCI_DKG_ACTIVATE_AHEAD=8)..."
+	@echo "Starting battery testnet with $(DKG_NODE_COUNT) nodes (batched finalization: every pool key of a Live epoch is usable at once)..."
 	@cd testnet && \
 	DKG_NODE_COUNT=$(DKG_NODE_COUNT) DKG_THRESHOLD=$(DKG_THRESHOLD) \
 	docker compose $(BATTERY_COMPOSE) up -d --scale dkg-node=$(DKG_NODE_COUNT) --build
@@ -269,8 +267,8 @@ build: ## Build all Go binaries
 
 test: ## Run fast unit tests
 	@echo "Running unit tests..."
-	@# -timeout is per package: circuits/contribution (3.0M constraints, ~10 min
-	@# Groth16 setup) needs about 20 min on its own.
+	@# -timeout is per package: circuits/contribution (5.9M constraints, ~10 min
+	@# Groth16 setup, v4) needs about 20 min on its own.
 	go test -v $$(go list ./... | grep -v github.com/vocdoni/davinci-dkg/tests) -timeout=120m -failfast
 
 test-integration: ## Run heavy integration tests

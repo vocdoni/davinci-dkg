@@ -41,7 +41,7 @@ activation step any more). There is no dispute phase.
 |-------------------|-------------------------------|------------------------------------------------------------------|
 | `davinci-dkg-node`| `cmd/davinci-dkg-node`        | Node binary — joins the active set and reacts to every epoch     |
 | Solidity contracts| `solidity/src`                | `DKGRegistry` + `DKGManager` + `DKGAppManager`                   |
-| Circuits          | `circuits/`                   | Groth16 / BN254 — Contribution, Finalize, PartialDecrypt, Combine  |
+| Circuits          | `circuits/`                   | Groth16 / BN254 — Contribution, Finalize, PartialDecrypt, DecryptCombine  |
 | TypeScript SDK    | `sdk/`                        | `@vocdoni/davinci-dkg-sdk` — read client, writer, encryption     |
 | Web explorer / UI | `ui/`                         | React SPA + interactive playground                               |
 
@@ -328,12 +328,17 @@ Run a node and you become eligible to be drawn on every epoch created after you 
 Sepolia deployment below is open, so anyone can join the committee.
 
 You need an Ethereum key with a little Sepolia ETH (about 0.05 ETH covers weeks of
-participation, and any Sepolia faucet works), Docker, and a machine sized for the proofs: at
-least 4 cores and 8 GB of RAM. The node keeps the four circuits and proving keys resident, about
-3 GB at rest; a contribution proof (5.9 M constraints at `MaxK = 16`) takes about 3.5 s on
-32 threads and peaks at 9.3 GB of resident memory, the finalization proof about 2.3 s and 5.5 GB,
-so plan for 16 GB of RAM; more cores shorten the proofs, less RAM is not an option (see
-[`BENCHMARKS.md`](BENCHMARKS.md)).
+participation, and any Sepolia faucet works), Docker, and a machine sized for the proofs:
+at least 4 cores and 16 GB of RAM minimum (more is safer). The v0.5.0 node keeps all four
+circuits and their proving keys preloaded: about 9 GB at rest (8.5–9.6 GB across the seed
+fleet, against 3.1 GB for v0.4) and up to about 10 GB while proving — the contribution proof
+(5.9 M constraints at `MaxK = 16`) peaks at 9.3 GB, a running seed node observed ~9.8 GB, and
+the finalization proof takes about 2.3 s and 5.5 GB. More cores shorten the proofs; less RAM is
+not an option (see [`BENCHMARKS.md`](BENCHMARKS.md)).
+
+The node's RPC list should hold at least two endpoints: the node classifies rate-limited or
+unreachable endpoints and rotates off them, so a single-endpoint config has no fallback when a
+provider rate-limits you.
 
 ```bash
 git clone https://github.com/vocdoni/davinci-dkg.git
@@ -344,7 +349,8 @@ docker compose --profile node logs -f node
 ```
 
 Three entries in `.env` are enough: `DAVINCI_DKG_NETWORK=sepolia`, your operator key in
-`DAVINCI_DKG_PRIVKEY`, and a Sepolia endpoint in `DAVINCI_DKG_WEB3_RPC`. For a named network
+`DAVINCI_DKG_PRIVKEY`, and at least two Sepolia endpoints in `DAVINCI_DKG_WEB3_RPC` (comma-separated;
+the node rotates off rate-limited endpoints, so keep a fallback). For a named network
 the contract addresses are built into the binary. On any other network, set
 `DAVINCI_DKG_MANAGER=0x...` instead; the node resolves the registry and the app manager from
 the manager on chain.
@@ -356,7 +362,7 @@ What happens on first start:
 2. Before its first proof it downloads the pinned circuit artifacts from the release built into
    the binary — the [`circuits-v4`
    release](https://github.com/vocdoni/davinci-dkg/releases/tag/circuits-v4), about 1.7 GB, of which
-   the contribution proving key is 760 MB and the finalization proving key 425 MB — and checks every
+   the contribution proving key is 762 MB and the finalization proving key 425 MB — and checks every
    file against the hashes built into the binary.
 3. It prints a startup banner with the chain head, registry statistics and its own `self:` row,
    then polls `DKGManager` and reacts to every phase it is eligible for.

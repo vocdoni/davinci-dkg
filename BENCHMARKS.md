@@ -12,9 +12,10 @@ kept for comparison; `MaxN` must be a power of two (the share-commitment Merkle 
 > values; constraint counts and gas are unchanged by the ceremony (the verifier
 > bytecode shifts by a few hundred bytes of vkey constants).
 
-> **Two toolchains.** The first three sections are the current build (v3.1,
-> gnark v0.16.3 / gnark-crypto v0.21.0, measured 2026-09-05). The sections
-> marked **pre-upgrade** were measured with the previously pinned gnark
+> **Two toolchains.** The v4 section at the top is the current build (gnark
+> v0.16.3 / gnark-crypto v0.21.0, measured 2026-09-05); the v3.1 sections
+> (eight keys, per-key activation proofs) and the sections marked
+> **pre-upgrade** were measured with the previously pinned gnark
 > snapshot (`v0.14.1-0.20260126…`) and the first pool-key cut, and are kept
 > for comparison. That snapshot — like every gnark release up to v0.15.0 —
 > has an unsound variable-base twisted-Edwards `ScalarMul`: the fake-GLV
@@ -64,6 +65,13 @@ prover peaks at 9.3 GB resident (5.0 GB at MaxK = 8) and the finalize prover at 
 around the benchmark, proving key and circuit loaded). With MaxK = 8 the same design would keep the v3.1 proving cost and land
 near 0.5 M per key at n = 4.
 
+**Hardware guidance:** a v0.5.0 node with all four circuits and their proving keys preloaded
+sits at 8.5–9.6 GB of resident memory at rest (docker stats on the three Sepolia seed nodes
+right after start, against 3.1 GB for a v0.4 node), and peaks at about 9.8 GB during its first
+contribution proof (sampled every five seconds across the three nodes). State the requirement as
+**16 GB of RAM minimum, more is safer** — the 9.3 GB proving peak sits on top of the ~9 GB
+resting footprint, so a node with less RAM will swap or be killed mid-proof.
+
 ## Circuit constraint counts after the gnark upgrade (v3.1, superseded by v4, 2026-09-04)
 
 Recompiled with gnark v0.16.3 / gnark-crypto v0.21.0 after the pool-key v3.1
@@ -104,7 +112,7 @@ still spends under two seconds of CPU per epoch on its contribution, under a
 fifth of a second per key it activates, and about a quarter of a second per
 ciphertext it combines.
 
-## Single-key baseline (MaxK = 1, same toolchain)
+## Single-key baseline (MaxK = 1, same toolchain, for comparison)
 
 Measured 2026-09-05 with the v3.1 code at commit d8c186a, `MaxK = 1` / `MAX_K = 1`, the same
 gnark v0.16.3 toolchain, MaxN = 32, on the same machine, so the pool can be compared with a
@@ -135,7 +143,7 @@ is 4.5–5.3× cheaper on contributions; activation is per key in both. An epoch
 key costs about 3.1 M gas at n = 4 (creation, four claims, four contributions, finalization, one
 activation) against 0.95 M per key for a fully used eight-key epoch.
 
-## On-chain gas (Anvil, real verifiers, v3.1)
+## On-chain gas (Anvil, real verifiers, v3.1 — superseded by v4)
 
 Measured on 2026-09-05 with the verifiers generated from the re-pinned gnark
 v0.16.3 artifacts, same procedure as the pre-upgrade table below
@@ -361,9 +369,14 @@ release; the constraint, proving-time and gas tables above predate it.
 
 * Constraints: `go run ./cmd/constraints` after setting `MaxN` in
   `circuits/common/sizes.go` (and `MAX_N` in `solidity/src/libraries/Sizes.sol`
-  for the contracts).
-* Proving times: `DAVINCI_ARTIFACTS_DIR=/tmp/bench-$N go test ./circuits/... -run XXX -bench '^BenchmarkProve$' -benchtime=5x`
-  on an idle host; the first run performs the setup.
+  for the contracts). The current pipeline is `make circuits` (compile all four
+  circuits — Contribution, Finalize, PartialDecrypt, DecryptCombine — regenerate
+  the Solidity verifiers, patch `config/circuit_artifacts.go` and rebuild).
+* Proving times (contribution + finalize are the two expensive ones):
+  `DAVINCI_ARTIFACTS_DIR=/tmp/bench-$N go test ./circuits/contribution -run XXX -bench '^BenchmarkProve$' -benchtime=5x`
+  and `DAVINCI_ARTIFACTS_DIR=/tmp/bench-$N go test ./circuits/finalize -run XXX -bench '^BenchmarkProve$' -benchtime=5x`
+  on an idle host; the first run performs the setup. (The full suite is
+  `go test ./circuits/... -run XXX -bench '^BenchmarkProve$' -benchtime=5x`.)
 * Gas: run the flow on any deployment (`make testnet-up`, or the Sepolia
   public testnet with `--network sepolia`) with `cmd/dkgapp`
   (`register`, `encrypt`, `reveal`, `plaintext`)

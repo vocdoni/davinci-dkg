@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Deploy DKG contracts and seed node keys.
 # Writes /addresses/addresses.env on success.
+# Deploys the 4 Groth16 verifier wrappers (Contribution, Finalize,
+# PartialDecrypt, DecryptCombine) + DKGRegistry + DKGManager + DKGAppManager.
 set -euo pipefail
 
 RPC_URL="${RPC_URL:-http://anvil:8545}"
@@ -23,11 +25,12 @@ echo "Building contracts..."
 forge build --quiet
 
 echo "Deploying contracts..."
-# PoseidonT3/T5/T6 are well above EIP-170's 24,576-byte ceiling — that's
-# the whole point of the precompile-style approach (they're called via
-# DELEGATECALL from much smaller wrappers). Anvil disables the runtime
-# check via `--disable-code-size-limit`; we pass the matching forge flag
-# here to keep the script from refusing to broadcast at simulation time.
+# The v4 suite deploys 4 Groth16 verifier wrappers (each ~5-7 KB, well under
+# EIP-170's 24,576-byte ceiling) plus DKGRegistry, DKGManager, DKGAppManager
+# (the earlier Poseidon precompile-style contracts are gone). The
+# Anvil in testnet/docker-compose.yml still passes `--disable-code-size-limit`
+# for headroom; the matching `--code-size-limit 200000` here keeps the forge
+# broadcast simulation from refusing on the heaviest wrapper.
 forge script script/DeployAll.s.sol:DeployAllScript \
   --chain "$CHAIN_ID" \
   --rpc-url "$RPC_URL" \

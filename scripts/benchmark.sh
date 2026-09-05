@@ -11,14 +11,14 @@
 #               BATTERY_ORGANIZERS / BATTERY_CIPHERTEXTS (swarm size per run)
 #
 # For every size the script tears down any running testnet, starts a fresh
-# fleet (Anvil + deployer + n nodes) with the battery's compose override so
-# the nodes activate the whole MAX_K pool of each epoch, lets the fleet
-# create, contribute to, finalize and activate an epoch on its own, then runs
+# fleet (Anvil + deployer + n nodes) with the battery's compose override,
+# lets the fleet create, contribute to and finalize an epoch on its own
+# (one proof-carrying `finalizeEpoch` stores the whole MAX_K pool), then runs
 # the battery's organizer swarm against it (registrations, ciphertexts, an
 # organizer reveal, and the nodes' partials and combines).
 #
 # Gas comes from two places: the node logs for the committee-side
-# transactions (submitContribution, finalizeEpoch, activatePoolKey) and the
+# transactions (submitContribution, finalizeEpoch) and the
 # battery's JSON report for the application-side ones (registerApplication,
 # submitCiphertext, revealOrganizerSecret, submitPartialDecryption,
 # combineDecryption).
@@ -32,8 +32,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 OUTPUT="${1:-/tmp/dkg-benchmark.jsonl}"
 TESTNET_DIR="${REPO_ROOT}/testnet"
-# The battery override sets DAVINCI_DKG_ACTIVATE_AHEAD=8 on the nodes (see
-# tests/battery/compose.battery.yml for why).
+# The battery's compose override is now a no-op (v4: batched finalization,
+# no activation step; the v3.1 DAVINCI_DKG_ACTIVATE_AHEAD=8 env is gone).
 COMPOSE=(docker compose -f docker-compose.yml -f ../tests/battery/compose.battery.yml)
 
 # Participant counts to benchmark.
@@ -144,10 +144,9 @@ run_once() {
 
     # Committee-side gas from the node logs.
     compose logs --no-color dkg-node > "${node_log}" 2>&1 || true
-    local gas_contribution gas_finalize gas_activate
+    local gas_contribution gas_finalize
     gas_contribution=$(parse_node_gas "${node_log}" "contribution submitted")
     gas_finalize=$(parse_node_gas "${node_log}" "finalizeEpoch tx mined")
-    gas_activate=$(parse_node_gas "${node_log}" "activatePoolKey tx mined")
 
     # Application-side gas and latency from the battery report.
     local gas_register gas_ciphertext gas_reveal gas_partial_decrypt gas_combine
@@ -168,7 +167,6 @@ run_once() {
         --argjson success "${success}" \
         --argjson gas_contribution "${gas_contribution}" \
         --argjson gas_finalize "${gas_finalize}" \
-        --argjson gas_activate "${gas_activate}" \
         --argjson gas_register "${gas_register}" \
         --argjson gas_ciphertext "${gas_ciphertext}" \
         --argjson gas_reveal "${gas_reveal}" \
@@ -186,7 +184,6 @@ run_once() {
             gas: {
                 contribution: $gas_contribution,
                 finalize: $gas_finalize,
-                activate: $gas_activate,
                 register: $gas_register,
                 ciphertext: $gas_ciphertext,
                 reveal: $gas_reveal,
@@ -221,4 +218,4 @@ compose down -v --remove-orphans 2>/dev/null || true
 echo ""
 echo "Benchmark complete. Results in ${OUTPUT}"
 echo "Summary:"
-jq -r '. | "\(.n) nodes (t=\(.threshold)): success=\(.success) elapsed=\(.elapsed_ms)ms contribution=\(.gas.contribution) finalize=\(.gas.finalize) activate=\(.gas.activate) register=\(.gas.register) reveal=\(.gas.reveal) partial=\(.gas.partial_decrypt) combine=\(.gas.combine)"' "${OUTPUT}"
+jq -r '. | "\(.n) nodes (t=\(.threshold)): success=\(.success) elapsed=\(.elapsed_ms)ms contribution=\(.gas.contribution) finalize=\(.gas.finalize) register=\(.gas.register) reveal=\(.gas.reveal) partial=\(.gas.partial_decrypt) combine=\(.gas.combine)"' "${OUTPUT}"

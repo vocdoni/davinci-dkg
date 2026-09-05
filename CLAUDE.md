@@ -17,7 +17,7 @@ touching protocol logic. Requires Go 1.25+, Foundry, pnpm 10, Docker (for integr
 make build                                   # go build ./cmd/...
 make test                                    # unit tests, excludes ./tests (integration)
 go test ./crypto/schnorr -run TestName       # single test
-go test ./circuits/contribution -run TestContributionCircuitProveAndVerify -timeout 120m  # heavy: ~10 min setup, ~1 GB proving key
+go test ./circuits/contribution -run TestContributionCircuitProveAndVerify -timeout 120m  # heavy: ~10 min setup, 762 MB v4 contribution proving key
 go vet ./... && gofumpt -l . && golangci-lint run   # what CI enforces (golangci-lint v2.5, config in .golangci.yml)
 go mod tidy                                  # CI fails if this produces a diff
 ```
@@ -67,7 +67,7 @@ templates it via `scripts/render-ui-config.sh`.
 ### Local multi-node testnet
 
 ```bash
-make testnet-up DKG_NODE_COUNT=3 DKG_THRESHOLD=2   # Anvil + deployer + N nodes + UI on :8081
+make testnet-up DKG_NODE_COUNT=3 DKG_THRESHOLD=2   # Anvil + deployer + N nodes (no UI service; browse via `make ui-dev`)
 make testnet-logs / testnet-down
 ```
 

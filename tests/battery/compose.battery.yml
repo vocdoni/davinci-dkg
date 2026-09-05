@@ -7,16 +7,11 @@
 #
 services:
   dkg-node:
-    environment:
-      # Every epoch deals MAX_K = 8 pool keys, but a node only keeps
-      # ActivateAhead (default 2) of them activated past the claim cursor,
-      # one activation proof per tick. A registration claims the next
-      # *activated* key and reverts PoolKeyNotActive otherwise, so a burst of
-      # more than two concurrent registrations — the organizer swarm fires up
-      # to MAX_K at once, the ciphertext adversary claims six keys in one
-      # epoch — would wait on the fleet's activation rotation, or fail. The
-      # battery fleet therefore activates the whole pool as soon as an epoch
-      # goes Live. (Side effect: with ActivateAhead = MAX_K the early
-      # createEpoch trigger fires after every claim; the contract rejects it
-      # at gas estimation until at most one key is left, no gas is spent.)
-      DAVINCI_DKG_ACTIVATE_AHEAD: "8"
+    # Every epoch deals MAX_K = 16 pool keys; with batched finalization a
+    # single proof-carrying `finalizeEpoch` stores all of them at once, so
+    # every key of a Live epoch is claimable immediately — there is no
+    # activation step any more (the v3.1 `DAVINCI_DKG_ACTIVATE_AHEAD`
+    # override is gone).
+    # (v3.1, superseded: nodes kept only two keys activated ahead of the
+    # claim cursor, and the swarm's burst of registrations would have
+    # stalled on the activation rotation.)

@@ -26,13 +26,13 @@ preimage, its keccak256 and the digest reduced into the BN254 scalar field:
   `BRLC.deriveChallenge`): `ContributionTranscriptV2`
   (`davinci-dkg:contribution:v2`, `submitContribution`), `FinalizeTranscriptV2`
   (`davinci-dkg:finalize:v2`, `finalizeEpoch` — replaces the former
-  `davinci-dkg:poolkey:v1` of `activatePoolKey`) and
+  `davinci-dkg:poolkey:v1` of `activatePoolKey` (v3.1, superseded)) and
   `DecryptCombineTranscriptV1` (`davinci-dkg:decrypt-combine:v1`,
   `combineDecryption`). Their source is `internal/protocol/protocol.go`; the
   circuits' witness builders and the `*_TRANSCRIPT_DOMAIN` constants in
   `DKGManager.sol` must hash the same strings.
 
-`contribution_compact.json` (docs/pool-keys-v4.md §3–§5): for each `(t, n,
+`contribution_compact.json` (docs/pool-keys.md §3–§5): for each `(t, n,
 contributorIndex)` case, the recipient secrets and nonces that regenerate the
 committee keys and ephemerals, the `MaxK × t` coefficients, the plaintext
 shares, the exact `L_C = MaxK·(2t+n) + 5n` transcript words (decimal, no
@@ -42,7 +42,7 @@ keccak, both Poseidon digests, the anchor
 `keccak(commitmentsHash ‖ encryptedSharesHash ‖ keccak(transcript))`, the
 challenge, the BRLC commitment and the eight public inputs in verifier order.
 
-`finalize_transcript.json` (docs/pool-keys-v4.md §6–§9): for each accepted
+`finalize_transcript.json` (docs/pool-keys.md §6–§9): for each accepted
 set (contiguous, non-contiguous with a silent member, descending order with
 `a = t`), the dealers' coefficients and stored `commitmentsHash`, all `MaxK`
 pool keys, the `n` share commitments per key, the fixed `L_F = 1120`-word
