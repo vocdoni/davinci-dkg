@@ -489,9 +489,9 @@ honest path:
    open or, for a locked application, on the reveal, are parked at no cost until the relevant
    block or event arrives (a reveal rescans the application's ciphertexts from its registration
    block); slots past their application's decryption window are dropped; and an undecryptable
-   ciphertext taints its source for the epoch (`<datadir>/tainted-apps.json`) — the application
-   when submission is restricted, only the offending submitter when the application has open
-   submission, so one bad submitter cannot silence an open application.
+   ciphertext taints its source for the epoch (`<datadir>/tainted-apps.json`): always the
+   offending (application, submitter) pair, so one bad submitter cannot silence an application
+   for its honest submitters.
 
 ---
 

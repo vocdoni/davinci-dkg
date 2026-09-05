@@ -7,7 +7,10 @@ import (
 	"math/big"
 
 	"github.com/ethereum/go-ethereum"
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
+	gtypes "github.com/vocdoni/davinci-dkg/solidity/golang-types"
+	"github.com/vocdoni/davinci-dkg/types"
 )
 
 // GetContributionVerifierVKeyHash returns the configured contribution proving key hash.
@@ -119,6 +122,45 @@ func (c *Contracts) SelectedParticipants(ctx context.Context, epochID [12]byte) 
 		return nil, fmt.Errorf("unexpected output type for selectedParticipants")
 	}
 	return participants, nil
+}
+
+// CommitteeSnapshot returns the committee members' share-encryption keys
+// exactly as they were frozen when the committee filled (the CommitteeSnapshot
+// event), not the live registry keys: a later updateKey rotation must not
+// change what contributors encrypt shares to. Entry i is committee position
+// i+1; Operator is left zero and must be filled by the caller from the
+// selected-participants list.
+func (c *Contracts) CommitteeSnapshot(ctx context.Context, epochID [12]byte) ([]types.NodeKey, error) {
+	epoch, err := c.GetEpoch(ctx, epochID)
+	if err != nil {
+		return nil, fmt.Errorf("get epoch: %w", err)
+	}
+	filterer, err := gtypes.NewDKGManagerFilterer(c.Addresses.Manager, c.PooledBackend())
+	if err != nil {
+		return nil, fmt.Errorf("bind DKGManager filterer: %w", err)
+	}
+	it, err := filterer.FilterCommitteeSnapshot(&bind.FilterOpts{Context: ctx, Start: epoch.StartBlock}, [][12]byte{epochID})
+	if err != nil {
+		return nil, fmt.Errorf("filter CommitteeSnapshot from block %d: %w", epoch.StartBlock, err)
+	}
+	defer func() { _ = it.Close() }()
+	if !it.Next() {
+		if err := it.Error(); err != nil {
+			return nil, fmt.Errorf("iterate CommitteeSnapshot: %w", err)
+		}
+		return nil, fmt.Errorf("committee snapshot event not found for epoch %x", epochID)
+	}
+	ev := it.Event
+	if len(ev.PubKeys) != int(ev.CommitteeSize)*2 {
+		return nil, fmt.Errorf(
+			"committee snapshot for epoch %x carries %d keys for committeeSize=%d",
+			epochID, len(ev.PubKeys)/2, ev.CommitteeSize)
+	}
+	keys := make([]types.NodeKey, ev.CommitteeSize)
+	for i := range keys {
+		keys[i] = types.NodeKey{PubX: ev.PubKeys[i*2], PubY: ev.PubKeys[i*2+1]}
+	}
+	return keys, nil
 }
 
 // EpochID builds the 12-byte epoch identifier `prefix ‖ nonce` used by the

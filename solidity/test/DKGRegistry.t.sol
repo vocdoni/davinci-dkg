@@ -4,6 +4,7 @@ pragma solidity 0.8.28;
 import {Test} from "forge-std/Test.sol";
 import {DKGRegistry} from "../src/DKGRegistry.sol";
 import {IDKGRegistry} from "../src/interfaces/IDKGRegistry.sol";
+import {BabyJubJub} from "../src/libraries/BabyJubJub.sol";
 
 /// @title DKGRegistryTest
 /// @notice Lifecycle tests for DKGRegistry. The Schnorr-PoK happy/error paths
@@ -114,6 +115,18 @@ contract DKGRegistryTest is Test {
 
         IDKGRegistry.NodeKey memory key = registry.getNode(address(this));
         assertEq(key.pubX, THIS_PUBX);
+    }
+
+    /// @dev (0, Q−1) is on the curve and is not the identity, but has order
+    ///      2 — it is outside the prime subgroup, so shares encrypted to it
+    ///      could never be decrypted. The Schnorr PoK alone would not catch
+    ///      it (a ground challenge satisfies the equation for small-order
+    ///      keys), so registerKey must reject it explicitly. The Schnorr
+    ///      words are arbitrary: the key check fires first.
+    function test_RegisterKey_RejectsSmallOrderKey() public {
+        vm.prank(alice);
+        vm.expectRevert(IDKGRegistry.PointNotInSubgroup.selector);
+        registry.registerKey(0, BabyJubJub.Q - 1, ALICE_AX, ALICE_AY, ALICE_Z);
     }
 
     // ── liveness ──────────────────────────────────────────────────────────

@@ -34,17 +34,21 @@ contract DKGManagerAppTest is Test, TestHelpers {
     DKGManager public manager;
     DKGAppManager public appManager;
 
-    // Schnorr operator vectors (THIS / BEEF), copied from DKGManager.t.sol.
-    uint256 internal constant THIS_PUBX =
-        17765672829315743641357949553430354448961270408100494783209553303687184365803;
-    uint256 internal constant THIS_PUBY =
-        13591243454297365848719372676992908085762757043204242277513940025707896351954;
-    uint256 internal constant THIS_AX =
-        8735331066154608227876753674818247062971894554643955333501578253334124637538;
-    uint256 internal constant THIS_AY =
-        21272836954776476886917169960736847641993451090581680169106828110848349153636;
-    uint256 internal constant THIS_Z =
-        1369885591156151396853044744701991591603236518469391786750891091614769051717;
+    // Schnorr operator vectors (ALICE / BEEF), copied from DKGManager.t.sol.
+    // Committee members must be codeless addresses: submitContribution /
+    // activatePoolKey reject contract callers (DirectCallRequired), and the
+    // test contract itself is a contract.
+    address internal alice = address(0xA11CE);
+    uint256 internal constant ALICE_PUBX =
+        14666979294172776374634275498241310759674509575452256743546893482427808967539;
+    uint256 internal constant ALICE_PUBY =
+        16568773859060023308888034681483224034881825787861296311803627274237556869649;
+    uint256 internal constant ALICE_AX =
+        206825796546323573150801242605652465781823711295602898923500400375891572685;
+    uint256 internal constant ALICE_AY =
+        14223109950820609858208501628131627333362274908883166606890781114024603385194;
+    uint256 internal constant ALICE_Z =
+        1415349030302839010594375480381656799266590814245522079555192493283473059241;
     uint256 internal constant BEEF_PUBX =
         10228722604559478181013548940833210623190136968531440936190496170400150013980;
     uint256 internal constant BEEF_PUBY =
@@ -60,7 +64,8 @@ contract DKGManagerAppTest is Test, TestHelpers {
 
     function setUp() public {
         registry = new DKGRegistry(1_000);
-        registry.registerKey(THIS_PUBX, THIS_PUBY, THIS_AX, THIS_AY, THIS_Z);
+        vm.prank(alice);
+        registry.registerKey(ALICE_PUBX, ALICE_PUBY, ALICE_AX, ALICE_AY, ALICE_Z);
         vm.prank(address(0xBEEF));
         registry.registerKey(BEEF_PUBX, BEEF_PUBY, BEEF_AX, BEEF_AY, BEEF_Z);
         manager = new DKGManager(
@@ -83,21 +88,25 @@ contract DKGManagerAppTest is Test, TestHelpers {
     ///      claimSlot × 2 → submitContribution × 2 → finalizeEpoch →
     ///      activatePoolKey × MAX_K) so registration can claim any key. The
     ///      mocks accept anything proof-shaped, so this shortcuts neatly.
+    ///      Contributions and activations are pranked with matching
+    ///      msg.sender/tx.origin — they must be direct EOA calls.
     function _liveEpoch() internal returns (bytes12 epochId) {
         uint64 next = manager.nextEpochStartBlock();
         if (block.number < uint256(next)) vm.roll(uint256(next));
         epochId = manager.createEpoch(2, 2, 2, 10000);
         vm.roll(block.number + 2);
+        vm.prank(alice);
         manager.claimSlot(epochId);
         vm.prank(address(0xBEEF));
         manager.claimSlot(epochId);
 
+        vm.prank(alice, alice);
         manager.submitContribution(
             epochId, 1, contributorCommitmentsHash(1), contributorSharesHash(1),
             contributionTranscript(2), contributionProof(),
             contributionInput(epochId, 2, 2, 1, contributorCommitmentsHash(1), contributorSharesHash(1))
         );
-        vm.prank(address(0xBEEF));
+        vm.prank(address(0xBEEF), address(0xBEEF));
         manager.submitContribution(
             epochId, 2, contributorCommitmentsHash(2), contributorSharesHash(2),
             contributionTranscript(2), contributionProof(),
@@ -110,6 +119,7 @@ contract DKGManagerAppTest is Test, TestHelpers {
         }
         manager.finalizeEpoch(epochId);
         for (uint8 j = 0; j < uint8(MAX_K); j++) {
+            vm.prank(alice, alice);
             manager.activatePoolKey(
                 epochId, j, testTranscriptDigest(j), poolKeyTranscript(j, 2, 2), poolKeyProof(),
                 poolKeyInput(epochId, 2, 2, 2, j)
@@ -350,6 +360,13 @@ contract DKGManagerAppTest is Test, TestHelpers {
         vm.expectRevert(IDKGAppManager.InvalidPolicy.selector);
         appManager.registerApplication(epochId, aid, policy, pkx, pky, ax, ay, z);
 
+        // A submission block window that closes before it opens.
+        policy = _emptyAppPolicy();
+        policy.notBeforeBlock = 100;
+        policy.notAfterBlock = 50;
+        vm.expectRevert(IDKGAppManager.InvalidPolicy.selector);
+        appManager.registerApplication(epochId, aid, policy, pkx, pky, ax, ay, z);
+
         // The same policy with 32 submitters and a sane window is fine.
         policy = _emptyAppPolicy();
         policy.submitters = new address[](32);
@@ -358,6 +375,17 @@ contract DKGManagerAppTest is Test, TestHelpers {
         policy.decryptNotAfter = uint64(block.timestamp + 2);
         appManager.registerApplication(epochId, aid, policy, pkx, pky, ax, ay, z);
         assertTrue(appManager.getApplication(epochId, aid).exists);
+    }
+
+    /// @dev A small-order organizer key passes the Schnorr equation with a
+    ///      ground challenge, but the application could then never be
+    ///      revealed nor combined: registration refuses it outright.
+    function test_RegisterApplication_RejectsSmallOrderOrganizerKey() public {
+        bytes12 epochId = _liveEpoch();
+        bytes32 aid = bytes32(uint256(46));
+        (,, uint256 ax, uint256 ay, uint256 z) = organizerPoP(epochId, aid);
+        vm.expectRevert(IDKGAppManager.PointNotInSubgroup.selector);
+        appManager.registerApplication(epochId, aid, _emptyAppPolicy(), 0, BabyJubJub.Q - 1, ax, ay, z);
     }
 
     // ─── Decryption window ─────────────────────────────────────────────────
@@ -381,6 +409,7 @@ contract DKGManagerAppTest is Test, TestHelpers {
         bytes memory input = partialDecryptionInput(epochId, aid, 1, 1, keyIndex);
         bytes32[] memory path = shareProofFor(keyIndex, 2, 1);
         vm.expectRevert(IDKGAppManager.DecryptionNotOpen.selector);
+        vm.prank(alice);
         manager.submitPartialDecryption(
             epochId, aid, 1, 1,
             TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y,
@@ -392,7 +421,7 @@ contract DKGManagerAppTest is Test, TestHelpers {
         // Open exactly at the boundary.
         vm.warp(block.timestamp + 100);
         appManager.requireDecryptionOpen(epochId, aid);
-        _submitPartialAs(address(this), epochId, aid, 1);
+        _submitPartialAs(alice, epochId, aid, 1);
     }
 
     function test_DecryptionWindow_ClosesSubmissionPartialsAndCombine() public {
@@ -407,7 +436,7 @@ contract DKGManagerAppTest is Test, TestHelpers {
         // Still open at the deadline itself.
         vm.warp(block.timestamp + 100);
         appManager.requireDecryptionOpen(epochId, aid);
-        _submitPartialAs(address(this), epochId, aid, 1);
+        _submitPartialAs(alice, epochId, aid, 1);
 
         vm.warp(block.timestamp + 1);
         vm.expectRevert(IDKGAppManager.DecryptionClosed.selector);

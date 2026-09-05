@@ -76,7 +76,8 @@ contract DKGRegistry is IDKGRegistry {
     ///         with a Schnorr proof of knowledge of the secret. Implements
     ///         paper §5.1.1 (line ~747).
     /// @dev    Validates the key is a canonical, on-curve, non-identity
-    ///         point. Then verifies the Schnorr PoK natively in BabyJubJub
+    ///         point in the prime subgroup (`PointNotInSubgroup` otherwise).
+    ///         Then verifies the Schnorr PoK natively in BabyJubJub
     ///         arithmetic (no SNARK). Initialises liveness and increments
     ///         `activeCount`.
     function registerKey(
@@ -86,7 +87,7 @@ contract DKGRegistry is IDKGRegistry {
         uint256 schnorrAy,
         uint256 schnorrZ
     ) external override {
-        _requireValidEncryptionPoint(pubX, pubY);
+        _requireValidEncryptionKey(pubX, pubY);
         _requireValidEncryptionPoint(schnorrAx, schnorrAy);
 
         NodeKey storage node = nodes[msg.sender];
@@ -123,7 +124,7 @@ contract DKGRegistry is IDKGRegistry {
         uint256 schnorrAy,
         uint256 schnorrZ
     ) external override {
-        _requireValidEncryptionPoint(pubX, pubY);
+        _requireValidEncryptionKey(pubX, pubY);
         _requireValidEncryptionPoint(schnorrAx, schnorrAy);
 
         NodeKey storage node = nodes[msg.sender];
@@ -201,14 +202,28 @@ contract DKGRegistry is IDKGRegistry {
     }
 
     /// @dev Validate that a BabyJubJub point received as encryption key or
-    ///      Schnorr nonce is canonical, on-curve, and non-identity. Prime-
-    ///      subgroup membership is implicit in the Schnorr PoK (any scalar
-    ///      multiple of the generator G lies in the prime subgroup), so we
-    ///      do not pay for the explicit `isInPrimeSubgroup` check here.
+    ///      Schnorr nonce is canonical, on-curve, and non-identity. This
+    ///      does NOT establish prime-subgroup membership: the Schnorr
+    ///      equation `z·G == A + c·PK` holds for small-order keys too (the
+    ///      order-2 point (0, Q−1) passes with a ground challenge), so the
+    ///      PoK alone would let a cofactor point register and every share
+    ///      encrypted to it would be unrecoverable. Encryption keys are
+    ///      therefore additionally gated by `_requireValidEncryptionKey`.
+    ///      The Schnorr nonce A needs no such check — it only enters the
+    ///      equation linearly and is bound by the Fiat–Shamir challenge.
     function _requireValidEncryptionPoint(uint256 x, uint256 y) internal pure {
         if (x >= BabyJubJub.Q || y >= BabyJubJub.Q) revert PointNotCanonical();
         if (x == 0 && y == 1) revert PointIsIdentity();
         if (!BabyJubJub.isOnCurve(x, y)) revert PointNotOnCurve();
+    }
+
+    /// @dev Encryption-key gate: the structural checks of
+    ///      `_requireValidEncryptionPoint` plus explicit prime-subgroup
+    ///      membership, see the comment above for why the Schnorr PoK does
+    ///      not subsume it.
+    function _requireValidEncryptionKey(uint256 x, uint256 y) internal pure {
+        _requireValidEncryptionPoint(x, y);
+        if (!BabyJubJub.isInPrimeSubgroup(x, y)) revert PointNotInSubgroup();
     }
 
     /// @notice Refresh an operator's `lastActiveBlock` after a successful

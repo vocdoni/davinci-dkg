@@ -163,9 +163,9 @@ Anything that touches encodings, hashes or constants has to be changed in all of
   application's ciphertexts from its registration block), because epochs stay Live on chain forever. The combine (dlog search, proof, send) runs in a per-slot goroutine, one at a time
   per node (`combineSem`), yielding to an in-progress contribution or finalization (`critical`). A
   ciphertext whose plaintext is out of range taints its source for the epoch (`taints`, persisted
-  in `<datadir>/tainted-apps.json`): the application when submission is restricted, only the offending
-  submitter when the application has open submission — so an attacker pays one search per registration
-  (or per submitter address) and cannot silence an open application for its honest submitters. All
+  in `<datadir>/tainted-apps.json`): always the offending (application, submitter) pair, so an
+  attacker pays one search per submitter address and cannot silence an application for its
+  honest submitters. All
   secret scalars come from `scalars.go` (`crypto/rand`, never deterministic); `dlog.go` is a compact
   parallel BSGS (2^50 cap, ~256 MB). Every flag has a `DAVINCI_DKG_*` env equivalent (`config.go`).
   `--network sepolia` resolves the manager from `config/networks.go`; registry, verifiers and app

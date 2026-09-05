@@ -473,21 +473,27 @@ contract DKGManager is IDKGManager {
 
 /// @dev Internal helper: build the canonical (recipientIndexes ‖ pubKeys) layout
     /// for the committee that's just been filled and store its keccak256. Drives the
-    /// O(1) committee verification in submitContribution.
+    /// O(1) committee verification in submitContribution. The same keys are
+    /// published (unpadded, slot order) in the `CommitteeSnapshot` event so
+    /// off-chain consumers read the frozen view instead of the live registry.
     function _snapshotCommittee(bytes12 epochId, uint16 committeeSize) internal {
         uint256[MAX_N] memory canonicalIdxs;
         uint256[2 * MAX_N] memory canonicalKeys;
+        uint256[] memory snapshotKeys = new uint256[](2 * committeeSize);
         address[] storage participants = epochParticipants[epochId];
         for (uint256 i = 0; i < committeeSize; i++) {
             canonicalIdxs[i] = i + 1;
             IDKGRegistry.NodeKey memory node = IDKGRegistry(REGISTRY).getNode(participants[i]);
             canonicalKeys[i * 2] = node.pubX;
             canonicalKeys[i * 2 + 1] = node.pubY;
+            snapshotKeys[i * 2] = node.pubX;
+            snapshotKeys[i * 2 + 1] = node.pubY;
         }
         for (uint256 i = committeeSize; i < MAX_N; i++) {
             canonicalKeys[i * 2 + 1] = 1; // identity-pad unused slots
         }
         epochContribPrefixHash[epochId] = keccak256(abi.encodePacked(canonicalIdxs, canonicalKeys));
+        emit CommitteeSnapshot(epochId, committeeSize, snapshotKeys);
     }
 
     /// @notice Submit a contributor's polynomial commitments, encrypted
@@ -496,6 +502,15 @@ contract DKGManager is IDKGManager {
     ///         against a single `keccak256` snapshot taken when the lottery
     ///         filled; the transcript is read straight from calldata via the
     ///         BRLC helper. The transaction reverts if the proof fails.
+    ///
+    ///         Direct EOA calls only: nodes and the SDK rebuild every
+    ///         contribution from the outer transaction calldata, which an
+    ///         internal (contract-relayed) call never carries — such a
+    ///         contribution would be accepted on chain yet unrecoverable,
+    ///         and one relaying committee member blocks every key
+    ///         activation of the epoch. The `code.length` clause also
+    ///         excludes EIP-7702 delegated accounts, whose outer calldata is
+    ///         a batch, not the DKG call.
     function submitContribution(
         bytes12 epochId,
         uint16 contributorIndex,
@@ -505,6 +520,7 @@ contract DKGManager is IDKGManager {
         bytes calldata proof,
         bytes calldata input
     ) external {
+        if (msg.sender != tx.origin || msg.sender.code.length != 0) revert DirectCallRequired();
         Epoch storage epoch = epochs[epochId];
         if (epoch.organizer == address(0)) revert InvalidEpoch();
         if (!PhaseLib.inKeyAssembly(epoch.status, epoch.policy.keyAssemblyDeadlineBlock)) revert InvalidPhase();
@@ -624,6 +640,12 @@ contract DKGManager is IDKGManager {
     /// @param  input            `[eid, t, n, acceptedCount, keyIndex,
     ///                          transcriptDigest, challenge,
     ///                          transcriptCommitment]`.
+    /// @dev    Direct EOA calls only, exactly like submitContribution: the
+    ///         committee reconstructs every activation (pool key, share
+    ///         commitments, Merkle root pre-images) from the outer
+    ///         transaction calldata, so a contract-relayed activation would
+    ///         be valid on chain yet unrecoverable. `code.length` also
+    ///         excludes EIP-7702 delegated accounts (batch outer calldata).
     function activatePoolKey(
         bytes12 epochId,
         uint8 keyIndex,
@@ -632,6 +654,7 @@ contract DKGManager is IDKGManager {
         bytes calldata proof,
         bytes calldata input
     ) external {
+        if (msg.sender != tx.origin || msg.sender.code.length != 0) revert DirectCallRequired();
         Epoch storage epoch = epochs[epochId];
         if (epoch.organizer == address(0)) revert InvalidEpoch();
         if (epoch.status != DKGTypes.EpochPhase.Live) revert InvalidPhase();

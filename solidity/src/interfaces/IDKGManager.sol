@@ -23,6 +23,15 @@ interface IDKGManager {
     event SeedResolved(bytes12 indexed epochId, bytes32 seed);
     event SlotClaimed(bytes12 indexed epochId, address indexed claimer, uint16 slot);
     event CommitteeFilled(bytes12 indexed epochId);
+    /// @notice The committee of `epochId` filled and its members' encryption
+    ///         keys were frozen. `pubKeys` holds `2·committeeSize` words in
+    ///         canonical slot order (x0, y0, x1, y1, …). Emitted exactly
+    ///         once, by the claimSlot that fills the committee. Nodes build
+    ///         contribution witnesses from this event rather than from the
+    ///         live registry, so a later `updateKey` rotation cannot desync
+    ///         an honest contributor from the snapshot hash the contract
+    ///         checks every contribution against.
+    event CommitteeSnapshot(bytes12 indexed epochId, uint16 committeeSize, uint256[] pubKeys);
     event ContributionSubmitted(
         bytes12 indexed epochId,
         address indexed contributor,
@@ -106,6 +115,14 @@ interface IDKGManager {
     error PoolKeyNotActive();
     /// @dev A pool key may be activated exactly once per epoch.
     error PoolKeyAlreadyActive();
+    /// @dev submitContribution / activatePoolKey must be direct EOA calls.
+    ///      Their transcripts only exist in the outer transaction calldata,
+    ///      which is where nodes and the SDK reconstruct contributions and
+    ///      activations from; a call relayed through a contract would be
+    ///      valid on chain yet unrecoverable. The `code.length` clause also
+    ///      excludes EIP-7702 delegated accounts, whose outer calldata is a
+    ///      batch rather than the DKG call itself.
+    error DirectCallRequired();
 
     /// @notice Create a new epoch. All phase deadlines are derived from
     ///         `EPOCH_DURATION_BLOCKS` (immutable, set at deploy) and the

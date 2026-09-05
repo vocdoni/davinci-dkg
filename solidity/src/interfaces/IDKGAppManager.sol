@@ -27,6 +27,11 @@ interface IDKGAppManager {
     error InvalidApplication();
     error ApplicationAlreadyExists();
     error InvalidSchnorrProof();
+    /// @dev The locked-mode organizer key is not in the curve's prime-order
+    ///      subgroup. The Schnorr PoP does not imply membership — a
+    ///      small-order key passes it with a ground challenge — and such an
+    ///      application could never be revealed or combined.
+    error PointNotInSubgroup();
     error InvalidEpoch();
     error InvalidPhase();
     error InvalidAddress();

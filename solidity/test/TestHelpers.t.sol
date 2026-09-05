@@ -74,7 +74,10 @@ abstract contract TestHelpers is TestInputs {
     // ─── Committee fixture ────────────────────────────────────────────────────
 
     /// @dev The first two committee slots use real on-curve BabyJubJub keys
-    ///      (THIS and BEEF Schnorr vectors from cmd/operator-schnorr-vectors).
+    ///      (ALICE and BEEF Schnorr vectors from cmd/operator-schnorr-vectors).
+    ///      Both are plain addresses with no code, which the fixtures need:
+    ///      submitContribution / activatePoolKey must be direct EOA calls,
+    ///      so committee member 1 can never be the (contract) test address.
     ///      Slots 3+ stay at zero and are padded with the identity (0,1).
     ///      This matches what the DKGManager test fixtures register at setUp,
     ///      so the committee snapshot hash and the contribution transcript
@@ -82,8 +85,8 @@ abstract contract TestHelpers is TestInputs {
     function _slotPubKey(uint256 i) internal pure returns (uint256 x, uint256 y) {
         if (i == 0) {
             return (
-                17765672829315743641357949553430354448961270408100494783209553303687184365803,
-                13591243454297365848719372676992908085762757043204242277513940025707896351954
+                14666979294172776374634275498241310759674509575452256743546893482427808967539,
+                16568773859060023308888034681483224034881825787861296311803627274237556869649
             );
         }
         if (i == 1) {

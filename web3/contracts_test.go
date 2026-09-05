@@ -12,6 +12,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	qt "github.com/frankban/quicktest"
+	gtypes "github.com/vocdoni/davinci-dkg/solidity/golang-types"
 	"github.com/vocdoni/davinci-dkg/types"
 )
 
@@ -249,6 +250,36 @@ func testRPCServer() *httptest.Server {
 			default:
 				resp.Error = &testRPCError{Code: -32601, Message: "unknown call data: " + callData}
 			}
+		case "eth_getLogs":
+			// One CommitteeSnapshot event for epoch "epoch-1": committee of
+			// two members with keys (1,2) and (3,4).
+			abiJSON, err := gtypes.DKGManagerMetaData.GetAbi()
+			if err != nil {
+				resp.Error = &testRPCError{Code: -32603, Message: err.Error()}
+				break
+			}
+			ev := abiJSON.Events["CommitteeSnapshot"]
+			data, err := ev.Inputs.NonIndexed().Pack(
+				uint16(2),
+				[]*big.Int{big.NewInt(1), big.NewInt(2), big.NewInt(3), big.NewInt(4)},
+			)
+			if err != nil {
+				resp.Error = &testRPCError{Code: -32603, Message: err.Error()}
+				break
+			}
+			var epochTopic common.Hash
+			copy(epochTopic[:12], []byte("epoch-1"))
+			resp.Result = []map[string]any{{
+				"address":          common.HexToAddress("0x2000000000000000000000000000000000000002").Hex(),
+				"topics":           []string{ev.ID.Hex(), epochTopic.Hex()},
+				"data":             "0x" + hex.EncodeToString(data),
+				"blockNumber":      "0x9",
+				"blockHash":        common.HexToHash("0xabc").Hex(),
+				"transactionHash":  common.HexToHash("0xdef").Hex(),
+				"transactionIndex": "0x0",
+				"logIndex":         "0x0",
+				"removed":          false,
+			}}
 		default:
 			resp.Error = &testRPCError{Code: -32601, Message: "method not found"}
 		}
@@ -256,4 +287,35 @@ func testRPCServer() *httptest.Server {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(resp)
 	}))
+}
+
+func TestCommitteeSnapshot(t *testing.T) {
+	c := qt.New(t)
+
+	server := testRPCServer()
+	defer server.Close()
+
+	contracts, err := New([]string{server.URL}, types.ContractAddresses{
+		Registry:               common.HexToAddress("0x1000000000000000000000000000000000000001"),
+		Manager:                common.HexToAddress("0x2000000000000000000000000000000000000002"),
+		ContributionVerifier:   common.HexToAddress("0x3000000000000000000000000000000000000003"),
+		PoolKeyVerifier:        common.HexToAddress("0x4000000000000000000000000000000000000004"),
+		PartialDecryptVerifier: common.HexToAddress("0x5000000000000000000000000000000000000005"),
+		DecryptCombineVerifier: common.HexToAddress("0x6000000000000000000000000000000000000006"),
+	})
+	c.Assert(err, qt.IsNil)
+
+	var epochID [12]byte
+	copy(epochID[:], []byte("epoch-1"))
+
+	keys, err := contracts.CommitteeSnapshot(context.Background(), epochID)
+	c.Assert(err, qt.IsNil)
+	c.Assert(keys, qt.HasLen, 2)
+	c.Assert(keys[0].PubX.Int64(), qt.Equals, int64(1))
+	c.Assert(keys[0].PubY.Int64(), qt.Equals, int64(2))
+	c.Assert(keys[1].PubX.Int64(), qt.Equals, int64(3))
+	c.Assert(keys[1].PubY.Int64(), qt.Equals, int64(4))
+	// Operator addresses come from the selected-participants list, not the
+	// snapshot event.
+	c.Assert(keys[0].Operator, qt.Equals, common.Address{})
 }

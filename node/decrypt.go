@@ -36,6 +36,9 @@ const (
 	maxPendingCiphertexts = 1024
 	// maxServiceBackoffTicks caps the exponential per-ciphertext backoff.
 	maxServiceBackoffTicks = 64
+	// combineTimeout bounds one combine job's chain calls and proving while
+	// it holds the combine semaphore.
+	combineTimeout = 15 * time.Minute
 )
 
 // ctKey identifies one ciphertext slot: (epoch, application, index).
@@ -239,16 +242,15 @@ func (n *Node) wake(key ctKey, p *parkedSlot, wakeBlock uint64) {
 	n.pending[key] = p.ct
 }
 
-// wakeParked returns to the pending set every parked slot of an application
-// whose organizer revealed its secret in [start, end], and rescans that
-// application's ciphertexts from its registration block: the reveal is
-// per-application and happens once, and ciphertexts submitted while the
-// application was locked may be older than the lookback window of a node
-// that restarted meanwhile.
+// wakeParked processes every OrganizerSecretRevealed event of [start, end]:
+// it returns to the pending set every parked slot of the revealed
+// application and rescans the application's ciphertexts from its
+// registration block. The rescan runs whether or not a slot of that
+// application is parked — a node restarted since the ciphertexts were parked
+// holds none of them, and they may be older than its lookback window. A
+// failed rescan is returned as an error so scanCiphertexts does not advance
+// its cursor past the range: the next tick retries the same events.
 func (n *Node) wakeParked(ctx context.Context, start, end, head uint64) error {
-	if len(n.parked) == 0 {
-		return nil
-	}
 	it, err := n.appManager.FilterOrganizerSecretRevealed(&bind.FilterOpts{Context: ctx, Start: start, End: &end}, nil, nil)
 	if err != nil {
 		return fmt.Errorf("filter OrganizerSecretRevealed [%d,%d]: %w", start, end, err)
@@ -256,23 +258,15 @@ func (n *Node) wakeParked(ctx context.Context, start, end, head uint64) error {
 	defer func() { _ = it.Close() }()
 	for it.Next() {
 		ev := it.Event
-		woken := 0
 		for key, p := range n.parked {
 			if key.epoch != ev.EpochId || key.aid != ev.Aid {
 				continue
 			}
 			n.wake(key, p, ev.Raw.BlockNumber)
-			woken++
 			log.Infow("organizer secret revealed — resuming the slot", "ct", key.String(), "block", ev.Raw.BlockNumber)
 		}
-		if woken == 0 {
-			continue
-		}
 		if err := n.rescanApplication(ctx, ev.EpochId, ev.Aid, ev.Raw.BlockNumber, head); err != nil {
-			// The woken slots are already pending; the rescan only adds
-			// older siblings and the next reveal-free tick cannot redo it,
-			// so log rather than fail the whole scan.
-			log.Warnw("rescan of the revealed application failed", "aid", fmt.Sprintf("%x", ev.Aid[:4]), "err", err)
+			return fmt.Errorf("rescan of the revealed application %x: %w", ev.Aid[:4], err)
 		}
 	}
 	if err := it.Error(); err != nil {
@@ -965,19 +959,17 @@ func (n *Node) tryCombine(
 	delete(n.combineJobs, key)
 	n.jobsMu.Unlock()
 	if res.taint {
-		// With a closed submitter set an undecryptable ciphertext is the
-		// registrant's doing: serve nothing else of this application in this
-		// epoch, which caps what one registration can make the committee
-		// compute. With open submission anyone could have sent it, so only
-		// that submitter is cut off — one search per (application, address).
-		tk := taintKey{epoch: key.epoch, aid: key.aid}
-		if app.openSubmission {
-			tk.submitter = ct.submitter
-		}
+		// One poisoned ciphertext condemns only its (application, submitter)
+		// pair for the rest of the epoch: whoever sent it pays one 2^50
+		// search per address, and the application's honest submitters keep
+		// their service. jobsMu also guards the read in runCombineJob.
+		tk := taintKey{epoch: key.epoch, aid: key.aid, submitter: ct.submitter}
+		n.jobsMu.Lock()
 		n.taints[tk] = true
 		n.saveTaints()
-		log.Warnw("tainted: ignoring the remaining ciphertexts for this epoch",
-			"ct", key.String(), "openSubmission", app.openSubmission, "submitter", tk.submitter)
+		n.jobsMu.Unlock()
+		log.Warnw("tainted: ignoring the remaining ciphertexts of this submitter",
+			"ct", key.String(), "submitter", tk.submitter)
 	}
 	switch {
 	case res.err != nil:
@@ -1019,14 +1011,32 @@ func (n *Node) runCombineJob(
 		time.Sleep(500 * time.Millisecond)
 	}
 	n.combineSem <- struct{}{}
-	res := n.combine(key, ct, idxs, deltas, app, threshold)
-	<-n.combineSem
+	defer func() { <-n.combineSem }()
+
+	// Re-check before paying for the search: minutes can pass while queued
+	// on the semaphore, and meanwhile the tick loop may have combined or
+	// evicted the slot (forget drops the job's registration) or learned
+	// from a sibling ciphertext that this source is poisoned. Skipping the
+	// 2^50 search then is the whole point of the semaphore.
+	n.jobsMu.Lock()
+	_, registered := n.combineJobs[key]
+	tainted := n.tainted(key, ct.submitter)
+	n.jobsMu.Unlock()
+	if !registered || tainted {
+		log.Infow("combine job skipped: slot already settled or source tainted", "ct", key.String())
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), combineTimeout)
+	defer cancel()
+	res := n.combine(ctx, key, ct, idxs, deltas, app, threshold)
 	n.jobsMu.Lock()
 	n.combineJobs[key] = res
 	n.jobsMu.Unlock()
 }
 
 func (n *Node) combine(
+	ctx context.Context,
 	key ctKey,
 	ct *ciphertext,
 	idxs []uint16,
@@ -1034,7 +1044,6 @@ func (n *Node) combine(
 	app appView,
 	threshold uint16,
 ) *combineResult {
-	ctx := context.Background()
 	// M·G = C2 − Σ λ_k·δ_k − sk_org·C1
 	combinedEnc, err := ccommon.InterpolatePointsAtZeroNative(ccommon.Uint16sToBigInts(idxs), deltas)
 	if err != nil {

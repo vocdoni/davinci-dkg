@@ -325,3 +325,101 @@ func TestTaintFileLoadsLegacyEntriesAsWholeApplicationTaints(t *testing.T) {
 	c.Assert(n.tainted(other, common.HexToAddress("0x1")), qt.IsTrue)
 	c.Assert(n.tainted(other, common.HexToAddress("0x2")), qt.IsFalse, qt.Commentf("per-submitter taint spares the others"))
 }
+
+// fakeAppChain answers DKGAppManager getApplication calls on top of
+// fakeLogChain's log serving.
+type fakeAppChain struct {
+	fakeLogChain
+	app       gtypes.DKGTypesApplication
+	failCalls bool
+}
+
+func (f *fakeAppChain) CallContract(_ context.Context, msg ethereum.CallMsg, _ *big.Int) ([]byte, error) {
+	if f.failCalls {
+		return nil, errFakeUnsupported
+	}
+	abiJSON, err := gtypes.DKGAppManagerMetaData.GetAbi()
+	if err != nil {
+		return nil, err
+	}
+	m := abiJSON.Methods["getApplication"]
+	if len(msg.Data) < 4 || string(msg.Data[:4]) != string(m.ID) {
+		return nil, errFakeUnsupported
+	}
+	return m.Outputs.Pack(f.app)
+}
+
+func revealLog(t *testing.T, epoch [12]byte, aid [32]byte, block uint64) ethtypes.Log {
+	t.Helper()
+	abiJSON, err := gtypes.DKGAppManagerMetaData.GetAbi()
+	qt.Assert(t, err, qt.IsNil)
+	ev := abiJSON.Events["OrganizerSecretRevealed"]
+	topics, err := abi.MakeTopics([]any{ev.ID}, []any{epoch}, []any{aid})
+	qt.Assert(t, err, qt.IsNil)
+	data, err := ev.Inputs.NonIndexed().Pack(big.NewInt(12345))
+	qt.Assert(t, err, qt.IsNil)
+	return ethtypes.Log{
+		Address:     common.Address{0xaa},
+		Topics:      []common.Hash{topics[0][0], topics[1][0], topics[2][0]},
+		Data:        data,
+		BlockNumber: block,
+	}
+}
+
+func ciphertextLog(t *testing.T, key ctKey, block uint64) ethtypes.Log {
+	t.Helper()
+	abiJSON, err := gtypes.DKGManagerMetaData.GetAbi()
+	qt.Assert(t, err, qt.IsNil)
+	ev := abiJSON.Events["CiphertextSubmitted"]
+	topics, err := abi.MakeTopics([]any{ev.ID}, []any{key.epoch}, []any{key.aid}, []any{key.idx})
+	qt.Assert(t, err, qt.IsNil)
+	data, err := ev.Inputs.NonIndexed().Pack(common.HexToAddress("0xfeed"), big.NewInt(1), big.NewInt(2), big.NewInt(3), big.NewInt(4))
+	qt.Assert(t, err, qt.IsNil)
+	return ethtypes.Log{
+		Address:     common.Address{0xbb},
+		Topics:      []common.Hash{topics[0][0], topics[1][0], topics[2][0], topics[3][0]},
+		Data:        data,
+		BlockNumber: block,
+	}
+}
+
+// A node that restarted after a locked application's ciphertexts were parked
+// holds none of them: the reveal event alone — no parked slot — must still
+// rescan the application from its registration block, and a failed rescan
+// must surface so the scan cursor does not advance past the event.
+func TestWakeParkedRescansApplicationsWithoutParkedSlots(t *testing.T) {
+	c := qt.New(t)
+	key := ctKey{epoch: [12]byte{7}, aid: [32]byte{9}, idx: 1}
+	chain := &fakeAppChain{app: gtypes.DKGTypesApplication{
+		Creator:         common.HexToAddress("0x1"),
+		OrganizerPK:     gtypes.DKGTypesPoint{X: big.NewInt(1), Y: big.NewInt(2)},
+		OrganizerSecret: big.NewInt(0),
+		Policy:          gtypes.DKGTypesAppPolicy{Mode: 1, Submitters: []common.Address{}},
+		CreatedAtBlock:  1_000,
+		Exists:          true,
+	}}
+	chain.logs = []ethtypes.Log{
+		revealLog(t, key.epoch, key.aid, 1_500),
+		ciphertextLog(t, key, 1_200),            // submitted while locked, before the reveal
+		revealLog(t, key.epoch, key.aid, 3_500), // a second application's reveal, for the failure case
+	}
+	am, err := gtypes.NewDKGAppManager(common.Address{}, chain)
+	c.Assert(err, qt.IsNil)
+	m, err := gtypes.NewDKGManager(common.Address{}, chain)
+	c.Assert(err, qt.IsNil)
+	n := newTestNode()
+	n.appManager = am
+	n.manager = m
+	c.Assert(n.parked, qt.HasLen, 0)
+
+	c.Assert(n.wakeParked(context.Background(), 1_000, 2_000, 2_000), qt.IsNil)
+
+	ct, ok := n.pending[key]
+	c.Assert(ok, qt.IsTrue, qt.Commentf("the reveal must rescan the application even with nothing parked"))
+	c.Assert(ct.wakeBlock, qt.Equals, uint64(1_500), qt.Commentf("rescanned slots anchor on the reveal block"))
+	c.Assert(ct.submitter, qt.Equals, common.HexToAddress("0xfeed"))
+
+	chain.failCalls = true
+	err = n.wakeParked(context.Background(), 3_000, 4_000, 4_000)
+	c.Assert(err, qt.Not(qt.IsNil), qt.Commentf("a failed rescan must fail the range so the cursor does not advance"))
+}

@@ -1,14 +1,21 @@
 package web3
 
 import (
+	"context"
 	"fmt"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/vocdoni/davinci-dkg/log"
 )
+
+// rpcHTTPTimeout bounds every HTTP round trip of a pooled endpoint so a hung
+// endpoint fails over instead of blocking a tick forever.
+const rpcHTTPTimeout = 30 * time.Second
 
 const (
 	rpcCooldownDuration = 2 * time.Minute
@@ -36,11 +43,16 @@ func NewRPCPool(urls []string) (*RPCPool, error) {
 	}
 	pool := &RPCPool{}
 	for _, url := range urls {
-		client, err := ethclient.Dial(url)
+		// Dial with a bounded HTTP client: a hung endpoint then fails the
+		// round trip after rpcHTTPTimeout instead of blocking forever. The
+		// option only applies to http(s) URLs; websocket and ipc endpoints
+		// keep their own keepalive/deadline handling.
+		rpcClient, err := rpc.DialOptions(context.Background(), url, rpc.WithHTTPClient(&http.Client{Timeout: rpcHTTPTimeout}))
 		if err != nil {
 			log.Warnw("rpc pool: failed to dial endpoint, skipping", "url", url, "err", err)
 			continue
 		}
+		client := ethclient.NewClient(rpcClient)
 		pool.entries = append(pool.entries, &rpcEntry{url: url, client: client})
 	}
 	if len(pool.entries) == 0 {

@@ -87,7 +87,14 @@ contract DKGAppManager is IDKGAppManager {
             // transcript's PK_org binding needs no mode-specific branch.
             keyY = 1;
         } else {
+            // The subgroup check is load-bearing, not hygiene: a small-order
+            // organizer key satisfies the Schnorr PoP with a ground
+            // challenge, but `sk·G` is then never a multiple of `PK_org`,
+            // so the application can neither be revealed nor combined, and
+            // its "locked" ciphertexts are decryptable by the committee
+            // alone. The Schnorr nonce A needs no such check.
             BabyJubJub.requireValidPoint(pkOrgX, pkOrgY);
+            if (!BabyJubJub.isInPrimeSubgroup(pkOrgX, pkOrgY)) revert PointNotInSubgroup();
             BabyJubJub.requireValidPoint(schnorrAx, schnorrAy);
             if (
                 !_verifyOrganizerSchnorr(epochId, aid, pkOrgX, pkOrgY, schnorrAx, schnorrAy, schnorrZ)
@@ -224,6 +231,11 @@ contract DKGAppManager is IDKGAppManager {
         // arrival.
         if (p.decryptNotAfter != 0 && p.decryptNotAfter <= block.timestamp) revert InvalidPolicy();
         if (p.decryptNotBefore != 0 && p.decryptNotAfter != 0 && p.decryptNotBefore > p.decryptNotAfter) {
+            revert InvalidPolicy();
+        }
+        // Same discipline for the submission block window: a window that
+        // closes before it opens accepts no ciphertext at all.
+        if (p.notBeforeBlock != 0 && p.notAfterBlock != 0 && p.notBeforeBlock > p.notAfterBlock) {
             revert InvalidPolicy();
         }
     }

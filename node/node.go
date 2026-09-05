@@ -1093,15 +1093,24 @@ func (n *Node) doContribution(
 		coeffs[j] = keyCoeffs
 	}
 
+	// Recipient keys come from the CommitteeSnapshot event frozen when the
+	// committee filled, not the live registry: a post-fill updateKey rotation
+	// must not change what contributors encrypt shares to (the on-chain prefix
+	// hash pins the snapshot keys). Operator addresses still come from the
+	// selected list, which the snapshot does not carry.
+	snapshot, err := n.contracts.CommitteeSnapshot(ctx, epochID)
+	if err != nil {
+		return fmt.Errorf("committee snapshot: %w", err)
+	}
+	if len(snapshot) != int(committeeSize) {
+		return fmt.Errorf("committee snapshot has %d members, want %d", len(snapshot), committeeSize)
+	}
 	recipientIdxs := make([]uint16, committeeSize)
 	recipientKeys := make([]nodetypes.NodeKey, committeeSize)
 	for i := uint16(0); i < committeeSize; i++ {
 		recipientIdxs[i] = i + 1
-		nd, err := n.contracts.GetNode(ctx, selected[i])
-		if err != nil {
-			return fmt.Errorf("get node key idx=%d: %w", i+1, err)
-		}
-		recipientKeys[i] = nodetypes.NodeKey{Operator: selected[i], PubX: nd.PubX, PubY: nd.PubY}
+		recipientKeys[i] = snapshot[i]
+		recipientKeys[i].Operator = selected[i]
 	}
 
 	// One fresh hashed-ElGamal nonce per recipient. The nonce is the only

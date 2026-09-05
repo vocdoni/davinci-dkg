@@ -16,12 +16,12 @@ import (
 // repeat the 2^50 search that condemned them: a fleet restart would otherwise
 // run one full-core search per node per poisoned application at once.
 
-// taintKey names what an undecryptable ciphertext condemns for the rest of the
-// epoch. For an application with a closed submitter set the registrant is the
-// only one who can have produced it, so the whole application is tainted
-// (submitter is the zero address). With openSubmission anyone may submit, and
-// tainting the application would let one stranger silence it for everyone, so
-// the taint is per (application, submitter) instead.
+// taintKey names what an undecryptable ciphertext condemns for the rest of
+// the epoch: always its (application, submitter) pair. Whoever produced it
+// pays one 2^50 search per address, and the application's honest submitters
+// keep their service. Entries without a submitter are a legacy on-disk form
+// from before this rule (whole-application taints); they still load and
+// match.
 type taintKey struct {
 	epoch     [12]byte
 	aid       [32]byte
@@ -100,8 +100,9 @@ func (n *Node) saveTaints() {
 	}
 }
 
-// String is the persisted form: epoch:aid for a whole application,
-// epoch:aid:submitter for one submitter of an open-submission application.
+// String is the persisted form: epoch:aid:submitter. The two-part
+// epoch:aid spelling only survives on disk from whole-application taints
+// written before the per-submitter rule.
 func (tk taintKey) String() string {
 	s := hex.EncodeToString(tk.epoch[:]) + ":" + hex.EncodeToString(tk.aid[:])
 	if tk.submitter != (common.Address{}) {

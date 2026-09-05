@@ -62,6 +62,11 @@ interface IDKGRegistry {
     error PointNotCanonical();
     error PointNotOnCurve();
     error PointIsIdentity();
+    /// @dev The registered encryption key is not in the curve's prime-order
+    ///      subgroup. The Schnorr PoK does not imply membership: small-order
+    ///      (cofactor) points satisfy its verification equation too, and
+    ///      shares encrypted to such a key can never be decrypted.
+    error PointNotInSubgroup();
 
     // ── registration ──────────────────────────────────────────────────────
     /// @notice Register the caller's BabyJubJub encryption key together
