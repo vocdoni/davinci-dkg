@@ -297,8 +297,8 @@ release; the constraint, proving-time and gas tables above predate it.
   for the contracts).
 * Proving times: `DAVINCI_ARTIFACTS_DIR=/tmp/bench-$N go test ./circuits/... -run XXX -bench '^BenchmarkProve$' -benchtime=5x`
   on an idle host; the first run performs the setup.
-* Gas: run the flow on any deployment (`make testnet-up`; the Sepolia
-  deployment is still the previous single-key release) with `cmd/dkgapp`
+* Gas: run the flow on any deployment (`make testnet-up`, or the Sepolia
+  public testnet with `--network sepolia`) with `cmd/dkgapp`
   (`register`, `encrypt`, `reveal`, `plaintext`)
   and read `gasUsed` from the receipts, e.g. `cast receipt --json <tx> | jq
   .gasUsed`. `forge test --gas-report` gives the same per-function figures

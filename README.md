@@ -327,18 +327,11 @@ A few load-bearing knobs:
 Run a node and you become eligible to be drawn on every epoch created after you register. The
 Sepolia deployment below is open, so anyone can join the committee.
 
-> **Pending redeploy.** The public Sepolia deployment (see [Deployments](#deployments) and
-> `config/networks.go`) is still the previous single-key release. Joining it requires the
-> [`circuits-v2`](https://github.com/vocdoni/davinci-dkg/releases/tag/circuits-v2) artifacts and a
-> node built from that release; the pool-key contracts this README describes are not on Sepolia
-> yet. A pool-key redeploy and a new circuit release are pending.
-
 You need an Ethereum key with a little Sepolia ETH (about 0.05 ETH covers weeks of
-participation, and any Sepolia faucet works), Docker, and a machine sized for the proofs. The
-current Sepolia release runs on 4 cores and 4 GB of RAM. The pool-key build is heavier: its
-contribution proving key is on the order of 1 GB, a local Groth16 setup takes about ten minutes,
-and a contribution proof takes about 1.7 s on 32 threads; peak memory has not been measured yet,
-so size generously until [`BENCHMARKS.md`](BENCHMARKS.md) says otherwise.
+participation, and any Sepolia faucet works), Docker, and a machine sized for the proofs: at
+least 4 cores and 8 GB of RAM. The node keeps the four proving keys resident (about 1 GB, the
+contribution key alone is 410 MB) and a contribution proof takes about 1.6 s on 32 threads; more
+cores shorten the proofs, less RAM is not an option.
 
 ```bash
 git clone https://github.com/vocdoni/davinci-dkg.git
@@ -359,10 +352,10 @@ What happens on first start:
 1. The node derives its BabyJubJub key from your operator EVM key and registers it in
    `DKGRegistry`. That is one transaction, skipped if you are already registered and active.
 2. Before its first proof it downloads the pinned circuit artifacts from the release built into
-   the binary — currently the [`circuits-v2`
-   release](https://github.com/vocdoni/davinci-dkg/releases/tag/circuits-v2), about 190 MB, for
-   the Sepolia deployment; the pool-key build ships its own, larger release — and checks every
-   file against the hashes built into the binary.
+   the binary — the [`circuits-v3`
+   release](https://github.com/vocdoni/davinci-dkg/releases/tag/circuits-v3), about 600 MB, of which
+   the contribution proving key is 410 MB — and checks every file against the hashes built into
+   the binary.
 3. It prints a startup banner with the chain head, registry statistics and its own `self:` row,
    then polls `DKGManager` and reacts to every phase it is eligible for.
 
@@ -506,7 +499,7 @@ honest path:
 
 | Network | DKGManager                                 | Notes |
 |---------|--------------------------------------------|-------|
-| Sepolia | `0xd38af14cd3b550e268693b459c08ef7331cb23b0` | **Previous single-key release** (pre-pool-key contracts, `circuits-v2` artifacts); a pool-key redeploy and a new circuit release are pending. Public testnet, built into the node and SDK: pass `--network sepolia`. Registry `0x8bcb80408a28044d632fe6e3bc2e5b79c9a2107c`, app manager `0x96c1c606aac602380ec921679652374fdbfe3992`, deployed at block 11,628,341. Epochs last 7,200 blocks (about 24 h); committee selection 100 blocks, key assembly 150 blocks, finalize gap 10 blocks; floors `MIN_THRESHOLD=2`, `MIN_COMMITTEE_SIZE=3`, `MAX_LOTTERY_ALPHA_BPS=20000`; inactivity window 50,400 blocks. |
+| Sepolia | `0x6dd442e96cd0b5d8408c2e461a6504be8893229c` | Public pool-key testnet (contracts and [`circuits-v3`](https://github.com/vocdoni/davinci-dkg/releases/tag/circuits-v3) artifacts of this release), built into the node and SDK: pass `--network sepolia`. Registry `0x62d0b2eac42912d756c88d51df8ecab31f0b565a`, app manager `0x759572dc41b2d56a4a28df23bb3efd4e0684c108`, deployed at block 11,639,686 (2026-09-05). Epochs last 7,200 blocks (about 24 h); committee selection 100 blocks, key assembly 150 blocks, finalize gap 10 blocks; floors `MIN_THRESHOLD=2`, `MIN_COMMITTEE_SIZE=3`, `MAX_LOTTERY_ALPHA_BPS=20000`; inactivity window 50,400 blocks. The previous single-key deployment at `0xd38af14cd3b550e268693b459c08ef7331cb23b0` (block 11,628,341, `circuits-v2`) is retired. |
 
 `DKGRegistry` and `DKGAppManager` are auto-resolved from `DKGManager` on-chain — only the manager
 address needs to be configured.
