@@ -1,0 +1,700 @@
+\documentclass[a4paper]{article}
+\usepackage[a4paper, left=1.35in, right=1.35in, top=1.1in, bottom=1.1in]{geometry}
+\setlength{\emergencystretch}{2em}
+\pagestyle{plain}
+\setlength{\parindent}{1em}
+\setlength{\parskip}{0.05em}
+
+\usepackage[backend=biber,style=numeric]{biblatex}
+\addbibresource{references.bib}
+
+\usepackage{authblk}
+\usepackage{url}
+\usepackage{nicefrac}
+
+% !! The following 2 lines => requires XeLaTex or LuaLaTeX
+% Latin Modern fonts are an enhancement of the original Computer Modern fonts
+% and are widely available in TeX distributions
+\usepackage{fontspec}
+\IfFontExistsTF{CMU Serif}{
+    \setmainfont{CMU Serif}
+}{
+    \setmainfont{Latin Modern Roman}[SmallCapsFont={Latin Modern Roman Caps}]
+}
+
+\usepackage{amsmath, amsthm, amssymb, mathrsfs}
+\usepackage{enumitem}
+\usepackage{mathtools}
+\usepackage[dvipsnames]{xcolor}
+\usepackage{tikz}
+\usetikzlibrary{calc, patterns, patterns.meta, decorations.pathreplacing}
+\usetikzlibrary{positioning,fit,arrows.meta}
+\usepackage{multirow}
+\usepackage{array}
+\usepackage{scrextend}
+
+\newcommand{\AC}{\mathcal{A}}
+\newcommand{\BC}{\mathcal{B}}
+\newcommand{\CC}{\mathcal{C}}
+\newcommand{\DC}{\mathcal{D}}
+\newcommand{\FC}{\mathcal{F}}
+\newcommand{\GC}{\mathcal{G}}
+\newcommand{\HC}{\mathcal{H}}
+\newcommand{\IC}{\mathcal{I}}
+\newcommand{\KC}{\mathcal{K}}
+\newcommand{\NC}{\mathcal{N}}
+\newcommand{\OC}{\mathcal{O}}
+\newcommand{\PC}{\mathcal{P}}
+\newcommand{\QC}{\mathcal{Q}}
+\newcommand{\UC}{\mathcal{U}}
+
+\newcommand{\FB}{\mathbb{F}}
+\newcommand{\NB}{\mathbb{N}}
+\newcommand{\QB}{\mathbb{Q}}
+\newcommand{\RB}{\mathbb{R}}
+\newcommand{\ZB}{\mathbb{Z}}
+
+\newcommand{\Cbar}{\overline{C}}
+
+%
+% highlight variables
+%
+
+\usepackage{bm} % for bold‐italic math symbols
+\usepackage{graphicx}
+
+% define custom colours
+\definecolor{darkblue}{RGB}{0,0,139} %  built-in dvipsnames has: DarkBlue
+\definecolor{darkred}{RGB}{139,0,0} %  built-in dvipsnames has: Red4 / BrickRed / Mahogany
+
+% newcommand: \dbx{<symbol>} → bold-italic darkblue <symbol>
+\newcommand{\dbx}[1]{\textcolor{darkblue}{\bm{#1}}}
+\newcommand{\drx}[1]{\textcolor{darkred}{\bm{#1}}}
+
+\newcommand{\dbxs}[1]{\scalebox{1.1}{$\textcolor{darkblue}{\bm{#1}}$}}
+\newcommand{\drxs}[1]{\scalebox{1.1}{$\textcolor{darkred}{\bm{#1}}$}}
+
+% Define theorem styles and numbering
+\newtheorem{theorem}{Theorem}[section] % Theorem with numbering
+\newtheorem{lemma}[theorem]{Lemma}     % Lemma with numbering
+\newtheorem{corollary}[theorem]{Corollary} % Corollary with numbering
+\newtheorem{observation}[theorem]{Observation} % Observation with numbering
+\newtheorem{definition}[theorem]{Definition} % Definition with numbering
+% \newtheorem{exercise}[theorem]{Exercise}
+
+% Define Exercises with separate numbering
+\newtheorem{exercise}{Exercise}[section] % Numbering per section
+
+% Define Examples with separate numbering
+\newtheorem{example}{Example}[section] % Numbering per section
+
+% Define proof environment (already built-in with amsthm)
+% Optionally, you can customize the proof header if needed
+\renewcommand{\qedsymbol}{$\blacksquare$} % Change the end-of-proof symbol
+
+% https://tex.stackexchange.com/questions/22252/how-to-typeset-function-restrictions
+\newcommand\restr[2]{{% we make the whole thing an ordinary symbol
+  \left.\kern-\nulldelimiterspace % automatically resize the bar with \right
+  #1 % the function
+  \littletaller % pretend it's a little taller at normal size
+  \right|_{#2} % this is the delimiter
+  }}
+\newcommand{\littletaller}{\mathchoice{\vphantom{\big|}}{}{}{}}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\usepackage[most]{tcolorbox}
+\tcbuselibrary{breakable}
+
+% Outer box (breakable)
+\newtcolorbox{zkledger}{
+  enhanced,
+  breakable,
+  boxrule=0.4pt, % thickness of border
+  colback=gray!4,
+  colframe=gray!50,
+  arc=1mm,
+  left=1mm,right=1mm,top=1mm,bottom=1mm, % inner paddings
+  before skip=2.0ex, after skip=1.0ex % outer spacing
+}
+
+% Inner rounded boxes for each part
+\newcommand{\zkpart}[2]{%
+  \begin{tcolorbox}[
+    enhanced,
+    breakable,
+%    enforce breakable, % necessary if inside another tcolorbox % does not work
+    title={\textsc{#1}},
+    % even if box breaks, title stays attached to the first part of the box
+    attach boxed title to top left={yshift=0mm, xshift=0mm},
+    boxed title style={
+      colback=gray!4,
+      frame hidden,        % no border
+      boxrule=0pt,
+      left=0pt, right=0pt, top=0pt, bottom=0pt
+    },
+    coltitle=black,
+    boxrule=0.4pt,
+    colback=white,
+    colframe=gray!50,
+    arc=1mm,
+    left=1.0mm,right=1.0mm,top=0.8mm,bottom=0.8mm,
+    before skip=1.5ex, after skip=0.5ex
+  ]
+  #2
+  \end{tcolorbox}%
+}
+
+\newcommand{\PrivateInputs}{Private inputs}
+\newcommand{\PublicInputs}{Public inputs}
+\newcommand{\InCircuit}{In-circuit computations/validations}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% Merkle-root notation (avoid \root which is a TeX primitive)
+\newcommand{\mroot}[1]{\mathsf{root}_{\mathtt{#1}}}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% Vectors (with and without arrow)
+\newcommand{\vct}[1]{\mathbf{#1}}
+% \newcommand{\vct}[1]{\vec{#1}}
+% \newcommand{\vct}[1]{\vec{\mkern0mu #1}}
+% \newcommand{\vct}[1]{\vec{\mkern0mu \mathbf{#1}}}
+% \newcommand{\vct}[1]{\overrightarrow{\mathbf{#1}}}
+
+% \newcommand{\vct}[1]{\overline{\vphantom{(}\mathbf{#1}}}
+
+% \newcommand{\vct}[1]{\overline{\mathbf{#1}}}
+
+\usepackage{calc}
+\newcommand{\vcth}[1]{%
+  \overline{\raisebox{0pt}[\dimexpr\height+0.8pt\relax]{$\mathbf{#1}$}}
+}
+
+\usepackage{hyperref}
+
+% QUAL alias for the qualified set, standard DKG notation
+\newcommand{\QUAL}{\mathsf{QUAL}}
+\newcommand{\HK}{\mathsf{H}_{\mathsf{K}}}
+\newcommand{\HP}{\mathsf{H}_{\mathsf{P}}}
+\newcommand{\Nmax}{N_{\max}}
+\newcommand{\Kmax}{K_{\max}}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% authblk loaded above
+\renewcommand\Authfont{\small}
+\renewcommand\Affilfont{\normalsize}
+
+\title{DAVINCI-DKG: Non-Interactive\\
+  Distributed Key Generation on Ethereum\\
+  with Proof-Carrying Contributions}
+\author[1]{Alex Kampa}
+\author[1]{Pau Escrich}
+\author[2]{Marta Bellés-Muñoz}
+\author[3]{Roger Baig Viñas}
+\affil[1]{Vocdoni Association}
+\affil[2]{Pompeu Fabra University}
+\affil[3]{Universitat Politècnica de Catalunya}
+\date{September 2026}
+
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+We present a distributed key generation (DKG) protocol hosted on a public EVM chain in which every contribution is a publicly verifiable dealing whose on-chain verification costs one Groth16 check with eight public inputs, independently of the committee size; invalid dealings are rejected at submission, so there is no complaint phase. Each epoch deals a small pool of $\Kmax$ independent committee keys $P_0,\dots,P_{\Kmax-1}$ inside the same contribution proof, rather than a single epoch key; finalizing an epoch only freezes its accepted contributors, and each pool key is turned on separately by a small activation proof that rebinds its already-published share commitments without republishing them. Every application claims one pool key at registration, so a ciphertext copied into another application decrypts, uselessly, under a key nobody there controls: the cross-application decryption oracle of a shared epoch key is closed by construction. An application either keeps its pool key as is, for plain $t$-of-$n$ decryption by the committee, or adds an \emph{organizer} key so that $\mathsf{PK}_{\mathtt{aid}} = P_j + \mathsf{PK}_{\mathtt{org}}$ and decryption needs the committee and, from the moment the organizer reveals its secret in a single on-chain transaction, the organizer's share too; until that reveal the contract refuses every partial and combine of the application, and a decryption window enforced on the same calls keeps even a revealed organizer from decrypting early. The committee's combine proof shows knowledge of the organizer secret directly (zero for an application with none) instead of verifying a Chaum--Pedersen proof, so the reveal is the organizer's entire on-chain footprint. We define secrecy as a game in which the adversary controls arbitrarily many organizers and submitters and $f$ committee members with $n - f \ge t$, submits whatever it likes under its own applications and obtains every committee partial the contract would release, and give a straight-line reduction bounding its advantage against an honest application's ciphertexts, before that application's organizer (if any) reveals, by DDH---assuming soundness of the proof system for the adversary's dealings, the random-oracle model for Keccak and collision resistance of Poseidon. A binding random-linear-combination commitment, anchored on a prover digest and the calldata of every proof-carrying call, keeps every verifier at $8$--$15$ public inputs and a point-based Vandermonde check pins the combine proof's Lagrange vector without non-native arithmetic. We report circuit sizes at a committee bound of $32$ and a pool of $8$ keys, and transaction costs measured against the real verifiers of the current build on a local testnet; the same build runs as a public testnet on Sepolia.
+\end{abstract}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Introduction}
+\label{sec:intro}
+
+A distributed key generation protocol lets $n$ parties jointly produce a public key whose secret is Shamir-shared so that any $t$ of them can decrypt \cite{desmedt1989threshold}, with no party ever holding the secret. Classical DKGs in the Pedersen tradition \cite{pedersen1991threshold} assume synchrony and resolve faulty contributions through interactive complaints: a recipient that receives an invalid share posts a complaint, the dealer must answer within a timeout, and the protocol disqualifies on failure. Gennaro et al.\ \cite{gennaro1999secure} showed that Pedersen's protocol lets a rushing adversary bias the resulting key and fixed it with a commit-then-reveal round; they later showed that the biased key is nevertheless safe for discrete-log applications such as ElGamal encryption \cite{gennaro2003applications}. Kate and Goldberg \cite{kate2009dkg} moved DKG to the Internet setting; Gurkan et al.\ \cite{gurkan2021aggregatable} made transcripts aggregatable and publicly verifiable; Groth's non-interactive DKG \cite{groth2021nidkg}, deployed in the Internet Computer, proves dealings correct with forward-secure encryption and a bespoke proof system; SPRINT \cite{benhamouda2024sprint} targets high-throughput threshold signing. Asynchronous DKGs \cite{kokoris2020asynchronous,das2022practical,abraham2023bingo} have reduced communication to nearly quadratic and achieved adaptive security, but rest on packed asynchronous VSS, multi-valued validated Byzantine agreement and asynchronous common subset---primitives with little deployment history \cite{bacho2025sok}. Blockchain-assisted DKGs use the chain as a bulletin board: EthDKG \cite{schindler2019ethdkg} ports Joint-Feldman to Ethereum with on-chain complaint resolution, Sober et al.\ \cite{sober2023zksnark} SNARK-check the rebuttal but keep the complaint phase, and Shutter \cite{shutter2024} runs Feldman VSS with interactive complaints in production.
+
+Removing the complaint phase is not new in principle. Publicly verifiable secret sharing \cite{stadler1996pvss,schoenmakers1999pvss} lets a dealer publish shares encrypted to the recipients' keys together with a proof of correct sharing, so that anyone, not only the recipient, can check a dealing; Fouque and Stern \cite{fouque2001oneround} built a one-round DKG on exactly this idea; SCRAPE \cite{cascudo2017scrape} made the verification linear and ALBATROSS \cite{cascudo2020albatross} amortised it over batches. Gurkan et al.\ \cite{gurkan2021aggregatable} and Groth \cite{groth2021nidkg} are the modern descendants, Kate et al.\ \cite{kate2024classgroups} obtain a non-interactive VSS without any setup from class groups, and Ferveo \cite{bebel2022ferveo} deploys epoch-style threshold decryption with publicly verifiable dealings on a BFT chain. What has kept this line off public chains is the cost of the \emph{verifier}: every one of these proofs is checked with $\Theta(n)$ group operations per dealing, in groups (Paillier, class groups, pairing-friendly curves) that the EVM either does not expose or prices at hundreds of thousands of gas per dealing. On a chain, the contract is the verifier, and it must verify every dealing of every epoch. Our observation is that a general-purpose succinct proof turns a publicly verifiable dealing into one whose on-chain verification cost is \emph{constant}: one pairing check and eight public inputs, whatever $n$ and $t$ are. The rest of the paper is what it takes to make that observation hold up in a deployed system.
+
+\paragraph{Contributions.}
+\begin{enumerate}[leftmargin=2em,nosep]
+  \item Every contribution is a publicly verifiable Feldman dealing carried by a Groth16 proof and verified on chain at constant cost, one pairing check and eight public inputs; the contract rejects invalid contributions at submission time, so the attack surface of interactive dispute resolution disappears by construction. Table~\ref{tab:related} places the design among its predecessors.
+  \item The protocol is organised around a long-lived \emph{epoch}: one DKG deals a pool of $\Kmax$ independent keys inside the same contribution proof, finalizes without a proof, and turns on each key with a small activation proof that rebinds the share commitments already published at contribution time. Every \emph{application} registering against the epoch claims one pool key $P_j$ and, optionally, adds an organizer key, so its encryption key is $P_j$ or $P_j + \mathsf{PK}_{\mathtt{org}}$ and a ciphertext submitted to one application never decrypts under another's key. Committees are drawn from a permissionless registry by a lottery whose seed is unpredictable to the epoch initiator.
+  \item Co-decryption is browser-feasible and needs no per-ciphertext organizer transaction. A locked application's organizer reveals its secret once, in one transaction the contract checks against the key registered at application creation; from then on the committee's combine proof---produced in any case---shows knowledge of that secret directly, so one reveal unlocks every past and future ciphertext of that application and the organizer never touches a ciphertext-specific value. Until the reveal the contract refuses every partial and combine of the application, so the organizer decides \emph{when} its ciphertexts open, never \emph{which}; a decryption window on the application's policy keeps the committee, and a revealed organizer, from decrypting before it opens.
+  \item A security model in which the adversary controls arbitrarily many organizers and submitters as well as $f$ committee members with $n - f \ge t$, submits anything under the applications it controls and reads every committee partial. Closing the shared-key oracle makes cross-application secrecy a matter of key independence: an adversary's own applications sit on keys dealt independently of an honest one's. What remains is a straight-line DDH reduction for a locked application before its organizer reveals, and one for an automatic application under its own key, each with its assumption chain stated: soundness of the dealing proofs, the random-oracle model for Keccak, collision resistance of Poseidon, and $f < t$ or $n - f \ge t$ as the result requires.
+  \item An EVM implementation with three contracts and four circuits, and the two devices that make it affordable: a binding random-linear-combination commitment keeping every verifier at $8$--$15$ public inputs regardless of $n$ (we show that its challenge must cover both a prover digest of the witness and the calldata, and exhibit the forgeries otherwise) and a Vandermonde-identity check pinning the combine proof's Lagrange vector without non-native field arithmetic. We report circuit sizes at a committee bound of $32$ and a pool of $8$ keys, and transaction costs measured against the real verifiers of the current build on a local testnet; the same build runs as a public testnet on Sepolia.
+\end{enumerate}
+
+\paragraph{Motivating application.} The protocol is the threshold-key layer of Vocdoni's DAVINCI voting system \cite{Vocdoni_io,Davinci_vote}: ballots are encrypted under a threshold ElGamal key that is never reconstructed, homomorphically aggregated off chain, and the tally ciphertext is what the pipeline decrypts. Each election registers as an application against a live epoch, claiming one of its pool keys and, if it wants one, an organizer key, so one committee serves many concurrent elections under independent keys while no committee opens an election alone and no organizer opens one without the committee. The November~2025 IACR board election rerun \cite{iacr2025rerun}, where a single trustee's lost share under a $3$-of-$3$ Helios deployment left the ballots unrecoverable, is the failure mode the epoch model absorbs on the committee side: $t$ with margin, oversubscribed lotteries, overlapping epochs, permissionless demotion of silent operators.
+
+\begin{table}[t]
+\centering
+\caption{Dealing verification in DKGs with a public bulletin board. ``Complaints'': whether an interactive dispute phase remains. ``Verifier'': the work needed to accept one dealing, and whether anyone (public) or only the recipient (private) can do it. ``On chain'': whether an EVM contract performs the verification.}
+\label{tab:related}
+\footnotesize
+\renewcommand{\arraystretch}{1.1}
+\begin{tabular}{l l p{5.4cm} l}
+\hline
+Protocol & Complaints & Verifier per dealing & On chain \\
+\hline
+Pedersen, Gennaro et al.\ \cite{pedersen1991threshold,gennaro1999secure} & yes & $O(t)$ exp.\ per recipient (private) & no \\
+Fouque--Stern \cite{fouque2001oneround} & no & $O(n)$ Paillier ops (public) & no \\
+SCRAPE / ALBATROSS \cite{cascudo2017scrape,cascudo2020albatross} & no & $O(n)$ exp.\ (public) & no \\
+Gurkan et al.\ \cite{gurkan2021aggregatable} & no & $O(n)$ exp.\ + pairings, aggregatable & no \\
+Groth NI-DKG \cite{groth2021nidkg} & no & $O(n)$ exp.\ + pairings (public) & no (ICP) \\
+Ferveo \cite{bebel2022ferveo} & no & $O(n)$ exp.\ + pairings (public) & no (BFT) \\
+Kate et al.\ \cite{kate2024classgroups} & no & $O(n)$ class-group ops (public) & no \\
+EthDKG \cite{schindler2019ethdkg} & on chain & $O(t)$ exp.\ per recipient, disputes on chain & yes \\
+Sober et al.\ \cite{sober2023zksnark} & on chain & SNARK-checked disputes (trusted setup) & yes \\
+Shutter \cite{shutter2024} & yes & $O(t)$ exp.\ per recipient (private) & partly \\
+This work & no & one Groth16 check, $8$ inputs (public; trusted setup) & yes \\
+\hline
+\end{tabular}
+\end{table}
+
+Section~\ref{sec:prelim} fixes notation, Section~\ref{sec:protocol} specifies the protocol, Section~\ref{sec:security} analyses it, Section~\ref{sec:implementation} describes and measures the EVM implementation, Section~\ref{sec:why} explains why the design is shaped the way it is rather than in one of four more obvious ways, and Section~\ref{sec:discussion} closes with limitations, risks and future work.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Preliminaries}
+\label{sec:prelim}
+
+Let $\GC$ be a cyclic group of prime order $q$ in additive notation with generator $G$; scalars live in $\FB_q$. We assume the decisional Diffie--Hellman problem is hard in $\GC$ and model the hash functions as random oracles \cite{bellare1993random}. Two hash functions appear: $\HK$ is Keccak-256 reduced modulo $q$, used wherever the contract computes a challenge; $\HP$ is Poseidon \cite{grassi2021poseidon}, used inside circuits, whose random-oracle modelling is a heuristic we make explicit. The implementation uses the prime-order subgroup of BabyJubJub (cofactor $8$) over the BN254 scalar field $\FB_p$, $p > q$; $\FB_p$ is also the native field of the circuits. Table~\ref{tab:notation} collects the notation. Group operations run inside SNARK circuits; the contract does bookkeeping. Every point crossing a trust boundary must be canonical, on the curve and, where a zero value would be meaningful, not the identity, which the contract checks; subgroup membership is not checked on chain but where a point is consumed, in circuit or off chain by the party about to multiply a secret into it (\S\ref{subsec:decryption}).
+
+\begin{table}[t]
+\centering
+\caption{Notation.}
+\label{tab:notation}
+\footnotesize
+\renewcommand{\arraystretch}{1.05}
+\begin{tabular}{l p{9.2cm}}
+\hline
+$\GC, G, q$ & prime-order group, generator, order (BabyJubJub subgroup) \\
+$\FB_p$ & BN254 scalar field, native field of the circuits, $p > q$ \\
+$\HK, \HP$ & Keccak-256 mod $q$ (contract side), Poseidon (circuit side) \\
+$N$ & active operators in the registry when an epoch is created \\
+$\Nmax$ & compile-time committee bound of the circuits and contracts \\
+$\Kmax$ & compile-time bound on pool keys dealt per epoch ($\Kmax = 8$) \\
+$t, n, m_{\min}, \alpha$ & threshold, committee size, minimum accepted contributions, lottery oversubscription \\
+$\QUAL$ & committee members whose contributions were accepted \\
+$\QC, s$ & members whose partials are combined, $s = |\QC| \ge t$ \\
+$\mathtt{eid}, \mathtt{aid}, \mathtt{ctIdx}, j$ & epoch, application, ciphertext and pool-key identifiers \\
+$\mathsf{pub}_i, \mathsf{sk}_i$ & operator $i$'s share-encryption key pair \\
+$f_i^{(j)}, C_i^{(j)}(k), E_i^{(j)}(u)$ & dealer $i$'s polynomial, coefficient commitments and share for key $j$, encrypted to recipient $u$ \\
+$A_j, \Cbar^{(j)}(k)$ & pool key $j$'s summed polynomial, summed coefficient commitments \\
+$P_j, D_{j,i}, e_{j,i}$ & pool key $j$ ($= A_j(0)G$), member $i$'s share commitment and share of key $j$ \\
+$\mathsf{sk}_{\mathtt{org}}, \mathsf{PK}_{\mathtt{org}}$ & organizer key pair of one application \\
+$\mathsf{PK}_{\mathtt{aid}}$ & application key, $P_j$ or $P_j + \mathsf{PK}_{\mathtt{org}}$ \\
+$\mroot{j}$ & Keccak Merkle root of pool key $j$'s share commitments \\
+$\delta_i, c_i$ & committee partial $e_{j,i} C_1$, Poseidon challenge of its proof \\
+\hline
+\end{tabular}
+\end{table}
+
+\paragraph{Bulletin-board model.} Parties publish on the blockchain, which provides ordering, persistence and broadcast under the chain's partial-synchrony assumption. Phases are delimited by block numbers and a party that misses its window is excluded; this matches every production smart-contract chain and avoids asynchronous agreement primitives.
+
+\paragraph{Shamir sharing and Feldman VSS \cite{shamir1979share,feldman1987practical}.} A dealer with secret $\sigma$ samples a random degree-$(t{-}1)$ polynomial $f$ with $f(0) = \sigma$, gives party $j$ the share $f(j)$, and publishes commitments $C(k) := a_k G$ to the coefficients so that party $j$ can check
+\begin{align}
+    f(j)\,G \overset{?}{=} \sum_{k=0}^{t-1} j^k\, C(k).
+    \label{eq:feldman}
+\end{align}
+Pedersen DKG \cite{pedersen1991threshold} runs $n$ Feldman instances in parallel and sums them; we replace its complaint phase by a per-contribution SNARK that enforces \eqref{eq:feldman} for every recipient.
+
+\paragraph{Hashed ElGamal.} To encrypt a share $s \in \FB_q$ under $\mathsf{pub} = x\,G$ the sender samples $r \leftarrow \FB_q$ and outputs $(R, \sigma) := (rG,\; s + \HP(\mathsf{ctx} \,\|\, r\,\mathsf{pub}) \bmod q)$; the recipient recovers $s = \sigma - \HP(\mathsf{ctx} \,\|\, xR)$. The context $\mathsf{ctx}$ binds the epoch, the (dealer, recipient) pair and the index of the share when a dealer sends several to one recipient, so a mask is never reused. The construction is IND-CPA under hash-CDH (a KEM/DEM instance in the style of \cite{abdalla_bellare_rogaway_dhies_2001,cash_kiltz_shoup_twin_dh_2008}), avoids message encoding into $\GC$, and its correctness statement is one fixed-base multiplication, one variable-base multiplication and a hash---SNARK-friendly. This scheme encrypts \emph{shares}; applications encrypt with the exponential ElGamal of \S\ref{subsec:derivation}, a different scheme.
+
+\paragraph{Schnorr and Chaum--Pedersen proofs \cite{chaum1992wallet}.} A Schnorr proof of knowledge of $x$ with $X = xG$ is $(A = wG,\, z = w + cx)$ with $c$ a Fiat--Shamir hash of the transcript; a Chaum--Pedersen DLEQ proof additionally commits $B = wH$ and shows that $\log_G X = \log_H Y$. All transcripts are domain-separated and pin the protocol identifiers; the exact layout is given at each use site.
+
+\paragraph{Groth16 \cite{groth16}.} Groth16 is knowledge-sound and zero-knowledge under a per-circuit structured reference string; its knowledge soundness is established in the generic-group model \cite{groth16}, an idealisation that every statement relying on it inherits. Each circuit compiles to a Solidity verifier over BN254 whose cost is a fixed pairing check plus one $\mathsf{ecMul}$ ($6{,}000$ gas), one $\mathsf{ecAdd}$ ($150$ gas) \cite{eip1108} and calldata per public input, about $6.7\,\mathrm{k}$ gas each; \S\ref{subsec:input-reduction} keeps that term small.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Protocol}
+\label{sec:protocol}
+
+The protocol runs in \emph{epochs}. An epoch, identified by a 12-byte $\mathtt{eid}$, deals a pool of $\Kmax$ independent keys $P_0, \dots, P_{\Kmax-1}$ and, for each, per-member share commitments $\{D_{j,i}\}_{i \in [n]}$ for the whole committee, dealt by the members $\QUAL \subseteq [n]$ whose contributions were accepted; every key's secret exists only as Shamir shares. Many applications register against one epoch, each claiming one pool key and, optionally, its own organizer key (\S\ref{subsec:derivation}), and the same committee serves all of them under independent keys. We assume an on-chain registry of operators, each having published an encryption key $\mathsf{pub}_i$ for the hashed-ElGamal scheme above with a Schnorr proof of possession (\S\ref{subsec:registry-contract}).
+
+\subsection{Committee Selection}
+\label{subsec:lottery}
+
+Who may operate a node is a deployment concern (vetting, stake, diversity); the protocol only decides \emph{which} eligible operators serve in an epoch, by a lottery that nobody can steer. Let $N$ be the number of active operators when the epoch is created.
+
+\begin{enumerate}[leftmargin=2em,nosep]
+    \item \textbf{Snapshot.} The initiator submits $(t, n, m_{\min}, \alpha)$: threshold, committee size, minimum accepted contributions ($t \le m_{\min} \le n$) and an oversubscription factor $\alpha \ge 1$. The contract snapshots $N$, pins the seed block $b_s := b_0 + \kappa$ ($b_0$ the creation block, $\kappa$ a compile-time constant, $1$ block in the reference contracts) and stores the admissibility threshold
+    \[
+        \tau := \Big\lfloor 2^{256} \cdot \frac{\alpha n}{N} \Big\rfloor \quad (\tau := 2^{256}-1 \text{ if } \alpha n \ge N).
+    \]
+    \item \textbf{Seed.} The first claim after $b_s$ resolves $\mathsf{seed} := \mathsf{blockhash}(b_s)$ and freezes it.
+    \item \textbf{Self-claim.} An active operator $\mathsf{op}$ is admissible iff $\mathsf{keccak}(\mathsf{seed} \,\|\, \mathsf{op}) < \tau$; the first $n$ admissible claimants take the slots and the epoch advances.
+\end{enumerate}
+
+Only operators that entered the active set \emph{before} the epoch was created may claim, where reactivating a reaped identity (\S\ref{subsec:registry-contract}) counts as entering: the admissible set ranges over a subset of the $N$ operators the contract counted and over nobody outside it, so an adversary can neither grind fresh identities against a revealed seed nor park dormant ones outside $N$ and revive the winners once it is known. Reaping applies only to operators silent for longer than the inactivity window, which the reference node refreshes at $80\%$ of that window, so an honest live operator is never reapable. Each operator is admissible with probability $p = \alpha n / N$, so the admissible count is $\mathrm{Bin}(N, p)$ with mean $\alpha n$ and the epoch dies if fewer than $n$ of them claim in time; at $\alpha = 1.5$, $n = 32$ and full liveness, $\Pr[\mathrm{Bin}(N, p) < n] \approx 0.6\%$ for large $N$ (the Poisson tail at mean $48$), falling below $10^{-5}$ at $\alpha = 2$. Offline operators shift $p$ down, so $\alpha$ should be set from the observed liveness of the registry.
+
+What the lottery guarantees should be stated plainly. The seed is \emph{unpredictable to the epoch initiator} at creation time---it is a block hash that does not exist yet---but it is not unbiasable, and \S\ref{subsec:risks} says by whom; a beacon \cite{micali1999vrf,drand2024} would remove that. Within the admissible set slots are first-come-first-served, so an adversary with $n$ admissible identities and better inclusion latency takes the whole committee; admissibility is however proportional to its share of the \emph{snapshotted} registry, so the protocol reduces committee capture to registry capture and claims no more. Since EVM chains expose only the last $256$ block hashes, a seed that is not resolved in time expires and the epoch is dead.
+
+\subsection{Epoch Key Generation}
+\label{subsec:keygen}
+
+Epochs are created \emph{permissionlessly} at a fixed cadence: $\mathsf{createEpoch}$ succeeds once $\mathsf{EPOCH\_DURATION}$ blocks have elapsed since the previous epoch started, and the three preparation windows are deploy-time constants (the deployment script's defaults are $25$, $25$ and $5$ blocks), so a long epoch has a longer service window. Because the winner of the creation race supplies $(t, n, m_{\min}, \alpha)$, the deployment fixes floors $t \ge t_{\min}$, $n \ge n_{\min}$ and a ceiling $\alpha \le \alpha_{\max}$ as constructor immutables. These are the deployment's real security parameters, since an adversary that wins every creation race pins every epoch to them: they must be the weakest committee the deployment will live with. The public Sepolia deployment uses $t_{\min} = 2$, $n_{\min} = 3$, $\alpha_{\max} = 2$; the build measured in \S\ref{subsec:results} keeps those floors, and its committee of $n = 4$ and $t = 3$ sits one member above them; the contract additionally enforces $t \le m_{\min} \le n \le \Nmax$ and $\alpha \ge 1$. There is no separate floor on $m_{\min}$: robustness is governed by $n_{\min} - t_{\min}$, the number of members that may fail before $t$ honest shares are missing (\S\ref{sec:security}).
+
+Figure~\ref{fig:lifecycle} shows the lifecycle on the block axis.
+
+\input{fig-lifecycle}
+
+\paragraph{Phase 1: Committee assembly.} The lottery of \S\ref{subsec:lottery} runs during the selection window.
+
+\paragraph{Phase 2: Contribution.} Each committee member $i$ samples, for every pool key $j \in [\Kmax]$, a uniform degree-$(t{-}1)$ polynomial $f_i^{(j)}(x) := \sum_{k<t} a_{i,j,k} x^k$, and one ECDH secret per recipient shared across all $\Kmax$ keys. It publishes in one transaction the commitments $C_i^{(j)}(k) := a_{i,j,k} G$ for every $j$, the encrypted shares $E_i^{(j)}(u) := (R_i(u), \sigma_i^{(j)}(u)) = \mathsf{Enc}[\mathsf{pub}_u, f_i^{(j)}(u)]$ for every recipient $u \in [n]$ and key $j$---masked with the same per-recipient secret but a key index folded into the mask hash, so the $\Kmax$ shares to one recipient cost one ECDH, not $\Kmax$---and a proof $\pi_i$ that \eqref{eq:feldman} holds for every $u$ and $j$ and that each $E_i^{(j)}(u)$ is a correct encryption of $f_i^{(j)}(u)$ (circuit in \S\ref{subsec:zk-contribution}). The commitments are digested per key and the $\Kmax$ per-key digests digested again into one $\mathtt{commitmentsHash}$ (\S\ref{subsec:input-reduction}); the contract verifies $\pi_i$, stores $\mathtt{commitmentsHash}$, and leaves the shares in calldata, from where the other members read them.
+
+\paragraph{Phase 3: Finalization.} After the contribution window closes, at least $m_{\min}$ contributions were accepted and the key-assembly window has elapsed, anyone may call $\mathsf{finalizeEpoch}$, which takes \emph{no proof}: it checks the phase and the row count, freezes $\QUAL$ as the accepted contributor set, and marks the epoch $\textsc{Live}$. An epoch that did not fill its committee in time, or closed its contribution window with fewer than $m_{\min}$ rows, is dead and anyone may record the abort; one that can still be finalized cannot be aborted by anybody, and finalization has no upper deadline, the next epoch starting on cadence regardless. In a single-key design finalization is the proof that produces the epoch key; here it is bookkeeping, and every pool key is turned on separately, after the epoch is already $\textsc{Live}$.
+
+\paragraph{Phase 4: Pool-key activation.} With $A_j(x) := \sum_{\ell \in \QUAL} f_\ell^{(j)}(x)$ and $\Cbar^{(j)}(k) := \sum_{\ell \in \QUAL} C_\ell^{(j)}(k)$,
+\[
+    P_j := \Cbar^{(j)}(0) = A_j(0)\,G, \qquad D_{j,i} := A_j(i)\,G = \sum_{k<t} i^k\,\Cbar^{(j)}(k) \quad (i \in [n]),
+\]
+anyone may submit, for any key $j \in [\Kmax]$ and in any order, an activation proof that the $\Cbar^{(j)}(k)$ aggregate exactly the accepted contributions' key-$j$ commitments and that the $D_{j,i}$ are their evaluations at every committee position $i \in [n]$, contributor or not (circuit in \S\ref{subsec:zk-poolkey}). The proof rebinds key $j$ to the $\mathtt{commitmentsHash}$ each contributor already published in Phase 2, without republishing that contributor's other $\Kmax - 1$ keys: \S\ref{subsec:input-reduction} explains how this stays affordable. The contract persists $P_j$ and $\mroot{j}$, a Keccak Merkle root over $\Nmax$ tagged leaves---$\mathsf{keccak}(\mathtt{0x00} \,\|\, D_{j,i})$ for $i \le n$, the fixed sentinel $\mathsf{keccak}(\texttt{"davinci-dkg:merkle-empty:v1"})$ for the positions beyond $n$, and $\mathsf{keccak}(\mathtt{0x01} \,\|\, l \,\|\, r)$ at the inner nodes, so that a leaf cannot pose as a node nor an absent position as a commitment to the identity (\S\ref{subsec:zk-partial})---and emits $\mathsf{PoolKeyActivated}$. Every committee member $i \in [n]$ computes $e_{j,i} := A_j(i)$, for every key $j$, by decrypting the Phase-2 calldata with $\mathsf{sk}_i$, whether or not its own contribution was accepted: every accepted dealer encrypted a share to all $n$ recipients, so a member that never contributed holds shares of every key just the same, has its $D_{j,i}$ under $\mroot{j}$ and may publish partials. $\QUAL$ is the set of dealers, not the set of decryptors; decryption survives $n - t$ absent members, not $|\QUAL| - t$. Nodes activate key $0$ as soon as an epoch goes $\textsc{Live}$ and keep $\mathsf{ActivateAhead}$ (default $2$) activated-but-unclaimed keys ready, in the same seed-derived rotation that used to schedule auto-finalization; a node may also start the next epoch's lottery ahead of cadence once the current one has at most one unclaimed key left, so a deployment with live nodes never runs dry.
+
+\paragraph{Selective abort.} Contributions land sequentially, so a last mover can inspect earlier commitments before deciding whether to contribute; an activator has no such choice, because the contract requires the activation proof to aggregate \emph{every} accepted contribution for that key. What remains is Gennaro et al.'s attack \cite{gennaro1999secure} in its weakest form: an adversary with $f$ members contributing last selects, among $2^f$ committee subsets it can compute in advance, which one lands in $\QUAL$ and hence in every pool key at once, and can refuse to reach $m_{\min}$. Confidentiality is unaffected as long as one honest polynomial is in $\QUAL$ (\S\ref{sec:security}); deployments needing unbiased keys can add a commit-then-reveal layer.
+
+\subsection{Applications and Their Keys}
+\label{subsec:derivation}
+
+An application is registered against a $\textsc{Live}$ epoch with an identifier $\mathtt{aid}$ and a policy; registration claims the next activated, unclaimed pool key $P_j$, reverting $\mathsf{PoolExhausted}$ if the epoch's $\Kmax$ keys are all spoken for and $\mathsf{PoolKeyNotActive}$ if the next one has not been turned on yet, and $\mathtt{aid}$ must be a non-zero element of $\FB_p$ because every proof of the pipeline consumes it as a public input. From here the two modes diverge.
+
+In the default, \emph{organizer-locked} mode, registration also carries an organizer key $\mathsf{PK}_{\mathtt{org}} = \mathsf{sk}_{\mathtt{org}} G$ and a Schnorr proof of possession
+\[
+    A := wG,\quad c := \HK(\mathsf{dom}_{\mathtt{org}} \,\|\, \mathtt{eid} \,\|\, \mathtt{aid} \,\|\, \mathsf{PK}_{\mathtt{org}} \,\|\, A),\quad z := w + c\,\mathsf{sk}_{\mathtt{org}},
+\]
+which the contract verifies as $zG = A + c\,\mathsf{PK}_{\mathtt{org}}$: one Keccak and one double-base multiplication, once per application. The registrant is the application's \emph{organizer}, and the encryption key is $\mathsf{PK}_{\mathtt{aid}} := P_j + \mathsf{PK}_{\mathtt{org}}$, whose implicit secret is $\mathsf{sk}_{P_j} + \mathsf{sk}_{\mathtt{org}}$: the additive key aggregation used for non-hardened derivation in BIP-32 \cite{bip32} and for v3 onion addresses in Tor \cite{tor2018v3}, with one difference that carries the whole design---the added term is a public key whose secret somebody keeps, not a public offset anybody can recompute. The organizer keeps $\mathsf{sk}_{\mathtt{org}}$ off chain until it chooses to publish it; \S\ref{subsec:decryption} describes the one-shot reveal that unlocks decryption.
+
+A user encrypts an integer $m$ for $\mathtt{aid}$ as $(C_1, C_2) := (rG,\, mG + r\,\mathsf{PK}_{\mathtt{aid}})$ with $r \leftarrow \FB_q$: \emph{exponential} ElGamal, additively homomorphic, at the price of recovering $m$ from $M = mG$ by a discrete-logarithm search over a bounded range (\S\ref{subsec:decryption}). For a locked application decryption needs $\mathsf{sk}_{P_j} C_1$, which only the committee can produce, \emph{and} $\mathsf{sk}_{\mathtt{org}} C_1$, which only the organizer's revealed secret lets anyone compute; neither side alone decrypts, and until the organizer reveals, nobody does.
+
+This is what separates one application from another, and it no longer rests on the organizer term alone. Each pool key is dealt by an independent Feldman polynomial per committee member, so the committee's contribution $\mathsf{sk}_{P_j} C_1$ is specific to whichever application claimed $P_j$: copying a $C_1$ into a decoy application and reading its partials yields $\mathsf{sk}_{P_{j'}} C_1$ under an unrelated key, useless against the original ciphertext. The committee's $t$-of-$n$ threshold now carries genuine secrecy weight for \emph{every} application, locked or automatic; a locked application additionally needs its organizer's reveal. Section~\ref{sec:security} makes this precise; Section~\ref{sec:why} explains why the classical alternative---a proof of knowledge of $r$ at submission---is unavailable: a ciphertext obtained by summing others has randomness $\sum_i r_i$ that its submitter does not know, and homomorphic aggregation is why the scheme is exponential ElGamal in the first place.
+
+\paragraph{Automatic applications.} An application may instead register with no organizer key at all: the contract stores $\mathsf{PK}_{\mathtt{org}}$ as the identity and $\mathsf{sk}_{\mathtt{org}} = 0$, ignoring any key or Schnorr words passed in, and the encryption key is plainly $\mathsf{PK}_{\mathtt{aid}} := P_j$. We call such an application \emph{automatic}, as opposed to \emph{organizer-locked}; the mode is fixed at registration and costs nothing extra, since the combine circuit's knowledge proof for $\mathsf{OrganizerSecret} = 0$ against $\mathsf{OrganizerPK} = (0,1)$ is satisfied trivially. An automatic application gives up, for itself only, what an organizer term buys: its plaintexts are recovered as soon as $t$ partials exist, and no party is accountable for having opened them. Its confidentiality is exactly that of threshold ElGamal under its own $P_j$ (\S\ref{subsec:automatic-secrecy})---which, because $P_j$ is independent of every other application's key, means only that the committee alone can open it without an organizer, not that the ciphertexts are public to the world. The mode exists for ciphertexts that are meant to be opened, such as a tally, when no organizer should stand between the committee and the result.
+
+\paragraph{Policy.} Registration also fixes who may submit, a block window for ciphertext submission, and a decryption window in Unix time, $[\mathsf{decryptNotBefore}, \mathsf{decryptNotAfter}]$ (either bound $0$ meaning unbounded on that side). Submission is open to anyone if the application says so, else restricted to an allow-list of up to $32$ addresses, else---when both are empty---to the registrant; outside its block window, or after the decryption window has closed, the contract rejects new ciphertexts. Outside the decryption window the contract rejects new partials and new combines alike, in both modes, not the combine only: in an automatic application $t$ partials already decrypt off chain, so the closing bound gives it a hard stop after which the committee neither spends on it nor lands anything of it on chain; the opening bound is an embargo that not even a revealed organizer can lift early. For a locked application the same gate also refuses every partial and combine until the organizer has revealed ($\mathsf{OrganizerSecretNotRevealed}$), so before the reveal no partial of the application exists on chain at all (\S\ref{subsec:decryption}). Contradictory policies---open submission together with an allow-list, a decryption window that closes before it opens---are rejected at registration.
+
+\subsection{Threshold Decryption}
+\label{subsec:decryption}
+
+A ciphertext $(C_1, C_2)$ for $\mathtt{aid}$, registered against pool key $P_j$, decrypts to $M = C_2 - \mathsf{sk}_{P_j} C_1 - \mathsf{sk}_{\mathtt{org}} C_1$ ($\mathsf{sk}_{\mathtt{org}} = 0$ for an automatic application). Figure~\ref{fig:decryption} shows the message flow.
+
+\input{fig-decryption}
+
+\paragraph{Submission.} The contract receives $\mathtt{aid}$ and $(C_1, C_2)$ as six calldata words and no proof. It requires the application to exist and enforces its policy (\S\ref{subsec:derivation})---the submission rule, the block window, the closing bound of the decryption window (a ciphertext nobody may ever decrypt is refused) and a cap of $256$ ciphertexts per application and epoch---assigns the next index $\mathtt{ctIdx}$ on chain so no slot can be squatted or front-run, checks that both points are canonically encoded, on the curve and non-identity, stores $\mathsf{keccak}(C_1, C_2)$ and emits the ciphertext. The opening bound and, for a locked application, the reveal are checked later, on partials and combines. The contract does \emph{not} check that $C_1$ lies in the prime-order subgroup: that check costs about $0.17\,\mathrm{M}$ gas and protects only whoever is about to multiply a secret into $C_1$, since a cofactor component leaks $e_{j,i} \bmod 8$ through the published partial. The committee node is the only party in that position---by the time $\mathsf{sk}_{\mathtt{org}}$ is multiplied into $C_1$, inside a combine, it is public---so the node performs the check off chain before computing $e_{j,i} C_1$ and nobody else does; a node that skipped it would endanger its own share and nobody else's.
+
+\paragraph{Partial decryption.} Each committee member $i \in [n]$, whether or not its own contribution was accepted, publishes $\delta_i := e_{j,i} C_1$ with a DLEQ proof $(A_i, B_i, z_i)$ that $(D_{j,i}, \delta_i)$ share a discrete logarithm with respect to $(G, C_1)$, and a Merkle path proving that $D_{j,i}$ is the $i$-th leaf under $\mroot{j}$, the root the application's pool key was activated with (\S\ref{subsec:zk-poolkey}). With witness $w_i \leftarrow \FB_q$:
+\begin{align*}
+    A_i &= w_i G, \qquad B_i = w_i C_1, \qquad z_i := w_i + c_i\,e_{j,i}, \\
+    c_i &:= \HP(\mathsf{dom} \,\|\, \mathtt{eid} \,\|\, \mathtt{aid} \,\|\, \mathtt{ctIdx} \,\|\, i \,\|\, D_{j,i} \,\|\, C_1 \,\|\, \delta_i \,\|\, A_i \,\|\, B_i).
+\end{align*}
+The transcript binds the proof to one epoch, application, ciphertext and participant, so it can be replayed nowhere; the Merkle path binds the same partial to the application's own key, so a partial computed for a decoy application cannot be replayed against this one either. Verification is $z_i G = A_i + c_i D_{j,i}$ and $z_i C_1 = B_i + c_i\,\delta_i$ inside the partial-decrypt circuit, unchanged from before (\S\ref{subsec:zk-partial}); the Merkle path is checked outside it, against $\mroot{j}$ at leaf index $i - 1$ with the tagged leaf $\mathsf{keccak}(\mathtt{0x00} \,\|\, D_{j,i})$, because BabyJubJub arithmetic is expensive on the EVM but Keccak is not. The contract accepts the partial only if the application's decryption is open: inside its window and, for a locked application, after the organizer's reveal.
+
+\paragraph{Revealing the organizer secret.} A locked application's organizer controls \emph{when} its ciphertexts open, by an action rather than by time-lock cryptography \cite{rivest1996timelock,tlock2023}, but the action is now all-or-nothing and application-wide rather than per ciphertext: it calls $\mathsf{revealOrganizerSecret}(\mathtt{eid}, \mathtt{aid}, \mathsf{sk}_{\mathtt{org}})$, permissionless and one-shot, and the contract checks $\mathsf{sk}_{\mathtt{org}} G$ against the $\mathsf{PK}_{\mathtt{org}}$ already on record, stores the secret and emits $\mathsf{OrganizerSecretRevealed}$; a second call reverts $\mathsf{AlreadyRevealed}$. Until that block the contract refuses every partial and every combine of the application with $\mathsf{OrganizerSecretNotRevealed}$, so no partial of a locked application exists on chain before its reveal; from that block on, every ciphertext the application has ever received or will ever receive combines as soon as $t$ partials are on chain and the decryption window allows it, because the combine proof of \S\ref{subsec:decryption} takes $\mathsf{sk}_{\mathtt{org}}$ from the application record as a private witness and proves in circuit that it matches $\mathsf{PK}_{\mathtt{org}}$, rather than verifying a per-ciphertext Chaum--Pedersen transcript. The organizer therefore decides \emph{when} the tap opens, once, never which ciphertext flows through it first: there is no smaller unit of release than the whole application, no way to open one ballot and leave the rest closed, and---because the partials it would need do not exist until it has published its secret---no way to learn a result before everyone else does. The contract enforces this, not node policy. An automatic application never takes this step: its $\mathsf{sk}_{\mathtt{org}}$ is $0$ from registration, so the same knowledge proof is satisfied trivially and decryption needs nobody but the committee, subject to the same decryption window.
+
+\paragraph{Combine.} Once $t$ partials are on chain and the application's decryption window is open, anyone submits the combine proof; for a locked application whose organizer has not yet revealed, the contract refuses the call---as it refuses the partials it would combine---and the private witness the proof needs does not exist anyway. For a set $\QC = \{x_1, \dots, x_s\} \subseteq [n]$ of $s \ge t$ members with partials on chain and Lagrange coefficients $\lambda_k = \prod_{u \in \QC \setminus \{x_k\}} u/(u - x_k)$,
+\begin{align}
+    \mathsf{sk}_{P_j} C_1 = \sum_{k} \lambda_k\, \delta_{x_k}, \qquad \Delta_{\mathtt{org}} := \mathsf{sk}_{\mathtt{org}} C_1, \qquad M = C_2 - \sum_k \lambda_k\,\delta_{x_k} - \Delta_{\mathtt{org}},
+    \label{eq:combine}
+\end{align}
+and one proof establishes the Lagrange combination \emph{and}, from the private witness $\mathsf{sk}_{\mathtt{org}}$, that $\mathsf{sk}_{\mathtt{org}} G$ equals the $\mathsf{PK}_{\mathtt{org}}$ on record---trivially true at $\mathsf{sk}_{\mathtt{org}} = 0$, $\mathsf{PK}_{\mathtt{org}} = (0,1)$ for an automatic application. This knowledge check replaces the previous design's Chaum--Pedersen proof: it is verified once, inside the same proof that already runs for the committee's share, rather than by a Keccak challenge the contract recomputes over a separately posted, unverified share. The combiner recovers $m$ ($M = mG$) off-line by baby-step giant-step \cite{shanks1971class}, the circuit only checking $M = mG$; the node caps plaintexts at $2^{50}$ ($2^{25}$ baby steps, a $256$~MiB table), the browser SDK at $2^{32}$. For a locked application, compromising $t$ committee members therefore does not decrypt, and neither does compromising an organizer before it reveals; every protocol-following decryption leaves an on-chain trace. A ciphertext costs $t$ partials and one combine in either mode, plus, once per application rather than once per ciphertext, the organizer's reveal.
+
+\paragraph{Liveness.} If fewer than $t$ committee members still hold their shares when a ciphertext is combined it is undecryptable; since every member holds a share of every key whether or not it contributed, the margin is $n - t$ absent members, not $|\QUAL| - t$. With members available over the decryption horizon independently with probability $p_a$, that happens with probability $\Pr[\mathrm{Bin}(n, p_a) < t]$: at $p_a = 0.9$, $1.3 \cdot 10^{-9}$ for $n = 32$, $t = 16$, against $0.028$ for the $2$-of-$3$ committee of our testnet fleet and $0.27$ for the $3$-of-$3$ of the IACR incident. The mitigations are margin in $t$ relative to $n$, re-registering applications against a fresh epoch before the committee thins, and, in future, proactive share refresh \cite{herzberg1995proactive}. The organizer key of an organizer-locked application is a single point of failure of a different kind (\S\ref{subsec:risks}).
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Security Analysis}
+\label{sec:security}
+
+\paragraph{Model.} The adversary is static (corruptions fixed before the epoch is created, as in \cite{canetti1999adaptive}) and controls $f$ committee members, any number of non-committee operators, and any number of organizers and ciphertext submitters. We assume $n - f \ge t$ throughout: it is the margin the deployment needs for robustness anyway, and it is what lets the challenger below reconstruct every pool secret and argue without rewinding; where a statement needs the usual $f < t$ as well, it says so. The adversary sees the whole chain and may submit its own contributions, applications and ciphertexts at any time, including after seeing honest ones. The assumptions, and which results use them, are these: (a) DDH in $\GC$, for every secrecy statement; (b) $\HK$, i.e.\ Keccak, is a random oracle, used to programme the challenge of one Schnorr proof in Theorem~\ref{thm:cross} and for the BRLC binding of Lemma~\ref{lem:brlc}; (c) Poseidon is collision resistant, so that a stored digest fixes the vector it digests (Lemma~\ref{lem:dealing}), and where a circuit uses it as a Fiat--Shamir challenge, a random oracle---a heuristic we do not otherwise rely on; (d) the SNARK is sound, which for Groth16 is a knowledge-soundness statement established in the generic-group model \cite{groth16}, so every result that needs Lemma~\ref{lem:dealing} for the adversary's dealings inherits that idealisation, and zero-knowledge, used only in Observation~\ref{obs:automatic}; (e) a corruption bound: $n - f \ge t$ for robustness and for the straight-line argument of Theorem~\ref{thm:cross}, $f < t$ wherever a pool key's secret itself must stay hidden, and at least one honest dealer in $\QUAL$ ($m_{\min} > f$ suffices) for the pool keys to be secret at all. We consider correctness, robustness and secrecy.
+
+\emph{Correctness}: if pool key $j$ of a $\textsc{Live}$ epoch is activated then $P_j = A_j(0)\,G$ for $A_j = \sum_{\ell \in \QUAL} f_\ell^{(j)}$, every leaf $D_{j,i}$ under $\mroot{j}$ equals $A_j(i)\,G$, every honest committee member $i \in [n]$ holds $e_{j,i} = A_j(i)$, and every combined plaintext of an application on $P_j$ equals $\log_G(C_2 - \mathsf{sk}_{\mathtt{aid}} C_1)$ with $\mathsf{sk}_{\mathtt{aid}} = A_j(0) + \mathsf{sk}_{\mathtt{org}}$, whenever that logarithm is below the search bound. \emph{Robustness}: if at least $m_{\min}$ contributions are accepted the epoch goes $\textsc{Live}$ and every one of its $\Kmax$ keys can be activated by anybody; any $t$ honest committee members can decrypt any well-formed ciphertext of an automatic application, and of a locked one once its organizer has revealed.
+
+\begin{lemma}[Dealing correctness]
+\label{lem:dealing}
+If the contract accepts contribution $i$ then, for every key $j \in [\Kmax]$ and every recipient $u \in [n]$, recipient $u$ decrypts $E_i^{(j)}(u)$ to $s_i^{(j)}(u) \in [0, q)$ with $s_i^{(j)}(u)\,G = \sum_{k<t} u^k C_i^{(j)}(k)$, and $C_i^{(j)}(0), \dots, C_i^{(j)}(t-1)$ are commitments to a polynomial $f_i^{(j)}$ of degree below $t$ over $\FB_q$ with $s_i^{(j)}(u) = f_i^{(j)}(u)$. Moreover the stored $\mathtt{commitmentsHash}$ fixes every $C_i^{(j)}(k)$.
+\end{lemma}
+\begin{proof}
+By knowledge soundness the prover holds a witness for the relation of \S\ref{subsec:zk-contribution}. For each $j$ it contains range-checked coefficients $a_{i,j,k} \in [0, q)$ with $C_i^{(j)}(k) = a_{i,j,k}G$, so $f_i^{(j)}(x) := \sum_k a_{i,j,k} x^k$ has degree below $t$ over $\FB_q$. For each $u$ it contains $s_i^{(j)}(u) \in [0, q)$ with $s_i^{(j)}(u)\,G = \sum_k u^k C_i^{(j)}(k) = f_i^{(j)}(u)\,G$; since $G$ has order $q$ and both sides are reduced, $s_i^{(j)}(u) = f_i^{(j)}(u) \bmod q$. It further contains, once per recipient, $r_{i,u}$ with $R_i(u) = r_{i,u}G$, and $\sigma_i^{(j)}(u) = s_i^{(j)}(u) + \HP(\mathsf{ctx}_{i,u} \,\|\, j \,\|\, r_{i,u}\mathsf{pub}_u) \bmod q$, the reduction being enforced by an explicit quotient with a range-checked remainder, so the decomposition is unique, and the key index inside the mask keeps the $\Kmax$ masks of one recipient distinct. Recipient $u$ computes $\mathsf{sk}_u R_i(u) = r_{i,u}\mathsf{pub}_u$ and recovers every $s_i^{(j)}(u)$. The transcript the recipient reads from calldata is the one the circuit committed to: the contract compares the key section against its snapshot, and the BRLC of \S\ref{subsec:input-reduction} binds every remaining word to the digests the circuit exposes as public inputs. Finally $\mathtt{commitmentsHash}$ is the Poseidon digest, over $j$, of the per-key digests of the $C_i^{(j)}(k)$, so by collision resistance it fixes them all.
+\end{proof}
+
+\paragraph{Correctness and robustness.} By Lemma~\ref{lem:dealing} every accepted contribution is a valid Feldman dealing of $\Kmax$ polynomials to all $n$ members; this is where the complaint phase goes. Finalization proves nothing and needs to prove nothing: it freezes $\QUAL$. Activation of key $j$ proves, over the $\QUAL$ rows the contract checks against storage, that some commitment vectors hash---through the per-key digest and then together with the other keys' digests---to each contributor's stored $\mathtt{commitmentsHash}$, that $\Cbar^{(j)}(k)$ is their sum and $D_{j,i} = \sum_k i^k \Cbar^{(j)}(k)$ for every committee position $i \in [n]$; by the lemma those vectors are the $C_\ell^{(j)}(k)$ the recipients decrypted against, so $D_{j,i} = A_j(i)\,G$ and each honest member $i$ holds $e_{j,i} = A_j(i)$, whether or not it dealt. The Merkle root binds the $D_{j,i}$ to the key, and the partial-decryption proof of \S\ref{subsec:zk-partial}, whose $D_{j,i}$ the contract checks against $\mroot{j}$ of the application's own key, guarantees $\delta_i = e_{j,i} C_1$. The combine proof is sound against any prover by the Vandermonde check (\S\ref{subsec:zk-combine}), so a stored plaintext satisfies $mG = C_2 - \sum_k \lambda_k \delta_{x_k} - \mathsf{sk}\,C_1$ with $\sum_k \lambda_k \delta_{x_k} = A_j(0)\,C_1$ and $\mathsf{sk}\,G = \mathsf{PK}_{\mathtt{org}}$, the key the contract reads from the application record, so $\mathsf{sk} = \mathsf{sk}_{\mathtt{org}}$ ($= 0$ for an automatic application). Robustness needs $t$ honest members holding shares, and every committee member holds a share of every accepted dealing, so the condition is $n - f \ge t$ however many members dealt---the deployment's margin $n_{\min} - t_{\min}$. The row count $m_{\min}$ governs something else: with $m_{\min} > f$ at least one accepted dealer is honest, which is what the secrecy of the pool keys requires; the contract enforces only $m_{\min} \ge t$ because it cannot know $f$.
+
+\paragraph{Bias and secrecy of the pool keys.} As in Pedersen's protocol, a rushing adversary contributes last and decides which of its own dealings to submit, so no $P_j$ is uniform \cite{gennaro1999secure}; we do not add the commit-then-reveal round. The bias is harmless for encryption because the biased key is \emph{expressible} in terms of an honest one: $P_j = P^{\mathrm{hon}}_j + a_j G$, where $P^{\mathrm{hon}}_j$ sums the honest dealers' constant terms---uniform if one honest dealer is in $\QUAL$---and $a_j$ sums the adversary's, which the reductions below know, either by decrypting the adversary's shares with $t$ honest recipients ($n - f \ge t$) or by recovering its polynomials through the honest recipients' shares ($f < t$). A ciphertext $(C_1, C_2)$ under $P_j$ is the ciphertext $(C_1, C_2 - a_j C_1)$ under $P^{\mathrm{hon}}_j$ with the same randomness, so any advantage against the biased key is the same advantage against the honest one, with no loss. The $\Kmax$ polynomials of one honest dealer are independent, so the pool keys of one epoch are independent of each other up to the adversary's own additive contributions, which it knows. Share secrecy rests on hashed ElGamal in the random-oracle model, a corrupt member learning $f_\ell^{(j)}(u)$ for honest $\ell$ only at its own $f$ indices. Both arguments require the dealer's nonces to be uniform---the circuit proves $R = rG$ and correct masking for \emph{whatever} $r$ the dealer used---and, for the secrecy of a key, fewer than $t$ corrupt members.
+
+\paragraph{What the committee protects, and what it does not.} A partial $\delta_i = e_{j,i} C_1$ depends on $C_1$ and on the pool key $P_j$ of the application it was posted to, and the Merkle path binds it to that key. Anyone may still register an application and submit any point as $C_1$---copied verbatim from a victim application, or re-randomised as $C_1 + xG$---and the committee answers; what it reads off the partials is $A_{j'}(0)\,C_1$ under its own key $P_{j'}$, independent of the victim's $A_j(0)\,C_1$. With a single epoch key this was the oracle that made $\mathsf{sk}_{\mathtt{ep}} C_1$ public for every $C_1$ and put every bit of separation on the organizer term; classical threshold ElGamal closes it with a proof of knowledge of the randomness on every ciphertext \cite{shoup2002threshold}, a route \S\ref{sec:why} explains is unavailable here. Dealing a pool closes it by construction: a ciphertext is only ever answered under the key it was encrypted to, by members holding a share of that key, inside that application's decryption window. What the committee does not protect against is $t$ of its own members: they hold $A_j(0)$ for every $j$, and an automatic application has nothing else.
+
+\paragraph{Secrecy game.} The challenger runs the honest operators and organizers and---unlike the reductions usual for threshold schemes---runs the DKG \emph{honestly}: it plays the $n - f \ge t$ honest committee members, so it holds $t$ evaluations of every $A_j$ and interpolates every pool secret itself. The adversary $\AC$ fixes its corrupt set before the epoch is created, contributes for its members, sees every message, and calls five oracles. $\mathsf{Register}(\mathtt{aid}, \mathsf{mode}, \mathsf{PK}_{\mathtt{org}}, \pi)$ creates as many applications as the pool allows, in either mode, with arbitrary organizer keys and registration transcripts; each claims the next pool key as the contract does. $\mathsf{NewApp}(\mathtt{aid}, \mathsf{mode})$ creates an \emph{honest} application: the challenger samples a fresh organizer key (in the locked mode), registers it with a genuine proof of possession, and is its only submitter; $Q_A$ counts these. $\mathsf{Submit}(\mathtt{aid}, C_1, C_2)$, under an application of either kind, takes \emph{any} two points, well formed or not; every honest committee member $i \in [n]$ answers with $\delta_i = e_{j,i} C_1$ for that application's key $j$ and its proof. The only restriction is the contract's own: a partial is posted only while the application's decryption is open, which for a locked application means after its organizer has revealed. $\mathsf{Encrypt}(\mathtt{aid}, m)$, for an honest application, has the challenger sample $r \leftarrow \FB_q$ and submit $(rG,\, mG + r\mathsf{PK}_{\mathtt{aid}})$, on which the honest members again post their partials under the same rule. $\mathsf{Reveal}(\mathtt{aid})$, for a locked honest application, has its organizer publish $\mathsf{sk}_{\mathtt{org}}$, after which its partials flow; applications $\AC$ controls need no oracle. Once, $\mathsf{Challenge}(\mathtt{aid}^{\star}, m_0, m_1)$ encrypts $m_b$ for a random $b$ as $\mathsf{Encrypt}$ does, under a locked honest application of $\AC$'s choice, and forbids $\mathsf{Reveal}$ on $\mathtt{aid}^{\star}$. $\AC$'s advantage is $|\Pr[\AC \text{ outputs } b] - 1/2|$.
+
+Two features of this game mark the design's boundary. $\mathsf{Submit}$ takes anything and $\mathsf{Encrypt}$ is answered: the adversary may copy or maul the challenge ciphertext and push it through a pipeline of its own, where the committee answers at once. In $\mathtt{aid}^{\star}$'s own pipeline the contract's gate withholds partials until a reveal that never comes; the proof below nevertheless handles the stronger variant in which the honest members post partials on $\mathtt{aid}^{\star}$'s ciphertexts, the challenge one included, so the theorem does not rest on the gate---the gate is there for the organizer (``Secrecy inside an application'' below). And $\mathsf{Reveal}$ is the organizer's only action: there is no oracle producing $\mathsf{sk}_{\mathtt{org}} C_1$ for a chosen $C_1$, because the protocol has no such message any more. In the previous design the organizer posted such a value per ciphertext and the reduction had to insist that it did so only for ciphertexts of known provenance, on pain of becoming a static Diffie--Hellman oracle for its own key; the reveal removes the message and the caveat together.
+
+\begin{theorem}[Secrecy of a locked application before its reveal]
+\label{thm:cross}
+In the model above, for every adversary $\AC$ there is a DDH distinguisher $\BC$ running in about the same time with
+\[
+    \mathrm{Adv}(\AC) \;\le\; Q_A \cdot \mathrm{Adv}^{\mathrm{ddh}}_{\GC}(\BC) \;+\; \frac{Q_H}{q} \;+\; \epsilon_{\mathrm{snd}},
+\]
+where $Q_A$ is the number of honest applications, $Q_H$ the number of random-oracle queries to $\HK$, and $\epsilon_{\mathrm{snd}}$ the probability that some accepted adversarial contribution has no witness (soundness of the contribution proof over at most $f$ proofs, plus a Poseidon collision); $\BC$'s running time exceeds $\AC$'s by the honest parties' proving cost. The bound holds for any $f$ with $n - f \ge t$, including $f \ge t$. It uses DDH, the random-oracle model for $\HK$, and soundness of the SNARK only through Lemma~\ref{lem:dealing}; neither zero-knowledge nor extraction from $\AC$ is used.
+\end{theorem}
+\begin{proof}
+$\BC$ receives a DDH instance $(G,\, X = uG,\, Y = vG,\, Z)$ and plays the challenger. It runs the four Groth16 setups, hands $\AC$ the reference strings, and plays the honest committee members honestly: real polynomials for every key, real encrypted shares, real contribution and activation proofs. $\AC$ contributes for its $f$ members; $\BC$ decrypts their shares, correct by Lemma~\ref{lem:dealing} except with probability $\epsilon_{\mathrm{snd}}$, so each honest recipient $u \in [n]$ obtains $e_{j,u} = A_j(u)$ for every $j$ (\S\ref{subsec:keygen}). Since $n - f \ge t$, $\BC$ holds $t$ evaluations of each $A_j$, interpolates it and reads off every $A_j(0)$; write $j^{\star}$ for the key $\mathtt{aid}^{\star}$ claims.
+
+$\BC$ guesses in advance which of the $Q_A$ honest applications will be the challenge one, aborting with a random output if it guessed wrong---the factor $Q_A$. For every other honest organizer, $\BC$ samples $\mathsf{sk}_{\mathtt{org}}$ itself and answers $\mathsf{Reveal}$ honestly. For $\mathtt{aid}^{\star}$ it sets $\mathsf{PK}_{\mathtt{org}}^{\star} := X$ and simulates the one proof it cannot produce, the registration: pick $z, c \leftarrow \FB_q$, set $A := zG - cX$ and program $\HK(\mathsf{dom}_{\mathtt{org}} \,\|\, \mathtt{eid} \,\|\, \mathtt{aid}^{\star} \,\|\, X \,\|\, A) := c$, which is perfect unless $\AC$ had queried that input already, of probability at most $Q_H/q$. No other message of $\mathtt{aid}^{\star}$'s organizer exists: $\mathsf{Reveal}$ on it is forbidden, and a combine on $\mathtt{aid}^{\star}$ would need a witness nobody has, so none is ever submitted, exactly as in the real protocol.
+
+Every $\mathsf{Submit}$ and $\mathsf{Encrypt}$ query the contract would let through is answered with genuine partials $\delta_i = e_{j,i} C_1$ and genuine proofs, because $\BC$ knows every honest share of every key; nothing is extracted from $\AC$'s ciphertexts. Finally $\BC$ draws $b$, sets $C_1^{\star} := Y$ and $C_2^{\star} := m_b G + A_{j^{\star}}(0)\, Y + Z$ and submits under $\mathtt{aid}^{\star}$. The real contract posts no partial on it before a reveal; $\BC$ could nevertheless publish $\delta_i = e_{j^{\star},i} Y$ for every honest member, as on anything else, so the argument covers the stronger game as well. If $Z = uvG$ then $(C_1^{\star}, C_2^{\star}) = (vG,\; m_b G + v(P_{j^{\star}} + X))$ is a correct encryption of $m_b$ under $\mathsf{PK}_{\mathtt{aid}^{\star}}$ with randomness $v$ and $\AC$'s view is its view in the real game; if $Z$ is uniform and independent, $C_2^{\star}$ is uniform and independent of $b$. $\BC$ outputs $1$ iff $\AC$ guesses $b$.
+\end{proof}
+
+Three things follow. First, the DDH reduction never rewinds $\AC$ and never runs an extractor to produce an answer: every partial comes from a share $\BC$ holds. Soundness of the SNARK enters only through Lemma~\ref{lem:dealing}, to establish that $\AC$'s dealings are well formed, and it enters as an assumption rather than as a step: Groth16's soundness is proved in the generic-group model, and $\epsilon_{\mathrm{snd}}$ carries that idealisation into the bound; an adversary that could forge a contribution proof would defeat the lemma, not the reduction. Zero-knowledge is never used, since every proof $\BC$ publishes is produced by the honest prover on a true statement, so $\AC$'s view is identical to the real one. There is no forking-lemma loss; the only multiplicative loss is the guess among the $Q_A$ honest applications. Nor need the registration proofs be sound for this theorem: an adversary registering $\mathsf{PK}_{\mathtt{org}}' := X$ or $X + kG$ under its own application gets an unrelated pool key and still has to produce $u\,C_1$ to combine anything; the registration proof protects a different party (\S\ref{subsec:rogue}). Second, the theorem does not use the independence of the pool keys at all: it tolerates $f \ge t$, in which case $\AC$ holds $A_{j^{\star}}(0)$ outright, and still learns nothing before the reveal. What the pool changes for a locked application is who else can reach that point. With a shared key, $t$ partials on \emph{any} application's copy of $C_1^{\star}$ handed the committee half to whoever had registered the copy, so a later leak or reveal of $\mathsf{sk}_{\mathtt{org}}$ opened every ciphertext whose $C_1$ had ever been copied anywhere; now that half exists only in $\mathtt{aid}^{\star}$'s own pipeline, inside its own decryption window and, by the contract's gate, only after its reveal. Third, $\mathsf{Submit}$ is answered even for a cofactor-tainted $C_1$, so the off-chain subgroup check of \S\ref{subsec:decryption} is not what the theorem rests on; it protects the secrecy of the shares themselves.
+
+\paragraph{Automatic applications.}
+\label{subsec:automatic-secrecy}
+An automatic application has no organizer term, and its secrecy is what its pool key alone provides. Here the independence of the keys is exactly what is used.
+
+\begin{observation}[Automatic applications]
+\label{obs:automatic}
+Let $\mathtt{aid}$ be an honest automatic application on pool key $P_j$, let $f < t$, and let at least one honest dealer be in $\QUAL$. Before $\mathtt{aid}$'s decryption window opens---and the contract refuses every partial until then, so no partial of $\mathtt{aid}$ exists on chain---the adversary, with all of its oracles on every other application, distinguishes the plaintexts of an $\mathsf{Encrypt}$ed ciphertext of $\mathtt{aid}$ with advantage at most $Q_A \cdot \mathrm{Adv}^{\mathrm{ddh}}_{\GC}$ plus $\epsilon_{\mathrm{snd}}$ and the zero-knowledge simulation losses of the proofs, by a reduction that embeds the DDH instance in one honest dealer's constant term for key $j$ and expresses the biased key as that dealer's key plus an offset it knows. Once its window opens and $t$ partials are on chain the ciphertext is public, which is the mode's definition.
+\end{observation}
+\begin{proof}[Sketch]
+The reduction guesses the challenge application among the $Q_A$ honest ones (the factor $Q_A$), embeds $X$ as the constant term of one honest dealer's polynomial for its key $j$ and deals every other key honestly, so it knows every share of every $P_{j'}$, $j' \ne j$, and answers every $\mathsf{Submit}$ query on the adversary's applications, which sit on those other keys, with genuine partials. On key $j$ it chooses the corrupt members' $f < t$ shares itself, derives the honest members' commitments from $X$ and those shares by interpolation in the exponent, encrypts placeholder shares to the honest recipients (hashed ElGamal is IND-CPA under hash-CDH, and those recipients are honest) and simulates, by the zero-knowledge of the SNARK, the contribution proof and the partials on $\mathsf{Encrypt}$ed ciphertexts of $\mathtt{aid}$, whose values it knows from $r$ as $\delta_i = r\,D_{j,i}$; the activation proof it produces honestly, its witness being points. The adversary's own polynomials for key $j$ are recovered through the honest recipients as in Theorem~\ref{thm:cross}, so the challenge $(Y,\, m_b G + Z + a\,Y)$, with $a$ the adversary's contribution to $A_j(0)$ together with the other honest dealers' constant terms, all known to the reduction, is distributed as in the real game when $Z = uvG$---the key-expressability argument above. No partial on the challenge ciphertext is ever posted, because the contract refuses partials before the window opens.
+\end{proof}
+
+Three consequences. (i) An automatic application's confidentiality is exactly the $t$-of-$n$ assumption on the committee, which is what a DKG without organizers offers; unlike with a shared key, it is not \emph{also} at the mercy of everybody who can register an application, so an automatic ciphertext is not public from the moment it is on chain but from the moment its window opens. (ii) The decryption deadline of \S\ref{subsec:derivation} follows from the same fact: once $t$ partials exist there is nothing left to withhold, so a deadline that closed only the combine would close nothing, and the contract closes partials as well; symmetrically, the opening bound is what makes ``before its window opens'' a statement the contract enforces rather than a hope. (iii) Cross-application separation is unconditional in both directions: a ciphertext of a locked application $A$ copied into an automatic application $B$ decrypts, in $B$'s pipeline, to $M + r(P_{j_A} + \mathsf{PK}_{\mathtt{org}}^{A} - P_{j_B})$, an ElGamal ciphertext under a key whose secret involves $A_{j_A}(0)$ and $\mathsf{sk}_{\mathtt{org}}^{A}$, neither of which $B$'s pipeline touches; and a ciphertext of $B$ copied into $A$ yields, under $A$'s key, a value nobody can combine before $A$'s organizer reveals and an unrelated plaintext after.
+
+\paragraph{Secrecy inside an application.} Theorem~\ref{thm:cross} says nothing about the organizer of $\mathtt{aid}^{\star}$ itself, and the organizer of a locked application can indeed open it---once, for all of its ciphertexts, by revealing. What the pool takes away is every quieter route. With a shared epoch key an organizer could register a throwaway application from a fresh address, submit a victim ciphertext's $C_1$ there, read the committee's partials off the log, combine them off chain and add its own $\mathsf{sk}_{\mathtt{org}} C_1$: no share posted, no combine sent, one anonymous submission to an unrelated application as the only trace. Now the throwaway application sits on a different pool key and its partials say nothing about $A_{j^{\star}}(0)\,C_1$; the only partials under $P_{j^{\star}}$ are those of $\mathtt{aid}^{\star}$'s own ciphertexts, and the contract posts none of them until the organizer has revealed---so the one route a shared key left open, reading the committee's partials off the log and adding $\mathsf{sk}_{\mathtt{org}} C_1$ off chain to open a chosen ballot, is closed by the contract rather than by node policy. An organizer that wants a plaintext therefore either reveals, on chain and application-wide, after which it learns every result together with everyone else, or corrupts $t$ committee members---the same $t$ that open an automatic application. Within an application, before its reveal, secrecy thus needs $t$ members \emph{and} the organizer: confidentiality against the organizer reduces to the committee assumption plus one attributable action, and confidentiality against the committee to the organizer's reveal. The organizer still decides \emph{when}; it no longer decides \emph{which}.
+
+\paragraph{Rogue keys.}
+\label{subsec:rogue}
+Without the proof of possession at registration, an organizer could register $\mathsf{PK}_{\mathtt{org}}^* := -P_j$ against the pool key it is about to claim---activated, and so public, before it can be claimed---collapsing $\mathsf{PK}_{\mathtt{aid}}$ to the identity so that $C_2 = mG$ and every ``ciphertext'' of that application is public, or more generally choose $\mathsf{PK}_{\mathtt{org}}$ as a function of $P_j$ without knowing the corresponding secret. The Schnorr proof, bound to $\mathtt{eid}$, $\mathtt{aid}$ and the key, forces knowledge of $\mathsf{sk}_{\mathtt{org}}$; in the random-oracle model an extractor applied to a rogue registration would recover $\log_G P_j$, the standard argument of aggregate signatures \cite{boneh2018compactmultisig}. It does not protect a client that encrypts to a key it was told rather than the key on chain (\S\ref{subsec:risks}). The operator proof of possession plays the same role for the registry: without it an operator could register a key it cannot decrypt with and silently break every epoch it joins.
+
+\paragraph{Graceful degradation.} The contract fixes the order for a locked application: the reveal comes first, and only then may partials land. Between the two, $\mathsf{sk}_{\mathtt{org}}$ is public and every ciphertext of the application is $(C_1,\, M + A_j(0)\,C_1 + \mathsf{sk}_{\mathtt{org}} C_1)$ with a known last term---a plain ElGamal ciphertext under $P_j$, secret under DDH against fewer than $t$ members until its window opens and $t$ partials exist. The mirror image, $t$ partials on chain under an unrevealed organizer, which in the previous design left every such ciphertext an ElGamal ciphertext under $\mathsf{PK}_{\mathtt{org}}$ open to whoever later obtained the key, can no longer occur. In an automatic application the organizer term is absent and $t$ partials decrypt outright.
+
+\paragraph{What is not covered.} Adaptive corruption during an epoch \cite{canetti1999adaptive,bacho2022adaptive}, the bias of the pool keys (above) and a compromised submitter of the challenge application are outside the model. So are lottery capture, liveness against $t$ or more crashed members, late finalization and a compromised proving-system setup---a party holding the toxic waste of any circuit forges that circuit's proofs---which are operational rather than cryptographic and are collected with the rest of the design's risks in \S\ref{subsec:risks}.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{EVM Implementation}
+\label{sec:implementation}
+
+BabyJubJub arithmetic in Solidity costs two to three orders of magnitude more than a BN254 precompile call and there is no Poseidon precompile, so operations that recur per ciphertext and per member live inside SNARKs while the one-shot Schnorr proofs of possession are verified directly on chain. The implementation is open source\footnote{\url{https://github.com/vocdoni/davinci-dkg}}: Go node and circuits (gnark \cite{gnark}), Solidity contracts, a TypeScript SDK and a web explorer.
+
+\subsection{Contracts}
+\label{subsec:architecture}
+
+\subsubsection{Operator registry}
+\label{subsec:registry-contract}
+
+An append-only registry of operator encryption keys with liveness tracking. $\mathsf{registerKey}$ and $\mathsf{updateKey}$ take the key and a Schnorr proof of possession whose challenge is $\mathsf{keccak}(\mathsf{dom}_{\mathtt{op}} \,\|\, \mathsf{op} \,\|\, \mathsf{pub} \,\|\, A) \bmod q$, bound to the operator's address and domain-separated from the organizer proof; verification is one double-base multiplication in extended twisted-Edwards coordinates \cite{hisil2008twisted}. Each row carries $\mathsf{lastActiveBlock}$, refreshed by the manager on every accepted contribution, by $\mathsf{updateKey}$ or by an explicit $\mathsf{heartbeat}$; anyone may $\mathsf{reap}$ an operator silent for longer than $\mathsf{INACTIVITY\_WINDOW}$, removing it from the active count $N$ until it $\mathsf{reactivate}$s, which restarts its snapshot clock (\S\ref{subsec:lottery}). There is no admin and no key revocation; the only privileged call is a one-shot $\mathsf{setManager}$ by the deployer.
+
+\subsubsection{DKG manager and application manager}
+
+One logical contract, split into $\mathsf{DKGManager}$ (epochs, pool keys, ciphertexts, decryption) and $\mathsf{DKGAppManager}$ (applications, organizer keys and their reveal) only to stay under the EIP-170 code-size limit. Entry points: $\mathsf{createEpoch}$ (permissionless, cadence-gated---or earlier, once the newest epoch has at most one unclaimed pool key---and bounded by the policy floors; snapshots $N$, derives $\tau$ and the deadlines); $\mathsf{claimSlot}$ (resolves the seed lazily, rejects operators registered after the epoch was created, applies the lottery test, allocates slots and snapshots a hash of the committee's keys when full); $\mathsf{submitContribution}$ (cheap public-input bindings, then one Groth16 proof; stores the contributor's Poseidon $\mathtt{commitmentsHash}$ and nothing else of the transcript); $\mathsf{finalizeEpoch}$ (no proof: phase, block and row-count checks, then $\textsc{Live}$); $\mathsf{activatePoolKey}(\mathtt{eid}, j, \cdot)$ (permissionless, once per key, in any order: checks that the transcript's $\QUAL$ rows are distinct, accepted and carry the stored $\mathtt{commitmentsHash}$ of each, that the prover's transcript digest equals the proof's public input, derives $\rho$ from that digest and the calldata, verifies the proof and the BRLC, stores $P_j$ and $\mroot{j}$, the depth-$5$ Keccak Merkle root over $\Nmax$ leaves $\mathsf{keccak}(\mathtt{0x00} \,\|\, D_{j,i})$ for $i \le n$, the sentinel $\mathsf{keccak}(\texttt{"davinci-dkg:merkle-empty:v1"})$ beyond, and $\mathsf{keccak}(\mathtt{0x01} \,\|\, l \,\|\, r)$ at inner nodes); $\mathsf{claimPoolKey}$ (callable by the application manager only; hands out the next activated, unclaimed index or reverts $\mathsf{PoolExhausted}$ / $\mathsf{PoolKeyNotActive}$); $\mathsf{submitCiphertext}$ (six calldata words, no proof); $\mathsf{submitPartialDecryption}$ (binds $C_1$ to the stored ciphertext, checks the five-sibling Merkle path of the tagged leaf at index $i - 1$ against $\mroot{j}$ of the application's key, asks the application manager whether decryption is open---inside the window and, for a locked application, after the reveal, else $\mathsf{OrganizerSecretNotRevealed}$---then the proof); $\mathsf{combineDecryption}$ (the same gate, the organizer-key words against the application record, then the proof); and $\mathsf{abortEpoch}$. On the application side, $\mathsf{registerApplication}$ takes the policy and, for the organizer-locked mode, the organizer key with its Schnorr proof of possession---one Keccak and one double-base multiplication, i.e.\ $zG$ and $c\,\mathsf{PK}_{\mathtt{org}}$---while the automatic mode ignores the key and Schnorr words and stores the identity; either way it claims a pool key through $\mathsf{claimPoolKey}$, and the registration event carries the mode and the index. $\mathsf{revealOrganizerSecret}(\mathtt{eid}, \mathtt{aid}, \mathsf{sk})$ is permissionless, once per locked application, one fixed-base multiplication checking $\mathsf{sk}\,G = \mathsf{PK}_{\mathtt{org}}$, and stores the secret where the combiner reads it. The policy names the submitters---anyone, an allow-list of up to $32$ addresses, or the registrant when neither is set---the submission block window and the decryption window; contradictory policies revert. There is no per-ciphertext organizer entry point, and the application manager holds no verifier address at all. Partial decryptions are stored as $\mathsf{keccak}(\delta_i)$ plus one bit in a per-ciphertext bitmap, the points being read back from the event log at combine time. Epoch storage is never evicted: applications outlive epochs by design and $\mathsf{createEpoch}$ must stay $O(1)$.
+
+The lifecycle is $\textsc{CommitteeSelection} \to \textsc{KeyAssembly} \to \textsc{Live}$, with $\textsc{Aborted}$ reachable from the first two. $\textsc{Live}$ is terminal: pool keys are activated and claimed while later epochs bootstrap, and an application registered against an epoch keeps working for as long as its committee does.
+\subsubsection{Verifiers and trusted setup}
+\label{subsec:trusted-setup}
+
+Each circuit compiles to a Groth16 verifier contract pinned at manager construction. The reference artifacts come from a single-party setup and are pinned by hash in the node, which loads nothing else; a production deployment must replace them by a multi-party ceremony whose published transcript gives the usual guarantee, soundness if one participant destroyed its toxic waste.
+
+\subsection{Circuits}
+\label{subsec:zk-circuits}
+
+We write $\vct{C}_i = \{C_i^{(j)}(k)\}_{j < \Kmax,\, k<t}$ with per-key slices $\vct{C}_i^{(j)}$, $\vct{E}_i = \{E_i^{(j)}(u)\}_{j < \Kmax,\, u \in [n]}$, $\vct{pub} = \{\mathsf{pub}_u\}_{u \in [n]}$ and $\vct{D}_j = \{D_{j,i}\}_{i \in [n]}$. Each circuit is stated with its logical inputs; \S\ref{subsec:input-reduction} explains how the vectors are compressed to a constant number of verifier inputs. All circuits are over BN254 with BabyJubJub embedded and Poseidon as the in-circuit hash; every witness point not itself produced by a scalar multiplication is checked to be on the curve, and every scalar interpreted modulo $q$ is range-checked to $[0, q)$.
+
+\paragraph{Scalar multiplication.} The circuits are compiled with gnark \cite{gnark} v0.16.3. Every gnark release up to v0.15.0, and the snapshot pinned before, had an unsound variable-base twisted-Edwards scalar multiplication: the gadget obtained $Q = [s]P$ through a hint and certified it with a fake-GLV decomposition $s_1 + s_2 s = k\,\ell$, but evaluated that relation in the native field with the quotient $k$ itself a hint output, so it holds for any $(s_1, s_2)$ and a prover can return $[s']P$ for any $s'$ of its choosing. We reproduced it with verifying Groth16 proofs on v0.14.0, v0.15.0 and the snapshot. It is distinct from, and much stronger than, the cofactor-torsion offset on hinted multiplications described by El~Housni \cite{elhousni2026cofactor}; upstream moved the check into an emulated field of the curve order and bound the output to the subgroup in v0.16.0 (PR \#1765), without an advisory. Every variable-base multiplication of the four circuits went through that gadget. The fixed upstream gadget range-checks its hints through a lookup argument, which adds a commitment to the proof, changes the shape of the Solidity verifier and adds a pairing to every proof, so instead every variable-base scalar multiplication in our circuits is now a hint-free double-and-add over the scalar's $254$ bits with the complete twisted-Edwards formulas \cite{hisil2008twisted}: no hint and no commitment, proofs stay eight words and the verifiers keep their shape, at the cost of the constraint growth reported in \S\ref{subsec:results}.
+
+\subsubsection{Contribution}
+\label{subsec:zk-contribution}
+
+\zkpart{\PrivateInputs}{$\vct{a}_i$ ($\Kmax \times t$ coefficients), $\vct{r}_i$ ($n$ nonces), $\vct{s}_i$ ($\Kmax \times n$ shares), $\vct{C}_i$, $\vct{E}_i$, $\vct{pub}$}
+\zkpart{\PublicInputs}{$\mathtt{eid}$, $t$, $n$, $i$, $\mathtt{commitmentsHash} = \HP(\mathtt{eid}, i, t, \HP(\vct{C}_i^{(0)}), \dots, \HP(\vct{C}_i^{(\Kmax-1)}))$, $\HP(\vct{pub} \,\|\, \vct{E}_i)$, $\rho$, $\mathsf{BRLC}_\rho(\vct{C}_i \,\|\, \vct{pub} \,\|\, \vct{E}_i)$ \quad (8 scalars)}
+\zkpart{\InCircuit}{
+For all $j < \Kmax$, $k < t$: $a_{i,j,k} \in [0, q)$ and $C_i^{(j)}(k) = a_{i,j,k} G$. For all $u \in [n]$: $R_i(u) = r_{i,u} G$ and $S_{i,u} = r_{i,u}\,\mathsf{pub}_u$, once; then for all $j$: $s_i^{(j)}(u) \in [0, q)$, $s_i^{(j)}(u)\,G = \sum_k u^k C_i^{(j)}(k)$ and $\sigma_i^{(j)}(u) = s_i^{(j)}(u) + \HP(\mathsf{ctx}_{i,u} \,\|\, j \,\|\, S_{i,u}) \bmod q$. Recompute both digests and the BRLC commitment over the masked vectors (inactive slots are constants).}
+
+The range checks are essential: $\FB_p$ is larger than $q$, so a witness $s' = s + q$ satisfies the point equations yet decrypts to a different share, whose $e_{j,i}$ would disagree with $D_{j,i}$ and break the key. The masking equation is checked with an explicit quotient, $\HP(\cdot) = \mathsf{quot} \cdot q + \mathsf{mask}$, uniquely decomposed. The evaluations $\sum_k u^k C_i^{(j)}(k)$ use Horner's rule with the $6$-bit index $u$ as the only variable multiplier, so each costs $t$ short scalar multiplications rather than multiplications by growing powers. The two multiplications per recipient---the fixed-base ephemeral $R_i(u) = r_{i,u} G$ and the variable-base ECDH secret $r_{i,u}\,\mathsf{pub}_u$, the only variable-base multiplication of the circuit---are shared by the $\Kmax$ keys; what scales with $\Kmax$ is the $t$ fixed-base multiplications per key, the $\Kmax \cdot n$ Horner evaluations and the masks, and the circuit is $5.6\times$ the single-key one at $\Kmax = 8$ (\S\ref{subsec:results}). The committee keys $\vct{pub}$ are bound to the registry by the contract, which compares the transcript's key section to the hash snapshotted when the lottery filled, and are absorbed into the share digest so that every transcript word is fixed by a public digest (\S\ref{subsec:input-reduction}): one Poseidon per recipient row---index, key, ephemeral and the row's $\Kmax$ masked shares---and one over the $\Nmax$ row digests, keeping every sponge below its input cap. The commitments are digested per key and then over keys for a reason that belongs to the next circuit.
+
+\subsubsection{Pool-key activation}
+\label{subsec:zk-poolkey}
+
+\zkpart{\PrivateInputs}{$\QUAL$ as indexes, $\{\mathtt{commitmentsHash}_\ell\}_{\ell \in \QUAL}$, $\{\vct{C}_\ell^{(j)}\}_{\ell \in \QUAL}$ (key $j$ only), $\{\HP(\vct{C}_\ell^{(j')})\}_{\ell \in \QUAL,\, j' \ne j}$ (the other keys' digests), $\{\Cbar^{(j)}(k)\}_{k<t}$, $\vct{D}_j$}
+\zkpart{\PublicInputs}{$\mathtt{eid}$, $t$, $n$, $|\QUAL|$, $j$, $\HP(\text{transcript})$, $\rho$, $\mathsf{BRLC}_\rho(\QUAL \,\|\, \{\mathtt{commitmentsHash}_\ell\} \,\|\, \Cbar^{(j)} \,\|\, \vct{D}_j)$ \quad (8 scalars)}
+\zkpart{\InCircuit}{$t \le |\QUAL| \le n \le \Nmax$ and $j < \Kmax$; for each $\ell \in \QUAL$: $\HP(\mathtt{eid}, \ell, t, \text{digests with slot } j := \HP(\vct{C}_\ell^{(j)}))$ equals $\mathtt{commitmentsHash}_\ell$; $\Cbar^{(j)}(k) = \sum_{\ell \in \QUAL} C_\ell^{(j)}(k)$ for $k < t$; $D_{j,i} = \sum_k i^k \Cbar^{(j)}(k)$ for every committee position $i \in [n]$ (identity beyond $n$); the transcript digest over $\mathtt{eid}$, $j$ and the masked transcript words; the BRLC.}
+
+This circuit replaces the finalization proof. Its transcript is $6\Nmax$ words---indexes, contribution hashes, the $\Nmax$ aggregate commitments and the $\Nmax$ share commitments, inactive slots masked to constants---so nothing quadratic in $\Nmax$ reaches calldata: the contributors' commitment vectors enter as private witness and are bound by the $\mathtt{commitmentsHash}$ each contributor stored, which the contract compares against storage for every row. Only key $j$'s $2\Nmax$ commitment words per contributor are hashed in circuit; the other $\Kmax - 1$ keys are represented by their digests, one field element each. The share commitments cover every committee position, not only the dealers: a member that claimed a slot but never contributed still received a share of every accepted polynomial, so its $D_{j,i}$ belongs under the root and it may post partials. The transcript digest is the eighth public input and enters the challenge anchor, $\rho$ being derived from $\mathsf{keccak}(\text{digest} \,\|\, \mathsf{keccak}(\text{transcript}))$ exactly as the other two proof-carrying calls derive theirs (\S\ref{subsec:input-reduction}). The contract checks the digest word against the public input, reads $P_j = \Cbar^{(j)}(0)$ and the $D_{j,i}$ straight from the BRLC-bound transcript, hashes the $D_{j,i}$ into $\mroot{j}$ with Keccak, and stores both.
+
+\subsubsection{Partial decryption}
+\label{subsec:zk-partial}
+
+\zkpart{\PrivateInputs}{$e_{j,i}$, $w_i$}
+\zkpart{\PublicInputs}{$\mathtt{eid}$, $\mathtt{aid}$, $\mathtt{ctIdx}$, $i$, $C_1$, $D_{j,i}$, $\delta_i$, $A_i$, $B_i$, $z_i$ \quad (15 scalars)}
+\zkpart{\InCircuit}{$D_{j,i} = e_{j,i} G$, $\delta_i = e_{j,i} C_1$, $A_i = w_i G$, $B_i = w_i C_1$; $c_i$ as in \S\ref{subsec:decryption}; $z_i G = A_i + c_i D_{j,i}$ and $z_i C_1 = B_i + c_i\,\delta_i$.}
+
+The first four equations already prove knowledge of $e_{j,i}$; the DLEQ equations are checked as well so that $(A_i, B_i, z_i)$ stays a self-contained Chaum--Pedersen proof that any verifier with Poseidon and native group operations can check without the SNARK. The circuit is unchanged from the single-key design; what changed is around it. The contract binds $C_1$ to the stored ciphertext hash, $D_{j,i}$ to the application's key through a five-sibling Keccak Merkle path against $\mroot{j}$ (five hashes, a few hundred gas, instead of one storage word per member and key; leaves are tagged $\mathtt{0x00}$ and inner nodes $\mathtt{0x01}$, and an absent position is a fixed sentinel rather than a zero word, so no leaf can be replayed as a node and no empty slot as a commitment), refuses the call while the application's decryption is closed or, for a locked application, its organizer has not revealed, and rejects a second partial from the same index. With the hint-free scalar multiplications of \S\ref{subsec:zk-circuits} the circuit grew from $22{,}026$ to $29{,}026$ constraints.
+
+\subsubsection{Combine}
+\label{subsec:zk-combine}
+
+\zkpart{\PrivateInputs}{$C_1$, $C_2$, $\mathsf{PK}_{\mathtt{org}}$, $\mathsf{sk}_{\mathtt{org}}$, $\{x_k\}$, $\{\delta_{x_k}\}$, $\{\lambda_k\}$, $m$}
+\zkpart{\PublicInputs}{$\mathtt{eid}$, $\mathtt{aid}$, $\mathtt{ctIdx}$, $t$, $s = |\QC|$, $\HP(\text{transcript})$, $m$, $\rho$, $\mathsf{BRLC}_\rho(\text{transcript})$ \quad (9 scalars)}
+\zkpart{\InCircuit}{$t \le s$, $m \in [0, q)$, $\mathsf{sk}_{\mathtt{org}} \in [0, q)$;
+$\mathsf{PK}_{\mathtt{org}} = \mathsf{sk}_{\mathtt{org}}\,G$ (which places it in the subgroup, so no separate curve check) and $\Delta := \mathsf{sk}_{\mathtt{org}}\,C_1$;
+$C_2 = mG + \sum_{k \le s} \lambda_k \delta_{x_k} + \Delta$;
+and the Vandermonde identity $\sum_{k} \lambda_k\, x_k^{\,j}\, G = [j = 0]\, G$ for $j = 0, \dots, t-1$. The transcript uses the same masked values as the digest.}
+
+The combine transcript is $6 + 3\Nmax$ words: $C_1, C_2, \mathsf{PK}_{\mathtt{org}}$, then the $\Nmax$ participant indexes and the $\Nmax$ partials as coordinate pairs, inactive slots masked to constants.
+
+\paragraph{The organizer's secret, used by somebody else.} The previous design had the organizer post $\Delta = \mathsf{sk}_{\mathtt{org}} C_1$ per ciphertext with a Chaum--Pedersen proof, stored unverified and checked inside this circuit against a Keccak challenge the contract recomputed: eight transcript words, two double-base multiplications and a recomputed hash per combine. Now $\Delta$ is not an input at all. The combiner reads $\mathsf{sk}_{\mathtt{org}}$ from the application record---$0$ for an automatic application, the revealed value for a locked one---and the circuit derives $\Delta$ from it after checking that the secret matches the $\mathsf{PK}_{\mathtt{org}}$ the contract compares with the record: one fixed-base and one variable-base multiplication, fewer constraints than the two DLEQ equations they replace ($241{,}138$ against $247{,}076$ at $\Nmax = 32$, both with the previous toolchain; the hint-free multiplications of \S\ref{subsec:zk-circuits} take the combine to $287{,}338$). A combiner that does not hold the secret holds no witness, so before the reveal the statement is unprovable and after it the secret is public; the contract nevertheless gates the combine, like the partials, on the reveal ($\mathsf{OrganizerSecretNotRevealed}$), because the partials carry no such witness and it is their absence before the reveal that keeps the organizer from decrypting selectively (\S\ref{sec:security}). Knowledge of $\mathsf{sk}_{\mathtt{org}}$ is what the circuit proves, not the validity of something the organizer produced, which is why nothing the organizer does per ciphertext exists any more (\S\ref{sec:why}).
+\paragraph{Pinning the Lagrange vector.} The $\lambda_k$ cannot be computed in circuit by division, since $\FB_p \ne \FB_q$. For $s = t$ they are the unique solution of the Vandermonde system $\sum_k \lambda_k x_k^{\,j} = [j = 0]$ over $\FB_q$ (for $s > t$ an $(s{-}t)$-dimensional family satisfies it, every member of which interpolates $F(0)$), so we verify exactly that system---but on points, where the arithmetic is automatically modulo $q$: $L_k := \lambda_k G$ by fixed-base multiplication reduces $\lambda_k$, and successive powers come from multiplying $L_k$ by the $6$-bit scalar $x_k \le \Nmax$, a short double-and-add ($\Nmax^2$ of them, inactive slots masked) on top of $\Nmax$ fixed-base multiplications. Checking $j < t$ suffices, the shared polynomial having degree below $t$. Given that the contract rules out $x_k = 0$ and duplicates through its index bitmap, the check also forces at least $t$ distinct nodes among the $x_k$: with fewer, $P(X) := \prod_k (X - x_k)$ has degree below $t$ and the identity would give $0 = P(0) = \prod_k (-x_k) \ne 0$. It is by a wide margin the largest item in the combine circuit, and it is what makes the proof sound against a prover that knows the discrete logarithm of one partial---the encryptor colluding with a single member.
+
+\paragraph{Contract-side checks.} The first four transcript words must hash to the stored ciphertext, the next two equal the application's $\mathsf{PK}_{\mathtt{org}}$, the decryption window must be open and, for a locked application, the organizer must have revealed, and each $x_k$ must be set in the ciphertext's partial bitmap with $\mathsf{keccak}(\delta_{x_k})$ matching the stored hash. Then $\rho$, the BRLC and the Groth16 proof.
+\subsection{Public-Input Reduction}
+\label{subsec:input-reduction}
+
+Sent naively, the contribution proof has $2\Kmax t + (3 + \Kmax)\,n$ public scalars and an activation proof that carried the contributors' commitment vectors $2nt + 2t + 2n$, i.e.\ $380$ and $460$ scalars at $n = 20$, $t = 10$, $\Kmax = 8$. At $\approx 6.7\,\mathrm{k}$ gas per Groth16 input (\S\ref{sec:prelim}) that is $2.5$--$3$~M gas of input processing per call before the pairing check. We reduce every circuit to $8$--$15$ inputs with two devices, of which the second is a random-fingerprint argument in the sense of Freivalds \cite{freivalds1977probabilistic}, and a third keeps the activation proof linear in $\Nmax$.
+
+\paragraph{Hash-to-single-signal.} A vector consumed many times but fixed once is committed by a hash that is cheap where it is computed most often. The committee's keys are fixed when the lottery fills and consumed by all $n$ contribution proofs; the contract snapshots $\mathsf{keccak}(\vct{pub})$ once ($6$ gas per word) and checks each transcript against it, so the keys never touch the verifier. Inside a circuit the same role is played by Poseidon ($\approx 43$ constraints per absorbed element with the pinned gnark implementation, $2{,}734$ constraints for $64$ inputs), which is why the per-vector digests are Poseidon and the on-chain comparisons Keccak.
+
+\paragraph{Binding random linear combination (BRLC).} A vector $\vct{v} = (v_1, \dots, v_l)$ of calldata words is committed as $\mathsf{BRLC}_\rho(\vct{v}) := \sum_i \rho^i v_i \bmod p$. The circuit recomputes the same combination over its witness vector $\vct{w}$ and exposes it as a public input; the contract streams it over calldata with $\mathsf{mulmod}$/$\mathsf{addmod}$ ($\approx 70$ gas per word) and compares. For $\vct{w} \ne \vct{v}$ the polynomial $P(X) = \sum_i (w_i - v_i) X^i$ is non-zero of degree $\le l$, so a $\rho$ that is uniform and \emph{independent of both vectors} makes it vanish with probability $\le l/p$ \cite{schwartz1980fast}: statistically binding, with no discrete-log assumption.
+
+The independence condition is the whole point, and it is easy to get wrong. Our first implementation derived $\rho$ by Fiat--Shamir from the circuit's Poseidon digests only. A prover then knows $\rho$ before choosing the calldata, and matching a known $\rho$ is a single linear equation over $\FB_p$: change any word $v_a$ by $\eta$ and compensate a second word by $-\eta \rho^{a-b}$. Everything the contract does not check independently is then free---a dealer can publish masked shares differing from the proven ones, silently poisoning recipients, which is precisely the fault the complaint phase used to catch, and an activator can overwrite $P_j$ with a key it knows, the aggregate section of the activation transcript being bound by nothing else. We verified both forgeries with tests before fixing them. The dual mistake is on the witness side: if the circuit's transcript holds a word that no public digest fixes, the prover fixes the calldata first, learns $\rho$, and solves the same equation in the free witness word.
+
+The correct derivation applies the usual Fiat--Shamir discipline to both sides: $\rho := \mathsf{keccak}(\mathtt{eid} \,\|\, \mathsf{dom} \,\|\, \mathsf{keccak}(\text{digests} \,\|\, \mathsf{keccak}(\vct{v})))$, where the digests are the Poseidon hashes of \emph{every} witness vector the circuit commits to (inactive slots masked to constants) and $\mathsf{keccak}(\vct{v})$ is over the calldata. In the random-oracle model the prover then fixes $\vct{v}$ and $\vct{w}$ before $\rho$ exists, each attempt at a different pair yielding a fresh $\rho$, so $Q$ hash queries succeed with probability at most $Q \cdot l / p$. The contract pays one extra keccak over the transcript. The discipline is uniform across the three proof-carrying calls: the contribution anchors on $\mathsf{keccak}(\mathtt{commitmentsHash} \,\|\, \HP(\vct{pub} \,\|\, \vct{E}_i) \,\|\, \mathsf{keccak}(\vct{v}))$, the activation on $\mathsf{keccak}(\HP(\mathtt{eid}, j, \text{transcript}) \,\|\, \mathsf{keccak}(\vct{v}))$ with the transcript digest as its eighth public input, and the combine on $\mathsf{keccak}(\HP(\text{transcript}) \,\|\, m \,\|\, \mathsf{keccak}(\vct{v}))$. In each case a prover digest fixes the whole witness vector before $\rho$ is drawn.
+
+\begin{lemma}[BRLC binding]
+\label{lem:brlc}
+Let $\HP$ be collision resistant and $\mathsf{keccak}$ a random oracle. Suppose the contract accepts a call with calldata vector $\vct{v}$ of length $l$ and a proof whose public inputs include $d = \HP(\vct{w})$, $\rho = \mathsf{keccak}(\mathsf{ctx} \,\|\, d \,\|\, \mathsf{keccak}(\vct{v}))$ and $\mathsf{BRLC}_\rho(\vct{w})$ for the circuit's witness vector $\vct{w}$, and that the contract checks $\mathsf{BRLC}_\rho(\vct{v})$ against that last input. Then $\vct{v} = \vct{w}$, except with probability at most $Q \cdot l / p$ plus the probability of a collision in $\HP$ or $\mathsf{keccak}$, where $Q$ counts the prover's random-oracle queries.
+\end{lemma}
+\begin{proof}
+Fix a query $\mathsf{keccak}(\mathsf{ctx} \,\|\, d \,\|\, h)$. Absent collisions, $d$ determines $\vct{w}$ and $h$ determines $\vct{v}$, so the pair $(\vct{w}, \vct{v})$ is fixed before the answer $\rho$ is drawn, uniformly. If $\vct{w} \ne \vct{v}$, the polynomial $\sum_i (w_i - v_i) X^i$ is non-zero of degree at most $l$ and vanishes at $\rho$ with probability at most $l/p$. A union bound over the $Q$ queries gives the claim.
+\end{proof}
+
+The first cut of the activation proof did not follow this discipline. Its anchor was $\mathsf{keccak}(\mathsf{keccak}(\vct{v}))$ alone, on the reasoning that the contributors' $\mathtt{commitmentsHash}$ words, which the contract checks against storage, fix the rest of the witness through the circuit's constraints. That makes the binding depend on the circuit having no slack in its witness rather than on the commitment, and it left the words the contract actually consumes---the aggregates in $[2\Nmax, 4\Nmax)$, $P_j$ itself among them, and the share commitments in $[4\Nmax, 6\Nmax)$---bound to the proven witness only through the single linear relation $\sum_k \rho^k w_k = \sum_k \rho^k v_k$ with $\rho$ independent of the $w_k$, rather than through a collision-resistant hash. The hypothesis of Lemma~\ref{lem:brlc} fails on the witness side, and a permissionless activator that finds any freedom in the witness words, or any collision among calldata transcripts, is forging a pool key. Folding the transcript digest into the anchor costs one Poseidon sponge over $6\Nmax + 2$ words in the activation circuit and one public input, and restores the lemma's hypothesis for all three calls.
+
+\paragraph{Two-level commitment digest.} The activation proof must convince the contract that $P_j$ aggregates the key-$j$ commitments of exactly the accepted contributions, whose commitments the contract never stored---it kept one Poseidon word per contribution. Rebinding one key has two naive forms and both are quadratic. Either the activation transcript carries every contributor's full commitment matrix, $2\Kmax\Nmax$ words per contributor and $2\Kmax\Nmax^2 = 16{,}384$ words ($512$~KiB) for the committee at $\Nmax = 32$, $\Kmax = 8$, so that the contract can hash it against the stored word; or the circuit takes the matrix as private witness and hashes all of it, $2\Kmax\Nmax$ absorptions per contributor, to reproduce the stored word---$\Kmax$ times the work for a proof that uses one key. The contribution proof therefore digests its commitments in two levels, $\mathtt{commitmentsHash} := \HP(\mathtt{eid}, i, t, \HP(\vct{C}_i^{(0)}), \dots, \HP(\vct{C}_i^{(\Kmax-1)}))$, and the activation proof for key $j$ takes, per contributor, the $2\Nmax$ words of key $j$ and the $\Kmax - 1$ digests of the other keys as private witness: it recomputes $\HP(\vct{C}_\ell^{(j)})$, substitutes it at position $j$, recomputes the outer hash and compares it with the transcript word the contract checked against storage. The cost per contributor is $2\Nmax + \Kmax$ absorptions instead of $2\Kmax\Nmax$, the transcript is $6\Nmax$ words, and a prover cannot substitute another contributor's or another key's commitments, by collision resistance of Poseidon on both levels. Since finalization stores nothing per key, the same device is what lets every key be activated separately, on demand and in any order, without the epoch ever posting the $2\Kmax\Nmax^2$ matrix.
+
+The contribution transcript is $3\Kmax\Nmax + 5\Nmax$ words ($928$ words, $29$~KiB, at $\Nmax = 32$, $\Kmax = 8$; $43$~KiB at $\Nmax = 48$), the activation transcript $6\Nmax$ and the combine transcript $6 + 3\Nmax$; a partial carries its $15$ inputs and a five-word Merkle path. Nothing is quadratic in $\Nmax$ any more, so the transaction size that bounded the single-key design at $\Nmax = 32$---its finalization transcript was $2\Nmax^2 + 5\Nmax$ words, $69$~KiB, and $152$~KiB at $\Nmax = 48$, above the $128$~KiB clients propagate by default---no longer does; what bounds $\Nmax$ now is the contribution circuit, which grows with $\Kmax \Nmax t$ (\S\ref{subsec:results}). After the reduction the per-input verifier term is negligible; calldata and the pairing check dominate.
+\subsection{Measurements}
+\label{subsec:results}
+
+Table~\ref{tab:results} reports circuit sizes and proving times at $\Kmax = 8$ and committee bound $\Nmax = 32$ for the current artifacts of the pool-key design, compiled with gnark v0.16.3 and the hint-free scalar multiplication of \S\ref{subsec:zk-circuits}; the public Sepolia deployment described in the repository runs this build since September 2026, but nothing below was measured on it. The Merkle tree of share commitments under $\mroot{j}$ needs $\Nmax$ to be a power of two, so $\Nmax = 48$ is no longer a valid bound and $\Nmax = 64$ was not compiled. For comparison the table keeps the same circuits with the previous toolchain, at $\Nmax = 16$ and $\Nmax = 32$. Proving times, for both toolchains, are the mean of five proofs on an idle 32-thread desktop CPU (AMD Ryzen~9 9950X3D, 64~GiB), witness solving included but not loading the proving key. The upgrade changes every compiled circuit: the partial grows by $7{,}000$ constraints, the combine by $46{,}200$ and the contribution by $44{,}800$, while the activation, despite its new transcript digest, is $27{,}800$ constraints smaller; the current artifacts prove in $1{,}574$~ms (contribution), $181$~ms (activation), $32$~ms (partial) and $213$~ms (combine), against $1{,}687$, $246$, $28$ and $134$~ms with the previous toolchain---two different provers, so the times do not track the constraint counts. Contribution scales with $\Kmax \Nmax t$ because of the Horner evaluations and is about $5.7\times$ the single-key circuit it replaced ($541{,}218$ constraints, previous toolchain); activation scales with $\Nmax t$ for the aggregate and evaluation checks plus $2\Nmax + \Kmax$ Poseidon absorptions per contributor and is smaller than the old finalization circuit ($211{,}600$); partial decryption is independent of $\Nmax$; combine grows with the Vandermonde check's $\Nmax$ fixed-base and $\Nmax^2$ six-bit multiplications. With the previous toolchain, halving the bound to $\Nmax = 16$ divided the contribution and combine circuits by about $2.2$ and activation by $3.2$. Table~\ref{tab:gas} reports \emph{transaction} gas from the receipts of a local Anvil chain with the current verifiers and $\Nmax = 32$---pairing check, calldata and intrinsic cost included---at $n = 4$, $t = 3$ and at $n = 32$, $t = 22$. The transcript length is fixed by $\Nmax$, but the slots of absent members are zero bytes, which calldata prices at $4$ gas instead of $16$, and activation and combine also read one stored word per present member: over a sweep of $n = 4, 8, \dots, 32$ a contribution grows by about $8.7$k gas per extra member, an activation by about $10.7$k and a combine by about $3.9$k per extra partial, while every other call stays within $0.1\%$ of its $n = 4$ value except $\mathsf{claimSlot}$, whose average falls from $138{,}831$ to $119{,}505$, and the registration and the reveal, which move by a few thousand gas. Two calls have a one-off variant: the $\mathsf{claimSlot}$ that resolves an epoch's lottery seed costs $205{,}116$, and the $\mathsf{createEpoch}$ that resolves the deployment's first seed $150{,}324$ against $133{,}313$ otherwise. Against the previous toolchain's verifiers the activation costs $24.5$k more ($+5\%$), the contribution $15.6$k ($+2.3\%$), the combine $3.0$k, the reveal $2.5$k and the partial $1.6$k, everything else being within $0.1\%$. The v3.1 changes that touch these calls are the activation's additional public input and digest calldata word, the tagged Merkle tree over all $\Nmax$ member slots (activation and partial), the reveal-gate storage read (partial and combine), and verifiers that receive the proof as \texttt{bytes}; we did not measure how the deltas split among them. The $\mathsf{registerApplication}$ row gives the organizer-locked and the automatic registration; the $\mathsf{registerKey}$ row is the $322{,}112$ measured on the previous Sepolia release, the registry being unchanged by the pool.
+
+\begin{table}[ht]
+\centering
+\caption{Circuit size and proving time at pool size $\Kmax = 8$. The current column is the build measured throughout (gnark v0.16.3, hint-free scalar multiplication); the other two are the same circuits with the previous toolchain. Proving times at $\Nmax = 32$ on a Ryzen~9 9950X3D, 32 threads, mean of five proofs; --- = not measured.}
+\label{tab:results}
+\renewcommand{\arraystretch}{1.15}
+\small
+\begin{tabular}{llrrr}
+\hline
+ & & \multicolumn{2}{c}{previous toolchain} & current \\
+ & & $\Nmax = 16$ & $\Nmax = 32$ & $\Nmax = 32$ \\
+\hline
+\multirow{4}{*}{Constraints} & Contribution & 1\,359\,732 & 3\,015\,892 & 3\,060\,692 \\
+ & Pool-key activation & 66\,859 & 215\,291 & 187\,495 \\
+ & Partial decrypt & 22\,026 & 22\,026 & 29\,026 \\
+ & Combine & 107\,259 & 241\,138 & 287\,338 \\
+\hline
+\multirow{4}{*}{Proving time (ms)} & Contribution & --- & 1\,687 & 1\,574 \\
+ & Pool-key activation & --- & 246 & 181 \\
+ & Partial decrypt & --- & 28 & 32 \\
+ & Combine & --- & 134 & 213 \\
+\hline
+\end{tabular}
+\end{table}
+
+\begin{table}[ht]
+\centering
+\caption{Transaction gas with the current verifiers ($\Nmax = 32$, $\Kmax = 8$, local Anvil chain, receipts' \texttt{gasUsed}) at both committee sizes. The $\mathsf{registerKey}$ row is the previous Sepolia release's, whose registry the pool leaves unchanged; it has no $n = 32$ measurement.}
+\label{tab:gas}
+\renewcommand{\arraystretch}{1.1}
+\footnotesize
+\begin{tabular}{lrrl}
+\hline
+ & \multicolumn{2}{c}{Gas ($10^3$)} & \\
+Call & $n = 4$, $t = 3$ & $n = 32$, $t = 22$ & Paid by \\
+\hline
+$\mathsf{registerKey}$ & 322 & --- & operator, once \\
+$\mathsf{createEpoch}$ & 133 & 133 & race winner, per epoch ($150$ for the first seed) \\
+$\mathsf{claimSlot}$ & 139 & 120 & each member (average; $205$ resolving the seed) \\
+$\mathsf{submitContribution}$ & 702 & 944 & each member \\
+$\mathsf{finalizeEpoch}$ & 35 & 35 & one member, per epoch \\
+$\mathsf{activatePoolKey}$ & 508 & 809 & one member, per pool key \\
+$\mathsf{registerApplication}$ & 453 / 234 & 456 / 234 & organizer, per application (locked/automatic) \\
+$\mathsf{revealOrganizerSecret}$ & 223 & 228 & organizer, once per locked application \\
+$\mathsf{submitCiphertext}$ & 103 & 103 & submitter, per ciphertext \\
+$\mathsf{submitPartialDecryption}$ & 402 & 402 & each of $t$ members \\
+$\mathsf{combineDecryption}$ & 411 & 484 & one member, per ciphertext \\
+\hline
+\end{tabular}
+\end{table}
+
+Deploying the four verifiers and three contracts cost $11.9$~M gas once with the previous release's single-key verifiers; the current verifiers' deployment was not measured. Every proof-carrying call pays about $0.25$~M gas for the Groth16 verification itself \cite{eip1108}; the rest is calldata, of which the contribution's $29$~KiB transcript is the largest item. An epoch with $n$ members that activates all eight keys pays about $n \cdot 0.70$~M gas for the contributions and $8 \cdot 0.51$~M for the activations at $n = 4$, $6.9$~M or $0.86$~M per key, and $32 \cdot 0.94$~M $+\, 8 \cdot 0.81$~M $\approx 37$~M at $n = 32$, $4.6$~M per key; creation, claims and the proof-less finalization add $0.2$~M $+\, n \cdot 0.12$--$0.14$~M on top, and the finalization that used to carry the one key dropped from $1.11$~M to $0.035$~M. Decrypting one ciphertext costs $0.10$~M $+\, t \cdot 0.40$~M for the submission and the partials plus $0.41$--$0.48$~M for the combine, with no organizer transaction---$1.7$~M at $t = 3$---and a locked application adds one $0.22$~M reveal for all of its ciphertexts together, where the previous design paid $0.09$~M per ciphertext for the organizer's share. All figures are from one local deployment of the current build; the repository's benchmark document lists the transactions.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Why This Design}
+\label{sec:why}
+
+The design of \S\ref{sec:protocol} is not the only way to give one committee's threshold key per-application secrecy, and it is not the first one we implemented. It is the only one we found that satisfies four constraints at once, none of them cryptographic. \textbf{C1}: the consuming protocol cannot change its circuits---DAVINCI produces ballots and aggregated tallies with a deployed, audited proof system, so anything requiring a new proof from every voter is a rewrite of the client, the circuits and the audit. \textbf{C2}: the organizer runs in a browser, so it may compute Keccak and BabyJubJub scalar multiplications but not download a proving key, run a Groth16 prover, or stay online for a multi-round protocol. \textbf{C3}: one DKG serves many protocols and many chains, some applications living elsewhere, so it cannot encode the semantics of any one of them. \textbf{C4}: gas must stay minimal, every per-ciphertext step being paid repeatedly, and half a million gas per ciphertext is a different product from a few thousand.
+
+\paragraph{(i) A proof of knowledge of the ciphertext randomness.} The textbook answer, and it works: with a Schnorr proof of $r$ such that $C_1 = rG$, bound to $\mathtt{eid}$ and $\mathtt{aid}$, on every submission, the decryption oracle that a shared key exposes (\S\ref{sec:security}) closes---a copied $C_1$ cannot be re-submitted elsewhere, a re-randomised $C_1 + xG$ needs knowledge of $r + x$---and per-application secrecy follows from a public per-application offset alone, with one key per epoch and no organizer. It is what threshold ElGamal classically does to reach chosen-ciphertext security \cite{shoup2002threshold}: the decryption-share oracle \emph{is} the chosen-ciphertext oracle, and a proof of knowledge of the randomness on every ciphertext is how TDH2 closes it. We implemented and measured it. It is also incompatible with homomorphic aggregation, which is why the scheme is exponential ElGamal in the first place: the submitter of a tally $C = \sum_j C^{(j)}$ knows no $r$ with $C_1 = rG$, the randomness being $\sum_j r_j$, held by nobody. DAVINCI submits exactly such aggregates, so the proof breaks C1. The natural repair, a proof of \emph{correct aggregation}, does not survive C3: it must speak about the application's state---which inputs, which eligibility set, which counting rule---so the DKG would delegate verification to a per-application verifier contract, moving the trust rather than removing it.
+
+\paragraph{(ii) An aggregate-only accumulator inside the DKG.} Let the DKG hold one accumulator per application, accept \emph{appends} carrying a batched proof of knowledge of the appended randomness, and decrypt only the sum. This is the strongest privacy of any option here---no individual ciphertext is ever a decryptable object, for the committee or anybody---but it fails C1 twice over, every voter having to produce a proof in the DKG's format, and fails C4, each append being a transaction with a proof verification where the current design pays for the tally only.
+
+\paragraph{(iii) A verified-aggregator contract.} Let the DKG accept submissions only from a contract that has verified the application's own state transitions and submits nothing but accumulators of verified state. This keeps voters unchanged and individual ciphertexts out of the pipeline, so it is the best of (i) and (ii) where it applies, but it fails C3 by construction: the aggregator embodies one protocol's state machine, and a DKG on one chain cannot verify a state machine running on another.
+
+\paragraph{(iv) Per-application keys from one dealt secret.} What one wants is a per-application key that the committee can apply in threshold form but that nobody can transfer between applications. A \emph{public} derivation from a single epoch key $\mathsf{PK}_{\mathtt{ep}}$---$\mathsf{PK}_{\mathtt{aid}} := \mathsf{PK}_{\mathtt{ep}} + \HC(\mathtt{aid})\,G$, the non-hardened derivation of BIP-32 \cite{bip32}---is removable by anybody: the offset is public, so a ciphertext under $\mathsf{PK}_{\mathtt{aid}}$ is a ciphertext under $\mathsf{PK}_{\mathtt{ep}}$ with $C_2$ shifted by $\HC(\mathtt{aid})\,C_1$, and the shared-key oracle applies unchanged. A \emph{secret} derivation needs a per-application scalar $\sigma_{\mathtt{aid}}$ that nobody sees, applied inside the threshold: a distributed pseudo-random function with scalar output \cite{naor1999distributed}. The DDH-based constructions and the threshold oblivious PRFs built on them \cite{agrawal2018dise} output a \emph{group element} $\mathsf{sk}_{\mathtt{ep}} \cdot \HC(\mathtt{aid})$, and hashing it to a scalar is public again; to keep $\sigma_{\mathtt{aid}}$ secret the hash must be evaluated on shares, which is generic multi-party computation among the members, rounds of interaction per application where the design has one transaction (C4). Non-interactively, an unbounded family of committee-held scalars cannot be derived from one dealt secret without a pairing: that is what threshold identity-based encryption \cite{boneh2001ibe,boldyreva2003threshold} is, and drand's timelock \cite{tlock2023} deploys it with the identity string as the application key, so that nothing is dealt per application and separation is unconditional. It fails C1 and C4 together: the ballots are exponential ElGamal on BabyJubJub produced by a deployed circuit, identity-based encryption is not additively homomorphic, and its pairing curve is neither the client's nor cheap on the EVM per ciphertext; and a time-based release is the wrong trigger for an election that closes by an action. Running one DKG per application gives independent keys with no new assumption, at $n$ contributions and one activation per application: an election would wait for a full contribution round and pay $n \cdot 0.7$~M gas to get a key (C4).
+
+What is left is to deal the independent keys in \emph{advance}, in the epoch's own DKG, as a pool that applications draw from. Its cost is the interesting number. Each further key costs a contributor $t$ coefficients, $n$ masked shares and $n$ Horner evaluations in circuit and $3\Nmax$ transcript words on chain---no new ECDH, no new proof, no new transaction---plus a $6\Nmax$-word activation proof when the key is claimed, so $\Kmax = 8$ keys cost $3.6\times$ the calldata, $5.7\times$ the constraints and $1.5\times$ the gas of one, against $8\times$ everything for eight DKGs. The pool is finite, which is the objection we raised against it ourselves before adopting it; what answers the objection is that epochs are permissionless and cheap to start, so a deployment refills by beginning the next epoch as soon as the pool runs low (\S\ref{subsec:keygen}), and $\Kmax$ trades the size of the contribution proof against how many applications an epoch serves before that happens. A pool dealt in the epoch and refilled by early epochs is the scalable form of per-application dealing: the dealing is amortised over $\Kmax$ applications, and activation is paid per key, when a key is needed.
+
+\paragraph{(v) A per-ciphertext organizer share.} With independent keys settled, the organizer's role is optional, and the question is what it should do when present. Our previous design had it post, per ciphertext, $\Delta = \mathsf{sk}_{\mathtt{org}} C_1$ with a Chaum--Pedersen proof, stored unverified ($88$k gas) and checked inside the combine proof against a Keccak challenge the contract recomputed, so that a browser needed no prover and no BabyJubJub verification happened in Solidity (an earlier, unmeasured estimate for an on-chain-verified variant was about $436$k). It gave the organizer a ciphertext-by-ciphertext veto, which is a feature for a ballot box and a liability for the voter: the organizer could open any single ballot whose partials were on chain, and with a shared key every ballot's partials could be had. The reveal replaces the share. The organizer's only per-application obligation is one $32$-byte secret and one transaction, so it decides when its ciphertexts open and nothing finer; the circuit no longer verifies anything the organizer produced but proves knowledge of what it revealed, which is smaller than the DLEQ it replaces; the contract stores the secret and recomputes no challenge; and the reduction of \S\ref{sec:security} loses the caveat that a share released on a ciphertext of unknown provenance is a Diffie--Hellman oracle on the organizer key, because there is no share. The decryption window carries the embargo the share used to: partials and combines are refused before it opens, so a revealed organizer decrypts nothing early; and for a locked application they are refused until the reveal, so an unrevealed organizer, holding $\mathsf{sk}_{\mathtt{org}}$ and no partials, decrypts nothing at all, and nothing selectively.
+
+Each party then does what it can afford: voters produce what they already produced, the organizer keeps a secret and publishes it once, and the committee---which owns the proving keys and the hardware---absorbs every group equation into proofs it was going to submit anyway. The honest headline of this section is that a deployment without homomorphic aggregation should prefer (i): it is cheaper, needs no pool and no organizer, and its separation is unconditional rather than reduction-based. The design of \S\ref{sec:protocol} is the one that survives C1.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Discussion}
+\label{sec:discussion}
+
+\paragraph{Limitations.} Beyond what \S\ref{sec:security} leaves uncovered: the protocol inherits the chain's timing model, $(t, n)$ are fixed per epoch and shared by every application anchored to it, an epoch serves at most $\Kmax$ applications before a new one must be dealt, the contribution proof carries $\Kmax$ dealings and at $3$~M constraints is the largest object a member proves, and the shipped registry is open, so a production deployment must add admission control. The protocol is not post-quantum: every group-based component and the pairing-based proof system fall to Shor's algorithm, and only Shamir sharing and the coordination layer would survive a redesign on lattice assumptions \cite{regev2005lwe,peikert2016decade} and the schemes standardised on them \cite{nist_fips203}. A transparent proof system \cite{ben2018stark} would remove the trusted setup at a higher verification cost.
+
+\subsection{Risks}
+\label{subsec:risks}
+
+The design trades cryptographic guarantees for deployability in identifiable places. They are worth listing without euphemism.
+
+\paragraph{Losing the organizer key makes an organizer-locked application undecryptable.} $\mathsf{sk}_{\mathtt{org}}$ is a $32$-byte secret held by one party, and its application's ciphertexts cannot be opened without it. There is no recovery path and none is intended: any escrow is a second copy of the secret whose isolation is the point. Deployments that cannot accept this should split the organizer side across several keys, which the combine identity supports unchanged but the reference contract's single-secret record does not. Committee key loss is absorbed by $t$-of-$n$ margin; organizer key loss is absorbed by nothing.
+
+\paragraph{The pool runs out, and somebody must keep it filled.} An epoch deals $\Kmax = 8$ keys and serves at most eight applications; a registration beyond them reverts $\mathsf{PoolExhausted}$ until the next epoch is $\textsc{Live}$ and has activated a key, which takes a full preparation window---committee selection, key assembly, finalize gap---plus one activation, and a key is usable only after its $0.51$~M-gas activation, the committee's expense, not the registrant's. The reference node keeps $\mathsf{ActivateAhead} = 2$ activated-but-unclaimed keys in the newest epoch and starts the next epoch early once fewer remain, so an application normally finds a key waiting; a burst of more than two registrations in one block, or a fleet whose nodes are all down, meets $\mathsf{PoolKeyNotActive}$ or $\mathsf{PoolExhausted}$ and must retry, and a burst of more than eight in one epoch waits for the refill.
+
+\paragraph{Registration drives epochs, and epochs cost the committee.} $\mathsf{createEpoch}$ is allowed ahead of cadence once the newest epoch has at most one unclaimed key. Registration is permissionless and an automatic application needs no organizer key, so anyone registering seven automatic applications, at about $0.23$~M gas each, lets the next epoch start early and makes every committee member pay a contribution again---$n \cdot 0.7$--$0.9$~M gas in total, plus the activations of the new pool. The cost is bounded, one extra epoch per seven registrations each of which pays gas, but it is an amplification with the committee on the paying side. A registration fee or an allow-list on $\mathsf{registerApplication}$ is future work; the protocol supplies neither.
+
+\paragraph{An organizer key reused across applications is revealed with the first.} Revealing a locked application's $\mathsf{sk}_{\mathtt{org}}$ publishes it; if the same key backs another locked application, every ciphertext of the latter whose partials are on chain becomes readable at that moment, and every later one as soon as its partials land. The contract cannot detect the reuse, since keys are per $(\mathtt{eid}, \mathtt{aid})$ and nothing ties two registrations together. Organizer keys must be fresh per application; the reference tooling generates one per registration and never offers a default.
+
+\paragraph{Open submission on an automatic application opens whatever anyone posts under its key.} A locked application can admit any submitter and still decide when, and whether, the whole batch opens. An automatic application has no such gate: every ciphertext its policy admits is decrypted once its window opens, including one a third party mauled from an existing ciphertext of the \emph{same} application. A ciphertext copied from another application decrypts to garbage, so cross-application leakage is not the concern here; malleability within the application is. Open submission is therefore appropriate only when nothing encrypted under that key needs to stay private from the submitters; the usual choice is the registrant or an allow-list.
+
+\paragraph{A leaked $\mathsf{sk}_{\mathtt{org}}$ is a reveal waiting to happen, not a quiet decryption.} Whoever obtains a locked application's secret can open it---but only the way the organizer can: $\mathsf{revealOrganizerSecret}$ is permissionless, so the holder publishes the secret on chain, application-wide and visibly, and the committee then answers inside the window. No quieter route exists, because the contract posts no partial of a locked application before the reveal, so there is nothing on the log to combine off chain; in the previous design every ciphertext whose $t$ partials were on chain was an ElGamal ciphertext under $\mathsf{PK}_{\mathtt{org}}$ that a later leak opened without trace. Organizer keys are still long-term secrets until revealed, and a leak still ends the embargo early; after the reveal there is nothing left to leak.
+
+\paragraph{Anyone can make the committee spend.} Registration is permissionless, an application may name itself as submitter, and each of its $256$ ciphertexts costs the submitter about $0.1$~M gas while every responding member spends about $0.4$~M on a partial as soon as the decryption window is open (and, for a locked application, the organizer has revealed), in either mode: a gas amplification of the order of $t$ (the reference node has only the first $t$ members of a seed-derived rotation respond, and the rest step in after a delay if partials are missing), plus a combine of $0.4$~M for an automatic application, or for a locked one once its organizer reveals. Registration itself costs the committee an activation. The decryption window bounds this in time, not in volume. A production deployment needs a registration bond, an operator-side allowlist of applications, or both; the protocol does not supply either.
+
+\paragraph{An undecryptable ciphertext costs every combiner a discrete-log search.} A ciphertext whose plaintext is not below $2^{50}$---a random $C_2$, or one copied from another application and so decrypting to garbage---is accepted by the contract and answered with $t$ partials like any other; each member of the combine rotation then runs the full baby-step giant-step search before concluding that no plaintext exists, about $20$~s of every core and a $256$~MiB table that is built once per process. The node bounds the damage by running one such search at a time, off the loop that serves other ciphertexts, and by never retrying a slot whose search has failed: a failed search taints the application for the rest of the epoch, so an attacker pays one search per registration, not per ciphertext. Under open submission that rule would let one stranger silence an application for every honest submitter, so there the taint is per (application, submitter) instead, and a griefer with fresh addresses buys one search per address. In a 32-node fleet running the previous release the measured cost of a poisoned slot was one search per member and a delay of one or two blocks for its neighbours, at $0.1$~M gas to the attacker; that fleet measurement predates the pool-key build. A locked application whose organizer has not revealed parks its slots in every node until the reveal event wakes them, at no recurring cost. Both are griefing at a bounded price rather than denial of service, and both are visible on chain.
+
+\paragraph{Application identifiers can be front-run.} $\mathtt{aid}$ is caller-chosen and first come, first served within an epoch. An adversary watching the mempool can register the identifier an organizer is about to use, with its own key; the honest registration then reverts, and a client resolving the identifier through the chain would encrypt to the adversary's key. Reading $\mathsf{PK}_{\mathtt{org}}$ from the chain does not help, since the wrong key is on chain under the expected identifier. The defence is to bind the identifier to the registering address: the application record stores its creator, and a client must check it against the organizer it expects.
+
+\paragraph{Rogue organizer keys are stopped by one proof, and by the client.} The registration proof of possession says nothing about which key a client encrypts to. A client must read the application's pool index, $P_j$ and $\mathsf{PK}_{\mathtt{org}}$ from the chain, recompute $\mathsf{PK}_{\mathtt{aid}}$ itself, and check that the epoch is $\textsc{Live}$, the key activated and its committee the expected one; a client that encrypts to a key an organizer hands it has no protection at all.
+
+\paragraph{Without a proof of knowledge, malleability inside an application is the policy's problem.} Anyone the policy admits can post $(C_1, C_2 + m'G)$ or $(kC_1, kC_2)$ derived from an existing ciphertext of the same application, and once the window is open and---for a locked application---the organizer has revealed, a related plaintext becomes public. Nothing cryptographic prevents this, and the organizer has no per-ciphertext veto to catch it with: the submission policy, the block window and the cap of $256$ decide what enters the pipeline, and a client that needs more must keep individual ciphertexts out of it and submit aggregates it has verified itself (\S\ref{sec:why}).
+
+\paragraph{The secrecy argument rests on a chain of assumptions, not on DDH alone.} Theorem~\ref{thm:cross} programs $\HK$ to simulate the honest organizer's registration proof and Lemma~\ref{lem:brlc} draws $\rho$ from it, so Keccak is a random oracle; Poseidon must be collision resistant for a stored digest to fix anything, and the in-circuit Fiat--Shamir challenges treat it as a random oracle besides; and the well-formedness of the adversary's dealings comes from Groth16 soundness, which is proved in the generic-group model. Each of these is a heuristic about a concrete primitive. The theorem is evidence about the design, not a statement about Keccak, Poseidon or BN254.
+
+\paragraph{The reference artifacts come from a single-party setup.} Until a ceremony replaces them, the holder of the combine circuit's toxic waste can post a false plaintext for any ciphertext, an integrity break, though not read a true one, and the holder of the contribution or activation waste can choose any $P_j$, which does break confidentiality. Pinned artifact hashes prevent substitution, not compromise at the source.
+
+\paragraph{The proof system's library is part of the trusted computing base.} The circuits are only as sound as the gadgets they are built from. The gnark snapshot the implementation pinned before v0.16.3 had a variable-base scalar multiplication whose fake-GLV certificate was vacuous (\S\ref{subsec:zk-circuits}), so a prover could return any point as $[s]P$, and every variable-base multiplication in the four circuits used it. Had it been exploited, a forged combine would have let a submitter who knows $r$ post any plaintext of its choosing for its ciphertext, and a forged partial would have let a single member post a $\delta_i$ that is not $e_{j,i} C_1$ and so poison an application's decryptions---an integrity break in both cases, with no key recovered. The implementation now pins gnark v0.16.3, documents that it must never be downgraded below v0.16.2, and avoids the hinted gadget altogether (\S\ref{subsec:zk-circuits}); but the lesson generalises, and a deployment should treat a proving-library advisory as it treats a compiler advisory: re-compile, re-pin every artifact hash, redeploy every verifier.
+
+\paragraph{Late finalization has no deadline, and the lottery seed has a proposer.} An epoch with at least $m_{\min}$ contributions can be finalized, and its keys activated, by anyone at any later time, with a committee that may have thinned meanwhile, so an application should look at when an epoch went $\textsc{Live}$ and at its members' liveness. And the proposer of the seed block can resample its hash thousands of times within its slot by reordering transactions or varying extra data, at no cost, or withhold the block at the cost of its reward; since the proposer schedule is public, an initiator that is also a validator can arrange to be that proposer and select, essentially for free, the seed that maximises its own admissible count (\S\ref{subsec:lottery}). A beacon-sourced seed is the fix and is listed under future work.
+
+\paragraph{Claim-race losers pay a reverted transaction.} Slots go to the first $n$ admissible claimants, so an admissible operator that is late pays gas for a revert, as does the loser of an epoch-creation race. The amounts are small, but honest participants bear them and they scale with oversubscription.
+
+\paragraph{Future work.} Threshold or multi-party organizer keys with contract-side storage to match; proactive share refresh \cite{herzberg1995proactive}; a commit-then-reveal contribution window where unbiased pool keys are required; a beacon-sourced lottery seed; sending only the $3\Kmax n + 5n$ active words of the contribution transcript; refilling a pool without dealing a new committee; and a simulation-based proof of the SNARK-ified Pedersen DKG in the UC sense.
+
+\section{Conclusion}
+\label{sec:conclusion}
+
+Proof-carrying dealings make a publicly verifiable DKG affordable on a public chain: one pairing check per contribution, whatever the committee size, and no dispute phase. On top of that, dealing a pool of keys inside the same proof turns one committee into a supplier of independent per-application keys, each activated by a small proof that rebinds what was already published, so that the committee's half of a decryption is useful nowhere but in the application that asked for it; an application that wants a gatekeeper adds an organizer key whose whole obligation is to be revealed once. Epochs, a dealt pool bound by two-level digests, a knowledge proof in place of a per-ciphertext organizer share and the binding argument for compressed public inputs are what it took to turn that observation into a system that runs unattended on a multi-node testnet, and serves a public one on Sepolia.
+\clearpage
+{\footnotesize
+\printbibliography}
+
+\end{document}

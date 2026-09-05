@@ -41,7 +41,7 @@ commands:
               [-decrypt-from rfc3339|duration] [-decrypt-until rfc3339|duration]
                                                             claim one of the epoch's committee keys for the
                                                             application; without -epoch the newest Live epoch
-                                                            with an activated unclaimed key is used. In locked
+                                                            with an unclaimed key is used. In locked
                                                             mode the organizer key PK_org = sk_org*G is
                                                             published with a Schnorr proof of possession and
                                                             the secret is generated and printed when
@@ -170,7 +170,7 @@ func (a *app) cmdEpoch(args []string) error {
 	if err != nil {
 		return err
 	}
-	status, err := a.manager.GetPoolStatus(a.callOpts(), id)
+	next, err := a.manager.GetPoolStatus(a.callOpts(), id)
 	if err != nil {
 		return err
 	}
@@ -180,23 +180,23 @@ func (a *app) cmdEpoch(args []string) error {
 		phase = phases[e.Status]
 	}
 	fmt.Printf("epoch      %x\nphase      %s\nthreshold  %d/%d (min %d)\nclaimed    %d\ncontribs   %d\n"+
-		"ciphertexts %d\nstartBlock %d\npool       %d/%d claimed, activated bitmap %08b\n",
+		"ciphertexts %d\nstartBlock %d\npool       %d/%d claimed\n",
 		id, phase, e.Policy.Threshold, e.Policy.CommitteeSize, e.Policy.MinValidContributions,
 		e.ClaimedCount, e.ContributionCount, e.CiphertextCount, e.StartBlock,
-		status.NextIndex, ccommon.MaxK, status.Activated)
+		next, ccommon.MaxK)
+	if e.Status != uint8(types.EpochPhaseLive) {
+		return nil // the pool only exists once finalizeEpoch has stored every key
+	}
 	for key := range uint8(ccommon.MaxK) {
-		if status.Activated&(1<<key) == 0 {
-			continue
-		}
 		x, y, keyErr := a.manager.GetPoolKey(a.callOpts(), id, key)
 		if keyErr != nil {
 			return keyErr
 		}
 		state := "claimed"
-		if key >= status.NextIndex {
+		if key >= next {
 			state = "free"
 		}
-		fmt.Printf("  P_%d      (%s, %s) %s\n", key, x, y, state)
+		fmt.Printf("  P_%-2d     (%s, %s) %s\n", key, x, y, state)
 	}
 	return nil
 }
@@ -206,7 +206,7 @@ func (a *app) cmdEpoch(args []string) error {
 func (a *app) cmdRegister(args []string) error {
 	fs := flag.NewFlagSet("register", flag.ContinueOnError)
 	epochFlag := fs.String("epoch", "",
-		"epoch id (hex); default: the newest Live epoch with an activated unclaimed pool key")
+		"epoch id (hex); default: the newest Live epoch with an unclaimed pool key")
 	aidFlag := fs.String("aid", "", "32-byte application id (hex), must be non-zero and below the BN254 scalar field")
 	modeFlag := fs.String("mode", "locked", "'locked': PK_aid = P_j + PK_org and you reveal sk_org when decryption may start; "+
 		"'automatic': no organizer key, the committee decrypts as soon as the ciphertexts land")
@@ -317,9 +317,9 @@ func (a *app) cmdRegister(args []string) error {
 }
 
 // registrationEpoch resolves the epoch a registration goes to: the one the
-// caller named, or the newest Live epoch whose pool still has an activated,
-// unclaimed key. Every other epoch would revert with PoolExhausted or
-// PoolKeyNotActive.
+// caller named, or the newest Live epoch whose pool still has an unclaimed
+// key (every key of a Live epoch is usable; finalizeEpoch stored them all).
+// Every other epoch would revert with PoolExhausted or InvalidPhase.
 func (a *app) registrationEpoch(explicit string) ([12]byte, error) {
 	var id [12]byte
 	if explicit != "" {
@@ -336,8 +336,8 @@ func (a *app) registrationEpoch(explicit string) ([12]byte, error) {
 	if err != nil {
 		return id, err
 	}
-	// Only a handful of epochs are ever serviceable at once; the nodes keep
-	// activating keys ahead in the newest ones.
+	// Only a handful of epochs are ever serviceable at once; the nodes
+	// create the next one early once the newest pool is nearly claimed out.
 	const lookback = 8
 	for n := nonce; n > 0 && n+lookback > nonce; n-- {
 		candidate := web3.EpochID(prefix, n)
@@ -345,15 +345,15 @@ func (a *app) registrationEpoch(explicit string) ([12]byte, error) {
 		if epochErr != nil || epoch.Status != uint8(types.EpochPhaseLive) {
 			continue
 		}
-		status, statusErr := a.manager.GetPoolStatus(a.callOpts(), candidate)
+		next, statusErr := a.manager.GetPoolStatus(a.callOpts(), candidate)
 		if statusErr != nil {
 			continue
 		}
-		if status.NextIndex < ccommon.MaxK && status.Activated&(1<<status.NextIndex) != 0 {
+		if int(next) < ccommon.MaxK {
 			return candidate, nil
 		}
 	}
-	return id, fmt.Errorf("no Live epoch has an activated unclaimed pool key; retry once the committee activates one")
+	return id, fmt.Errorf("no Live epoch has an unclaimed pool key; retry once the committee finalizes the next epoch")
 }
 
 // parseDeadline accepts a Go duration relative to now ("48h") or an RFC3339

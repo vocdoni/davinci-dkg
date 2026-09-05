@@ -18,7 +18,6 @@ type gasProfile struct {
 	claimSlot          uint64
 	submitContribution uint64
 	finalizeEpoch      uint64
-	activatePoolKey    uint64
 	registerLocked     uint64
 	registerAutomatic  uint64
 	revealSecret       uint64
@@ -55,11 +54,11 @@ func TestGasProfiles(t *testing.T) {
 	epochID, profile := singleNodeGasProfile(t, ctx, policy)
 
 	t.Logf(
-		"gas profile epoch=%s create=%d claimSlot=%d contribution=%d finalize=%d activatePoolKey=%d "+
+		"gas profile epoch=%s create=%d claimSlot=%d contribution=%d finalize=%d "+
 			"registerLocked=%d registerAutomatic=%d reveal=%d ciphertext=%d partial_decrypt=%d combine=%d",
 		helpers.RoundIDToString(epochID),
 		profile.createEpoch, profile.claimSlot, profile.submitContribution, profile.finalizeEpoch,
-		profile.activatePoolKey, profile.registerLocked, profile.registerAutomatic, profile.revealSecret,
+		profile.registerLocked, profile.registerAutomatic, profile.revealSecret,
 		profile.submitCiphertext, profile.partialDecrypt, profile.combine,
 	)
 
@@ -74,8 +73,9 @@ func TestGasProfiles(t *testing.T) {
 	// BENCHMARKS.md — don't compare them directly.
 	c.Assert(profile.claimSlot < 250_000, qt.IsTrue)
 	c.Assert(profile.submitContribution < 3_000_000, qt.IsTrue)
-	c.Assert(profile.finalizeEpoch < 150_000, qt.IsTrue)
-	c.Assert(profile.activatePoolKey < 1_200_000, qt.IsTrue)
+	// finalizeEpoch now verifies the batched proof and stores 16 keys and 16
+	// roots (docs/pool-keys-v4.md §13 estimates 2.1–2.8 M).
+	c.Assert(profile.finalizeEpoch < 4_000_000, qt.IsTrue)
 	c.Assert(profile.registerLocked < 700_000, qt.IsTrue)
 	c.Assert(profile.registerAutomatic < 400_000, qt.IsTrue)
 	c.Assert(profile.revealSecret < 300_000, qt.IsTrue)
@@ -108,7 +108,9 @@ func singleNodeGasProfile(t *testing.T, ctx context.Context, policy types.EpochP
 	c.Assert(err, qt.IsNil)
 
 	c.Assert(helpers.WaitForFinalizeGate(ctx, services, epochID), qt.IsNil)
-	profile.finalizeEpoch, err = helpers.FinalizeEpochMeasured(ctx, services, self, epochID)
+	finalization, err := helpers.BuildFinalizeSubmission(ctx, epochID, 1, 1, []uint16{1}, contributions)
+	c.Assert(err, qt.IsNil)
+	profile.finalizeEpoch, err = helpers.FinalizeEpochMeasured(ctx, services, self, epochID, finalization)
 	c.Assert(err, qt.IsNil)
 
 	round := &helpers.FinalizedRoundResult{
@@ -117,17 +119,8 @@ func singleNodeGasProfile(t *testing.T, ctx context.Context, policy types.EpochP
 		CommitteeSize:      1,
 		ParticipantIndexes: []uint16{1},
 		Contributions:      contributions,
-		Activations:        map[uint8]*helpers.PoolKeyActivation{},
+		Finalize:           finalization,
 	}
-	activation, err := helpers.BuildPoolKeyActivation(ctx, epochID, 1, 1, []uint16{1}, contributions, 0)
-	c.Assert(err, qt.IsNil)
-	profile.activatePoolKey, err = helpers.ActivatePoolKeyMeasured(ctx, services, self, epochID, activation)
-	c.Assert(err, qt.IsNil)
-	round.Activations[0] = activation
-
-	// Registration in both modes needs two activated keys.
-	second, err := helpers.ActivateRoundPoolKey(ctx, services, round, 1)
-	c.Assert(err, qt.IsNil)
 
 	lockedAid, skOrg := randomAid(c), randomOrganizerSecret(c)
 	profile.registerLocked, err = helpers.RegisterApplicationMeasured(
@@ -149,10 +142,11 @@ func singleNodeGasProfile(t *testing.T, ctx context.Context, policy types.EpochP
 
 	// The decryption pass runs on the automatic application, which claimed
 	// the second pool key.
-	share := poolShare(c, round, second.KeyIndex, 1)
+	const secondKey uint8 = 1
+	share := poolShare(c, round, secondKey, 1)
 	const ciphertextBase = 9
 	partial, err := helpers.BuildPartialDecryptionSubmission(
-		ctx, epochID, autoAid, 1, 1, big.NewInt(ciphertextBase), share, big.NewInt(5), second.Shares,
+		ctx, epochID, autoAid, 1, 1, big.NewInt(ciphertextBase), share, big.NewInt(5), round.Shares(secondKey),
 	)
 	c.Assert(err, qt.IsNil)
 	output, err := helpers.BuildDecryptCombineOutput(

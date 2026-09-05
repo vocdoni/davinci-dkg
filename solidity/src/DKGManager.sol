@@ -16,13 +16,11 @@ import {
     MAX_K,
     MERKLE_DEPTH,
     MERKLE_EMPTY_LEAF,
-    CONTRIB_TRANSCRIPT_WORDS,
-    CONTRIB_COMMITTEE_BYTES_OFFSET,
-    CONTRIB_COMMITTEE_BYTES_END,
-    POOLKEY_TRANSCRIPT_WORDS,
-    POOLKEY_HASHES_BYTES_OFFSET,
-    POOLKEY_AGG_WORDS_OFFSET,
-    POOLKEY_SHARE_WORDS_OFFSET,
+    FINALIZE_TRANSCRIPT_WORDS,
+    FINALIZE_KEY_WORDS_STRIDE,
+    contribTranscriptWords,
+    contribCommitteeBytesOffset,
+    contribCommitteeBytesEnd,
     COMBINE_TRANSCRIPT_WORDS,
     COMBINE_INDEXES_BYTES_OFFSET,
     COMBINE_PARTIALS_BYTES_OFFSET,
@@ -43,10 +41,11 @@ import {
 ///         must stay O(1) gas regardless of history.
 ///
 ///         Each epoch's DKG deals `MAX_K` independent keys. `finalizeEpoch`
-///         only freezes the accepted contributor set; each pool key is proven
-///         separately by `activatePoolKey`, which stores `P_j` and a keccak
-///         Merkle root over the committee's share commitments for that key
-///         (one SSTORE instead of `MAX_N`). Partial decryptions carry the
+///         is atomic and proof-carrying: one `circuits/finalize` proof binds
+///         the epoch's whole accepted contributor set to all `MAX_K`
+///         aggregate keys and their share-commitment Merkle roots, so `Live`
+///         means every pool key and root is stored and usable — there is no
+///         separate per-key activation. Partial decryptions carry the
 ///         matching Merkle path. Every transcript is read straight out of
 ///         calldata via assembly to avoid per-element bounds checks.
 contract DKGManager is IDKGManager {
@@ -81,7 +80,7 @@ contract DKGManager is IDKGManager {
     uint32 public immutable EPOCH_PREFIX;
     address public immutable CONTRIBUTION_VERIFIER;
     address public immutable PARTIAL_DECRYPT_VERIFIER;
-    address public immutable POOL_KEY_VERIFIER;
+    address public immutable FINALIZE_VERIFIER;
     address public immutable DECRYPT_COMBINE_VERIFIER;
     /// @notice Total epoch length in blocks. Set per-deploy by the constructor.
     ///         Defaults to `DEFAULT_EPOCH_DURATION_BLOCKS` (Sizes.sol) when the
@@ -143,24 +142,26 @@ contract DKGManager is IDKGManager {
     mapping(bytes12 epochId => mapping(bytes32 aid => uint16 count)) internal ciphertextCounts;
     mapping(bytes12 epochId => mapping(bytes32 aid => mapping(uint16 ciphertextIndex => DKGTypes.CombinedDecryptionRecord combined))) internal
         epochCombinedDecryptions;
-    /// @dev Stores keccak256 over the canonical (recipientIndexes ‖ recipientPubKeys)
-    /// section of any valid submitContribution transcript for this epoch. Set once at
-    /// selectParticipants. Lets submitContribution verify the entire 96-word committee
-    /// section in one keccak instead of 32 storage reads + 32 external registry calls.
+    /// @dev Stores keccak256 over the unpadded committee section
+    /// (recipientIndexes ‖ recipientPubKeys, exactly `3·committeeSize` words:
+    /// index, x, y per member) of any valid submitContribution transcript for
+    /// this epoch. Set once at selectParticipants. Lets submitContribution
+    /// verify the whole committee section in one keccak instead of per-member
+    /// storage reads + external registry calls.
     mapping(bytes12 epochId => bytes32 prefixHash) internal epochContribPrefixHash;
 
     // ─── Pool keys ──────────────────────────────────────────────────────────
     //
-    // Every epoch deals `MAX_K` keys. A key becomes usable in two steps:
-    // `activatePoolKey` proves it (writing `poolKeys` + `poolShareRoots` and
-    // setting its bit in `poolActivated`), and `claimPoolKey` — driven by the
-    // app manager at registration — hands the next activated one to an
-    // application. `poolNext` only ever moves forward, so an epoch serves at
-    // most `MAX_K` applications and `createEpoch` opens early once it is
-    // nearly spent.
+    // Every epoch deals `MAX_K` keys. `finalizeEpoch` proves and stores all
+    // of them (plus their share-commitment Merkle roots) in one atomic,
+    // proof-carrying call, so once an epoch is Live its whole pool is usable.
+    // `claimPoolKey` — driven by the app manager at registration — hands the
+    // next key to an application. `poolNext` only ever moves forward, so an
+    // epoch serves at most `MAX_K` applications and `createEpoch` opens early
+    // once it is nearly spent.
 
     /// @dev `P_j = Σ_d A_{d,j,0}`, written exactly once per key by
-    ///      `activatePoolKey` from the proof-verified `aggregateCommitments[0]`.
+    ///      `finalizeEpoch` from the proof-verified per-key transcript row.
     mapping(bytes12 epochId => mapping(uint8 keyIndex => DKGTypes.Point key)) internal poolKeys;
     /// @dev keccak Merkle root (depth `MERKLE_DEPTH`, `MAX_N` leaves) over the
     ///      committee's share commitments `D_i` for one pool key. Leaf
@@ -168,10 +169,8 @@ contract DKGManager is IDKGManager {
     ///      committee member, `MERKLE_EMPTY_LEAF` beyond `committeeSize`, and
     ///      internal nodes are `keccak256(0x01 ‖ left ‖ right)`. One SSTORE
     ///      replaces the per-participant list; the pre-images travel in the
-    ///      activation calldata.
+    ///      finalize calldata.
     mapping(bytes12 epochId => mapping(uint8 keyIndex => bytes32 root)) internal poolShareRoots;
-    /// @dev Bit `j` is set once pool key `j` of the epoch has been activated.
-    mapping(bytes12 epochId => uint8 bitmap) internal poolActivated;
     /// @dev Index of the pool key the next registration claims. Reaching
     ///      `MAX_K` exhausts the epoch.
     mapping(bytes12 epochId => uint8 nextIndex) internal poolNext;
@@ -190,16 +189,16 @@ contract DKGManager is IDKGManager {
     // validation flows through `_requireValidEncryptionPoint` which calls
     // `BabyJubJub.{isCanonical,isOnCurve,isIdentity,isInPrimeSubgroup}`.
 
-    bytes32 internal constant CONTRIBUTION_TRANSCRIPT_DOMAIN = DKGProtocol.DOMAIN_CONTRIBUTION_TRANSCRIPT_V1;
+    bytes32 internal constant CONTRIBUTION_TRANSCRIPT_DOMAIN = DKGProtocol.DOMAIN_CONTRIBUTION_TRANSCRIPT_V2;
     bytes32 internal constant DECRYPT_COMBINE_TRANSCRIPT_DOMAIN = DKGProtocol.DOMAIN_DECRYPT_COMBINE_TRANSCRIPT_V1;
-    bytes32 internal constant POOLKEY_TRANSCRIPT_DOMAIN = DKGProtocol.DOMAIN_POOLKEY_TRANSCRIPT_V1;
+    bytes32 internal constant FINALIZE_TRANSCRIPT_DOMAIN = DKGProtocol.DOMAIN_FINALIZE_TRANSCRIPT_V2;
 
     constructor(
         uint32 _chainId,
         address _registry,
         address _contributionVerifier,
         address _partialDecryptVerifier,
-        address _poolKeyVerifier,
+        address _finalizeVerifier,
         address _decryptCombineVerifier,
         uint256 _epochDurationBlocks,
         uint256 _committeeSelectionBlocks,
@@ -212,7 +211,7 @@ contract DKGManager is IDKGManager {
         if (uint32(block.chainid) != _chainId) revert InvalidChainId();
         if (_registry == address(0)) revert InvalidAddress();
         if (
-            _contributionVerifier == address(0) || _partialDecryptVerifier == address(0) || _poolKeyVerifier == address(0)
+            _contributionVerifier == address(0) || _partialDecryptVerifier == address(0) || _finalizeVerifier == address(0)
                 || _decryptCombineVerifier == address(0)
         ) revert InvalidVerifier();
         CHAIN_ID = _chainId;
@@ -220,7 +219,7 @@ contract DKGManager is IDKGManager {
         EPOCH_PREFIX = DKGIdLib.getPrefix(_chainId, address(this));
         CONTRIBUTION_VERIFIER = _contributionVerifier;
         PARTIAL_DECRYPT_VERIFIER = _partialDecryptVerifier;
-        POOL_KEY_VERIFIER = _poolKeyVerifier;
+        FINALIZE_VERIFIER = _finalizeVerifier;
         DECRYPT_COMBINE_VERIFIER = _decryptCombineVerifier;
 
         uint256 dur     = _epochDurationBlocks      == 0 ? DEFAULT_EPOCH_DURATION_BLOCKS      : _epochDurationBlocks;
@@ -471,28 +470,33 @@ contract DKGManager is IDKGManager {
     // simply gets aborted (`abortEpoch`) and the next scheduled epoch picks
     // up automatically once the cadence threshold passes.
 
-/// @dev Internal helper: build the canonical (recipientIndexes ‖ pubKeys) layout
-    /// for the committee that's just been filled and store its keccak256. Drives the
-    /// O(1) committee verification in submitContribution. The same keys are
-    /// published (unpadded, slot order) in the `CommitteeSnapshot` event so
-    /// off-chain consumers read the frozen view instead of the live registry.
+/// @dev Internal helper: build the unpadded committee layout — exactly
+    /// `3·committeeSize` words, `i+1` then x, y per member, no identity
+    /// padding beyond the live committee — and store its keccak256. Drives
+    /// the O(1) committee verification in submitContribution over the compact
+    /// transcript's `[2Kt, 2Kt+3n)` word window. The same keys are published
+    /// (unpadded, slot order) in the `CommitteeSnapshot` event so off-chain
+    /// consumers read the frozen view instead of the live registry.
     function _snapshotCommittee(bytes12 epochId, uint16 committeeSize) internal {
-        uint256[MAX_N] memory canonicalIdxs;
-        uint256[2 * MAX_N] memory canonicalKeys;
+        // Unpadded, in the exact byte order the compact contribution
+        // transcript carries its committee section (§5 of docs/pool-keys-v4.md):
+        // n recipient indexes (word i is i+1) followed by the n public keys'
+        // x,y coordinates — 3n words total, so `keccak` of this array is
+        // directly comparable with transcript bytes [32·2Kt, 32·(2Kt+3n)).
+        uint256[] memory canonical = new uint256[](3 * committeeSize);
         uint256[] memory snapshotKeys = new uint256[](2 * committeeSize);
         address[] storage participants = epochParticipants[epochId];
         for (uint256 i = 0; i < committeeSize; i++) {
-            canonicalIdxs[i] = i + 1;
             IDKGRegistry.NodeKey memory node = IDKGRegistry(REGISTRY).getNode(participants[i]);
-            canonicalKeys[i * 2] = node.pubX;
-            canonicalKeys[i * 2 + 1] = node.pubY;
+            canonical[i] = i + 1;
             snapshotKeys[i * 2] = node.pubX;
             snapshotKeys[i * 2 + 1] = node.pubY;
         }
-        for (uint256 i = committeeSize; i < MAX_N; i++) {
-            canonicalKeys[i * 2 + 1] = 1; // identity-pad unused slots
+        for (uint256 i = 0; i < committeeSize; i++) {
+            canonical[uint256(committeeSize) + i * 2] = snapshotKeys[i * 2];
+            canonical[uint256(committeeSize) + i * 2 + 1] = snapshotKeys[i * 2 + 1];
         }
-        epochContribPrefixHash[epochId] = keccak256(abi.encodePacked(canonicalIdxs, canonicalKeys));
+        epochContribPrefixHash[epochId] = keccak256(abi.encodePacked(canonical));
         emit CommitteeSnapshot(epochId, committeeSize, snapshotKeys);
     }
 
@@ -539,13 +543,17 @@ contract DKGManager is IDKGManager {
                 || publicInputs[2] != epoch.policy.committeeSize || publicInputs[3] != contributorIndex
                 || bytes32(publicInputs[4]) != commitmentsHash || bytes32(publicInputs[5]) != encryptedSharesHash
         ) revert InvalidProofInput();
-        // Transcript layout (3KN + 5N words; see Sizes.sol):
-        //   words [0..2KN)          commitments, key-major (K keys × N points × 2)
-        //   words [2KN..2KN+N)      recipientIndexes
-        //   words [2KN+N..2KN+3N)   recipientPubKeys  (N points × 2 coords)
-        //   words [2KN+3N..2KN+5N)  ephemerals
-        //   words [2KN+5N..3KN+5N)  maskedShares, key-major
-        if (transcript.length != CONTRIB_TRANSCRIPT_WORDS * 32) revert InvalidProofInput();
+        // Compact transcript layout (L_C = K·(2t+n)+5n words, t/n from the
+        // epoch policy; see Sizes.sol). No padding travels in calldata: the
+        // fixed-width regions are truncated at the live counts.
+        //   words [0..2Kt)          commitments, key-major (K keys × t points × 2)
+        //   words [2Kt..2Kt+n)      recipientIndexes (word i is i+1)
+        //   words [2Kt+n..2Kt+3n)   recipientPubKeys  (n points × 2 coords)
+        //   words [2Kt+3n..2Kt+5n)  ephemerals
+        //   words [2Kt+5n..L_C)     maskedShares, key-major (K keys × n)
+        uint256 wordCount =
+            contribTranscriptWords(epoch.policy.threshold, epoch.policy.committeeSize);
+        if (transcript.length != wordCount * 32) revert InvalidProofInput();
         // The BRLC challenge is Fiat–Shamir over the calldata itself. Deriving
         // it from the prover's own digests would let the prover know ρ before
         // choosing the calldata and publish a transcript that differs from the
@@ -560,22 +568,26 @@ contract DKGManager is IDKGManager {
         IZKVerifier(CONTRIBUTION_VERIFIER).verifyProof(proof, input);
 
         // Single-shot committee verification: the bytes spanning
-        // recipientIndexes ‖ recipientPubKeys hold the canonical committee
-        // section. Compare against the hash snapshotted when the lottery
-        // filled. This replaces a per-recipient loop with N storage reads + N
-        // external registry calls.
+        // recipientIndexes ‖ recipientPubKeys hold the unpadded committee
+        // section (exactly 3n words). Compare against the hash snapshotted
+        // when the lottery filled. This replaces a per-recipient loop with N
+        // storage reads + N external registry calls.
         if (
-            keccak256(transcript[CONTRIB_COMMITTEE_BYTES_OFFSET:CONTRIB_COMMITTEE_BYTES_END])
-                != epochContribPrefixHash[epochId]
+            keccak256(
+                transcript[
+                    contribCommitteeBytesOffset(epoch.policy.threshold)
+                        :contribCommitteeBytesEnd(epoch.policy.threshold, epoch.policy.committeeSize)
+                ]
+            ) != epochContribPrefixHash[epochId]
         ) revert InvalidProofInput();
 
         uint256 dOff;
         assembly { dOff := transcript.offset }
-        if (BRLC.commitCalldata(challenge, dOff, CONTRIB_TRANSCRIPT_WORDS) != publicInputs[7]) revert InvalidProofInput();
+        if (BRLC.commitCalldata(challenge, dOff, wordCount) != publicInputs[7]) revert InvalidProofInput();
 
         // Only persist the fields the contract itself actually needs:
         //   - commitmentsHash: the Poseidon digest over all MAX_K commitment
-        //     vectors, re-checked per participant row by `activatePoolKey`;
+        //     vectors, re-checked per participant row by `finalizeEpoch`;
         //   - contributorIndex + accepted: identity & dup-prevention gates.
         // encryptedSharesHash and the redundant `contributor` are only emitted
         // in the event below; off-chain consumers read them from logs.
@@ -593,163 +605,147 @@ contract DKGManager is IDKGManager {
         emit ContributionSubmitted(epochId, msg.sender, contributorIndex, commitmentsHash, encryptedSharesHash);
     }
 
-    /// @notice Freeze the epoch's accepted contributor set and open the
-    ///         Service window.
-    /// @dev    Proof-less by design: with `MAX_K` keys per epoch there is no
-    ///         single "collective key" to publish here. Each key is proven
-    ///         independently by `activatePoolKey`, which re-checks every
-    ///         participant row against the `commitmentsHash` stored at
-    ///         contribution time — so the contributor set this call freezes is
-    ///         exactly the set every activation must aggregate over.
-    ///         Callable by anyone once the epoch reached `liveNotBeforeBlock`
-    ///         with at least `policy.minValidContributions` contributions.
-    function finalizeEpoch(bytes12 epochId) external {
-        Epoch storage epoch = epochs[epochId];
-        if (epoch.organizer == address(0)) revert InvalidEpoch();
-        if (epoch.status == DKGTypes.EpochPhase.Live) revert AlreadyLive();
-        if (epoch.status != DKGTypes.EpochPhase.KeyAssembly) revert InvalidPhase();
-        // liveNotBeforeBlock gate — semantically a "phase not yet open"
-        // condition, so we reuse InvalidPhase to keep the contract small.
-        if (block.number < uint256(epoch.policy.liveNotBeforeBlock)) revert InvalidPhase();
-        uint16 accepted = epoch.contributionCount;
-        if (accepted < epoch.policy.minValidContributions) revert InsufficientContributions();
-
-        epoch.status = DKGTypes.EpochPhase.Live;
-        emit EpochLive(epochId, accepted);
-    }
-
-    /// @notice Prove and store one of the epoch's `MAX_K` pool keys.
-    /// @dev    Permissionless, one call per key, in any order, only while the
-    ///         epoch is Live. The proof attests that, over the accepted
-    ///         contributors listed in the transcript, each contributor's
-    ///         on-chain `commitmentsHash` is reproduced from its commitments
-    ///         for this key plus the digests of its other keys, that
-    ///         `aggregate[m] = Σ_i A_i[j][m]`, and that
-    ///         `D_p = Σ_m p^m · aggregate[m]` for every committee member `p`.
-    ///         The contract independently binds every row to an accepted
-    ///         on-chain contribution, rejects duplicate participant indexes,
-    ///         requires the unused rows and share slots to be blank, and
-    ///         re-derives the BRLC commitment from calldata so the published
-    ///         transcript is the one that was proven.
-    /// @param  keyIndex         Which of the `MAX_K` keys this activates.
+    /// @notice Prove the epoch's whole key pool and flip the epoch Live.
+    /// @dev    Atomic and proof-carrying: one `circuits/finalize` Groth16
+    ///         proof binds the accepted contributor set to all `MAX_K`
+    ///         aggregate keys `P_j` and their share-commitment Merkle roots,
+    ///         so `Live` means every pool key and root is stored and usable
+    ///         — there is no per-key activation any more.
+    ///
+    ///         The contract independently binds every transcript row to an
+    ///         accepted on-chain contribution, rejects duplicate participant
+    ///         indexes, requires the unused rows and share slots to be blank,
+    ///         and re-derives the BRLC commitment from calldata so the
+    ///         published transcript is the one that was proven. Checks run in
+    ///         the order of docs/pool-keys-v4.md §8; a revert leaves no
+    ///         partial state.
+    ///
+    ///         Direct EOA calls only, exactly like submitContribution: the
+    ///         committee recovers every key, share commitment and Merkle
+    ///         pre-image from the outer transaction calldata, so a
+    ///         contract-relayed finalize would be valid on chain yet
+    ///         unrecoverable. `code.length` also excludes EIP-7702 delegated
+    ///         accounts (batch outer calldata).
     /// @param  transcriptDigest The prover's digest of the witness transcript
-    ///                          (public input 5). It enters the challenge
+    ///                          (public input 4). It enters the challenge
     ///                          anchor so the witness is fixed before ρ exists.
-    /// @param  transcript       `POOLKEY_TRANSCRIPT_WORDS` words; layout in
+    /// @param  transcript       `FINALIZE_TRANSCRIPT_WORDS` words; layout in
     ///                          Sizes.sol.
-    /// @param  input            `[eid, t, n, acceptedCount, keyIndex,
+    /// @param  input            `[eid, threshold, committeeSize, acceptedCount,
     ///                          transcriptDigest, challenge,
-    ///                          transcriptCommitment]`.
-    /// @dev    Direct EOA calls only, exactly like submitContribution: the
-    ///         committee reconstructs every activation (pool key, share
-    ///         commitments, Merkle root pre-images) from the outer
-    ///         transaction calldata, so a contract-relayed activation would
-    ///         be valid on chain yet unrecoverable. `code.length` also
-    ///         excludes EIP-7702 delegated accounts (batch outer calldata).
-    function activatePoolKey(
+    ///                          transcriptCommitment]` (7 words).
+    function finalizeEpoch(
         bytes12 epochId,
-        uint8 keyIndex,
         bytes32 transcriptDigest,
         bytes calldata transcript,
         bytes calldata proof,
         bytes calldata input
     ) external {
+        // (1) Direct-call gate.
         if (msg.sender != tx.origin || msg.sender.code.length != 0) revert DirectCallRequired();
+        // (2) Epoch exists, not already Live, in KeyAssembly.
         Epoch storage epoch = epochs[epochId];
         if (epoch.organizer == address(0)) revert InvalidEpoch();
-        if (epoch.status != DKGTypes.EpochPhase.Live) revert InvalidPhase();
-        if (keyIndex >= MAX_K) revert InvalidProofInput();
-        uint8 keyBit = uint8(1) << keyIndex;
-        if (poolActivated[epochId] & keyBit != 0) revert PoolKeyAlreadyActive();
-        if (transcript.length != POOLKEY_TRANSCRIPT_WORDS * 32) revert InvalidProofInput();
-
-        // Cheap public-input checks first; only invoke the expensive verifier
-        // once the proof provably targets this epoch and key.
-        uint256[8] memory publicInputs = abi.decode(input, (uint256[8]));
+        if (epoch.status == DKGTypes.EpochPhase.Live) revert AlreadyLive();
+        if (epoch.status != DKGTypes.EpochPhase.KeyAssembly) revert InvalidPhase();
+        // (3) Positive finalize gap (contributions stay accepted through their
+        //     deadline; finalization happens strictly after it) and the
+        //     contribution floor.
+        if (block.number < uint256(epoch.policy.liveNotBeforeBlock)) revert InvalidPhase();
+        uint256 accepted = epoch.contributionCount;
+        if (accepted < epoch.policy.minValidContributions) revert InsufficientContributions();
+        uint256 cSize = epoch.policy.committeeSize;
+        // Count bounds: 1 ≤ t ≤ a ≤ n ≤ N. t and n hold by createEpoch and
+        // a ≤ n holds structurally (only selected committee members
+        // contribute, once each); spelled out anyway so the public inputs
+        // below bind against provably in-range values.
+        if (accepted < 1 || accepted > cSize) revert InvalidProofInput();
+        // (4) Exact argument lengths, canonical public inputs, and binding of
+        //     positions 0..4 to state and the digest argument.
+        if (transcript.length != FINALIZE_TRANSCRIPT_WORDS * 32) revert InvalidProofInput();
+        if (input.length != 224 || proof.length != 256) revert InvalidProofInput();
+        uint256[7] memory publicInputs = abi.decode(input, (uint256[7]));
+        if (
+            publicInputs[0] >= BRLC.FR_MODULUS || publicInputs[1] >= BRLC.FR_MODULUS
+                || publicInputs[2] >= BRLC.FR_MODULUS || publicInputs[3] >= BRLC.FR_MODULUS
+                || publicInputs[4] >= BRLC.FR_MODULUS || publicInputs[5] >= BRLC.FR_MODULUS
+                || publicInputs[6] >= BRLC.FR_MODULUS
+        ) revert InvalidProofInput();
         if (
             publicInputs[0] != _epochScalar(epochId) || publicInputs[1] != epoch.policy.threshold
-                || publicInputs[2] != epoch.policy.committeeSize || publicInputs[3] != epoch.contributionCount
-                || publicInputs[4] != uint256(keyIndex) || bytes32(publicInputs[5]) != transcriptDigest
+                || publicInputs[2] != cSize || publicInputs[3] != accepted
+                || bytes32(publicInputs[4]) != transcriptDigest
         ) revert InvalidProofInput();
-        // Fiat–Shamir over the prover's transcript digest AND the calldata
-        // (see submitContribution): the digest fixes the witness before ρ
-        // exists, the calldata hash pins the published words to it.
+        // (5) Fiat-Shamir over the prover's transcript digest AND the
+        //     calldata (see submitContribution): the digest fixes the witness
+        //     before ρ exists, the calldata hash pins the published words to
+        //     it. Then the canonical-stream BRLC commitment over all L_F
+        //     words.
         uint256 challenge = BRLC.deriveChallenge(
-            epochId, POOLKEY_TRANSCRIPT_DOMAIN, keccak256(abi.encodePacked(transcriptDigest, keccak256(transcript)))
+            epochId, FINALIZE_TRANSCRIPT_DOMAIN, keccak256(abi.encodePacked(transcriptDigest, keccak256(transcript)))
         );
-        if (publicInputs[6] != challenge) revert InvalidProofInput();
-        IZKVerifier(POOL_KEY_VERIFIER).verifyProof(proof, input);
-
-        bytes32 root = _verifyPoolKeyRows(epochId, epoch, transcript);
-
+        if (publicInputs[5] != challenge) revert InvalidProofInput();
         uint256 dOff;
         assembly { dOff := transcript.offset }
-        if (BRLC.commitCalldata(challenge, dOff, POOLKEY_TRANSCRIPT_WORDS) != publicInputs[7]) {
+        if (BRLC.commitCalldata(challenge, dOff, FINALIZE_TRANSCRIPT_WORDS) != publicInputs[6]) {
             revert InvalidProofInput();
         }
-
-        // The pool key is `aggregateCommitments[0]`. Read it straight from the
-        // (now fully bound) transcript calldata and persist it once.
-        uint256 pkX;
-        uint256 pkY;
-        {
-            uint256 aggBase = dOff + POOLKEY_AGG_WORDS_OFFSET * 32;
-            assembly ("memory-safe") {
-                pkX := calldataload(aggBase)
-                pkY := calldataload(add(aggBase, 0x20))
+        // (6) Row validation: every active row names a distinct accepted
+        //     contributor and carries that contributor's stored
+        //     commitmentsHash; inactive rows are zero. Exactly `a` unique
+        //     accepted rows prevents omitted dealers.
+        _verifyFinalizeRows(epochId, dOff, accepted, cSize);
+        // (7) Share slots beyond the committee must hold the identity (0, 1)
+        //     — the circuit masks them to identity, so anything else means
+        //     the calldata is not the proven witness — then the pinned
+        //     verifier gets the last word on the witness itself.
+        uint256 shareBase = dOff + (2 * MAX_N + 2) * 32;
+        for (uint256 j = 0; j < MAX_K; j++) {
+            uint256 slotBase = shareBase + j * FINALIZE_KEY_WORDS_STRIDE * 32;
+            for (uint256 i = cSize; i < MAX_N; i++) {
+                uint256 dx;
+                uint256 dy;
+                assembly ("memory-safe") {
+                    dx := calldataload(add(slotBase, mul(i, 0x40)))
+                    dy := calldataload(add(slotBase, add(mul(i, 0x40), 0x20)))
+                }
+                if (dx != 0 || dy != 1) revert InvalidProofInput();
             }
         }
-        DKGTypes.Point storage stored = poolKeys[epochId][keyIndex];
-        stored.x = pkX;
-        stored.y = pkY;
-        poolShareRoots[epochId][keyIndex] = root;
-        poolActivated[epochId] = poolActivated[epochId] | keyBit;
-
-        emit PoolKeyActivated(epochId, keyIndex, pkX, pkY);
+        IZKVerifier(FINALIZE_VERIFIER).verifyProof(proof, input);
+        // (8) Only now compute every Merkle root and store every key/root;
+        //     a revert anywhere above left nothing behind, and the last write
+        //     flips the epoch Live.
+        for (uint8 j = 0; j < MAX_K; j++) {
+            _storeFinalizedKey(epochId, j, dOff, cSize);
+        }
+        epoch.status = DKGTypes.EpochPhase.Live;
+        emit EpochLive(epochId, uint16(accepted));
     }
 
-    /// @dev Validates the rows of a pool-key activation transcript against
-    ///      on-chain contribution state and returns the Merkle root over the
-    ///      share commitments.
+    /// @dev Validates the dealer rows of a finalize transcript against
+    ///      on-chain contribution state.
     ///
-    ///      For every active row `i < contributionCount`: the participant
-    ///      index is in `[1, committeeSize]` and unique, names an accepted
+    ///      For every active row `i < acceptedCount`: the participant index
+    ///      is in `[1, committeeSize]` and unique, names an accepted
     ///      contributor registered under that very index, and carries that
     ///      contributor's stored Poseidon `commitmentsHash`. Without the
     ///      uniqueness check a prover could repeat one contributor's row and
     ///      omit another, aggregating over the wrong set. Every row
-    ///      `i >= contributionCount` must be blank (index and hash both 0).
-    ///
-    ///      Share slot `i` belongs to committee member `i + 1`, whether it
-    ///      contributed or not: leaf `i` is `keccak256(0x00 ‖ D.x ‖ D.y)` for
-    ///      `i < committeeSize`, and the slot must hold the identity `(0, 1)`
-    ///      with leaf `MERKLE_EMPTY_LEAF` beyond that. Internal nodes are
-    ///      `keccak256(0x01 ‖ left ‖ right)` — the tags keep leaves and
-    ///      nodes in separate domains. The tree is a fixed
-    ///      `MERKLE_DEPTH`-level fold over `MAX_N` leaves, so a partial
-    ///      decryption later proves its `D_i` with a `MERKLE_DEPTH`-long path.
-    function _verifyPoolKeyRows(
-        bytes12 epochId,
-        Epoch storage epoch,
-        bytes calldata transcript
-    ) internal view returns (bytes32) {
-        uint256 dOff;
-        assembly { dOff := transcript.offset }
-        uint256 piBase = dOff;                                     // participantIndexes
-        uint256 chBase = dOff + POOLKEY_HASHES_BYTES_OFFSET;       // contributionHashes
-        uint256 scBase = dOff + POOLKEY_SHARE_WORDS_OFFSET * 32;   // shareCommitments
-
-        uint256 ccount = epoch.contributionCount;
-        uint256 cSize = epoch.policy.committeeSize;
+    ///      `i >= acceptedCount` must be blank (index and hash both 0).
+    ///      Accepted rows may appear in any order, matching the contract's
+    ///      frozen contributor set.
+    function _verifyFinalizeRows(bytes12 epochId, uint256 dOff, uint256 accepted, uint256 cSize) internal view {
+        uint256 chBase = dOff + MAX_N * 32; // contributionHashes
         uint256 seenIndexes;
         for (uint256 i = 0; i < MAX_N; i++) {
             uint256 pIdx;
             uint256 rowHash;
             assembly ("memory-safe") {
-                pIdx := calldataload(add(piBase, mul(i, 0x20)))
+                pIdx := calldataload(add(dOff, mul(i, 0x20)))
                 rowHash := calldataload(add(chBase, mul(i, 0x20)))
             }
-            if (i >= ccount) {
+            if (i >= accepted) {
                 if (pIdx != 0 || rowHash != 0) revert InvalidProofInput();
                 continue;
             }
@@ -763,21 +759,46 @@ contract DKGManager is IDKGManager {
             if (!contribution.accepted || contribution.contributorIndex != uint16(pIdx)) revert InvalidProofInput();
             if (bytes32(rowHash) != contribution.commitmentsHash) revert InvalidProofInput();
         }
+    }
+
+    /// @dev Reads key `keyIndex`'s row of the (fully bound) finalize
+    ///      calldata, stores `P_j` and computes + stores the share-commitment
+    ///      Merkle root for that key.
+    ///
+    ///      Share slot `i` belongs to committee member `i + 1`, whether it
+    ///      contributed or not: leaf `i` is `keccak256(0x00 ‖ D.x ‖ D.y)` for
+    ///      `i < committeeSize` and `MERKLE_EMPTY_LEAF` beyond (the identity
+    ///      masking of those slots was already required in step 7). Internal
+    ///      nodes are `keccak256(0x01 ‖ left ‖ right)` — the tags keep leaves
+    ///      and nodes in separate domains. The tree is a fixed
+    ///      `MERKLE_DEPTH`-level fold over `MAX_N` leaves, so a partial
+    ///      decryption later proves its `D_i` with a `MERKLE_DEPTH`-long path.
+    function _storeFinalizedKey(bytes12 epochId, uint8 keyIndex, uint256 dOff, uint256 cSize) internal {
+        uint256 keyBase = dOff + (2 * MAX_N + uint256(keyIndex) * FINALIZE_KEY_WORDS_STRIDE) * 32;
+        // The pool key `P_j` is the head of the key's transcript row.
+        uint256 pkX;
+        uint256 pkY;
+        assembly ("memory-safe") {
+            pkX := calldataload(keyBase)
+            pkY := calldataload(add(keyBase, 0x20))
+        }
+        DKGTypes.Point storage stored = poolKeys[epochId][keyIndex];
+        stored.x = pkX;
+        stored.y = pkY;
 
         bytes32[MAX_N] memory nodes;
-        for (uint256 i = 0; i < MAX_N; i++) {
+        uint256 scBase = keyBase + 0x40;
+        for (uint256 i = 0; i < cSize; i++) {
             uint256 scX;
             uint256 scY;
             assembly ("memory-safe") {
                 scX := calldataload(add(scBase, mul(i, 0x40)))
                 scY := calldataload(add(scBase, add(mul(i, 0x40), 0x20)))
             }
-            if (i < cSize) {
-                nodes[i] = _hashLeaf(scX, scY);
-            } else {
-                if (scX != 0 || scY != 1) revert InvalidProofInput();
-                nodes[i] = MERKLE_EMPTY_LEAF;
-            }
+            nodes[i] = _hashLeaf(scX, scY);
+        }
+        for (uint256 i = cSize; i < MAX_N; i++) {
+            nodes[i] = MERKLE_EMPTY_LEAF;
         }
         uint256 width = MAX_N;
         for (uint256 level = 0; level < MERKLE_DEPTH; level++) {
@@ -786,21 +807,21 @@ contract DKGManager is IDKGManager {
                 nodes[i] = _hashNode(nodes[i * 2], nodes[i * 2 + 1]);
             }
         }
-        return nodes[0];
+        poolShareRoots[epochId][keyIndex] = nodes[0];
     }
 
     /// @notice Assign the next unclaimed pool key of `epochId` to `aid`.
     /// @dev    Callable only by the sibling app manager, which drives it from
     ///         `registerApplication` after it has validated the epoch phase,
     ///         the aid and the policy. Reverts `PoolExhausted` when all
-    ///         `MAX_K` keys are taken and `PoolKeyNotActive` when the next one
-    ///         has not been proven yet — an application must never end up
-    ///         holding a key nobody can decrypt under.
+    ///         `MAX_K` keys are taken. Since `finalizeEpoch` proves and
+    ///         stores the whole pool atomically, every unclaimed key of a
+    ///         Live epoch is usable — there is no activation state.
     function claimPoolKey(bytes12 epochId, bytes32 aid) external returns (uint8 keyIndex) {
         if (msg.sender != appManager) revert Unauthorized();
+        if (epochs[epochId].status != DKGTypes.EpochPhase.Live) revert InvalidPhase();
         keyIndex = poolNext[epochId];
         if (keyIndex >= MAX_K) revert PoolExhausted();
-        if (poolActivated[epochId] & (uint8(1) << keyIndex) == 0) revert PoolKeyNotActive();
         unchecked {
             poolNext[epochId] = keyIndex + 1;
             appPoolIndexes[epochId][aid] = keyIndex + 1;
@@ -808,23 +829,26 @@ contract DKGManager is IDKGManager {
         emit PoolKeyClaimed(epochId, aid, keyIndex);
     }
 
-    /// @notice The activated pool key `P_j` of an epoch.
+    /// @notice The pool key `P_j` of a Live epoch — `finalizeEpoch` stores all
+    ///         `MAX_K` of them, so every `j < MAX_K` is readable once Live.
     function getPoolKey(bytes12 epochId, uint8 keyIndex) external view returns (uint256, uint256) {
-        if (keyIndex >= MAX_K || poolActivated[epochId] & (uint8(1) << keyIndex) == 0) revert PoolKeyNotActive();
+        if (epochs[epochId].status != DKGTypes.EpochPhase.Live) revert InvalidPhase();
+        if (keyIndex >= MAX_K) revert InvalidProofInput();
         DKGTypes.Point storage key = poolKeys[epochId][keyIndex];
         return (key.x, key.y);
     }
 
     /// @notice `nextIndex` is the key the next registration claims (`MAX_K`
-    ///         once the pool is spent); `activated` is the bitmap of proven
-    ///         keys, bit `j` for key `j`.
-    function getPoolStatus(bytes12 epochId) external view returns (uint8 nextIndex, uint8 activated) {
-        return (poolNext[epochId], poolActivated[epochId]);
+    ///         once the pool is spent).
+    function getPoolStatus(bytes12 epochId) external view returns (uint8 nextIndex) {
+        return poolNext[epochId];
     }
 
-    /// @notice Merkle root over the share commitments of one pool key;
-    ///         `bytes32(0)` while the key is not activated.
+    /// @notice Merkle root over the share commitments of one pool key of a
+    ///         Live epoch.
     function getPoolShareRoot(bytes12 epochId, uint8 keyIndex) external view returns (bytes32) {
+        if (epochs[epochId].status != DKGTypes.EpochPhase.Live) revert InvalidPhase();
+        if (keyIndex >= MAX_K) revert InvalidProofInput();
         return poolShareRoots[epochId][keyIndex];
     }
 
@@ -836,7 +860,7 @@ contract DKGManager is IDKGManager {
     /// @dev Unwraps the `+1` marker; reverts when the aid never claimed a key.
     function _appPoolIndex(bytes12 epochId, bytes32 aid) internal view returns (uint8) {
         uint8 claimed = appPoolIndexes[epochId][aid];
-        if (claimed == 0) revert PoolKeyNotActive();
+        if (claimed == 0) revert InvalidProofInput();
         unchecked { return claimed - 1; }
     }
 
@@ -982,7 +1006,7 @@ contract DKGManager is IDKGManager {
         ) revert InvalidProofInput();
         if (deltaHash != keccak256(abi.encodePacked(publicInputs[8], publicInputs[9]))) revert InvalidProofInput();
         // pi[6..7] = D_i, the member's share commitment for THIS application's
-        // pool key. Proven against the root activatePoolKey stored.
+        // pool key. Proven against the root finalizeEpoch stored.
         _verifyShareProof(
             poolShareRoots[epochId][_appPoolIndex(epochId, aid)],
             _hashLeaf(publicInputs[6], publicInputs[7]),
@@ -1007,7 +1031,7 @@ contract DKGManager is IDKGManager {
     /// @dev Verify a `MERKLE_DEPTH`-long inclusion path for `leaf` at leaf
     ///      index `participantIndex - 1` against `root`. Siblings are ordered
     ///      bottom-up and combined as `keccak256(0x01 ‖ left ‖ right)`,
-    ///      matching the fold in `_verifyPoolKeyRows`.
+    ///      matching the fold in `_storeFinalizedKey`.
     function _verifyShareProof(
         bytes32 root,
         bytes32 leaf,
@@ -1323,8 +1347,8 @@ contract DKGManager is IDKGManager {
         return IZKVerifier(PARTIAL_DECRYPT_VERIFIER).provingKeyHash();
     }
 
-    function getPoolKeyVerifierVKeyHash() external view returns (bytes32) {
-        return IZKVerifier(POOL_KEY_VERIFIER).provingKeyHash();
+    function getFinalizeVerifierVKeyHash() external view returns (bytes32) {
+        return IZKVerifier(FINALIZE_VERIFIER).provingKeyHash();
     }
 
     function getDecryptCombineVerifierVKeyHash() external view returns (bytes32) {

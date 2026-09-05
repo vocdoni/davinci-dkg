@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	qt "github.com/frankban/quicktest"
-	ccommon "github.com/vocdoni/davinci-dkg/circuits/common"
+	"github.com/vocdoni/davinci-dkg/circuits/finalize"
 	"github.com/vocdoni/davinci-dkg/crypto/elgamal"
 	golangtypes "github.com/vocdoni/davinci-dkg/solidity/golang-types"
 	"github.com/vocdoni/davinci-dkg/tests/helpers"
@@ -80,19 +80,26 @@ func TestFinalizeRejectsBeforeLiveNotBeforeBlock(t *testing.T) {
 	self := selfActor()
 	c.Assert(helpers.SubmitContributionAs(ctx, self, epochID, 1, submission), qt.IsNil)
 
-	c.Assert(helpers.FinalizeEpochAs(ctx, self, epochID), qt.IsNotNil,
-		qt.Commentf("finalize must revert before liveNotBeforeBlock"))
+	// The proof is valid for the frozen contribution set; only the gate
+	// stands in its way.
+	finalization, err := helpers.BuildFinalizeSubmission(ctx, epochID, 1, 1, []uint16{1}, [][][]*big.Int{pool})
+	c.Assert(err, qt.IsNil)
+	err = helpers.FinalizeEpochAs(ctx, self, epochID, finalization)
+	ok, got := helpers.RevertsWith(err, "InvalidPhase")
+	c.Assert(ok, qt.IsTrue, qt.Commentf("finalize before liveNotBeforeBlock must revert InvalidPhase, got %s", got))
 
 	// Roll past the gate and finalize successfully.
 	c.Assert(helpers.WaitForFinalizeGate(ctx, services, epochID), qt.IsNil)
-	c.Assert(helpers.FinalizeEpochAs(ctx, self, epochID), qt.IsNil)
+	c.Assert(helpers.FinalizeEpochAs(ctx, self, epochID, finalization), qt.IsNil)
 
 	epoch, err := services.Contracts.GetEpoch(ctx, epochID)
 	c.Assert(err, qt.IsNil)
 	c.Assert(epoch.Status, qt.Equals, uint8(3))
 
 	// A second finalize is refused: the epoch is already Live.
-	c.Assert(helpers.FinalizeEpochAs(ctx, self, epochID), qt.IsNotNil)
+	err = helpers.FinalizeEpochAs(ctx, self, epochID, finalization)
+	ok, got = helpers.RevertsWith(err, "AlreadyLive")
+	c.Assert(ok, qt.IsTrue, qt.Commentf("a second finalize must revert AlreadyLive, got %s", got))
 }
 
 // TestFinalizeRejectsMissingContribution asserts an epoch with no accepted
@@ -122,15 +129,17 @@ func TestFinalizeRejectsMissingContribution(t *testing.T) {
 	c.Assert(err, qt.IsNil)
 	c.Assert(helpers.WaitForFinalizeGate(ctx, services, epochID), qt.IsNil)
 
-	c.Assert(helpers.FinalizeEpochAs(ctx, selfActor(), epochID), qt.IsNotNil,
-		qt.Commentf("finalize must revert with InsufficientContributions"))
+	// No contribution means no statement to prove; the contract refuses the
+	// call on the count before it looks at any argument.
+	err = helpers.FinalizeEpochAs(ctx, selfActor(), epochID, &helpers.FinalizeSubmission{})
+	ok, got := helpers.RevertsWith(err, "InsufficientContributions")
+	c.Assert(ok, qt.IsTrue, qt.Commentf("finalize must revert with InsufficientContributions, got %s", got))
 }
 
-// TestActivatePoolKeyRejectsWrongContributionSet feeds activatePoolKey a
-// participant set the epoch never accepted: the contract cross-checks every
-// contribution hash in the transcript against storage before the verifier is
-// ever called.
-func TestActivatePoolKeyRejectsWrongContributionSet(t *testing.T) {
+// TestFinalizeRejectsWrongContributionSet feeds finalizeEpoch a dealer row
+// the epoch never accepted: the contract cross-checks every contribution hash
+// in the transcript against storage before the verifier is ever called.
+func TestFinalizeRejectsWrongContributionSet(t *testing.T) {
 	if !helpers.IsIntegrationEnabled() {
 		t.Skip("integration tests disabled")
 	}
@@ -139,24 +148,53 @@ func TestActivatePoolKeyRejectsWrongContributionSet(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), helpers.MaxTestTimeout(t))
 	defer cancel()
 
-	res := finalizedEpochForApps(ctx, c)
+	epochID, pool := contributionRoundAtGate(ctx, c, []*big.Int{big.NewInt(7)})
+	self := selfActor()
 
 	// Same shape, different coefficients: the proof is internally sound but
-	// its contribution hashes are not the ones on chain.
+	// its contribution hash is not the one on chain.
 	forged := [][][]*big.Int{helpers.DealPoolCoefficients([]*big.Int{big.NewInt(1234)})}
-	activation, err := helpers.BuildPoolKeyActivation(ctx, res.EpochID, 1, 1, []uint16{1}, forged, 1)
+	forgery, err := helpers.BuildFinalizeSubmission(ctx, epochID, 1, 1, []uint16{1}, forged)
 	c.Assert(err, qt.IsNil)
+	err = helpers.FinalizeEpochAs(ctx, self, epochID, forgery)
+	ok, got := helpers.RevertsWith(err, "InvalidProofInput")
+	c.Assert(ok, qt.IsTrue, qt.Commentf("finalization over a forged contribution set must revert InvalidProofInput, got %s", got))
 
-	c.Assert(helpers.ActivatePoolKeyAs(ctx, selfActor(), res.EpochID, activation), qt.IsNotNil,
-		qt.Commentf("activation over a forged contribution set must revert"))
-
-	// The honest activation of the same key still works afterwards.
-	_, err = helpers.ActivateRoundPoolKey(ctx, services, res, 1)
+	// The honest finalization of the same epoch still works afterwards.
+	honest, err := helpers.BuildFinalizeSubmission(ctx, epochID, 1, 1, []uint16{1}, [][][]*big.Int{pool})
 	c.Assert(err, qt.IsNil)
+	c.Assert(helpers.FinalizeEpochAs(ctx, self, epochID, honest), qt.IsNil)
 
-	// And a key can only be activated once.
-	c.Assert(helpers.ActivatePoolKeyAs(ctx, selfActor(), res.EpochID, res.Activation(1)), qt.IsNotNil,
-		qt.Commentf("re-activation must revert with PoolKeyAlreadyActive"))
+	// And an epoch can only be finalized once.
+	err = helpers.FinalizeEpochAs(ctx, self, epochID, honest)
+	ok, got = helpers.RevertsWith(err, "AlreadyLive")
+	c.Assert(ok, qt.IsTrue, qt.Commentf("re-finalization must revert AlreadyLive, got %s", got))
+}
+
+// contributionRoundAtGate drives a single-member epoch through its one
+// contribution (key 0 of the dealt pool is `coefficients`, see
+// DealPoolCoefficients) and up to the finalize gate, leaving finalization to
+// the caller.
+func contributionRoundAtGate(ctx context.Context, c *qt.C, coefficients []*big.Int) ([12]byte, [][]*big.Int) {
+	head, err := services.Contracts.Client().BlockNumber(ctx)
+	c.Assert(err, qt.IsNil)
+	policy := types.EpochPolicy{
+		Threshold:                       1,
+		CommitteeSize:                   1,
+		MinValidContributions:           1,
+		LotteryAlphaBps:                 helpers.DefaultLotteryAlphaBps,
+		CommitteeSelectionDeadlineBlock: head + 25,
+		KeyAssemblyDeadlineBlock:        head + 50,
+		LiveNotBeforeBlock:              head + 51,
+	}
+	epochID, err := helpers.CreateContributionRound(ctx, services, policy)
+	c.Assert(err, qt.IsNil)
+	pool := helpers.DealPoolCoefficients(coefficients)
+	submission, err := helpers.BuildContributionSubmission(ctx, services, epochID, 1, 1, 1, pool, []uint16{1})
+	c.Assert(err, qt.IsNil)
+	c.Assert(helpers.SubmitContributionAs(ctx, selfActor(), epochID, 1, submission), qt.IsNil)
+	c.Assert(helpers.WaitForFinalizeGate(ctx, services, epochID), qt.IsNil)
+	return epochID, pool
 }
 
 func TestPartialDecryptRejectsMalformedProof(t *testing.T) {
@@ -188,7 +226,7 @@ func TestPartialDecryptRejectsMalformedProof(t *testing.T) {
 
 	share := poolShare(c, res, 0, 1)
 	partial, err := helpers.BuildPartialDecryptionSubmissionFromBase(
-		ctx, res.EpochID, aid, assignedIdx, 1, c1, c2, share, big.NewInt(4), res.Activation(0).Shares,
+		ctx, res.EpochID, aid, assignedIdx, 1, c1, c2, share, big.NewInt(4), res.Shares(0),
 	)
 	c.Assert(err, qt.IsNil)
 
@@ -253,22 +291,20 @@ func TestRoundCanFinalizeWithMissingContributorWhenPolicyPermits(t *testing.T) {
 	c.Assert(helpers.SubmitContributionAs(ctx, actor1, epochID, 2, submission1), qt.IsNil)
 
 	c.Assert(helpers.WaitForFinalizeGate(ctx, services, epochID), qt.IsNil)
-	c.Assert(helpers.FinalizeEpochAs(ctx, self, epochID), qt.IsNil)
+	// The pool is dealt over the two accepted contributors only.
+	finalization, err := helpers.BuildFinalizeSubmission(ctx, epochID, 2, 3, []uint16{1, 2}, contributions)
+	c.Assert(err, qt.IsNil)
+	c.Assert(helpers.FinalizeEpochAs(ctx, self, epochID, finalization), qt.IsNil)
 
 	epoch, err := services.Contracts.GetEpoch(ctx, epochID)
 	c.Assert(err, qt.IsNil)
 	c.Assert(epoch.Status, qt.Equals, uint8(3))
 	c.Assert(epoch.ContributionCount, qt.Equals, uint16(2))
 
-	// The pool is dealt over the two accepted contributors only.
-	activation, err := helpers.BuildPoolKeyActivation(ctx, epochID, 2, 3, []uint16{1, 2}, contributions, 0)
-	c.Assert(err, qt.IsNil)
-	c.Assert(helpers.ActivatePoolKeyAs(ctx, self, epochID, activation), qt.IsNil)
-
 	x, y, err := services.Manager.GetPoolKey(services.CallOpts(ctx), epochID, 0)
 	c.Assert(err, qt.IsNil)
-	c.Assert(x.Cmp(activation.PoolKey.X), qt.Equals, 0)
-	c.Assert(y.Cmp(activation.PoolKey.Y), qt.Equals, 0)
+	c.Assert(x.Cmp(finalization.PoolKey(0).X), qt.Equals, 0)
+	c.Assert(y.Cmp(finalization.PoolKey(0).Y), qt.Equals, 0)
 }
 
 // TestNonContributingMemberPostsPartials covers decryption liveness of
@@ -324,21 +360,20 @@ func TestNonContributingMemberPostsPartials(t *testing.T) {
 		c.Assert(helpers.SubmitContributionAs(ctx, actor, epochID, uint16(i+1), sub), qt.IsNil)
 	}
 	c.Assert(helpers.WaitForFinalizeGate(ctx, services, epochID), qt.IsNil)
-	c.Assert(helpers.FinalizeEpochAs(ctx, self, epochID), qt.IsNil)
 
-	// The activation proves the aggregate over the two accepted contributors
-	// and publishes a share commitment for all three members.
+	// The finalization proves the aggregate over the two accepted
+	// contributors and publishes a share commitment for all three members.
 	contributors := []uint16{1, 2}
-	activation, err := helpers.BuildPoolKeyActivation(ctx, epochID, 2, 3, contributors, contributions, 0)
+	finalization, err := helpers.BuildFinalizeSubmission(ctx, epochID, 2, 3, contributors, contributions)
 	c.Assert(err, qt.IsNil)
-	c.Assert(activation.ShareCommitments, qt.HasLen, 3)
-	c.Assert(helpers.ActivatePoolKeyAs(ctx, self, epochID, activation), qt.IsNil)
+	c.Assert(finalization.ShareCommitments[0], qt.HasLen, 3)
+	c.Assert(helpers.FinalizeEpochAs(ctx, self, epochID, finalization), qt.IsNil)
 
 	shares, err := helpers.RecoverParticipantShares(contributions, 0, committee)
 	c.Assert(err, qt.IsNil)
 	d3 := helpers.ScalarBasePoint(shares[2])
-	c.Assert(d3.X.Cmp(activation.ShareCommitments[2].X), qt.Equals, 0, qt.Commentf("D_3 = e_3·G is leaf 2"))
-	c.Assert(d3.Y.Cmp(activation.ShareCommitments[2].Y), qt.Equals, 0)
+	c.Assert(d3.X.Cmp(finalization.ShareCommitments[0][2].X), qt.Equals, 0, qt.Commentf("D_3 = e_3·G is leaf 2"))
+	c.Assert(d3.Y.Cmp(finalization.ShareCommitments[0][2].Y), qt.Equals, 0)
 
 	aid := randomAid(c)
 	c.Assert(helpers.RegisterApplication(
@@ -346,20 +381,20 @@ func TestNonContributingMemberPostsPartials(t *testing.T) {
 		golangtypes.DKGTypesAppPolicy{Mode: uint8(types.AppModeAutomatic)},
 	), qt.IsNil)
 	plaintext := big.NewInt(77)
-	c1, c2, err := elgamal.Encrypt(activation.PoolKey, plaintext)
+	c1, c2, err := elgamal.Encrypt(finalization.PoolKey(0), plaintext)
 	c.Assert(err, qt.IsNil)
 	ctIdx, err := helpers.SubmitCiphertextAs(ctx, self, epochID, aid, c1, c2)
 	c.Assert(err, qt.IsNil)
 
 	// Member 3 posts first: a partial from a slot that never contributed.
 	partial3, err := helpers.BuildPartialDecryptionSubmissionFromBase(
-		ctx, epochID, aid, ctIdx, 3, c1, c2, shares[2], big.NewInt(31), activation.Shares,
+		ctx, epochID, aid, ctIdx, 3, c1, c2, shares[2], big.NewInt(31), finalization.ShareTree(0),
 	)
 	c.Assert(err, qt.IsNil)
 	c.Assert(helpers.SubmitPartialDecryptionAs(ctx, actor2, epochID, aid, 3, ctIdx, partial3), qt.IsNil,
 		qt.Commentf("a committee member that did not contribute may post partials"))
 	partial1, err := helpers.BuildPartialDecryptionSubmissionFromBase(
-		ctx, epochID, aid, ctIdx, 1, c1, c2, shares[0], big.NewInt(29), activation.Shares,
+		ctx, epochID, aid, ctIdx, 1, c1, c2, shares[0], big.NewInt(29), finalization.ShareTree(0),
 	)
 	c.Assert(err, qt.IsNil)
 	c.Assert(helpers.SubmitPartialDecryptionAs(ctx, self, epochID, aid, 1, ctIdx, partial1), qt.IsNil)
@@ -376,14 +411,14 @@ func TestNonContributingMemberPostsPartials(t *testing.T) {
 	c.Assert(record.Plaintext.String(), qt.Equals, plaintext.String())
 }
 
-// TestActivatePoolKeyRejectsNonCanonicalWord lifts one transcript word to
-// `w + p`. The BRLC commitment cannot tell it from `w`, the proof is honest
-// for that calldata, and the contract would otherwise store the raw word
-// (the pool key itself, or a share-commitment leaf) — so the canonical check
-// in BRLC.commitCalldata has to be what refuses it, with
-// `TranscriptWordNotInField`. The untouched activation of the same key then
-// lands, which pins down that nothing else about the proof was wrong.
-func TestActivatePoolKeyRejectsNonCanonicalWord(t *testing.T) {
+// TestFinalizeRejectsNonCanonicalWord lifts one transcript word to `w + p`.
+// The BRLC commitment cannot tell it from `w`, the proof is honest for that
+// calldata, and the contract would otherwise store the raw word (a pool key
+// itself, or a share-commitment leaf) — so the canonical check in
+// BRLC.commitCalldata has to be what refuses it, with
+// `TranscriptWordNotInField`. The untouched finalization of the same epoch
+// then lands, which pins down that nothing else about the proof was wrong.
+func TestFinalizeRejectsNonCanonicalWord(t *testing.T) {
 	if !helpers.IsIntegrationEnabled() {
 		t.Skip("integration tests disabled")
 	}
@@ -392,25 +427,28 @@ func TestActivatePoolKeyRejectsNonCanonicalWord(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), helpers.MaxTestTimeout(t))
 	defer cancel()
 
-	res := finalizedEpochForApps(ctx, c)
+	epochID, pool := contributionRoundAtGate(ctx, c, []*big.Int{big.NewInt(7)})
 	self := selfActor()
+	contributions := [][][]*big.Int{pool}
 
 	lifted := map[string]int{
-		"pool key P_j.x (aggregate slot 0)":      2 * ccommon.MaxN,
-		"share commitment D_1.x (member 1 leaf)": 4 * ccommon.MaxN,
+		"pool key P_1.x": finalize.PoolKeyOffset(1),
+		"share commitment D_{0,1}.x (member 1 leaf)": finalize.ShareCommitmentOffset(0, 0),
 	}
 	for label, word := range lifted {
-		activation, err := helpers.BuildPoolKeyActivationWithNonCanonicalWord(
-			ctx, res.EpochID, res.Threshold, res.CommitteeSize, res.ParticipantIndexes, res.Contributions, 1, word,
+		finalization, err := helpers.BuildFinalizeSubmissionWithNonCanonicalWord(
+			ctx, epochID, 1, 1, []uint16{1}, contributions, word,
 		)
 		c.Assert(err, qt.IsNil, qt.Commentf("%s: the proof itself is valid", label))
-		err = helpers.ActivatePoolKeyAs(ctx, self, res.EpochID, activation)
+		err = helpers.FinalizeEpochAs(ctx, self, epochID, finalization)
 		ok, got := helpers.RevertsWith(err, "TranscriptWordNotInField")
 		c.Assert(ok, qt.IsTrue, qt.Commentf("%s: expected TranscriptWordNotInField, got %s", label, got))
 	}
 
-	_, err := helpers.ActivateRoundPoolKey(ctx, services, res, 1)
-	c.Assert(err, qt.IsNil, qt.Commentf("the canonical encoding of the same key activates"))
+	honest, err := helpers.BuildFinalizeSubmission(ctx, epochID, 1, 1, []uint16{1}, contributions)
+	c.Assert(err, qt.IsNil)
+	c.Assert(helpers.FinalizeEpochAs(ctx, self, epochID, honest), qt.IsNil,
+		qt.Commentf("the canonical encoding of the same statement finalizes"))
 }
 
 // TestCreateEpochEarlyAfterAbort covers the narrow early-creation rule: an

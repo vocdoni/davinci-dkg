@@ -1,6 +1,6 @@
 # Davinci DKG SDK
 
-TypeScript SDK for the Davinci DKG smart contracts. Covers read/write access to `DKGManager`, `DKGRegistry` and `DKGAppManager`, ElGamal encryption on BabyJubJub under per-application pool keys, pool-key activation and status, the organizer's one-time secret reveal, and helpers for polling epoch status and decryption results.
+TypeScript SDK for the Davinci DKG smart contracts. Covers read/write access to `DKGManager`, `DKGRegistry` and `DKGAppManager`, ElGamal encryption on BabyJubJub under per-application pool keys, the pool's claim status, the organizer's one-time secret reveal, helpers for polling epoch status and decryption results, and the transcript codecs (compact contribution, batched finalization, share-commitment Merkle tree) that read the key pool back from calldata.
 
 ## Installation
 
@@ -74,10 +74,13 @@ const bounds = await client.getEpochBounds();
 const participants = await client.selectedParticipants(epochId);
 const contrib      = await client.getContribution(epochId, participantAddress);
 
-// Pool keys (MaxK = 8 dealt per epoch; each application claims one at registration)
-const { nextIndex, activated } = await client.getPoolStatus(epochId);
-const poolKey = await client.getPoolKey(epochId, 0);           // reverts PoolKeyNotActive if not yet activated
+// Pool keys (MaxK = 16 dealt per epoch, all stored by finalizeEpoch; each application claims one)
+const { nextIndex } = await client.getPoolStatus(epochId);     // the claim cursor, MAX_K once spent
+const poolKey = await client.getPoolKey(epochId, 0);           // reverts InvalidPhase before Live
+const poolKeys = await client.getPoolKeys(epochId);            // all MAX_K keys, TE form
 const pkAid   = await client.getApplicationKey(epochId, aid);  // P_j (automatic) or P_j + PK_org (locked)
+const finalize = await client.getFinalizeTranscript(epochId);  // decoded finalizeEpoch calldata: keys + every D_{j,i}
+const proof = await client.getShareProof(epochId, 0, 1);       // member 1's Merkle path under key 0
 
 // Decryption state (ciphertexts are keyed by application id; there is no bare epoch-key path)
 const count    = await client.ciphertextCount(epochId, aid);
@@ -116,9 +119,9 @@ await writer.registerKey(babyJubPrivateKey);
 // Claim a slot (DKG node role — after the seed block has been mined)
 await writer.claimSlot(epochId);
 
-// Register an application once the epoch is Live and has an activated pool
-// key to claim (reverts PoolExhausted / PoolKeyNotActive otherwise; an epoch
-// serves at most 8 applications, the next epoch refills the pool).
+// Register an application once the epoch is Live; it claims the next
+// unclaimed pool key (reverts PoolExhausted once all 16 are taken; an epoch
+// serves at most 16 applications, the next epoch refills the pool).
 // Organizer-locked (the default) needs a one-time reveal before the
 // committee can combine; automatic has no organizer key at all — read
 // "Applications and the organizer secret" before choosing.
@@ -242,10 +245,10 @@ const pkAidLocal = applicationKey(poolKeyPoint, app.organizerPK);
 ## Applications and the organizer secret
 
 Ciphertexts are always submitted under a registered application id (`aid`); there is no
-epoch-key path, and an unregistered `aid` reverts. Registration claims the next activated
-**pool key** `P_j` — one of the `MaxK = 8` keys the epoch's DKG deals alongside the usual
-commitments, one polynomial per key inside the same contribution proofs — and binds it into
-the application's key:
+epoch-key path, and an unregistered `aid` reverts. Registration claims the next unclaimed
+**pool key** `P_j` — one of the `MaxK = 16` keys the epoch's DKG deals, one polynomial per
+key inside the same contribution proofs, all proven and stored by the one `finalizeEpoch` —
+and binds it into the application's key:
 
 ```
 PK_aid = P_j                    (automatic — no organizer key at all)
@@ -347,19 +350,19 @@ To decrypt a ciphertext:
 [DKG Node]  claimSlot(epochId)           ← lottery via on-chain blockhash seed; only
                │                            nodes registered before the epoch qualify
                ▼  (committee full)
-[DKG Node]  submitContribution(...)      ← ZK proof dealing all MaxK = 8 pool-key
-               │                            polynomials at once
+[DKG Node]  submitContribution(...)      ← ZK proof dealing all MaxK = 16 pool-key
+               │                            polynomials at once; compact calldata,
+               │                            MaxK·(2t+n) + 5n words
                ▼  (key-assembly deadline + live-not-before block reached)
-[Anyone]    finalizeEpoch(eid)           ← no proof: just checks phase/block/contribution
-               │                            count and flips the epoch to Live, freezing
-               │                            the accepted contributor set
-               ▼  Epoch.status = Live
-[Anyone]    activatePoolKey(eid, j, transcriptDigest, ...)  ← one ZK proof per key,
-               │                            permissionless, any order; stores P_j and the
-               │                            committee's share-commitment Merkle root; nodes
-               │                            activate keys ahead of demand (ActivateAhead)
-               ▼
-[Organizer] registerApplication(eid, aid, policy, skOrg)  ← claims the next activated
+[Anyone]    finalizeEpoch(eid, transcriptDigest, transcript, proof, input)
+               │                          ← one ZK proof over the accepted contributor
+               │                            set; stores all MaxK keys P_j and the
+               │                            committee's share-commitment Merkle roots,
+               │                            then flips the epoch to Live (direct EOA
+               │                            call only: the 1,120-word transcript lives
+               │                            in the calldata)
+               ▼  Epoch.status = Live — every key exists
+[Organizer] registerApplication(eid, aid, policy, skOrg)  ← claims the next unclaimed
                │                                             key j; locked: Schnorr PoP of
                │                                             sk_org; automatic: no organizer
                │                                             key at all; PK_aid = P_j (+PK_org)
@@ -392,11 +395,16 @@ To decrypt a ciphertext:
  closed below minValidContributions)  →  [Anyone] abortEpoch(epochId)
 ```
 
-> **Pool keys:** Each epoch's DKG deals `MaxK = 8` independent keys `P_0…P_7` inside the same
-> contribution proofs used for the committee itself. Each key is activated individually via a
-> small `circuits/poolkey` proof once the epoch is Live, and each application claims exactly one
-> at registration. `client.getPoolStatus(epochId)` reports how many keys are activated and
-> claimed; `client.getPoolKey(epochId, j)` returns one key's `(x, y)`; `client.getApplicationKey(epochId, aid)` returns the application's `PK_aid` directly.
+> **Pool keys:** Each epoch's DKG deals `MaxK = 16` independent keys `P_0…P_15` inside the same
+> contribution proofs used for the committee itself. The single proof-carrying `finalizeEpoch`
+> proves and stores all of them (plus one share-commitment Merkle root per key) atomically, so
+> `Live` means every key exists; each application claims exactly one at registration.
+> `client.getPoolStatus(epochId)` reports the claim cursor; `client.getPoolKey(epochId, j)` /
+> `client.getPoolKeys(epochId)` return the keys' `(x, y)`; `client.getApplicationKey(epochId, aid)`
+> returns the application's `PK_aid` directly; `client.getFinalizeTranscript(epochId)` decodes the
+> finalization calldata (every key and every member's share commitment `D_{j,i}` at word
+> `64 + 66·j + 2 + 2·i`) and `client.getShareProof(epochId, j, participantIndex)` builds the
+> Merkle path a partial decryption carries, checked against the stored root.
 
 ## API reference
 
@@ -415,8 +423,11 @@ To decrypt a ciphertext:
 | `ciphertextCount(epochId, aid)` | Ciphertexts accepted so far under `(epochId, aid)`; indices run 1…count |
 | `getApplication(epochId, aid)` | Cached `Application` record (creator, `PK_org` in TE form — identity for automatic —, `organizerSecret` — `0` until a locked app's organizer reveals it, always `0` for automatic —, `poolIndex`, `AppPolicy`) |
 | `getApplicationKey(epochId, aid)` | The application's `PK_aid` directly: `P_j` (automatic) or `P_j + PK_org` (locked) |
-| `getPoolKey(epochId, j)` | One pool key's `(x, y)`; reverts `PoolKeyNotActive` if key `j` isn't activated yet |
-| `getPoolStatus(epochId)` | `{ nextIndex, activated }` — how many of the epoch's `MaxK` keys are activated and claimed |
+| `getPoolKey(epochId, j)` | One pool key's `(x, y)`, TE form; reverts `InvalidPhase` before the epoch is Live |
+| `getPoolKeys(epochId)` | All `MAX_K` pool keys of a Live epoch, by index |
+| `getPoolStatus(epochId)` | `{ nextIndex }` — the claim cursor (`MAX_K` once the pool is spent) |
+| `getFinalizeTranscript(epochId)` | The decoded `finalizeEpoch` calldata: pool keys, every member's share commitment, digest, public inputs, finalizer; null before Live |
+| `getShareProof(epochId, j, participantIndex)` | Member `participantIndex`'s leaf, `MERKLE_DEPTH` siblings and root under key `j`, from the finalization calldata and checked against `getPoolShareRoot` |
 | `getPoolShareRoot(epochId, j)` | Merkle root of key `j`'s per-member share commitments |
 | `getAppPoolIndex(epochId, aid)` | Which pool key index an application claimed |
 | `getAppManagerAddress()` | Resolve the `DKGAppManager` address |
@@ -448,12 +459,11 @@ All `DKGClient` methods plus:
 | `createEpoch({ threshold, committeeSize, minValidContributions, lotteryAlphaBps })` | Create a new DKG epoch (permissionless, cadence-gated, bounded by `getEpochBounds()`) |
 | `claimSlot(epochId)` | Claim a committee slot |
 | `submitContribution(...)` | Submit VSS contribution + ZK proof, dealing all `MaxK` pool-key polynomials at once |
-| `finalizeEpoch(epochId)` | Finalize epoch — no proof; only checks phase/block/contribution-count and flips it to Live |
-| `activatePoolKey(epochId, poolIndex, transcriptDigest, transcript, proof, input)` | Activate one pool key with its `circuits/poolkey` ZK proof (8 public inputs; `transcriptDigest` is the proof's Poseidon transcript digest, folded into the Fiat–Shamir anchor); permissionless, any order |
+| `finalizeEpoch(epochId, transcriptDigest, transcript, proof, input)` | Finalize the epoch with the `circuits/finalize` ZK proof over the whole key pool (7 public inputs; `transcriptDigest` is the proof's Poseidon transcript digest, folded into the Fiat–Shamir anchor); stores every key and share root and flips the epoch to Live; permissionless, direct EOA call only |
 | `submitCiphertext(epochId, aid, ciphertext)` | Publish a ciphertext; waits for the receipt and returns `{ hash, receipt, ciphertextIndex }` with the on-chain-assigned index |
 | `submitPartialDecryption(...)` | Submit partial decryption + ZK proof, with a Merkle proof of the share commitment against the claimed pool key's root; reverts until the decryption window is open and, for a locked application, the organizer has revealed |
 | `combineDecryption(epochId, aid, idx, combineHash, plaintext, ...)` | Combine partial decryptions + ZK proof; stores plaintext |
-| `registerApplication(epochId, aid, policy, skOrg)` | Register an application, claiming the next activated pool key (reverts `PoolExhausted` / `PoolKeyNotActive`); derives `PK_org` and, for `AppMode.OrganizerLocked`, the Schnorr proof of possession; `AppMode.Automatic` sends no organizer material at all |
+| `registerApplication(epochId, aid, policy, skOrg)` | Register an application, claiming the next unclaimed pool key (reverts `PoolExhausted` once all `MAX_K` are taken); derives `PK_org` and, for `AppMode.OrganizerLocked`, the Schnorr proof of possession; `AppMode.Automatic` sends no organizer material at all |
 | `revealOrganizerSecret(epochId, aid, skOrg)` | Reveal the organizer secret once (locked applications only); from then on the committee combines by itself for every past and future ciphertext of the application |
 | `abortEpoch(epochId)` | Abort a dead epoch (permissionless; reverts unless the epoch can no longer progress) |
 | `registerKey(privateKey)` | Register a DKG node in the registry (derives the key + Schnorr PoK) |

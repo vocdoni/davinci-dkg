@@ -1,4 +1,4 @@
-package poolkey
+package finalize
 
 import (
 	"fmt"
@@ -7,18 +7,20 @@ import (
 	"github.com/vocdoni/davinci-dkg/types"
 )
 
-// Assignment is the native input model used to build a pool-key activation
-// witness. Commitments is indexed by accepted contributor, then pool key, then
-// coefficient: activation is permissionless and reads every set from the
-// contribution calldata, because reproducing a contributor's stored
-// commitments hash needs the digests of the keys that are not being activated.
+// Assignment is the native input model used to build a finalization witness:
+// the accepted contributions of one epoch, read back from their calldata.
+// Commitments is indexed by accepted dealer, then pool key, then coefficient.
+// ContributionHashes optionally carries each dealer's on-chain
+// commitmentsHash; when present the builder checks the recomputed hash
+// against it so a mis-decoded contribution fails early with a message
+// instead of as an unsatisfiable witness.
 type Assignment struct {
 	RoundHash          *big.Int
 	Threshold          uint16
 	CommitteeSize      uint16
-	KeyIndex           uint8
 	ParticipantIndexes []uint16
 	Commitments        [][][]types.CurvePoint
+	ContributionHashes []*big.Int
 }
 
 // Validate checks that the assignment fits the current circuit bounds.
@@ -38,9 +40,6 @@ func (a Assignment) Validate() error {
 	if int(a.CommitteeSize) > MaxParticipants {
 		return fmt.Errorf("committee size %d exceeds max %d", a.CommitteeSize, MaxParticipants)
 	}
-	if int(a.KeyIndex) >= MaxKeys {
-		return fmt.Errorf("key index %d is outside the pool [0, %d)", a.KeyIndex, MaxKeys)
-	}
 	if len(a.ParticipantIndexes) < int(a.Threshold) {
 		return fmt.Errorf("participant count %d is below threshold %d", len(a.ParticipantIndexes), a.Threshold)
 	}
@@ -48,8 +47,7 @@ func (a Assignment) Validate() error {
 		return fmt.Errorf("participant count %d exceeds committee size %d", len(a.ParticipantIndexes), a.CommitteeSize)
 	}
 	// Reject duplicate participant indexes so local tooling cannot produce an
-	// accepted set the contract would refuse (and that a malicious prover could
-	// otherwise use to activate a key over a set disjoint from the epoch's).
+	// accepted set the contract would refuse.
 	seen := make(map[uint16]struct{}, len(a.ParticipantIndexes))
 	for i, index := range a.ParticipantIndexes {
 		if index == 0 {
@@ -70,14 +68,26 @@ func (a Assignment) Validate() error {
 			len(a.ParticipantIndexes),
 		)
 	}
-	for i, contributor := range a.Commitments {
-		if len(contributor) != MaxKeys {
-			return fmt.Errorf("contributor %d deals %d keys, expected %d", i, len(contributor), MaxKeys)
+	if len(a.ContributionHashes) != 0 && len(a.ContributionHashes) != len(a.ParticipantIndexes) {
+		return fmt.Errorf(
+			"contribution hash count %d does not match participant count %d",
+			len(a.ContributionHashes),
+			len(a.ParticipantIndexes),
+		)
+	}
+	for i, hash := range a.ContributionHashes {
+		if hash == nil {
+			return fmt.Errorf("contribution hash %d is nil", i)
 		}
-		for j, key := range contributor {
+	}
+	for i, dealer := range a.Commitments {
+		if len(dealer) != MaxKeys {
+			return fmt.Errorf("dealer %d deals %d keys, expected %d", i, len(dealer), MaxKeys)
+		}
+		for j, key := range dealer {
 			if len(key) != int(a.Threshold) {
 				return fmt.Errorf(
-					"contributor %d key %d has %d commitments, expected the threshold %d",
+					"dealer %d key %d has %d commitments, expected the threshold %d",
 					i,
 					j,
 					len(key),
@@ -86,7 +96,7 @@ func (a Assignment) Validate() error {
 			}
 			for m, point := range key {
 				if err := point.Validate(); err != nil {
-					return fmt.Errorf("contributor %d key %d commitment %d: %w", i, j, m, err)
+					return fmt.Errorf("dealer %d key %d commitment %d: %w", i, j, m, err)
 				}
 			}
 		}

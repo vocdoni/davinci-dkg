@@ -8,7 +8,17 @@
 
 import { dkgAppManagerAbi, dkgManagerAbi, dkgRegistryAbi, fromRTEtoTE } from '@vocdoni/davinci-dkg-sdk'
 import type { Abi, Address, PublicClient } from 'viem'
-import { appModeName, type Aid, type ChainMeta, type EpochId, type EpochPolicy, type Hex, type TxMeta } from './types'
+import {
+  appModeName,
+  POOL_SIZE,
+  type Aid,
+  type ChainMeta,
+  type EpochId,
+  type EpochPolicy,
+  type Hex,
+  type Point,
+  type TxMeta,
+} from './types'
 import type { ApplicationStateUpdate, EpochStateUpdate, OperatorStateUpdate } from './reduce'
 
 /** Canonical Multicall3 deployment, identical on every supported chain. */
@@ -198,8 +208,9 @@ export class StateReader {
 
   /**
    * `getEpoch` + `selectedParticipants` + `getPoolStatus` for each id, in one
-   * batch. The pool keys themselves come from `PoolKeyActivated`; the status
-   * read only keeps the claim cursor honest on a chain nobody is watching.
+   * batch. The pool keys themselves are read separately (`readPoolKeys`) once
+   * the epoch is Live; the status read keeps the claim cursor honest on a
+   * chain nobody is watching.
    */
   async readEpochs(ids: EpochId[], stateBlock: number): Promise<Map<string, EpochStateUpdate>> {
     const out = new Map<string, EpochStateUpdate>()
@@ -251,12 +262,50 @@ export class StateReader {
         update.committee = (participantsResult.value as string[]).map((a) => a.toLowerCase() as Address)
       }
       if (poolResult?.ok) {
-        // `(nextIndex, activated)` as a tuple or a struct, depending on the decoder.
-        const value = poolResult.value as [unknown, unknown] | { nextIndex?: unknown }
-        const next = Array.isArray(value) ? value[0] : value?.nextIndex
+        // A bare `uint8`, or a one-element tuple / struct depending on the decoder.
+        const value = poolResult.value as unknown
+        const next = Array.isArray(value)
+          ? value[0]
+          : typeof value === 'object' && value != null
+            ? (value as { nextIndex?: unknown }).nextIndex
+            : value
         if (next != null) update.poolNext = num(next)
       }
       out.set(id.toLowerCase(), update)
+    })
+    return out
+  }
+
+  /**
+   * `getPoolKey(eid, j)` for every `j < POOL_SIZE` of each Live epoch, in one
+   * batch — the whole pool is stored by the single proof-carrying
+   * `finalizeEpoch`, so one read per epoch settles every slot. Keys come back
+   * in TE form, like every key in the store. A slot whose read failed (the
+   * epoch is not Live after all) is null and left for the next refresh.
+   */
+  async readPoolKeys(ids: EpochId[]): Promise<Map<string, Array<Point | null>>> {
+    const out = new Map<string, Array<Point | null>>()
+    if (ids.length === 0) return out
+    const calls: CallSpec[] = []
+    for (const id of ids) {
+      for (let j = 0; j < POOL_SIZE; j++) {
+        calls.push({ address: this.managerAddress, abi: MANAGER_ABI, functionName: 'getPoolKey', args: [id, j] })
+      }
+    }
+    const results = await this.read(calls)
+    ids.forEach((id, i) => {
+      const keys: Array<Point | null> = []
+      for (let j = 0; j < POOL_SIZE; j++) {
+        const result = results[i * POOL_SIZE + j]
+        if (!result?.ok || !Array.isArray(result.value)) {
+          keys.push(null)
+          continue
+        }
+        const [x, y] = result.value as [unknown, unknown]
+        const [tx, ty] = fromRTEtoTE(big(x), big(y))
+        keys.push({ x: tx, y: ty })
+      }
+      if (keys.some((key) => key != null)) out.set(id.toLowerCase(), keys)
     })
     return out
   }

@@ -12,8 +12,8 @@ import (
 )
 
 // TestCommitteeRoundHappyPath drives a three-member epoch by hand: lottery
-// claims, three contributions each dealing the whole pool, the proof-less
-// finalize, a pool-key activation and a threshold decryption under an
+// claims, three contributions each dealing the whole pool, the batched
+// finalization proof that stores every key, and a threshold decryption under an
 // organizer-locked application whose secret is revealed before the first
 // partial — the contract accepts none until then.
 func TestCommitteeRoundHappyPath(t *testing.T) {
@@ -75,27 +75,18 @@ func TestCommitteeRoundHappyPath(t *testing.T) {
 	}
 
 	c.Assert(helpers.WaitForFinalizeGate(ctx, services, epochID), qt.IsNil)
-	c.Assert(helpers.FinalizeEpochAs(ctx, selfActor(), epochID), qt.IsNil)
+	finalization, err := helpers.BuildFinalizeSubmission(ctx, epochID, 2, 3, participantIndexes, contributions)
+	c.Assert(err, qt.IsNil)
+	c.Assert(helpers.FinalizeEpochAs(ctx, selfActor(), epochID, finalization), qt.IsNil)
 
 	epoch, err = helpers.WaitEpochPhase(ctx, services, epochID, 3)
 	c.Assert(err, qt.IsNil)
 	c.Assert(epoch.ContributionCount, qt.Equals, uint16(3))
 
-	round := &helpers.FinalizedRoundResult{
-		EpochID:            epochID,
-		Epoch:              epoch,
-		Threshold:          2,
-		CommitteeSize:      3,
-		ParticipantIndexes: participantIndexes,
-		Contributions:      contributions,
-		Activations:        map[uint8]*helpers.PoolKeyActivation{},
-	}
-	activation, err := helpers.ActivateRoundPoolKey(ctx, services, round, 0)
-	c.Assert(err, qt.IsNil)
-
+	shareTree := finalization.ShareTree(0)
 	root, err := services.Manager.GetPoolShareRoot(services.CallOpts(ctx), epochID, 0)
 	c.Assert(err, qt.IsNil)
-	c.Assert(root, qt.Equals, activation.Shares.Root())
+	c.Assert(root, qt.Equals, shareTree.Root())
 
 	recoveredShares, err := helpers.RecoverParticipantShares(contributions, 0, participantIndexes)
 	c.Assert(err, qt.IsNil)
@@ -110,11 +101,11 @@ func TestCommitteeRoundHappyPath(t *testing.T) {
 	), qt.IsNil)
 
 	partial0, err := helpers.BuildPartialDecryptionSubmission(
-		ctx, epochID, aid, 1, 1, big.NewInt(9), recoveredShares[0], big.NewInt(11), activation.Shares,
+		ctx, epochID, aid, 1, 1, big.NewInt(9), recoveredShares[0], big.NewInt(11), shareTree,
 	)
 	c.Assert(err, qt.IsNil)
 	partial1, err := helpers.BuildPartialDecryptionSubmission(
-		ctx, epochID, aid, 1, 2, big.NewInt(9), recoveredShares[1], big.NewInt(13), activation.Shares,
+		ctx, epochID, aid, 1, 2, big.NewInt(9), recoveredShares[1], big.NewInt(13), shareTree,
 	)
 	c.Assert(err, qt.IsNil)
 

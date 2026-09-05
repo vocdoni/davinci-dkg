@@ -193,7 +193,7 @@ export function ApplicationPage() {
     {
       label: 'P_j x',
       value: row.poolKey ? <Hash value={bigIntToHex(row.poolKey.x)} chars={10} /> : '—',
-      hint: row.poolKey ? undefined : 'the pool key’s activation is not indexed yet',
+      hint: row.poolKey ? undefined : 'the epoch’s pool keys have not been read yet',
     },
     {
       label: 'P_j y',

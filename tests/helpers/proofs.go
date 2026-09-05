@@ -17,8 +17,8 @@ import (
 	ccommon "github.com/vocdoni/davinci-dkg/circuits/common"
 	"github.com/vocdoni/davinci-dkg/circuits/contribution"
 	"github.com/vocdoni/davinci-dkg/circuits/decryptcombine"
+	"github.com/vocdoni/davinci-dkg/circuits/finalize"
 	"github.com/vocdoni/davinci-dkg/circuits/partialdecrypt"
-	"github.com/vocdoni/davinci-dkg/circuits/poolkey"
 	"github.com/vocdoni/davinci-dkg/crypto/group"
 	"github.com/vocdoni/davinci-dkg/internal/protocol"
 	"github.com/vocdoni/davinci-dkg/types"
@@ -33,27 +33,37 @@ type ContributionSubmission struct {
 	RoundHash           *big.Int
 }
 
-// PoolKeyActivation is everything `activatePoolKey` needs for one key, plus
-// the share commitments the callers turn into Merkle paths for the partial
-// decryptions submitted against that key.
+// FinalizeSubmission is everything `finalizeEpoch` needs, plus the pool keys
+// and share commitments the callers turn into Merkle paths for the partial
+// decryptions submitted against those keys.
 //
 // ParticipantIndexes lists the accepted contributors (the transcript's
-// active rows). ShareCommitments is member-indexed: entry i is D_{i+1} for
-// every committee member i < committeeSize, contributing or not, because a
-// member that only claimed a slot still received a share of every accepted
-// polynomial. Shares is the Merkle tree over exactly those leaves, the root
-// the contract stores.
-type PoolKeyActivation struct {
-	KeyIndex           uint8
+// active rows). ShareCommitments[j] is member-indexed: entry i is D_{j,i+1}
+// for every committee member i < committeeSize, contributing or not, because
+// a member that only claimed a slot still received a share of every accepted
+// polynomial. Shares[j] is the Merkle tree over exactly those leaves, the
+// root the contract stores for key j.
+type FinalizeSubmission struct {
 	Proof              []byte
 	Input              []byte
 	Transcript         []byte
 	TranscriptDigest   [32]byte
 	RoundHash          *big.Int
-	PoolKey            types.CurvePoint
 	ParticipantIndexes []uint16
-	ShareCommitments   []types.CurvePoint
-	Shares             ShareTree
+	PoolKeys           []types.CurvePoint
+	ShareCommitments   [][]types.CurvePoint
+	Shares             []ShareTree
+}
+
+// PoolKey is P_j, the committee key an application registered against key j
+// encrypts under (plus PK_org when it is organizer-locked).
+func (s *FinalizeSubmission) PoolKey(keyIndex uint8) types.CurvePoint {
+	return s.PoolKeys[keyIndex]
+}
+
+// ShareTree is key j's share-commitment tree.
+func (s *FinalizeSubmission) ShareTree(keyIndex uint8) ShareTree {
+	return s.Shares[keyIndex]
 }
 
 type PartialDecryptionSubmission struct {
@@ -91,9 +101,9 @@ var (
 	contributionRuntimeOnce   sync.Once
 	contributionRuntime       *circuits.CircuitRuntime
 	contributionRuntimeErr    error
-	poolKeyRuntimeOnce        sync.Once
-	poolKeyRuntime            *circuits.CircuitRuntime
-	poolKeyRuntimeErr         error
+	finalizeRuntimeOnce       sync.Once
+	finalizeRuntime           *circuits.CircuitRuntime
+	finalizeRuntimeErr        error
 	partialDecryptRuntimeOnce sync.Once
 	partialDecryptRuntime     *circuits.CircuitRuntime
 	partialDecryptRuntimeErr  error
@@ -202,87 +212,80 @@ func contributionRecipients(
 	return keys, nonces, nil
 }
 
-// BuildPoolKeyActivation proves `activatePoolKey` for one key of the epoch's
-// pool. `contributions` is indexed by accepted contributor (aligned with
-// participantIndexes), then pool key, then coefficient.
-func BuildPoolKeyActivation(
+// BuildFinalizeSubmission proves `finalizeEpoch` for the epoch: every pool
+// key and every committee member's share commitment of every key, from the
+// accepted contributions. `contributions` is indexed by accepted contributor
+// (aligned with participantIndexes), then pool key, then coefficient.
+func BuildFinalizeSubmission(
 	ctx context.Context,
 	epochID [12]byte,
 	threshold uint16,
 	committeeSize uint16,
 	participantIndexes []uint16,
 	contributions [][][]*big.Int,
-	keyIndex uint8,
-) (*PoolKeyActivation, error) {
-	return buildPoolKeyActivation(
-		ctx, epochID, threshold, committeeSize, participantIndexes, contributions, keyIndex, nil,
-	)
+) (*FinalizeSubmission, error) {
+	return buildFinalizeSubmission(ctx, epochID, threshold, committeeSize, participantIndexes, contributions, nil)
 }
 
-// BuildPoolKeyActivationWithNonCanonicalWord is BuildPoolKeyActivation with
+// BuildFinalizeSubmissionWithNonCanonicalWord is BuildFinalizeSubmission with
 // transcript word `wordIndex` published in calldata as `w + p` (p the BN254
 // scalar field), which the BRLC commitment cannot tell from `w`. The proof is
 // otherwise honest for that calldata: the Fiat–Shamir challenge is derived
 // from the non-canonical bytes exactly as the contract derives it, and the
 // circuit's transcript commitment over the reduced words equals the
 // contract's over the raw ones. Only BRLC's canonical-word check stands
-// between such a transcript and storage — the contract reads the pool key
+// between such a transcript and storage — the contract reads the pool keys
 // and the share commitments straight from calldata — so it must revert
 // `TranscriptWordNotInField`. Test-only by construction.
-func BuildPoolKeyActivationWithNonCanonicalWord(
+func BuildFinalizeSubmissionWithNonCanonicalWord(
 	ctx context.Context,
 	epochID [12]byte,
 	threshold uint16,
 	committeeSize uint16,
 	participantIndexes []uint16,
 	contributions [][][]*big.Int,
-	keyIndex uint8,
 	wordIndex int,
-) (*PoolKeyActivation, error) {
-	if wordIndex < 0 || wordIndex >= poolkey.TranscriptWords {
-		return nil, fmt.Errorf("transcript word %d out of range [0, %d)", wordIndex, poolkey.TranscriptWords)
+) (*FinalizeSubmission, error) {
+	if wordIndex < 0 || wordIndex >= finalize.TranscriptWords {
+		return nil, fmt.Errorf("transcript word %d out of range [0, %d)", wordIndex, finalize.TranscriptWords)
 	}
 	lift := func(words []*big.Int) {
 		words[wordIndex] = new(big.Int).Add(words[wordIndex], gnec.BN254.ScalarField())
 	}
-	return buildPoolKeyActivation(
-		ctx, epochID, threshold, committeeSize, participantIndexes, contributions, keyIndex, lift,
-	)
+	return buildFinalizeSubmission(ctx, epochID, threshold, committeeSize, participantIndexes, contributions, lift)
 }
 
-// buildPoolKeyActivation builds the witness, optionally rewrites the calldata
+// buildFinalizeSubmission builds the witness, optionally rewrites the calldata
 // transcript words (re-deriving the challenge and the commitment the way the
-// contract will), proves, and lays out the member-indexed share tree.
-func buildPoolKeyActivation(
+// contract will), proves, and lays out the member-indexed share trees.
+func buildFinalizeSubmission(
 	ctx context.Context,
 	epochID [12]byte,
 	threshold uint16,
 	committeeSize uint16,
 	participantIndexes []uint16,
 	contributions [][][]*big.Int,
-	keyIndex uint8,
 	rewrite func(words []*big.Int),
-) (*PoolKeyActivation, error) {
+) (*FinalizeSubmission, error) {
 	roundHash := RoundScalar(epochID)
 	commitments, err := commitmentSets(contributions)
 	if err != nil {
 		return nil, err
 	}
-	assignment := poolkey.Assignment{
+	assignment := finalize.Assignment{
 		RoundHash:          roundHash,
 		Threshold:          threshold,
 		CommitteeSize:      committeeSize,
-		KeyIndex:           keyIndex,
 		ParticipantIndexes: participantIndexes,
 		Commitments:        commitments,
 	}
-	witness, publicInputs, err := poolkey.BuildWitness(assignment)
+	witness, publicInputs, err := finalize.BuildWitness(assignment)
 	if err != nil {
 		return nil, err
 	}
 	transcriptScalars, err := publicInputs.TranscriptScalars()
 	if err != nil {
-		return nil, fmt.Errorf("pool key transcript scalars: %w", err)
+		return nil, fmt.Errorf("finalize transcript scalars: %w", err)
 	}
 	if rewrite != nil {
 		rewrite(transcriptScalars)
@@ -291,27 +294,27 @@ func buildPoolKeyActivation(
 		// different (but still consistent) commitment in the witness.
 		anchor, anchorErr := ccommon.ChallengeAnchor(transcriptScalars, publicInputs.TranscriptDigest)
 		if anchorErr != nil {
-			return nil, fmt.Errorf("pool key challenge anchor: %w", anchorErr)
+			return nil, fmt.Errorf("finalize challenge anchor: %w", anchorErr)
 		}
-		challenge, challengeErr := ccommon.DeriveChallengeNative(roundHash, protocol.DomainPoolKeyTranscriptV1, anchor)
+		challenge, challengeErr := ccommon.DeriveChallengeNative(roundHash, protocol.DomainFinalizeTranscriptV2, anchor)
 		if challengeErr != nil {
-			return nil, fmt.Errorf("pool key challenge: %w", challengeErr)
+			return nil, fmt.Errorf("finalize challenge: %w", challengeErr)
 		}
 		commitment, commitErr := publicInputs.BRLCCommitment(challenge)
 		if commitErr != nil {
-			return nil, fmt.Errorf("pool key transcript commitment: %w", commitErr)
+			return nil, fmt.Errorf("finalize transcript commitment: %w", commitErr)
 		}
 		witness.Challenge, witness.TranscriptCommitment = challenge, commitment
 		publicInputs.Challenge, publicInputs.TranscriptCommitment = challenge, commitment
 	}
 
-	runtime, err := loadPoolKeyRuntime(ctx)
+	runtime, err := loadFinalizeRuntime(ctx)
 	if err != nil {
 		return nil, err
 	}
 	proof, err := runtime.ProveAndVerify(witness)
 	if err != nil {
-		return nil, fmt.Errorf("prove pool key activation: %w", err)
+		return nil, fmt.Errorf("prove finalization: %w", err)
 	}
 	proofBytes, err := marshalSolidityProof(proof)
 	if err != nil {
@@ -327,29 +330,31 @@ func buildPoolKeyActivation(
 	}
 
 	// Leaves for the whole committee, members 1..n, exactly as the contract
-	// rebuilds the tree from the transcript's share rows.
-	members := publicInputs.ShareCommitments[:committeeSize]
-	tree, err := CommitteeShareTree(members)
-	if err != nil {
-		return nil, err
+	// rebuilds every key's tree from the transcript's share rows.
+	shareCommitments := make([][]types.CurvePoint, ccommon.MaxK)
+	trees := make([]ShareTree, ccommon.MaxK)
+	for j := range ccommon.MaxK {
+		shareCommitments[j] = publicInputs.ShareCommitments[j][:committeeSize]
+		if trees[j], err = CommitteeShareTree(shareCommitments[j]); err != nil {
+			return nil, fmt.Errorf("key %d share tree: %w", j, err)
+		}
 	}
 
-	return &PoolKeyActivation{
-		KeyIndex:           keyIndex,
+	return &FinalizeSubmission{
 		Proof:              proofBytes,
 		Input:              inputBytes,
 		Transcript:         transcriptBytes,
 		TranscriptDigest:   common.BigToHash(publicInputs.TranscriptDigest),
 		RoundHash:          new(big.Int).Set(roundHash),
-		PoolKey:            publicInputs.PoolKey,
 		ParticipantIndexes: participantIndexes,
-		ShareCommitments:   members,
-		Shares:             tree,
+		PoolKeys:           publicInputs.PoolKeys,
+		ShareCommitments:   shareCommitments,
+		Shares:             trees,
 	}, nil
 }
 
 // commitmentSets turns coefficient scalars into the commitment points the
-// activation circuit consumes: A_{c,j,m} = a_{c,j,m}·G.
+// finalization circuit consumes: A_{c,j,m} = a_{c,j,m}·G.
 func commitmentSets(contributions [][][]*big.Int) ([][][]types.CurvePoint, error) {
 	sets := make([][][]types.CurvePoint, len(contributions))
 	for c, keys := range contributions {
@@ -655,14 +660,14 @@ func loadContributionRuntime(ctx context.Context) (*circuits.CircuitRuntime, err
 	return contributionRuntime, contributionRuntimeErr
 }
 
-func loadPoolKeyRuntime(ctx context.Context) (*circuits.CircuitRuntime, error) {
+func loadFinalizeRuntime(ctx context.Context) (*circuits.CircuitRuntime, error) {
 	if err := ensureArtifactsBaseDir(); err != nil {
 		return nil, err
 	}
-	poolKeyRuntimeOnce.Do(func() {
-		poolKeyRuntime, poolKeyRuntimeErr = poolkey.Artifacts.LoadOrSetupForCircuit(ctx, &poolkey.PoolKeyCircuit{})
+	finalizeRuntimeOnce.Do(func() {
+		finalizeRuntime, finalizeRuntimeErr = finalize.Artifacts.LoadOrSetupForCircuit(ctx, &finalize.FinalizeCircuit{})
 	})
-	return poolKeyRuntime, poolKeyRuntimeErr
+	return finalizeRuntime, finalizeRuntimeErr
 }
 
 func loadPartialDecryptRuntime(ctx context.Context) (*circuits.CircuitRuntime, error) {

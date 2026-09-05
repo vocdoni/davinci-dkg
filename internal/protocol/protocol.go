@@ -29,9 +29,10 @@ const (
 	// BRLC transcript domains: the Fiat–Shamir domain every proof-carrying
 	// call binds into its challenge (`keccak(eid ‖ domain ‖ anchor) mod p`,
 	// see BRLC.sol). One per circuit whose transcript the contract streams:
-	// contribution, pool-key activation and decrypt-combine.
-	DomainContributionTranscriptV1Str   = "davinci-dkg:contribution:v1"
-	DomainPoolKeyTranscriptV1Str        = "davinci-dkg:poolkey:v1"
+	// the compact contribution (v2, docs/pool-keys-v4.md §3), the batched
+	// finalization (v2, §7) and decrypt-combine (unchanged).
+	DomainContributionTranscriptV2Str   = "davinci-dkg:contribution:v2"
+	DomainFinalizeTranscriptV2Str       = "davinci-dkg:finalize:v2"
 	DomainDecryptCombineTranscriptV1Str = "davinci-dkg:decrypt-combine:v1"
 )
 
@@ -46,8 +47,8 @@ var (
 	DomainOperatorRegisterV1  = crypto.Keccak256Hash([]byte(DomainOperatorRegisterV1Str))
 	DomainOrganizerRegisterV1 = crypto.Keccak256Hash([]byte(DomainOrganizerRegisterV1Str))
 
-	DomainContributionTranscriptV1   = crypto.Keccak256Hash([]byte(DomainContributionTranscriptV1Str))
-	DomainPoolKeyTranscriptV1        = crypto.Keccak256Hash([]byte(DomainPoolKeyTranscriptV1Str))
+	DomainContributionTranscriptV2   = crypto.Keccak256Hash([]byte(DomainContributionTranscriptV2Str))
+	DomainFinalizeTranscriptV2       = crypto.Keccak256Hash([]byte(DomainFinalizeTranscriptV2Str))
 	DomainDecryptCombineTranscriptV1 = crypto.Keccak256Hash([]byte(DomainDecryptCombineTranscriptV1Str))
 )
 

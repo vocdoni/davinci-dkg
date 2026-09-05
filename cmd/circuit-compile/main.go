@@ -16,8 +16,8 @@ import (
 	"github.com/vocdoni/davinci-dkg/circuits"
 	"github.com/vocdoni/davinci-dkg/circuits/contribution"
 	"github.com/vocdoni/davinci-dkg/circuits/decryptcombine"
+	"github.com/vocdoni/davinci-dkg/circuits/finalize"
 	"github.com/vocdoni/davinci-dkg/circuits/partialdecrypt"
-	"github.com/vocdoni/davinci-dkg/circuits/poolkey"
 	"github.com/vocdoni/davinci-dkg/log"
 	"github.com/vocdoni/davinci-dkg/prover"
 )
@@ -70,10 +70,10 @@ func main() {
 			VerifierLabel: "contribution_vkey.sol",
 		},
 		{
-			Name:          "poolkey",
-			Artifacts:     poolkey.Artifacts,
-			Compile:       poolkey.Compile,
-			VerifierLabel: "poolkey_vkey.sol",
+			Name:          "finalize",
+			Artifacts:     finalize.Artifacts,
+			Compile:       finalize.Compile,
+			VerifierLabel: "finalize_vkey.sol",
 		},
 		{
 			Name:          "partialdecrypt",

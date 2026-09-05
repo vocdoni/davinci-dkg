@@ -55,7 +55,6 @@ function fakeChain() {
         encryptedSharesHash: ('0x' + '22'.repeat(32)) as Hex,
       }),
       log('EpochLive', 140, 0, { epochId: EPOCH, contributionCount: 1 }, FINALIZE_TX),
-      log('PoolKeyActivated', 141, 0, { epochId: EPOCH, keyIndex: 0, x: 12n, y: 34n }),
     ] as FakeLog[],
     ranges: [] as Array<[number, number]>,
     multicalls: 0,
@@ -106,7 +105,10 @@ function fakeChain() {
       case 'selectedParticipants':
         return [ALICE, BOB]
       case 'getPoolStatus':
-        return [0, 1]
+        return 0
+      case 'getPoolKey':
+        // Every key of a Live epoch is stored by finalizeEpoch; distinct per index.
+        return [12n + BigInt(call.args?.[1] as number), 34n]
       case 'getNode':
         return {
           operator: call.args?.[0],
@@ -179,7 +181,7 @@ describe('Indexer', () => {
     expect(status.scanning).toBe(false)
     expect(status.progress).toBe(1)
     expect(status.lastBlock).toBe(250)
-    expect(status.eventCount).toBe(9)
+    expect(status.eventCount).toBe(8)
 
     // Chunked: 151 blocks at a chunk of 100 (the floor scanRange enforces).
     expect(state.ranges[0]).toEqual([100, 199])
@@ -197,9 +199,12 @@ describe('Indexer', () => {
     expect(epoch.policy?.threshold).toBe(2)
     expect(epoch.committee).toEqual([ALICE, BOB])
     expect(epoch.finalization?.contributionCount).toBe(1)
-    expect(epoch.poolKeys[0].key).not.toBeNull()
-    expect(epoch.poolKeys[0].activatedBlock).toBe(141)
-    expect(epoch.poolKeys[1].key).toBeNull()
+    // The whole pool was read with getPoolKey once the epoch was Live (TE form in the store).
+    expect(epoch.poolKeys).toHaveLength(16)
+    expect(epoch.poolKeys.every((slot) => slot.key != null)).toBe(true)
+    expect(epoch.poolKeys[0].key).not.toEqual(epoch.poolKeys[1].key)
+    expect(epoch.poolKeys[0].key?.y).toBe(34n)
+    expect(epoch.poolKeys.every((slot) => slot.claimedBy == null)).toBe(true)
     expect(epoch.finalization?.by).toBe(BOB)
     expect(store.txMeta[FINALIZE_TX].gasUsed).toBe(1_112_337)
     expect(store.operators[ALICE].registeredAtBlock).toBe(101)
@@ -328,7 +333,9 @@ describe('Indexer', () => {
           case 'selectedParticipants':
             return [ALICE, BOB]
           case 'getPoolStatus':
-            return [0, 0]
+            return 0
+          case 'getPoolKey':
+            return [12n, 34n]
           case 'getNode':
             return { pubX: 1n, pubY: 2n, status: 1, lastActiveBlock: 130n, registeredAtBlock: 101n }
           case 'getEpoch':

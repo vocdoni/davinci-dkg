@@ -17,7 +17,7 @@ abstract contract TestInputs {
     bytes32 public constant CONTRIBUTION_PROVING_KEY_HASH =
         hex"0000000000000000000000000000000000000000000000000000000000001234";
     /// @dev Poseidon `commitmentsHash` of committee member 1. Member 2 uses
-    ///      this value + 1; `activatePoolKey` re-checks both against the
+    ///      this value + 1; `finalizeEpoch` re-checks both against the
     ///      records `submitContribution` stored.
     bytes32 public constant CONTRIBUTION_COMMITMENTS_HASH =
         hex"0000000000000000000000000000000000000000000000000000000000001111";
@@ -43,8 +43,6 @@ abstract contract TestInputs {
         hex"0000000000000000000000000000000000000000000000000000000000000000";
     bytes32 public constant PARTIAL_DECRYPTION_PROVING_KEY_HASH =
         hex"0000000000000000000000000000000000000000000000000000000000005678";
-    bytes32 public constant POOLKEY_PROVING_KEY_HASH =
-        hex"0000000000000000000000000000000000000000000000000000000000009abc";
     bytes32 public constant DECRYPT_COMBINE_PROVING_KEY_HASH =
         hex"000000000000000000000000000000000000000000000000000000000000def0";
     bytes32 public constant COMBINED_DECRYPTION_HASH =

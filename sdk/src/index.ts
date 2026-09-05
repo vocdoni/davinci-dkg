@@ -1,5 +1,5 @@
 // ── Core clients ──────────────────────────────────────────────────────────────
-export { DKGClient } from './client.js';
+export { DKGClient, type FinalizeRecord, type ShareProofRecord } from './client.js';
 export { DKGWriter, normalizeAppPolicy, type SubmitCiphertextResult } from './writer.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -38,7 +38,6 @@ export {
   type DecryptionCombinedEvent,
   type ApplicationRegisteredEvent,
   type PoolStatus,
-  type PoolKeyActivatedEvent,
   type PoolKeyClaimedEvent,
   type OrganizerSecretRevealedEvent,
 } from './types.js';
@@ -49,11 +48,71 @@ export { dkgManagerAbi, dkgRegistryAbi, dkgAppManagerAbi } from './abi.js';
 // ── Utilities ─────────────────────────────────────────────────────────────────
 export { buildEpochId, parseEpochId } from './utils.js';
 
+// ── Circuit bounds and transcript layouts ─────────────────────────────────────
+export {
+  MAX_N,
+  MAX_K,
+  MERKLE_DEPTH,
+  contributionTranscriptWords,
+  ContributionLayout,
+  FINALIZE_KEY_WORDS,
+  FINALIZE_TRANSCRIPT_WORDS,
+  FINALIZE_INDEXES_START,
+  FINALIZE_HASHES_START,
+  FINALIZE_KEYS_START,
+  finalizeKeyOffset,
+  finalizePoolKeyOffset,
+  finalizeShareCommitmentOffset,
+  COMBINE_TRANSCRIPT_WORDS,
+} from './sizes.js';
+
+// ── Transcript codecs, BRLC and digests ───────────────────────────────────────
+export {
+  FR_MODULUS,
+  wordsFromBytes,
+  wordsToBytes,
+  keccakWords,
+  bytes32,
+  challengeAnchor,
+  deriveChallenge,
+  brlcCommit,
+  multiPoseidon,
+  decodeContributionTranscript,
+  encodeContributionTranscript,
+  contributionCommitmentsHash,
+  contributionEncryptedSharesHash,
+  contributionChallenge,
+  decodeContributionCalldata,
+  decodeFinalizeTranscript,
+  encodeFinalizeTranscript,
+  finalizeTranscriptDigest,
+  finalizeChallenge,
+  decodeFinalizeCalldata,
+  type TranscriptPoint,
+  type ContributionTranscript,
+  type ContributionCall,
+  type FinalizeTranscript,
+  type FinalizeDigestParts,
+  type FinalizeCall,
+} from './transcript.js';
+
+// ── Share-commitment Merkle tree ──────────────────────────────────────────────
+export {
+  MERKLE_EMPTY_LEAF,
+  shareCommitmentLeaf,
+  merkleNode,
+  shareCommitmentLeaves,
+  merkleRoot,
+  merklePath,
+  merkleRootFromPath,
+  verifyMerklePath,
+  shareProof,
+} from './merkle.js';
+
 // ── Monitor / polling ─────────────────────────────────────────────────────────
 export {
   waitForEpochPhase,
   waitForDecryption,
-  waitForPoolKeyActivated,
   decryptionProgress,
   watchNewRounds,
   watchNewEpochs,
@@ -89,11 +148,11 @@ export {
   DomainOrganizerRegisterV1,
   DomainOperatorRegisterV1Str,
   DomainOrganizerRegisterV1Str,
-  DomainContributionTranscriptV1,
-  DomainPoolKeyTranscriptV1,
+  DomainContributionTranscriptV2,
+  DomainFinalizeTranscriptV2,
   DomainDecryptCombineTranscriptV1,
-  DomainContributionTranscriptV1Str,
-  DomainPoolKeyTranscriptV1Str,
+  DomainContributionTranscriptV2Str,
+  DomainFinalizeTranscriptV2Str,
   DomainDecryptCombineTranscriptV1Str,
 } from './protocol.js';
 

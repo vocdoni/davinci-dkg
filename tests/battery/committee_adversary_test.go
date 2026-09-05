@@ -348,9 +348,11 @@ func contributionPhase(
 	_, err = contribute(member, myIdx, sub.Proof)
 	expectRevert(t, "contribution/duplicate", err, "AlreadyContributed")
 
+	// Before the gate the contract refuses the call on phase alone, so no
+	// proof is needed to probe it: empty arguments never reach the checks.
 	head, _ := f.head(ctx)
 	_, err = f.send(ctx, member, func(auth *bind.TransactOpts) (*ethtypes.Transaction, error) {
-		return f.Services.Manager.FinalizeEpoch(auth, ep.ID)
+		return f.Services.Manager.FinalizeEpoch(auth, ep.ID, [32]byte{}, nil, nil, nil)
 	})
 	expectRevert(t, fmt.Sprintf("finalize/before-gate(head=%d,gate=%d)", head, ep.View.Policy.LiveNotBeforeBlock),
 		err, "InvalidPhase", "AlreadyLive")
@@ -400,10 +402,10 @@ func decryptionPhase(
 	}
 	record(t, Result{
 		Step: "share/recovered-from-calldata", Kind: "measure", Pass: match,
-		Notes: fmt.Sprintf("accepted contributions=%d, d_i·G matches the activation's share commitment=%v", accepted, match),
+		Notes: fmt.Sprintf("accepted contributions=%d, d_i·G matches the finalization's share commitment=%v", accepted, match),
 	})
 	if !match {
-		t.Fatalf("recovered share does not match the share commitment the activation published")
+		t.Fatalf("recovered share does not match the share commitment the finalization published")
 	}
 	tree, err := poolShareTree(ctx, f, ep.ID, app.PoolIndex, scanFrom(ep.View))
 	if err != nil {

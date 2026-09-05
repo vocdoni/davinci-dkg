@@ -106,19 +106,13 @@ export const dkgManagerAbi = [
     type: 'function',
     name: 'finalizeEpoch',
     stateMutability: 'nonpayable',
-    inputs: [{ name: 'epochId', type: 'bytes12' }],
-    outputs: [],
-  },
-  {
-    type: 'function',
-    name: 'activatePoolKey',
-    stateMutability: 'nonpayable',
     inputs: [
       { name: 'epochId', type: 'bytes12' },
-      { name: 'keyIndex', type: 'uint8' },
-      // Poseidon digest of the masked transcript words (public input 5); the
+      // Poseidon digest of the finalization transcript (public input 4); the
       // BRLC challenge is anchored on keccak(transcriptDigest ‖ keccak(transcript)).
       { name: 'transcriptDigest', type: 'bytes32' },
+      // The fixed FINALIZE_TRANSCRIPT_WORDS-word transcript: accepted dealer
+      // rows, then per pool key P_j and every member's share commitment.
       { name: 'transcript', type: 'bytes' },
       { name: 'proof', type: 'bytes' },
       { name: 'input', type: 'bytes' },
@@ -376,7 +370,7 @@ export const dkgManagerAbi = [
   },
   {
     type: 'function',
-    name: 'getPoolKeyVerifierVKeyHash',
+    name: 'getFinalizeVerifierVKeyHash',
     stateMutability: 'view',
     inputs: [],
     outputs: [{ name: '', type: 'bytes32' }],
@@ -406,10 +400,8 @@ export const dkgManagerAbi = [
     name: 'getPoolStatus',
     stateMutability: 'view',
     inputs: [{ name: 'epochId', type: 'bytes12' }],
-    outputs: [
-      { name: 'nextIndex', type: 'uint8' },
-      { name: 'activated', type: 'uint8' },
-    ],
+    // The claim cursor only: every key of a Live epoch is stored by finalizeEpoch.
+    outputs: [{ name: 'nextIndex', type: 'uint8' }],
   },
   {
     type: 'function',
@@ -466,6 +458,17 @@ export const dkgManagerAbi = [
     name: 'CommitteeFilled',
     inputs: [{ name: 'epochId', type: 'bytes12', indexed: true }],
   },
+  // Emitted once by the claimSlot that fills the committee: the members'
+  // encryption keys, 2·committeeSize words in slot order (x0, y0, x1, y1, …).
+  {
+    type: 'event',
+    name: 'CommitteeSnapshot',
+    inputs: [
+      { name: 'epochId', type: 'bytes12', indexed: true },
+      { name: 'committeeSize', type: 'uint16', indexed: false },
+      { name: 'pubKeys', type: 'uint256[]', indexed: false },
+    ],
+  },
   {
     type: 'event',
     name: 'ContributionSubmitted',
@@ -477,22 +480,14 @@ export const dkgManagerAbi = [
       { name: 'encryptedSharesHash', type: 'bytes32', indexed: false },
     ],
   },
+  // The whole key pool was proven and stored: all MAX_K pool keys and share
+  // roots are readable from this block on.
   {
     type: 'event',
     name: 'EpochLive',
     inputs: [
       { name: 'epochId', type: 'bytes12', indexed: true },
       { name: 'contributionCount', type: 'uint16', indexed: false },
-    ],
-  },
-  {
-    type: 'event',
-    name: 'PoolKeyActivated',
-    inputs: [
-      { name: 'epochId', type: 'bytes12', indexed: true },
-      { name: 'keyIndex', type: 'uint8', indexed: true },
-      { name: 'x', type: 'uint256', indexed: false },
-      { name: 'y', type: 'uint256', indexed: false },
     ],
   },
   {
@@ -585,10 +580,12 @@ export const dkgManagerAbi = [
   { type: 'error', name: 'AppManagerAlreadySet', inputs: [] },
   { type: 'error', name: 'AppManagerNotSet', inputs: [] },
   { type: 'error', name: 'PoolExhausted', inputs: [] },
-  { type: 'error', name: 'PoolKeyAlreadyActive', inputs: [] },
-  { type: 'error', name: 'PoolKeyNotActive', inputs: [] },
+  // submitContribution / finalizeEpoch must be direct EOA calls: their
+  // transcripts only exist in the outer transaction calldata, which is where
+  // nodes and this SDK read contributions and the key pool back from.
+  { type: 'error', name: 'DirectCallRequired', inputs: [] },
   // BRLC: a transcript word >= the BN254 scalar field on any proof-carrying
-  // call (submitContribution, activatePoolKey, combineDecryption).
+  // call (submitContribution, finalizeEpoch, combineDecryption).
   { type: 'error', name: 'TranscriptWordNotInField', inputs: [] },
   // Raised by DKGAppManager and bubbled through submitCiphertext,
   // submitPartialDecryption and combineDecryption; listed here so viem
@@ -780,6 +777,7 @@ export const dkgRegistryAbi = [
   { type: 'error', name: 'PointNotCanonical', inputs: [] },
   { type: 'error', name: 'PointNotOnCurve', inputs: [] },
   { type: 'error', name: 'PointIsIdentity', inputs: [] },
+  { type: 'error', name: 'PointNotInSubgroup', inputs: [] },
 ] as const;
 
 export const dkgAppManagerAbi = [
@@ -974,13 +972,14 @@ export const dkgAppManagerAbi = [
   // Automatic applications have no organizer secret to reveal).
   { type: 'error', name: 'InvalidOrganizerSecret', inputs: [] },
   { type: 'error', name: 'AlreadyRevealed', inputs: [] },
-  // registerApplication: no unclaimed pool key left this epoch.
+  // registerApplication: no unclaimed pool key left this epoch (every key of
+  // a Live epoch is already stored, so this is the only pool revert).
   { type: 'error', name: 'PoolExhausted', inputs: [] },
-  // registerApplication: the next unclaimed pool key hasn't been activated yet.
-  { type: 'error', name: 'PoolKeyNotActive', inputs: [] },
   // Contradictory policy: open submission with a list, a zero address in the
   // list, more than 32 submitters, or a deadline not in the future.
   { type: 'error', name: 'InvalidPolicy', inputs: [] },
+  // registerApplication (locked mode): PK_org is not in the prime-order subgroup.
+  { type: 'error', name: 'PointNotInSubgroup', inputs: [] },
   { type: 'error', name: 'IsIdentity', inputs: [] },
   { type: 'error', name: 'NotCanonical', inputs: [] },
   { type: 'error', name: 'NotOnCurve', inputs: [] },

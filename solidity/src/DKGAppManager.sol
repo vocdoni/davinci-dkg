@@ -103,8 +103,9 @@ contract DKGAppManager is IDKGAppManager {
             keyY = pkOrgY;
         }
 
-        // Reverts PoolExhausted / PoolKeyNotActive; only the app manager may
-        // call it, and it moves the epoch's pool cursor forward by one.
+        // Reverts PoolExhausted; only the app manager may call it, and it
+        // moves the epoch's pool cursor forward by one. Every unclaimed key
+        // of a Live epoch is proven and stored by finalizeEpoch.
         uint8 poolIndex = IDKGManager(MANAGER).claimPoolKey(epochId, aid);
 
         app.creator = msg.sender;

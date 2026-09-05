@@ -1,0 +1,152 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+% DKG Process Diagram
+%
+
+%\phantomsection
+\section{DKG Process Diagram}
+\label{appendix:dkg}
+
+\vspace{0.5cm}
+
+\begin{figure}[ht!]
+\noindent\makebox[\textwidth][l]{% allow overflow
+\begin{tikzpicture}[
+  font=\small,
+  >=Latex,
+  lifeline/.style={draw, rounded corners=2pt, minimum width=2.8cm, minimum height=8mm, align=center, fill=white},
+  tx/.style={->, line width=0.7pt},                                    % transactions (all)
+  read/.style={<-, line width=0.6pt, dashed, green!50!black},          % read from blockchain
+  phase/.style={font=\bfseries},
+  phasebox/.style={draw=gray!50, fill=gray!5, rounded corners=1pt, inner sep=3pt, anchor=west},
+  note/.style={font=\footnotesize, align=left}
+]
+
+% === Spacing constants ===
+\def\colA{0}        % Organizer x
+\def\colB{4.5}      % Participants x
+\def\colC{9.0}      % Blockchain x
+\def\headerY{0}
+\def\startY{-0.8}   % where phases begin (reduced gap below header)
+\def\lifelineEnd{-15.8}
+
+% === Lifelines (headers) ===
+\node[lifeline] (org)   at (\colA, \headerY) {Organizer};
+\node[lifeline] (nodes) at (\colB, \headerY) {Participants};
+\node[lifeline] (chain) at (\colC, \headerY) {Blockchain};
+
+% Vertical dashed lifelines
+\draw[draw, dashed, gray] (\colA, \startY + 0.3) -- (\colA, \lifelineEnd);
+\draw[draw, dashed, gray] (\colB, \startY + 0.3) -- (\colB, \lifelineEnd);
+\draw[draw, dashed, gray] (\colC, \startY + 0.3) -- (\colC, \lifelineEnd);
+
+% === Phase 1 — Initiation =====================================================
+
+\def\pX{-1.5}
+
+\node[phasebox, phase] at (-1.2, \pX) {Phase 1 — Initiation};
+
+\draw[tx] (\colA, \pX - 0.8) -- node[above, font=\footnotesize]{publish $(t,n)$ and policy parameters} (\colC, \pX - 0.8);
+
+\draw[read] (\colA, \pX - 1.4) -- node[above, font=\footnotesize]{rid} (\colB, \pX - 1.4);
+
+\draw[read] (\colB, \pX - 1.4) -- node[above, font=\footnotesize]{rid and process info} (\colC, \pX - 1.4);
+
+% === Phase 2 — Show of Hands ==================================================
+
+\pgfmathparse{\pX - 2.3} 
+\edef\pX{\pgfmathresult}
+
+\node[phasebox, phase] at (-1.2, \pX) {Phase 2 — Show of Hands};
+
+\draw[tx] (\colB, \pX - 0.6) -- node[above, font=\footnotesize]{readiness signals} (\colC, \pX - 0.6);
+
+% Separator
+%\draw[gray!40, thin] (-1.5, \pX - 0.9) -- (11, \pX - 0.9);
+
+% === Phase 3 — Determine Participants =========================================
+
+\pgfmathparse{\pX - 1.7} 
+\edef\pX{\pgfmathresult}
+
+\node[phasebox, phase] at (-1.2, \pX) {Phase 3 — Determine Participants};
+
+% Organizer triggers computation
+\draw[tx] (\colA, \pX - 0.9) -- node[above, font=\footnotesize]{\texttt{computeParticipants()}} (\colC, \pX - 0.9);
+
+% Blockchain self-loop: compute I
+\draw[tx] (\colC, \pX - 1.1) 
+    to[out=0, in=0, looseness=2.0] 
+    node[right, pos=0.5, font=\footnotesize, align=left]{compute\\participanting\\nodes} 
+    (\colC, \pX - 1.7);
+
+% Participants read the result
+\draw[read] (\colB, \pX - 1.9) -- node[above, font=\footnotesize]{read part. nodes} (\colC, \pX - 1.9);
+
+% === Phase 4 — Main DKG =======================================================
+
+\pgfmathparse{\pX - 2.7} 
+\edef\pX{\pgfmathresult}
+
+\node[phasebox, phase] at (-1.2, \pX) {Phase 4 — Main DKG};
+
+% Square version
+\draw[tx] (\colB, \pX - 0.5) 
+    -- ++(-1.2, 0) 
+    -- ++(0, -0.8) 
+    -- ++(1.2, 0);
+\node[left, font=\footnotesize, align=right] at (\colB - 1.2, \pX - 0.9) 
+    {compute\\$C_i$, $E_i$, $\pi_i$};
+
+% Single combined submission
+\draw[tx] (\colB, \pX - 1.6) -- node[above, font=\footnotesize]{submit $C_i$, $E_i$, $\pi_i$} (\colC, \pX - 1.6);
+
+% Blockchain verifies
+\draw[tx] (\colC, \pX - 1.8) 
+    to[out=0, in=0, looseness=2.0] 
+    node[right, pos=0.5, font=\footnotesize, align=left]{verify inputs} 
+    (\colC, \pX - 2.4);
+
+% === Phase 5 — Compute Public Key =============================================
+
+\pgfmathparse{\pX - 3.2} 
+\edef\pX{\pgfmathresult}
+
+\node[phasebox, phase] at (-1.2, \pX) {Phase 5 — Compute Secret Shares and Public Key};
+
+% Participants read data from the s.c.
+\draw[read] (\colB, \pX - 0.9) -- node[above, font=\footnotesize]{read $E_j$ (calldata)} (\colC, \pX - 0.9);
+
+% Participants compute secret share locally
+%\draw[tx] (\colB, \pX - 1.1)
+%    to[out=180, in=180, looseness=2.0] 
+%    node[left, pos=0.5, font=\footnotesize, align=right]{compute shares $s_i$} 
+%    (\colB, \pX - 1.7);
+
+% Participants compute secret share locally
+\draw[tx] (\colB, \pX - 1.2) 
+    -- ++(-1.2, 0) 
+    -- ++(0, -0.8) 
+    -- ++(1.2, 0);
+\node[left, font=\footnotesize, align=right] at (\colB - 1.2, \pX - 1.6) 
+    {compute\\shares $d_i$};
+    
+% Organizer triggers computation of the public key PK
+\draw[tx] (\colA, \pX - 2.8) -- node[above, font=\footnotesize]{\texttt{computePublicKey()}} (\colC, \pX - 2.8);
+
+% Blockchain self-loop: compute PK
+\draw[tx] (\colC, \pX - 3.0) 
+    to[out=0, in=0, looseness=2.0] 
+    node[right, pos=0.5, font=\footnotesize, align=left]{compute $\mathsf{PK}$} 
+    (\colC, \pX - 3.7);
+
+% Participants read the result
+\draw[read] (\colA, \pX - 4.0) -- node[above, font=\footnotesize]{read $\mathsf{PK}$} (\colC, \pX - 4.0);
+
+% === Caption ==================================================================
+
+\end{tikzpicture}%
+}
+\caption{DKG protocol sequence diagram}
+\label{fig:dkg-diagram}
+\end{figure}

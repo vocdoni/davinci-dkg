@@ -10,7 +10,7 @@ import (
 )
 
 // ShareTree is one pool key's keccak Merkle tree over the per-member share
-// commitments: `activatePoolKey` stores its root and every
+// commitments: `finalizeEpoch` stores its root and every
 // `submitPartialDecryption` proves the member's leaf against it.
 type ShareTree [ccommon.MaxN][32]byte
 
@@ -26,7 +26,7 @@ func NewShareTree(participantIndexes []uint16, shareCommitments []types.CurvePoi
 }
 
 // CommitteeShareTree is NewShareTree over the whole committee: entry i of
-// `shareCommitments` is D_{i+1}, the layout an activation transcript carries
+// `shareCommitments` is D_{i+1}, the layout a finalization transcript carries
 // (one commitment per member, contributing or not).
 func CommitteeShareTree(shareCommitments []types.CurvePoint) (ShareTree, error) {
 	indexes := make([]uint16, len(shareCommitments))
@@ -52,7 +52,7 @@ func ShareTreeFromShares(participantIndexes []uint16, shares []*big.Int) (ShareT
 	return NewShareTree(participantIndexes, commitments)
 }
 
-// Root is the value `activatePoolKey` stores for the key.
+// Root is the value `finalizeEpoch` stores for the key.
 func (t ShareTree) Root() [32]byte {
 	return ccommon.MerkleRoot(t)
 }
@@ -72,7 +72,7 @@ func (t ShareTree) Proof(participantIndex uint16) ([][32]byte, error) {
 
 // RecoverParticipantShares rebuilds d_i = Σ_c f_c(i) for pool key `keyIndex`
 // over the given contributions. `contributions` is indexed by contributor,
-// then pool key, then coefficient — the same shape BuildPoolKeyActivation
+// then pool key, then coefficient — the same shape BuildFinalizeSubmission
 // takes.
 func RecoverParticipantShares(
 	contributions [][][]*big.Int,

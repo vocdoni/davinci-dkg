@@ -1,0 +1,103 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+% Threshold Decryption Process Diagram
+%
+
+\section{Threshold Decryption Process Diagram}
+\label{appendix:decryption}
+
+\vspace{0.5cm}
+
+\begin{figure}[ht!]
+\noindent\makebox[\textwidth][l]{% allow overflow
+\begin{tikzpicture}[
+  font=\small,
+  >=Latex,
+  lifeline/.style={draw, rounded corners=2pt, minimum width=2.8cm, minimum height=8mm, align=center, fill=white},
+  tx/.style={->, line width=0.7pt},                                    % transactions (all)
+  read/.style={<-, line width=0.6pt, dashed, green!50!black},          % read from blockchain
+  phase/.style={font=\bfseries},
+  phasebox/.style={draw=gray!50, fill=gray!5, rounded corners=1pt, inner sep=3pt, anchor=west},
+  note/.style={font=\footnotesize, align=left}
+]
+
+% === Spacing constants ===
+\def\colA{0}        % Organizer x
+\def\colB{4.5}      % Participants x
+\def\colC{9.0}      % Blockchain x
+\def\headerY{0}
+\def\startY{-0.8}   % where phases begin (reduced gap below header)
+\def\lifelineEnd{-11.4}
+
+% === Lifelines (headers) ===
+\node[lifeline] (org)   at (\colA, \headerY) {Submitter};
+\node[lifeline] (nodes) at (\colB, \headerY) {Participants};
+\node[lifeline] (chain) at (\colC, \headerY) {Blockchain};
+
+% Vertical dashed lifelines
+\draw[draw, dashed, gray] (\colA, \startY + 0.3) -- (\colA, \lifelineEnd);
+\draw[draw, dashed, gray] (\colB, \startY + 0.3) -- (\colB, \lifelineEnd);
+\draw[draw, dashed, gray] (\colC, \startY + 0.3) -- (\colC, \lifelineEnd);
+
+% === Phase 1 — Initiation =====================================================
+
+\def\pX{-1.5}
+
+\node[phasebox, phase] at (-1.2, \pX) {Phase 1 — Publication of Ciphertext};
+
+\draw[tx] (\colA, \pX - 1.1) -- node[above, font=\footnotesize]{publish $(C_1, C_2)$ for $\mathtt{rid}$} (\colC, \pX - 1.1);
+
+\draw[read] (\colB, \pX - 2.0) -- node[above, font=\footnotesize]{read ciphertext} (\colC, \pX - 2.0);
+
+% === Phase 2 — Publication of Partial Decryptions =============================
+
+\pgfmathparse{\pX - 3.1} 
+\edef\pX{\pgfmathresult}
+
+\node[phasebox, phase] at (-1.2, \pX) {Phase 2 — Publication of Partial Decryptions};
+
+% Square version
+\draw[tx] (\colB, \pX - 0.8) 
+    -- ++(-1.2, 0) 
+    -- ++(0, -1.0) 
+    -- ++(1.2, 0);
+\node[left, font=\footnotesize, align=right] at (\colB - 1.2, \pX - 1.3) 
+    {compute partial\\decryption $\delta_i$ and\\proof $(A_i, B_i, z_i)$};
+
+% Single combined submission
+\draw[tx] (\colB, \pX - 2.4) -- node[above, font=\footnotesize]{submit $\delta_i$ and $(A_i, B_i, z_i)$} (\colC, \pX - 2.4);
+
+% Blockchain verifies
+\draw[tx] (\colC, \pX - 2.6) 
+    to[out=0, in=0, looseness=2.0] 
+    node[right, pos=0.5, font=\footnotesize, align=left]{verify inputs} 
+    (\colC, \pX - 3.2);
+
+
+% === Phase 3 — Decryption =====================================================
+
+\pgfmathparse{\pX - 4.0} 
+\edef\pX{\pgfmathresult}
+
+\node[phasebox, phase] at (-1.2, \pX) {Phase 3 — Decryption};
+
+% Organizer triggers computation
+\draw[tx] (\colA, \pX - 1.0) -- node[above, font=\footnotesize]{\texttt{completeDecryption()}} (\colC, \pX - 1.0);
+
+% Blockchain self-loop: compute PK
+\draw[tx] (\colC, \pX - 1.2)
+    to[out=0, in=0, looseness=2.0] 
+    node[right, pos=0.5, font=\footnotesize, align=left]{compute\\plaintext} 
+    (\colC, \pX - 1.8);
+
+% Submitter reads the result
+\draw[read] (\colA, \pX - 2.2) -- node[above, font=\footnotesize]{read plaintext message $M$} (\colC, \pX - 2.2);
+
+% === Caption ==================================================================
+
+\end{tikzpicture}
+}%
+\caption{Threshold decryption sequence diagram}
+\label{fig:threshold-decryption-diagram}
+\end{figure}
+

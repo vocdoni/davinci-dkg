@@ -5,12 +5,13 @@
 // monitor / writer / client expose for SDK consumers:
 //
 //   1. Go fixture (`sdk-test-fixture --action=create --keys=2`) creates a Live
-//      single-participant epoch (committee=1, threshold=1) with pool keys 0
-//      and 1 activated and reports participant 1's share of each key. Every
-//      key is dealt from its own polynomial, so the shares differ per key.
+//      single-participant epoch (committee=1, threshold=1) — the proof-carrying
+//      finalizeEpoch stores all MAX_K pool keys at once — and reports
+//      participant 1's share of keys 0 and 1. Every key is dealt from its own
+//      polynomial, so the shares differ per key.
 //   2. SDK reads `getPoolStatus` / `getPoolKey(epochId, j)` → TE form, and
-//      checks them against the fixture's P_0 and the PoolKeyActivated event.
-//   3. SDK registers an application; it claims the next activated key.
+//      checks them against the fixture's P_0 and the finalization calldata.
+//   3. SDK registers an application; it claims the next unclaimed key.
 //      Organizer-locked: `PK_aid = P_j + PK_org`; automatic: `PK_aid = P_j`.
 //      `client.getApplicationKey` computes it.
 //   4. SDK calls `writer.submitCiphertext(...)` — internally converts c1/c2
@@ -70,10 +71,11 @@ interface FixtureCreateResult {
   epochId: `0x${string}`;
   /** Participant 1's share of pool key 0 (= shares[0]), decimal. */
   share: string;
-  /** Participant 1's share of pool key j, decimal, one entry per activated key. */
+  /** Participant 1's share of pool key j, decimal, one entry per key the fixture was asked for. */
   shares: string[];
   /** P_0 in the contract's RTE form, decimal coordinates. */
   poolKey: { x: string; y: string };
+  /** `shares.length`: the keys the output describes; the pool itself is always whole. */
   activatedKeys: number;
 }
 
@@ -154,7 +156,7 @@ describe('SDK ciphertext end-to-end (encrypt → submit → combine → getPlain
     });
 
     console.log('[ciphertext-e2e] Running Go fixture (create) to set up a Live epoch…');
-    // Two activated keys: one per application registered below.
+    // Shares of two keys: one per application registered below.
     const createOut = await runGoFixture([
       '--rpc-url', rpcUrl, '--addresses-file', addressesFile, '--action=create', '--keys=2',
     ]);
@@ -173,18 +175,18 @@ describe('SDK ciphertext end-to-end (encrypt → submit → combine → getPlain
     );
   });
 
-  it('pool keys 0 and 1 are activated and getPoolKey returns P_0 in TE form', async () => {
+  it('the pool is whole at Live and getPoolKey returns P_0 in TE form', async () => {
     const { enabled } = useHarness();
     if (!enabled || !fixture) return;
 
     expect(fixture.activatedKeys).toBe(2);
-    // One share per activated key; `share` is the key-0 one.
+    // One share per reported key; `share` is the key-0 one.
     expect(fixture.shares).toHaveLength(2);
     expect(fixture.shares[0]).toBe(fixture.share);
     expect(fixture.shares[1]).not.toBe(fixture.shares[0]);
+    // Nothing claimed yet; every key already exists.
     const status = await client.getPoolStatus(fixture.epochId);
     expect(status.nextIndex).toBe(0);
-    expect(status.activated & 0b11).toBe(0b11);
 
     // The fixture reports P_0 in the contract's RTE form; the client converts
     // to TE at the boundary.
@@ -193,12 +195,14 @@ describe('SDK ciphertext end-to-end (encrypt → submit → combine → getPlain
     expect(p0).toEqual(expected);
     // y == 1 with x == 0 would be the identity, i.e. no contributions accepted.
     expect(!(p0[0] === 0n && p0[1] === 1n)).toBe(true);
+    const p1 = await client.getPoolKey(fixture.epochId, 1);
+    expect(p1).not.toEqual(p0);
 
-    // The activation event carries the raw on-chain words.
-    const activated = await client.getPoolKeyActivatedEvents(fixture.epochId, { keyIndex: 0 });
-    expect(activated).toHaveLength(1);
-    expect(activated[0].x).toBe(BigInt(fixture.poolKey.x));
-    expect(activated[0].y).toBe(BigInt(fixture.poolKey.y));
+    // The finalization calldata carries the raw on-chain words of every key.
+    const finalize = await client.getFinalizeTranscript(fixture.epochId);
+    expect(finalize).not.toBeNull();
+    expect(finalize!.transcript.poolKeys[0].x).toBe(BigInt(fixture.poolKey.x));
+    expect(finalize!.transcript.poolKeys[0].y).toBe(BigInt(fixture.poolKey.y));
   });
 
   it('organizer-locked: register → encrypt → submit → reveal sk_org → combine → getPlaintext', async () => {
@@ -207,7 +211,7 @@ describe('SDK ciphertext end-to-end (encrypt → submit → combine → getPlain
 
     // 1. Register an organizer-locked application. sk_org never leaves this
     //    process; only PK_org and the proof of possession go on chain. It
-    //    claims the next activated key: 0 on a fresh epoch.
+    //    claims the next unclaimed key: 0 on a fresh epoch.
     const aid = randomAid();
     const skOrg = randomOrganizerSecret();
     // Organizer-locked, registrant-only: the defaults of every field.

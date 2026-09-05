@@ -64,27 +64,27 @@ func TestGasProfilesMultiNode(t *testing.T) {
 
 	// Print a markdown table for easy copy-paste into BENCHMARKS.md.
 	t.Log("\n\n=== GAS PROFILE RESULTS (MaxN=" + fmt.Sprintf("%d", maxN) + ") ===")
-	t.Log("| n | t | createEpoch | claimSlot (avg) | submitContribution | finalizeEpoch | activatePoolKey |" +
+	t.Log("| n | t | createEpoch | claimSlot (avg) | submitContribution | finalizeEpoch |" +
 		" registerApplication (locked) | registerApplication (automatic) | revealOrganizerSecret |" +
 		" submitCiphertext | submitPartialDecryption | combineDecryption |")
-	t.Log("|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+	t.Log("|---|---|---|---|---|---|---|---|---|---|---|---|")
 	for _, r := range results {
 		p := r.profile
 		t.Logf(
-			"| %d | %d | %d | %d | %d | %d | %d | %d | %d | %d | %d | %d | %d |",
-			r.n, r.t, p.createEpoch, p.claimSlot, p.submitContribution, p.finalizeEpoch, p.activatePoolKey,
+			"| %d | %d | %d | %d | %d | %d | %d | %d | %d | %d | %d | %d |",
+			r.n, r.t, p.createEpoch, p.claimSlot, p.submitContribution, p.finalizeEpoch,
 			p.registerLocked, p.registerAutomatic, p.revealSecret, p.submitCiphertext, p.partialDecrypt, p.combine,
 		)
 	}
 
 	// Also print the compact form used in BENCHMARKS.md: the calls whose cost
 	// actually moves with the committee size.
-	t.Log("\n=== Compact (submitContribution | activatePoolKey | submitPartialDecryption | combineDecryption) ===")
+	t.Log("\n=== Compact (submitContribution | finalizeEpoch | submitPartialDecryption | combineDecryption) ===")
 	var sb strings.Builder
 	for _, r := range results {
 		fmt.Fprintf(
 			&sb, "| %d | %d | %d | %d | %d | %d |\n",
-			r.n, r.t, r.profile.submitContribution, r.profile.activatePoolKey,
+			r.n, r.t, r.profile.submitContribution, r.profile.finalizeEpoch,
 			r.profile.partialDecrypt, r.profile.combine,
 		)
 	}
@@ -158,29 +158,17 @@ func benchmarkGasForN(t *testing.T, n, threshold int) gasProfile {
 		profile.submitContribution = gas // keep the last one (warmest storage)
 	}
 
-	// ── 4. finalizeEpoch (proof-less) ───────────────────────────────────────
+	// ── 4. finalizeEpoch: one batched proof stores every pool key ────────────
 	c.Assert(helpers.WaitForFinalizeGate(ctx, services, epochID), qt.IsNil)
-	profile.finalizeEpoch, err = helpers.FinalizeEpochMeasured(ctx, services, self, epochID)
-	c.Assert(err, qt.IsNil)
-
-	// ── 5. activatePoolKey, twice: the pool is claimed one key per app ──────
-	round := &helpers.FinalizedRoundResult{
-		EpochID:            epochID,
-		Threshold:          uint16(threshold),
-		CommitteeSize:      uint16(n),
-		ParticipantIndexes: participantIndexes,
-		Contributions:      contributions,
-		Activations:        map[uint8]*helpers.PoolKeyActivation{},
-	}
-	first, err := helpers.BuildPoolKeyActivation(
-		ctx, epochID, uint16(threshold), uint16(n), participantIndexes, contributions, 0,
+	finalization, err := helpers.BuildFinalizeSubmission(
+		ctx, epochID, uint16(threshold), uint16(n), participantIndexes, contributions,
 	)
 	c.Assert(err, qt.IsNil)
-	profile.activatePoolKey, err = helpers.ActivatePoolKeyMeasured(ctx, services, self, epochID, first)
+	profile.finalizeEpoch, err = helpers.FinalizeEpochMeasured(ctx, services, self, epochID, finalization)
 	c.Assert(err, qt.IsNil)
-	round.Activations[0] = first
-	second, err := helpers.ActivateRoundPoolKey(ctx, services, round, 1)
-	c.Assert(err, qt.IsNil)
+
+	// ── 5. the pool is claimed one key per application ──────────────────────
+	const secondKey uint8 = 1
 
 	// ── 6. registerApplication in both modes, plus the reveal ───────────────
 	lockedAid, skOrg := randomAid(c), randomOrganizerSecret(c)
@@ -200,7 +188,7 @@ func benchmarkGasForN(t *testing.T, n, threshold int) gasProfile {
 	c.Assert(err, qt.IsNil)
 
 	// ── 7. the decryption pass under the automatic application ──────────────
-	shares, err := helpers.RecoverParticipantShares(contributions, second.KeyIndex, participantIndexes)
+	shares, err := helpers.RecoverParticipantShares(contributions, secondKey, participantIndexes)
 	c.Assert(err, qt.IsNil)
 
 	ciphertextBase := big.NewInt(42) // arbitrary C1 scalar
@@ -209,7 +197,7 @@ func benchmarkGasForN(t *testing.T, n, threshold int) gasProfile {
 	deltas := make([]types.CurvePoint, threshold)
 	for i := range threshold {
 		partial, partialErr := helpers.BuildPartialDecryptionSubmission(
-			ctx, epochID, autoAid, 1, uint16(i+1), ciphertextBase, shares[i], big.NewInt(int64(i+100)), second.Shares,
+			ctx, epochID, autoAid, 1, uint16(i+1), ciphertextBase, shares[i], big.NewInt(int64(i+100)), finalization.ShareTree(secondKey),
 		)
 		c.Assert(partialErr, qt.IsNil)
 		partials[i] = partial
@@ -246,10 +234,10 @@ func benchmarkGasForN(t *testing.T, n, threshold int) gasProfile {
 	profile.combine, err = helpers.CombineDecryptionMeasured(ctx, services, self, epochID, autoAid, assignedIdx, combineOut)
 	c.Assert(err, qt.IsNil)
 
-	t.Logf("n=%d t=%d create=%d claim_avg=%d contrib=%d finalize=%d activate=%d "+
+	t.Logf("n=%d t=%d create=%d claim_avg=%d contrib=%d finalize=%d "+
 		"reg_locked=%d reg_auto=%d reveal=%d ciphertext=%d pdecrypt=%d combine=%d",
 		n, threshold, profile.createEpoch, profile.claimSlot, profile.submitContribution, profile.finalizeEpoch,
-		profile.activatePoolKey, profile.registerLocked, profile.registerAutomatic, profile.revealSecret,
+		profile.registerLocked, profile.registerAutomatic, profile.revealSecret,
 		profile.submitCiphertext, profile.partialDecrypt, profile.combine)
 
 	return profile

@@ -9,8 +9,8 @@ library DKGTypes {
 
     /// @notice Epoch state machine. The first three values group into the
     ///         "Preparation" phase (committee assembly + key generation); `Live`
-    ///         is the "Service" phase in which pool keys activate, apps claim
-    ///         them and ciphertexts get decrypted.
+    ///         is the "Service" phase in which the proven pool keys serve apps
+    ///         and ciphertexts get decrypted.
     enum EpochPhase {
         None,
         CommitteeSelection,  // accepting claimSlot calls; lottery picks the committee
@@ -38,8 +38,8 @@ library DKGTypes {
     /// @notice One committee member's accepted contribution.
     /// @dev    `commitmentsHash` is the Poseidon digest of public input 4 of
     ///         the contribution proof — it commits to the member's `MAX_K`
-    ///         commitment vectors at once. `activatePoolKey` re-checks each
-    ///         participant row against it, which is what binds an activation
+    ///         commitment vectors at once. `finalizeEpoch` re-checks each
+    ///         participant row against it, which is what binds a finalization
     ///         to the contributions actually accepted on chain.
     struct ContributionRecord {
         address contributor;

@@ -171,7 +171,7 @@ export async function buildElGamal(): Promise<ElGamal> {
 // ─── application keys and organizer secrets ─────────────────────────────────
 
 /**
- * Derive the per-application public key from the application's activated
+ * Derive the per-application public key from the application's claimed
  * pool key and, for an `OrganizerLocked` application, its organizer key:
  *
  *   PK_aid = P_j                (AppMode.Automatic)

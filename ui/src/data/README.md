@@ -109,7 +109,7 @@ function EpochPage() {
 
 `createDemoDataSource()` serves `src/fixtures/synthetic.ts`: 300 operators,
 8 epochs of 64 members (t = 33, m_min = 40), one aborted, one in KeyAssembly,
-four pool keys activated per Live epoch, 2 applications × 8 ciphertexts
+the whole pool of 16 keys stored at finalization, 2 applications × 8 ciphertexts
 (one organizer-locked, one automatic), partials in waves, one organizer secret
 still kept, gas figures from `BENCHMARKS.md`. Its head block
 advances every 12 s. Pass options through `createDataSource({ demoOptions })`

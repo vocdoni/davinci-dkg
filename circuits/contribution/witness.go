@@ -12,11 +12,15 @@ import (
 	"github.com/vocdoni/davinci-dkg/types"
 )
 
-var contributionTranscriptDomain = protocol.DomainContributionTranscriptV1
+// TranscriptDomain is the BRLC Fiat–Shamir domain of the compact contribution
+// transcript (docs/pool-keys-v4.md §2).
+var TranscriptDomain = protocol.DomainContributionTranscriptV2
 
-// PublicInputs is the native representation of the public contribution inputs.
-// The per-key vectors (Commitments, Shares, EncryptedShares) are indexed by
-// pool key first and by coefficient / recipient second.
+// PublicInputs is the native representation of the public contribution inputs
+// plus the unpadded vectors the compact transcript is built from. The per-key
+// vectors (Commitments, Shares, EncryptedShares) are indexed by pool key first
+// and by coefficient / recipient second; Commitments[j] has Threshold entries,
+// the recipient vectors have CommitteeSize entries.
 type PublicInputs struct {
 	RoundHash            *big.Int
 	Threshold            *big.Int
@@ -44,6 +48,7 @@ func BuildWitness(a Assignment) (*ContributionCircuit, *PublicInputs, error) {
 	committeeSize := big.NewInt(int64(a.CommitteeSize))
 	contributorIndex := big.NewInt(int64(a.ContributorIndex))
 	subgroupOrder := group.ScalarField()
+	n := int(a.CommitteeSize)
 
 	recipientIndexes, err := ccommon.PadBigInts(ccommon.Uint16sToBigInts(a.RecipientIndexes), MaxRecipients)
 	if err != nil {
@@ -154,6 +159,8 @@ func BuildWitness(a Assignment) (*ContributionCircuit, *PublicInputs, error) {
 		}
 	}
 
+	// Digests absorb the padded vectors (identity / zero in inactive slots),
+	// exactly as the circuit does; only the calldata transcript is compact.
 	keyDigests := make([]*big.Int, MaxKeys)
 	for j := range MaxKeys {
 		keyDigests[j], err = ccommon.CommitmentKeyDigestNative(paddedCommitments[j])
@@ -187,12 +194,33 @@ func BuildWitness(a Assignment) (*ContributionCircuit, *PublicInputs, error) {
 		return nil, nil, fmt.Errorf("hash share inputs: %w", err)
 	}
 
-	transcriptValues := transcriptWords(paddedCommitments, recipientIndexes, paddedRecipientKeys, ephemerals, maskedShares)
+	publicShares := make([][]*big.Int, MaxKeys)
+	for j := range MaxKeys {
+		publicShares[j] = shares[j][:n]
+	}
+	publicInputs := &PublicInputs{
+		RoundHash:        new(big.Int).Set(a.RoundHash),
+		Threshold:        new(big.Int).Set(threshold),
+		CommitteeSize:    new(big.Int).Set(committeeSize),
+		ContributorIndex: new(big.Int).Set(contributorIndex),
+		CommitmentHash:   new(big.Int).Set(commitmentHash),
+		ShareHash:        new(big.Int).Set(shareHash),
+		Commitments:      commitments,
+		RecipientKeys:    recipientKeys,
+		Shares:           publicShares,
+		EncryptedShares:  encryptedShares,
+		RecipientIndexes: recipientIndexes[:n],
+	}
+
+	transcriptValues, err := publicInputs.TranscriptScalars()
+	if err != nil {
+		return nil, nil, err
+	}
 	anchor, err := ccommon.ChallengeAnchor(transcriptValues, commitmentHash, shareHash)
 	if err != nil {
 		return nil, nil, fmt.Errorf("hash contribution challenge anchor: %w", err)
 	}
-	challenge, err := ccommon.DeriveChallengeNative(a.RoundHash, contributionTranscriptDomain, anchor)
+	challenge, err := ccommon.DeriveChallengeNative(a.RoundHash, TranscriptDomain, anchor)
 	if err != nil {
 		return nil, nil, fmt.Errorf("derive contribution challenge: %w", err)
 	}
@@ -200,6 +228,8 @@ func BuildWitness(a Assignment) (*ContributionCircuit, *PublicInputs, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("brlc contribution transcript: %w", err)
 	}
+	publicInputs.Challenge = new(big.Int).Set(challenge)
+	publicInputs.TranscriptCommitment = new(big.Int).Set(transcriptCommitment)
 
 	witness := &ContributionCircuit{
 		RoundHash:            new(big.Int).Set(a.RoundHash),
@@ -229,26 +259,6 @@ func BuildWitness(a Assignment) (*ContributionCircuit, *PublicInputs, error) {
 			witness.ShareMasks[j][i] = shareMasks[j][i]
 			witness.MaskedShareCarries[j][i] = maskedShareCarries[j][i]
 		}
-	}
-
-	publicShares := make([][]*big.Int, MaxKeys)
-	for j := range MaxKeys {
-		publicShares[j] = shares[j][:len(a.RecipientIndexes)]
-	}
-	publicInputs := &PublicInputs{
-		RoundHash:            new(big.Int).Set(a.RoundHash),
-		Threshold:            new(big.Int).Set(threshold),
-		CommitteeSize:        new(big.Int).Set(committeeSize),
-		ContributorIndex:     new(big.Int).Set(contributorIndex),
-		CommitmentHash:       new(big.Int).Set(commitmentHash),
-		ShareHash:            new(big.Int).Set(shareHash),
-		Challenge:            new(big.Int).Set(challenge),
-		TranscriptCommitment: new(big.Int).Set(transcriptCommitment),
-		Commitments:          commitments,
-		RecipientKeys:        recipientKeys,
-		Shares:               publicShares,
-		EncryptedShares:      encryptedShares,
-		RecipientIndexes:     recipientIndexes,
 	}
 	return witness, publicInputs, nil
 }
@@ -282,94 +292,64 @@ func (p PublicInputs) Scalars() []*big.Int {
 	}
 }
 
-// TranscriptScalars returns the ordered transcript compressed by the verifier
-// path: TranscriptWords words, commitments and masked shares key-major.
-//
-// The padding helpers can fail when a manually-constructed PublicInputs holds
-// more entries than the circuit bounds; BuildWitness validates its assignment
-// first, but a hand-built value would otherwise emit a malformed transcript.
-func (p PublicInputs) TranscriptScalars() ([]*big.Int, error) {
-	if len(p.Commitments) != MaxKeys {
-		return nil, fmt.Errorf("contribution transcript: got %d commitment sets, expected %d", len(p.Commitments), MaxKeys)
+// Layout returns the compact transcript layout of these inputs' (t, n).
+func (p PublicInputs) Layout() (Layout, error) {
+	if p.Threshold == nil || p.CommitteeSize == nil || !p.Threshold.IsInt64() || !p.CommitteeSize.IsInt64() {
+		return Layout{}, fmt.Errorf("contribution transcript: threshold and committee size are required")
 	}
+	return NewLayout(int(p.Threshold.Int64()), int(p.CommitteeSize.Int64()))
+}
+
+// Transcript assembles the structured compact transcript from the unpadded
+// public vectors. The ephemeral is shared by every key, so key 0's encrypted
+// shares carry all of them.
+func (p PublicInputs) Transcript() (Transcript, error) {
 	if len(p.EncryptedShares) != MaxKeys {
-		return nil, fmt.Errorf(
-			"contribution transcript: got %d encrypted share sets, expected %d",
-			len(p.EncryptedShares),
-			MaxKeys,
+		return Transcript{}, fmt.Errorf(
+			"contribution transcript: got %d encrypted share sets, expected %d", len(p.EncryptedShares), MaxKeys,
 		)
 	}
-	commitments := make([][]types.CurvePoint, MaxKeys)
 	maskedShares := make([][]*big.Int, MaxKeys)
 	for j := range MaxKeys {
-		var err error
-		if commitments[j], err = ccommon.PadPoints(p.Commitments[j], MaxCoefficients); err != nil {
-			return nil, fmt.Errorf("contribution transcript: pad key %d commitments: %w", j, err)
-		}
-		values := make([]*big.Int, len(p.EncryptedShares[j]))
+		maskedShares[j] = make([]*big.Int, len(p.EncryptedShares[j]))
 		for i, share := range p.EncryptedShares[j] {
-			values[i] = share.Ciphertext
-		}
-		if maskedShares[j], err = ccommon.PadBigInts(values, MaxRecipients); err != nil {
-			return nil, fmt.Errorf("contribution transcript: pad key %d masked shares: %w", j, err)
+			maskedShares[j][i] = share.Ciphertext
 		}
 	}
-	indexes, err := ccommon.PadBigInts(p.RecipientIndexes, MaxRecipients)
-	if err != nil {
-		return nil, fmt.Errorf("contribution transcript: pad recipient indexes: %w", err)
-	}
-	recipientKeys, err := ccommon.PadPoints(p.RecipientKeys, MaxRecipients)
-	if err != nil {
-		return nil, fmt.Errorf("contribution transcript: pad recipient keys: %w", err)
-	}
-	// The ephemeral is shared by every key, so key 0's rows carry all of them.
 	ephemerals := make([]types.CurvePoint, len(p.EncryptedShares[0]))
 	for i, share := range p.EncryptedShares[0] {
 		ephemerals[i] = share.Ephemeral
 	}
-	paddedEphemerals, err := ccommon.PadPoints(ephemerals, MaxRecipients)
-	if err != nil {
-		return nil, fmt.Errorf("contribution transcript: pad ephemerals: %w", err)
-	}
-	return transcriptWords(commitments, indexes, recipientKeys, paddedEphemerals, maskedShares), nil
+	return Transcript{
+		Commitments:      p.Commitments,
+		RecipientIndexes: p.RecipientIndexes,
+		RecipientKeys:    p.RecipientKeys,
+		Ephemerals:       ephemerals,
+		MaskedShares:     maskedShares,
+	}, nil
 }
 
-// BRLCCommitment compresses the contribution transcript into one scalar commitment.
+// TranscriptScalars returns the L_C-word compact transcript the contract
+// streams into its BRLC check and hashes into the challenge anchor.
+func (p PublicInputs) TranscriptScalars() ([]*big.Int, error) {
+	layout, err := p.Layout()
+	if err != nil {
+		return nil, err
+	}
+	transcript, err := p.Transcript()
+	if err != nil {
+		return nil, err
+	}
+	return layout.Encode(transcript)
+}
+
+// BRLCCommitment compresses the compact transcript into one scalar commitment.
 func (p PublicInputs) BRLCCommitment(challenge *big.Int) (*big.Int, error) {
 	scalars, err := p.TranscriptScalars()
 	if err != nil {
 		return nil, err
 	}
 	return ccommon.BRLCNative(challenge, scalars...)
-}
-
-// transcriptWords lays out the calldata transcript both the circuit and the
-// contract stream: commitments key-major, then the recipient indexes, their
-// public keys, the shared ephemerals, and the masked shares key-major. Every
-// argument must already be padded to the circuit bounds.
-func transcriptWords(
-	commitments [][]types.CurvePoint,
-	recipientIndexes []*big.Int,
-	recipientKeys, ephemerals []types.CurvePoint,
-	maskedShares [][]*big.Int,
-) []*big.Int {
-	words := make([]*big.Int, 0, TranscriptWords)
-	for j := range MaxKeys {
-		for m := range MaxCoefficients {
-			words = append(words, commitments[j][m].X, commitments[j][m].Y)
-		}
-	}
-	words = append(words, recipientIndexes...)
-	for i := range MaxRecipients {
-		words = append(words, recipientKeys[i].X, recipientKeys[i].Y)
-	}
-	for i := range MaxRecipients {
-		words = append(words, ephemerals[i].X, ephemerals[i].Y)
-	}
-	for j := range MaxKeys {
-		words = append(words, maskedShares[j]...)
-	}
-	return words
 }
 
 // rawShareMask recomputes ccommon.ShareMaskHash natively, before the

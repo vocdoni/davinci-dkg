@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildFixture } from '../fixtures/synthetic'
+import { buildFixture, GAS } from '../fixtures/synthetic'
 import {
   activity,
   applicationDetail,
@@ -62,7 +62,7 @@ describe('epochRows', () => {
     expect(live.claimProgress).toBe(1)
     expect(live.contributionProgress).toBeGreaterThan(0.6)
     expect(live.finalizer).toBeTruthy()
-    expect(live.finalizationGas).toBe(91_204)
+    expect(live.finalizationGas).toBe(GAS.finalizeEpoch)
     expect(live.ciphertexts).toBe(16)
   })
 
@@ -119,28 +119,18 @@ describe('epochDetail', () => {
     expect(detail.windows.endBlock).toBe(detail.epoch.startBlock + 300)
     expect(detail.applications).toHaveLength(2)
     expect(detail.applications[0].ciphertexts).toBe(8)
-    expect(detail.finalization?.gasUsed).toBe(91_204)
+    expect(detail.finalization?.gasUsed).toBe(GAS.finalizeEpoch)
     expect(detail.finalization?.contributionCount).toBe(detail.epoch.contributions.length)
-    // The pool: eight slots, four activated (two claimed, two ahead), four inactive.
-    expect(detail.pool).toHaveLength(8)
-    expect(detail.poolActivated).toBe(4)
+    // The pool: sixteen slots, every key stored at finalization, two claimed.
+    expect(detail.pool).toHaveLength(16)
+    expect(detail.poolKnown).toBe(16)
     expect(detail.poolClaimed).toBe(2)
     expect(detail.poolNext).toBe(2)
-    expect(detail.pool.map((slot) => slot.state)).toEqual([
-      'claimed',
-      'claimed',
-      'activated',
-      'activated',
-      'inactive',
-      'inactive',
-      'inactive',
-      'inactive',
-    ])
+    expect(detail.row.poolFree).toBe(14)
+    expect(detail.pool.map((slot) => slot.state)).toEqual(['claimed', 'claimed', ...new Array<string>(14).fill('free')])
     expect(detail.pool[0].claimedBy).toBe(detail.applications[0].aid)
-    expect(detail.pool[0].activatedBy).toMatch(/^0x[0-9a-f]{40}$/)
-    expect(detail.pool[0].activatedGas).toBe(1_112_337)
-    expect(detail.pool[2].key).not.toBeNull()
-    expect(detail.pool[4].key).toBeNull()
+    expect(detail.pool.every((slot) => slot.key != null)).toBe(true)
+    expect(new Set(detail.pool.map((slot) => `${slot.key!.x}:${slot.key!.y}`)).size).toBe(16)
     expect(detail.events.length).toBeGreaterThan(64)
     expect(detail.events.every((event) => event.epoch === detail.epoch.id)).toBe(true)
   })
@@ -156,8 +146,10 @@ describe('epochDetail', () => {
     expect(assembling.epoch.status).toBe('key-assembly')
     expect(assembling.committee).toHaveLength(64)
     expect(assembling.contributions.length).toBeLessThan(40)
-    expect(assembling.poolActivated).toBe(0)
-    expect(assembling.pool.every((slot) => slot.state === 'inactive')).toBe(true)
+    // No finalization yet: no key is stored, so nothing is free or claimed.
+    expect(assembling.poolKnown).toBe(0)
+    expect(assembling.row.poolFree).toBe(0)
+    expect(assembling.pool.every((slot) => slot.state === 'pending')).toBe(true)
   })
 
   it('returns null for an unknown epoch', () => {
@@ -230,7 +222,7 @@ describe('applications', () => {
       expect(row.ciphertexts).toBe(8)
       expect(row.decrypted).toBeLessThanOrEqual(row.ciphertexts)
       expect(row.maxCiphertexts).toBe(8)
-      // Each application holds one activated pool key.
+      // Each application holds one of the epoch's pool keys.
       expect(row.poolIndex).toBe(row.mode === 'automatic' ? 1 : 0)
       expect(row.poolKey).not.toBeNull()
       expect(store.epochs[row.epoch].poolKeys[row.poolIndex!].claimedBy).toBe(row.aid)

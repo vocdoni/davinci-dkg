@@ -14,7 +14,7 @@ func TestContractAddressesValidate(t *testing.T) {
 		Registry:               common.HexToAddress("0x1000000000000000000000000000000000000001"),
 		Manager:                common.HexToAddress("0x2000000000000000000000000000000000000002"),
 		ContributionVerifier:   common.HexToAddress("0x3000000000000000000000000000000000000003"),
-		PoolKeyVerifier:        common.HexToAddress("0x4000000000000000000000000000000000000004"),
+		FinalizeVerifier:       common.HexToAddress("0x4000000000000000000000000000000000000004"),
 		PartialDecryptVerifier: common.HexToAddress("0x5000000000000000000000000000000000000005"),
 		DecryptCombineVerifier: common.HexToAddress("0x6000000000000000000000000000000000000006"),
 	}
@@ -42,7 +42,7 @@ func TestContractAddressesValidateRejectsMissingPartialDecryptVerifier(t *testin
 		Registry:               common.HexToAddress("0x1000000000000000000000000000000000000001"),
 		Manager:                common.HexToAddress("0x2000000000000000000000000000000000000002"),
 		ContributionVerifier:   common.HexToAddress("0x3000000000000000000000000000000000000003"),
-		PoolKeyVerifier:        common.HexToAddress("0x4000000000000000000000000000000000000004"),
+		FinalizeVerifier:       common.HexToAddress("0x4000000000000000000000000000000000000004"),
 		DecryptCombineVerifier: common.HexToAddress("0x6000000000000000000000000000000000000006"),
 	}
 

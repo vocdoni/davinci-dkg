@@ -33,10 +33,9 @@ func TestThresholdDecryptionAutomaticApplication(t *testing.T) {
 	), qt.IsNil)
 
 	share := poolShare(c, res, 0, 1)
-	activation := res.Activation(0)
 
 	partial, err := helpers.BuildPartialDecryptionSubmission(
-		ctx, res.EpochID, aid, 1, 1, big.NewInt(9), share, big.NewInt(5), activation.Shares,
+		ctx, res.EpochID, aid, 1, 1, big.NewInt(9), share, big.NewInt(5), res.Shares(0),
 	)
 	c.Assert(err, qt.IsNil)
 
@@ -86,12 +85,11 @@ func TestThresholdDecryptionLockedApplicationNeedsTheReveal(t *testing.T) {
 	), qt.IsNil)
 
 	share := poolShare(c, res, 0, 1)
-	activation := res.Activation(0)
 	const base = 9
 	plaintext := big.NewInt(3)
 
 	partial, err := helpers.BuildPartialDecryptionSubmission(
-		ctx, res.EpochID, aid, 1, 1, big.NewInt(base), share, big.NewInt(5), activation.Shares,
+		ctx, res.EpochID, aid, 1, 1, big.NewInt(base), share, big.NewInt(5), res.Shares(0),
 	)
 	c.Assert(err, qt.IsNil)
 
@@ -175,10 +173,9 @@ func TestThresholdDecryptionRespectsTheWindow(t *testing.T) {
 	), qt.IsNil)
 
 	share := poolShare(c, res, 0, 1)
-	activation := res.Activation(0)
 
 	partial, err := helpers.BuildPartialDecryptionSubmission(
-		ctx, res.EpochID, aid, 1, 1, big.NewInt(9), share, big.NewInt(5), activation.Shares,
+		ctx, res.EpochID, aid, 1, 1, big.NewInt(9), share, big.NewInt(5), res.Shares(0),
 	)
 	c.Assert(err, qt.IsNil)
 	combine, err := helpers.BuildDecryptCombineOutput(ctx, res.EpochID, aid, 1, 1, big.NewInt(9), nil,
@@ -224,7 +221,6 @@ func TestThresholdDecryptionSupportsMultipleCiphertextsPerRound(t *testing.T) {
 	), qt.IsNil)
 
 	share := poolShare(c, res, 0, 1)
-	activation := res.Activation(0)
 	baseValues := []*big.Int{big.NewInt(9), big.NewInt(13)}
 	plaintexts := []*big.Int{big.NewInt(3), big.NewInt(5)}
 
@@ -232,7 +228,7 @@ func TestThresholdDecryptionSupportsMultipleCiphertextsPerRound(t *testing.T) {
 		ciphertextIndex := uint16(i + 1)
 
 		partial, err := helpers.BuildPartialDecryptionSubmission(
-			ctx, res.EpochID, aid, ciphertextIndex, 1, baseValues[i], share, big.NewInt(int64(5+i)), activation.Shares,
+			ctx, res.EpochID, aid, ciphertextIndex, 1, baseValues[i], share, big.NewInt(int64(5+i)), res.Shares(0),
 		)
 		c.Assert(err, qt.IsNil)
 

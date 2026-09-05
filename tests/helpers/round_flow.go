@@ -14,13 +14,13 @@ import (
 
 const (
 	roundStatusContribution uint8 = 2
-	// roundStatusLive is the phase finalizeEpoch moves the epoch to; pool
-	// keys can only be activated (and applications registered) there.
+	// roundStatusLive is the phase finalizeEpoch moves the epoch to, with
+	// every pool key stored; applications can only register there.
 	roundStatusLive uint8 = 3
 )
 
-// FinalizedRoundResult is a Live epoch plus everything a test needs to
-// activate more of its pool and to reproduce the members' shares.
+// FinalizedRoundResult is a Live epoch plus everything a test needs to use
+// its pool and to reproduce the members' shares.
 type FinalizedRoundResult struct {
 	EpochID            [12]byte
 	Epoch              web3.EpochView
@@ -30,16 +30,22 @@ type FinalizedRoundResult struct {
 	CommitteeSize      uint16
 	ParticipantIndexes []uint16
 	// Contributions is indexed by accepted contributor, then pool key, then
-	// coefficient — the shape BuildPoolKeyActivation takes.
+	// coefficient — the shape BuildFinalizeSubmission takes.
 	Contributions [][][]*big.Int
-	// Activations holds the pool keys activated so far, by key index.
-	Activations map[uint8]*PoolKeyActivation
+	// Finalize is the finalization that made the epoch Live: every pool key
+	// and every key's share-commitment tree.
+	Finalize *FinalizeSubmission
 }
 
-// Activation returns the activation of `keyIndex`, or nil when the key was
-// never activated for this round.
-func (r *FinalizedRoundResult) Activation(keyIndex uint8) *PoolKeyActivation {
-	return r.Activations[keyIndex]
+// PoolKey is P_j of the round's pool.
+func (r *FinalizedRoundResult) PoolKey(keyIndex uint8) types.CurvePoint {
+	return r.Finalize.PoolKey(keyIndex)
+}
+
+// Shares is key j's share-commitment tree, the root the contract stores and
+// the tree a partial decryption proves its leaf against.
+func (r *FinalizedRoundResult) Shares(keyIndex uint8) ShareTree {
+	return r.Finalize.ShareTree(keyIndex)
 }
 
 // ParticipantShare returns the member's share of pool key `keyIndex`,
@@ -102,8 +108,8 @@ func CreateContributionRound(ctx context.Context, services *TestServices, policy
 	return epochID, nil
 }
 
-// CreateFinalizedSingleParticipantRound drives a one-member epoch to Live and
-// activates pool key 0. `coefficients` is the single fixture polynomial; it
+// CreateFinalizedSingleParticipantRound drives a one-member epoch to Live with
+// its whole pool stored. `coefficients` is the single fixture polynomial; it
 // becomes key 0 of the dealt pool verbatim (see DealPoolCoefficients), so the
 // share of participant 1 under key 0 stays sum(coefficients).
 func CreateFinalizedSingleParticipantRound(
@@ -131,7 +137,11 @@ func CreateFinalizedSingleParticipantRound(
 	if err := WaitForFinalizeGate(ctx, services, epochID); err != nil {
 		return nil, err
 	}
-	if err := FinalizeEpochAs(ctx, self, epochID); err != nil {
+	finalization, err := BuildFinalizeSubmission(ctx, epochID, 1, 1, []uint16{1}, [][][]*big.Int{pool})
+	if err != nil {
+		return nil, fmt.Errorf("build finalization: %w", err)
+	}
+	if err := FinalizeEpochAs(ctx, self, epochID, finalization); err != nil {
 		return nil, err
 	}
 	epoch, err := WaitEpochPhase(ctx, services, epochID, roundStatusLive)
@@ -139,7 +149,7 @@ func CreateFinalizedSingleParticipantRound(
 		return nil, err
 	}
 
-	result := &FinalizedRoundResult{
+	return &FinalizedRoundResult{
 		EpochID:            epochID,
 		Epoch:              epoch,
 		RoundHash:          submission.RoundHash,
@@ -148,37 +158,8 @@ func CreateFinalizedSingleParticipantRound(
 		CommitteeSize:      1,
 		ParticipantIndexes: []uint16{1},
 		Contributions:      [][][]*big.Int{pool},
-		Activations:        map[uint8]*PoolKeyActivation{},
-	}
-	if _, err := ActivateRoundPoolKey(ctx, services, result, 0); err != nil {
-		return nil, err
-	}
-	return result, nil
-}
-
-// ActivateRoundPoolKey proves and activates one more key of the round's pool,
-// caching the activation on the result.
-func ActivateRoundPoolKey(
-	ctx context.Context,
-	services *TestServices,
-	round *FinalizedRoundResult,
-	keyIndex uint8,
-) (*PoolKeyActivation, error) {
-	if existing, ok := round.Activations[keyIndex]; ok {
-		return existing, nil
-	}
-	activation, err := BuildPoolKeyActivation(
-		ctx, round.EpochID, round.Threshold, round.CommitteeSize,
-		round.ParticipantIndexes, round.Contributions, keyIndex,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("build pool key %d activation: %w", keyIndex, err)
-	}
-	if err := ActivatePoolKeyAs(ctx, SelfActor(services), round.EpochID, activation); err != nil {
-		return nil, err
-	}
-	round.Activations[keyIndex] = activation
-	return activation, nil
+		Finalize:           finalization,
+	}, nil
 }
 
 // SelfActor wraps the harness' own signer as a TestActor. PrivKey is left

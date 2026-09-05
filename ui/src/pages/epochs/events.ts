@@ -27,7 +27,6 @@ export const EVENT_TONE: Record<IndexedEventName, EventTone> = {
   CommitteeFilled: 'ok',
   ContributionSubmitted: 'neutral',
   EpochLive: 'ok',
-  PoolKeyActivated: 'ok',
   PoolKeyClaimed: 'neutral',
   CiphertextSubmitted: 'neutral',
   PartialDecryptionSubmitted: 'neutral',
@@ -74,9 +73,7 @@ export function eventSummary(event: IndexedEvent): string {
     case 'ContributionSubmitted':
       return `participant index ${event.data.contributorIndex}`
     case 'EpochLive':
-      return `${event.data.contributionCount} contributions frozen · pool opens`
-    case 'PoolKeyActivated':
-      return `key ${event.data.keyIndex} · P (${shortHash(bigintHex(event.data.key.x), 6, 4)}, …)`
+      return `${event.data.contributionCount} contributions proven · all pool keys stored`
     case 'PoolKeyClaimed':
       return `key ${event.data.keyIndex} claimed`
     case 'CiphertextSubmitted':

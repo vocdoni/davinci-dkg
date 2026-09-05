@@ -8,10 +8,14 @@
 //
 // Files emitted:
 //
-//	tests/vectors/protocol.json    domain digests (Schnorr / DLEQ transcripts and
-//	                               the three BRLC transcript domains) + field constants
-//	tests/vectors/schnorr.json     operator + organizer Schnorr proofs
-//	tests/vectors/dleq.json        committee partial-decryption DLEQ challenges + responses
+//	tests/vectors/protocol.json              domain digests (Schnorr / DLEQ transcripts and
+//	                                         the three BRLC transcript domains) + field constants
+//	tests/vectors/schnorr.json               operator + organizer Schnorr proofs
+//	tests/vectors/dleq.json                  committee partial-decryption DLEQ challenges + responses
+//	tests/vectors/contribution_compact.json  compact contribution transcripts (v4 §3): words, offsets,
+//	                                         digests, anchor, challenge, BRLC commitment
+//	tests/vectors/finalize_transcript.json   batched finalization transcripts (v4 §7): words, Poseidon
+//	                                         digest levels, anchor, challenge, BRLC, Merkle roots
 //
 // Determinism: every vector uses fixed inputs and either deterministic
 // witnesses or the chosen ones below. Re-running this command on a clean
@@ -53,6 +57,8 @@ func main() {
 	write(*dir, "protocol.json", buildProtocol())
 	write(*dir, "schnorr.json", buildSchnorr())
 	write(*dir, "dleq.json", buildDLEQ())
+	write(*dir, "contribution_compact.json", buildContributionCompact())
+	write(*dir, "finalize_transcript.json", buildFinalizeTranscript())
 }
 
 // ─── protocol.json ──────────────────────────────────────────────────────────
@@ -73,20 +79,21 @@ type protocolDomainRow struct {
 func buildProtocol() protocolFile {
 	return protocolFile{
 		Description: "Cross-impl protocol constants. Domain digests are bound into the Schnorr registration transcripts; " +
-			"the *TranscriptV1 rows are the BRLC domains every proof-carrying call binds into its challenge " +
+			"the *Transcript rows are the BRLC domains every proof-carrying call binds into its challenge " +
 			"(keccak(eid || domain || anchor) mod p).",
 		Domains: map[string]protocolDomainRow{
 			"OperatorRegisterV1":  domainRow(protocol.DomainOperatorRegisterV1Str, protocol.DomainOperatorRegisterV1),
 			"OrganizerRegisterV1": domainRow(protocol.DomainOrganizerRegisterV1Str, protocol.DomainOrganizerRegisterV1),
-			// BRLC transcript domains: submitContribution, activatePoolKey
-			// and combineDecryption each derive their Fiat-Shamir challenge
-			// under one of these. The pool-key row replaces the former
-			// davinci-dkg:finalize:v1.
-			"ContributionTranscriptV1": domainRow(
-				protocol.DomainContributionTranscriptV1Str, protocol.DomainContributionTranscriptV1,
+			// BRLC transcript domains: submitContribution, finalizeEpoch and
+			// combineDecryption each derive their Fiat-Shamir challenge under
+			// one of these. v4 (docs/pool-keys-v4.md §2) bumps the compact
+			// contribution to v2 and replaces davinci-dkg:poolkey:v1 with the
+			// batched finalization domain.
+			"ContributionTranscriptV2": domainRow(
+				protocol.DomainContributionTranscriptV2Str, protocol.DomainContributionTranscriptV2,
 			),
-			"PoolKeyTranscriptV1": domainRow(
-				protocol.DomainPoolKeyTranscriptV1Str, protocol.DomainPoolKeyTranscriptV1,
+			"FinalizeTranscriptV2": domainRow(
+				protocol.DomainFinalizeTranscriptV2Str, protocol.DomainFinalizeTranscriptV2,
 			),
 			"DecryptCombineTranscriptV1": domainRow(
 				protocol.DomainDecryptCombineTranscriptV1Str, protocol.DomainDecryptCombineTranscriptV1,

@@ -1,4 +1,4 @@
-package poolkey
+package finalize
 
 import (
 	"context"
@@ -12,7 +12,7 @@ func BenchmarkProve(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	runtime, err := Artifacts.LoadOrSetupForCircuit(context.Background(), &PoolKeyCircuit{})
+	runtime, err := Artifacts.LoadOrSetupForCircuit(context.Background(), &FinalizeCircuit{})
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -31,5 +31,5 @@ func BenchmarkBackends(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	backendbench.Compare(b, "poolkey", &PoolKeyCircuit{}, witness, 3)
+	backendbench.Compare(b, "finalize", &FinalizeCircuit{}, witness, 3)
 }

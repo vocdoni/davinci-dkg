@@ -15,7 +15,7 @@ import type { Address, Hex } from 'viem'
 export type { Address, Hex }
 
 /** Bumped whenever the shape below changes; a mismatch drops the cache. */
-export const STORE_VERSION = 5
+export const STORE_VERSION = 6
 
 /** `bytes12` epoch id (4-byte prefix ‖ 8-byte nonce). */
 export type EpochId = Hex
@@ -38,7 +38,7 @@ export type EpochPhaseName =
 export type NodeStatusName = 'none' | 'active' | 'inactive'
 
 /** `MaxK`: pool keys dealt per epoch (`circuits/common/sizes.go`, `Sizes.sol`). */
-export const POOL_SIZE = 8
+export const POOL_SIZE = 16
 /** `MaxN`: the committee cap the circuits are compiled for. */
 export const MAX_COMMITTEE = 32
 
@@ -83,10 +83,13 @@ export interface EventDataMap {
     commitmentsHash: Hex
     encryptedSharesHash: Hex
   }
-  /** Proof-less finalize: freezes the accepted contributor set, no key yet. */
+  /**
+   * The proof-carrying finalize landed: every one of the `POOL_SIZE` pool keys
+   * and share roots is stored from this block on. The keys themselves are not
+   * in the event — the indexer reads them with `getPoolKey` once the epoch is
+   * Live (they also sit in the transaction's calldata).
+   */
   EpochLive: { epochId: EpochId; contributionCount: number }
-  /** Pool key `P_j` proven and stored; `key` is in TE form. */
-  PoolKeyActivated: { epochId: EpochId; keyIndex: number; key: Point }
   PoolKeyClaimed: { epochId: EpochId; aid: Aid; keyIndex: number }
   CiphertextSubmitted: {
     epochId: EpochId
@@ -200,21 +203,20 @@ export interface FinalizationEntity {
   by: Address | null
   block: number
   tx: Hex | null
-  /** Accepted contributions frozen by `finalizeEpoch`. */
+  /** Accepted contributions the pool was proven from by `finalizeEpoch`. */
   contributionCount: number
 }
 
 /**
  * One of the `POOL_SIZE` keys an epoch deals. A slot exists from the moment
- * the epoch does; `key` is null until `activatePoolKey` proves it, and
+ * the epoch does; `key` is null until the epoch is Live and the indexer has
+ * read `getPoolKey` (every key is stored by the one `finalizeEpoch`), and
  * `claimedBy` until a registration claims it.
  */
 export interface PoolKeyEntity {
   index: number
-  /** `P_j`, TE form; null until activated. */
+  /** `P_j`, TE form; null until read from the Live epoch. */
   key: Point | null
-  activatedBlock: number | null
-  activatedTx: Hex | null
   claimedBy: Aid | null
   claimedBlock: number | null
   claimedTx: Hex | null

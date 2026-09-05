@@ -54,10 +54,9 @@ interface IDKGAppManager {
     ///      whose secret is structurally absent (`Automatic`).
     error AlreadyRevealed();
     /// @dev Re-declared from `IDKGManager` (identical selectors): the
-    ///      manager raises them from `claimPoolKey`, which registration
-    ///      calls, so they surface out of `registerApplication`.
+    ///      manager raises it from `claimPoolKey`, which registration
+    ///      calls, so it surfaces out of `registerApplication`.
     error PoolExhausted();
-    error PoolKeyNotActive();
 
     // ─── Application lifecycle ────────────────────────────────────────────────
 

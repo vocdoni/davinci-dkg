@@ -66,7 +66,7 @@ describe('playground (demo)', () => {
 
     await user.click(await screen.findByRole('button', { name: /use the demo wallet/i }))
     // The epoch list says how much of each pool is left.
-    expect((await screen.findAllByText(/\d+ activated free · \d+ claimed · \d+ not activated/)).length).toBeGreaterThan(0)
+    expect((await screen.findAllByText(/\d+ free · \d+ claimed · 16 keys/)).length).toBeGreaterThan(0)
     await user.click(await screen.findByRole('button', { name: 'Register an application →' }))
     await user.click(await screen.findByRole('button', { name: /^register application$/i }))
     // The fixture's live epochs have two keys claimed, so ours is key 2. The

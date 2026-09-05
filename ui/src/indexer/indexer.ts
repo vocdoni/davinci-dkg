@@ -406,6 +406,23 @@ export class Indexer {
       }
     }
 
+    // The pool keys are not in any event: `finalizeEpoch` stores all of them
+    // at once, so a Live epoch with an empty slot is read once and then never
+    // again — the keys are immutable.
+    const wantKeys = this.store.epochOrder.filter((key) => {
+      const epoch = this.store.epochs[key]
+      return epoch.status === 'live' && epoch.poolKeys.some((slot) => slot.key == null)
+    })
+    if (wantKeys.length > 0) {
+      this.pendingPersist = true
+      try {
+        const keys = await this.reader.readPoolKeys(wantKeys as EpochId[])
+        for (const [id, poolKeys] of keys) applyEpochState(this.store, id as EpochId, { poolKeys, stateBlock: head })
+      } catch (err) {
+        this.pushError('state', err)
+      }
+    }
+
     const operators = [...this.dirtyOperators].filter((key) => this.store.operators[key])
     this.dirtyOperators.clear()
     if (operators.length > 0) {

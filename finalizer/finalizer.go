@@ -1,15 +1,20 @@
-// Package finalizer drives the two on-chain steps that turn an epoch's
-// accepted contributions into usable keys: the proof-less finalizeEpoch,
-// which freezes the accepted set and makes the epoch Live, and
-// activatePoolKey, which proves one of the MaxK dealt polynomials into a
-// committee key from the contributions' on-chain calldata.
+// Package finalizer turns an epoch's accepted contributions into usable keys
+// with one on-chain operation (docs/pool-keys-v4.md §11): it reads every
+// accepted contribution record at one block, recovers each dealer's compact
+// calldata, rebuilds all MaxK pool keys and every committee member's share
+// commitments, proves the batched finalization circuit and submits
+// `finalizeEpoch`. Live therefore means every key and every share-commitment
+// root is stored.
 //
-// Used by the davinci-dkg-node daemon (via its stagger rotations).
+// Used by the davinci-dkg-node daemon (via its stagger rotation) and, without
+// the proof, by committee members that rebuild their Merkle leaves from the
+// contributions instead of trusting the finalization transaction's calldata.
 package finalizer
 
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"math/big"
 	"reflect"
@@ -25,8 +30,9 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/vocdoni/davinci-dkg/circuits"
+	ccommon "github.com/vocdoni/davinci-dkg/circuits/common"
 	"github.com/vocdoni/davinci-dkg/circuits/contribution"
-	"github.com/vocdoni/davinci-dkg/circuits/poolkey"
+	"github.com/vocdoni/davinci-dkg/circuits/finalize"
 	"github.com/vocdoni/davinci-dkg/log"
 	gtypes "github.com/vocdoni/davinci-dkg/solidity/golang-types"
 	nodetypes "github.com/vocdoni/davinci-dkg/types"
@@ -34,48 +40,33 @@ import (
 	"github.com/vocdoni/davinci-dkg/web3/txmanager"
 )
 
-// Result carries the outputs of a successful pool-key activation.
-// ParticipantIndexes lists the accepted contributors; ShareCommitments is
-// member-indexed, one D_p per committee member p = i+1 (contributing or
-// not), the leaves of the Merkle root the contract stored.
+// EpochPhase values as stored on-chain (DKGTypes.EpochPhase).
+const (
+	phaseKeyAssembly uint8 = 2
+	phaseLive        uint8 = 3
+)
+
+// ErrAlreadyLive reports that the epoch went Live under us: another
+// finalizer won the race. It is a benign outcome, not a failure to retry.
+var ErrAlreadyLive = errors.New("epoch is already Live")
+
+// ErrStale reports that the accepted set the statement was proven over no
+// longer matches the chain (a reorg while proving): the proof must not be
+// sent and the caller rebuilds from scratch.
+var ErrStale = errors.New("finalization statement is stale")
+
+// Result carries the outputs of a successful finalization: every pool key
+// and share-commitment root the contract stored, plus the member-indexed
+// share commitments those roots were built from (ShareCommitments[j][i] is
+// D_{j,i+1}, one per committee member whether it contributed or not).
 type Result struct {
-	PoolKey            nodetypes.CurvePoint
+	TxHash             common.Hash
 	TranscriptDigest   common.Hash
 	ParticipantIndexes []uint16
-	ShareCommitments   []nodetypes.CurvePoint
+	PoolKeys           []nodetypes.CurvePoint
+	ShareRoots         [][32]byte
+	ShareCommitments   [][]nodetypes.CurvePoint
 	GasUsed            uint64
-}
-
-// FinalizeEpoch submits the proof-less finalizeEpoch transaction, which
-// freezes the accepted contributor set and moves the epoch to Live. The
-// caller is responsible for block.number >= policy.LiveNotBeforeBlock and
-// for contributionCount >= minValidContributions — the contract gates on
-// both.
-func FinalizeEpoch(
-	ctx context.Context,
-	c *web3.Contracts,
-	m *gtypes.DKGManager,
-	txm *txmanager.Manager,
-	epochID [12]byte,
-) (uint64, error) {
-	auth, err := txm.NewTransactOpts(ctx)
-	if err != nil {
-		return 0, err
-	}
-	tx, err := m.FinalizeEpoch(auth, epochID)
-	if err != nil {
-		return 0, err
-	}
-	txm.RecordPending(tx)
-	if err := txm.WaitTxByHash(tx.Hash(), 120*time.Second); err != nil {
-		return 0, err
-	}
-	var gasUsed uint64
-	if receipt, err := c.Client().TransactionReceipt(ctx, tx.Hash()); err == nil {
-		gasUsed = receipt.GasUsed
-		log.Infow("finalizeEpoch tx mined", "tx", tx.Hash().Hex(), "gas", receipt.GasUsed)
-	}
-	return gasUsed, nil
 }
 
 // CalldataCache memoises raw submitContribution calldata on disk so a
@@ -89,179 +80,105 @@ type CalldataCache interface {
 	Put(epochID [12]byte, dealer common.Address, data []byte)
 }
 
-// ActivationAssignment reconstructs the activation statement of pool key
-// `keyIndex` from the accepted contributions' on-chain calldata: the input
-// poolkey.BuildWitness turns into the aggregate commitments, P_j and every
-// committee member's share commitment D_p. No proof is involved. A non-nil
-// `cache` is consulted before each dealer's event-log scan and filled with
-// the calldata once it decodes.
-//
-// Activation is permissionless but needs every contributor's *whole*
-// commitment set: reproducing the stored Poseidon commitmentsHash absorbs the
-// digests of the keys that are not being activated.
-func ActivationAssignment(
-	ctx context.Context,
-	c *web3.Contracts,
-	m *gtypes.DKGManager,
-	epochID [12]byte,
-	t, n uint16,
-	committee []common.Address,
-	keyIndex uint8,
-	cache CalldataCache,
-) (poolkey.Assignment, error) {
-	callOpts := &bind.CallOpts{Context: ctx}
-
-	// Bound the event-log scan to blocks since this epoch was created. Using
-	// the epoch's SeedBlock as a lower bound keeps the FilterLogs cheap even
-	// on long-lived deployments. We back off by 1 block to be safe against
-	// any off-by-one in the seed-block emission relative to the contribution
-	// submission window (contributions can only land after registration
-	// closes, which is after seedBlock, so this is conservative).
-	epoch, err := c.GetEpoch(ctx, epochID)
-	if err != nil {
-		return poolkey.Assignment{}, fmt.Errorf("get epoch for log scan range: %w", err)
-	}
-	startBlock := uint64(0)
-	if epoch.SeedBlock > 0 {
-		startBlock = uint64(epoch.SeedBlock) - 1
-	}
-
-	acceptedIdxs := make([]uint16, 0, n)
-	allCommitments := make([][][]nodetypes.CurvePoint, 0, n)
-
-	for i, addr := range committee {
-		rec, err := m.GetContribution(callOpts, epochID, addr)
-		if err != nil {
-			// A read failure is not a missing contribution: proving over a
-			// subset would activate a key the contract rejects (or, with a
-			// forged accepted count, the wrong key).
-			return poolkey.Assignment{}, fmt.Errorf("get contribution of %s: %w", addr, err)
-		}
-		if !rec.Accepted {
-			continue
-		}
-		data, cached := []byte(nil), false
-		if cache != nil {
-			data, cached = cache.Get(epochID, addr)
-		}
-		if data == nil {
-			data, err = ContributionCalldata(ctx, c.Client(), m, epochID, addr, startBlock)
-			if err != nil {
-				return poolkey.Assignment{}, fmt.Errorf("contribution calldata for %s: %w", addr, err)
-			}
-		}
-		sets, err := parseCommitmentPoints(data, t)
-		if err != nil {
-			return poolkey.Assignment{}, fmt.Errorf("parse commitment points for %s: %w", addr, err)
-		}
-		if cache != nil && !cached {
-			cache.Put(epochID, addr, data)
-		}
-		acceptedIdxs = append(acceptedIdxs, uint16(i+1))
-		allCommitments = append(allCommitments, sets)
-	}
-	// The contract activates over exactly the frozen accepted set; anything
-	// else means the committee list or the chain view is stale.
-	if len(acceptedIdxs) != int(epoch.ContributionCount) {
-		return poolkey.Assignment{}, fmt.Errorf(
-			"reconstructed %d accepted contributions, epoch has %d", len(acceptedIdxs), epoch.ContributionCount,
-		)
-	}
-	if len(acceptedIdxs) < int(t) {
-		return poolkey.Assignment{}, fmt.Errorf("only %d/%d accepted contributions", len(acceptedIdxs), t)
-	}
-
-	return poolkey.Assignment{
-		RoundHash:          new(big.Int).SetBytes(epochID[:]),
-		Threshold:          t,
-		CommitteeSize:      n,
-		KeyIndex:           keyIndex,
-		ParticipantIndexes: acceptedIdxs,
-		Commitments:        allCommitments,
-	}, nil
+// snapshot is the on-chain state one finalization statement was built from,
+// all read at the same block so a contribution landing between two reads
+// cannot turn into a missing dealer.
+type snapshot struct {
+	block      uint64
+	epoch      gtypes.IDKGManagerEpoch
+	committee  []common.Address
+	assignment finalize.Assignment
 }
 
-// PoolKeyStatement derives, without proving, what activatePoolKey committed
-// to for `keyIndex`: P_j and the member-indexed share commitments
-// (ShareCommitments[p-1] = D_p for p ≤ n, the identity beyond). Committee
-// members use it to rebuild their Merkle leaves from the contributions'
-// calldata instead of trusting the activation transaction's outer calldata,
-// which an activation relayed through a contract does not even carry. A
-// non-nil `cache` (see ActivationAssignment) spares the per-dealer event-log
-// rescans.
-func PoolKeyStatement(
+// FinalizeStatement derives, without proving, what `finalizeEpoch` commits
+// to: every pool key P_j and the member-indexed share commitments of every
+// key (ShareCommitments[j][i] = D_{j,i+1} for i < n, the identity beyond).
+// Committee members use it to rebuild their Merkle leaves from the
+// contributions' calldata instead of trusting the finalization transaction's
+// outer calldata, which a finalization relayed through a contract does not
+// even carry. A non-nil `cache` spares the per-dealer event-log rescans.
+func FinalizeStatement(
 	ctx context.Context,
 	c *web3.Contracts,
 	m *gtypes.DKGManager,
 	epochID [12]byte,
-	t, n uint16,
-	committee []common.Address,
-	keyIndex uint8,
 	cache CalldataCache,
-) (*poolkey.PublicInputs, error) {
-	asgn, err := ActivationAssignment(ctx, c, m, epochID, t, n, committee, keyIndex, cache)
+) (*finalize.PublicInputs, error) {
+	snap, err := reconstruct(ctx, c, m, epochID, cache)
 	if err != nil {
 		return nil, err
 	}
-	_, pi, err := poolkey.BuildWitness(asgn)
+	_, pi, err := finalize.BuildWitness(snap.assignment)
 	if err != nil {
-		return nil, fmt.Errorf("build pool key statement: %w", err)
+		return nil, fmt.Errorf("build finalize statement: %w", err)
 	}
 	return pi, nil
 }
 
-// BuildAndSubmitActivation reads the accepted contributions from on-chain
-// calldata, proves that pool key `keyIndex` is the sum of their key-j
-// commitments, and submits activatePoolKey. It returns the activated key and
-// the per-member share commitments the contract folded into the Merkle root.
-// The pool-key runtime is loaded from the pinned artifacts on every call;
-// long-lived callers pass their own to ProveAndSubmitActivation.
-func BuildAndSubmitActivation(
+// BuildAndSubmitFinalize reads the accepted contributions from on-chain
+// calldata, proves the batched finalization and submits `finalizeEpoch`. The
+// finalize runtime is loaded from the pinned artifacts on every call;
+// long-lived callers pass their own to ProveAndSubmitFinalize.
+func BuildAndSubmitFinalize(
 	ctx context.Context,
 	c *web3.Contracts,
 	m *gtypes.DKGManager,
 	txm *txmanager.Manager,
 	epochID [12]byte,
-	t, n uint16,
-	committee []common.Address,
-	keyIndex uint8,
+	cache CalldataCache,
 ) (*Result, error) {
-	runtime, err := poolkey.Artifacts.LoadPinned(ctx, &poolkey.PoolKeyCircuit{})
+	runtime, err := finalize.Artifacts.LoadPinned(ctx, &finalize.FinalizeCircuit{})
 	if err != nil {
-		return nil, fmt.Errorf("load pool key circuit: %w", err)
+		return nil, fmt.Errorf("load finalize circuit: %w", err)
 	}
-	return ProveAndSubmitActivation(ctx, c, m, txm, runtime, epochID, t, n, committee, keyIndex, nil)
+	return ProveAndSubmitFinalize(ctx, c, m, txm, runtime, epochID, cache)
 }
 
-// ProveAndSubmitActivation is BuildAndSubmitActivation with a caller-supplied
-// pool-key runtime (the node loads all four circuits once at startup) and an
-// optional contribution-calldata cache (see ActivationAssignment).
-func ProveAndSubmitActivation(
+// ProveAndSubmitFinalize is BuildAndSubmitFinalize with a caller-supplied
+// finalize runtime (the node loads all four circuits once at startup).
+//
+// The statement is reconstructed at one block, proven, and the epoch's phase
+// and every accepted dealer's record are re-read right before the transaction
+// is sent: a finalization that landed meanwhile is reported as ErrAlreadyLive,
+// and any other divergence (a reorg changed the accepted set) is ErrStale,
+// which the caller retries from scratch.
+func ProveAndSubmitFinalize(
 	ctx context.Context,
 	c *web3.Contracts,
 	m *gtypes.DKGManager,
 	txm *txmanager.Manager,
 	runtime *circuits.CircuitRuntime,
 	epochID [12]byte,
-	t, n uint16,
-	committee []common.Address,
-	keyIndex uint8,
 	cache CalldataCache,
 ) (*Result, error) {
 	if runtime == nil {
-		return nil, fmt.Errorf("pool key circuit runtime is required")
+		return nil, fmt.Errorf("finalize circuit runtime is required")
 	}
-	asgn, err := ActivationAssignment(ctx, c, m, epochID, t, n, committee, keyIndex, cache)
+	snap, err := reconstruct(ctx, c, m, epochID, cache)
 	if err != nil {
 		return nil, err
 	}
-	witness, pi, err := poolkey.BuildWitness(asgn)
+	if snap.epoch.Status == phaseLive {
+		return nil, ErrAlreadyLive
+	}
+	if snap.epoch.Status != phaseKeyAssembly {
+		return nil, fmt.Errorf("epoch is in phase %d, not KeyAssembly", snap.epoch.Status)
+	}
+	if snap.block < snap.epoch.Policy.LiveNotBeforeBlock {
+		return nil, fmt.Errorf("finalize gate opens at block %d, head is %d", snap.epoch.Policy.LiveNotBeforeBlock, snap.block)
+	}
+	if snap.epoch.ContributionCount < snap.epoch.Policy.MinValidContributions {
+		return nil, fmt.Errorf("only %d/%d contributions accepted",
+			snap.epoch.ContributionCount, snap.epoch.Policy.MinValidContributions)
+	}
+
+	witness, pi, err := finalize.BuildWitness(snap.assignment)
 	if err != nil {
-		return nil, fmt.Errorf("build pool key witness: %w", err)
+		return nil, fmt.Errorf("build finalize witness: %w", err)
 	}
 	proof, err := runtime.ProveAndVerify(witness)
 	if err != nil {
-		return nil, fmt.Errorf("prove pool key: %w", err)
+		return nil, fmt.Errorf("prove finalize: %w", err)
 	}
 	proofBytes, err := marshalSolidityProof(proof)
 	if err != nil {
@@ -273,23 +190,30 @@ func ProveAndSubmitActivation(
 	}
 	transcriptScalars, err := pi.TranscriptScalars()
 	if err != nil {
-		return nil, fmt.Errorf("pool key transcript scalars: %w", err)
+		return nil, fmt.Errorf("finalize transcript scalars: %w", err)
 	}
 	transcriptBytes, err := encodeWords(transcriptScalars...)
 	if err != nil {
 		return nil, err
 	}
-
 	// The Poseidon digest of the transcript is a public input the contract
 	// folds into the Fiat–Shamir anchor; it travels as its own argument so
-	// the contract never has to hash 194 Poseidon inputs itself.
+	// the contract never has to hash the transcript with Poseidon itself.
 	digest := common.BigToHash(pi.TranscriptDigest)
+
+	// Proving takes a while: re-read the epoch and the accepted records at
+	// the head before paying for the transaction. A statement built over a
+	// different accepted set (a reorg during the proof) is stale and must
+	// be rebuilt, not sent.
+	if err := snap.recheck(ctx, m, epochID); err != nil {
+		return nil, err
+	}
 
 	auth, err := txm.NewTransactOpts(ctx)
 	if err != nil {
 		return nil, err
 	}
-	tx, err := m.ActivatePoolKey(auth, epochID, keyIndex, digest, transcriptBytes, proofBytes, inputBytes)
+	tx, err := m.FinalizeEpoch(auth, epochID, digest, transcriptBytes, proofBytes, inputBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -297,24 +221,254 @@ func ProveAndSubmitActivation(
 	if err := txm.WaitTxByHash(tx.Hash(), 120*time.Second); err != nil {
 		return nil, err
 	}
+	roots, err := pi.ShareRoots()
+	if err != nil {
+		return nil, fmt.Errorf("share roots: %w", err)
+	}
+	n := int(snap.epoch.Policy.CommitteeSize)
 	res := &Result{
-		PoolKey:            pi.PoolKey,
+		TxHash:             tx.Hash(),
 		TranscriptDigest:   digest,
-		ParticipantIndexes: asgn.ParticipantIndexes,
-		ShareCommitments:   pi.ShareCommitments[:n],
+		ParticipantIndexes: snap.assignment.ParticipantIndexes,
+		PoolKeys:           pi.PoolKeys,
+		ShareRoots:         roots[:],
+		ShareCommitments:   make([][]nodetypes.CurvePoint, finalize.MaxKeys),
+	}
+	for j := range finalize.MaxKeys {
+		res.ShareCommitments[j] = pi.ShareCommitments[j][:n]
 	}
 	if receipt, err := c.Client().TransactionReceipt(ctx, tx.Hash()); err == nil {
 		res.GasUsed = receipt.GasUsed
-		log.Infow("activatePoolKey tx mined", "tx", tx.Hash().Hex(), "key", keyIndex, "gas", receipt.GasUsed)
+		log.Infow("finalizeEpoch tx mined", "tx", tx.Hash().Hex(), "gas", receipt.GasUsed)
 	}
 	return res, nil
+}
+
+// reconstruct reads the epoch, its committee and every contribution record
+// at one block, recovers each accepted dealer's compact calldata (through the
+// cache when possible), verifies the stored commitmentsHash against the
+// decoded commitments and assembles the finalization assignment. Any read or
+// decode failure is an error: a dealer silently dropped would prove a
+// statement the contract rejects, or with a forged count, the wrong keys.
+func reconstruct(
+	ctx context.Context,
+	c *web3.Contracts,
+	m *gtypes.DKGManager,
+	epochID [12]byte,
+	cache CalldataCache,
+) (*snapshot, error) {
+	head, err := c.Client().BlockNumber(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("read head: %w", err)
+	}
+	callOpts := &bind.CallOpts{Context: ctx, BlockNumber: new(big.Int).SetUint64(head)}
+	epoch, err := m.GetEpoch(callOpts, epochID)
+	if err != nil {
+		return nil, fmt.Errorf("get epoch at block %d: %w", head, err)
+	}
+	if epoch.Organizer == (common.Address{}) {
+		return nil, fmt.Errorf("epoch %x does not exist", epochID)
+	}
+	// The accepted set is only frozen once contributions can no longer land:
+	// past the finalize gate (which sits after the contribution deadline) or
+	// once the epoch is Live.
+	if epoch.Status != phaseLive && head < epoch.Policy.LiveNotBeforeBlock {
+		return nil, fmt.Errorf("contributions are still open until block %d (head %d)", epoch.Policy.LiveNotBeforeBlock, head)
+	}
+	t, n := epoch.Policy.Threshold, epoch.Policy.CommitteeSize
+	layout, err := contribution.NewLayout(int(t), int(n))
+	if err != nil {
+		return nil, fmt.Errorf("epoch policy: %w", err)
+	}
+	committee, err := m.SelectedParticipants(callOpts, epochID)
+	if err != nil {
+		return nil, fmt.Errorf("selected participants at block %d: %w", head, err)
+	}
+	if len(committee) != int(n) {
+		return nil, fmt.Errorf("committee has %d members, policy says %d", len(committee), n)
+	}
+
+	// Bound the event-log scan to blocks since this epoch was created. The
+	// seed block precedes every claim, and contributions only land after
+	// the committee filled, so backing off one block from it is conservative.
+	startBlock := uint64(0)
+	if epoch.SeedBlock > 0 {
+		startBlock = epoch.SeedBlock - 1
+	}
+	roundHash := new(big.Int).SetBytes(epochID[:])
+
+	asgn := finalize.Assignment{
+		RoundHash:          roundHash,
+		Threshold:          t,
+		CommitteeSize:      n,
+		ParticipantIndexes: make([]uint16, 0, n),
+		Commitments:        make([][][]nodetypes.CurvePoint, 0, n),
+		ContributionHashes: make([]*big.Int, 0, n),
+	}
+	for i, addr := range committee {
+		rec, err := m.GetContribution(callOpts, epochID, addr)
+		if err != nil {
+			return nil, fmt.Errorf("get contribution of %s at block %d: %w", addr, head, err)
+		}
+		if !rec.Accepted {
+			continue
+		}
+		index := uint16(i + 1)
+		if rec.ContributorIndex != index {
+			return nil, fmt.Errorf("contribution of %s is stored under index %d, committee position is %d",
+				addr, rec.ContributorIndex, index)
+		}
+		storedHash := new(big.Int).SetBytes(rec.CommitmentsHash[:])
+		tr, err := dealerTranscript(ctx, c, m, epochID, addr, index, startBlock, layout, roundHash, storedHash, cache)
+		if err != nil {
+			return nil, fmt.Errorf("contribution of %s (member %d): %w", addr, index, err)
+		}
+		asgn.ParticipantIndexes = append(asgn.ParticipantIndexes, index)
+		asgn.Commitments = append(asgn.Commitments, tr.Commitments)
+		asgn.ContributionHashes = append(asgn.ContributionHashes, storedHash)
+	}
+	// The contract finalizes over exactly the frozen accepted set; anything
+	// else means the chain view is inconsistent.
+	if len(asgn.ParticipantIndexes) != int(epoch.ContributionCount) {
+		return nil, fmt.Errorf("reconstructed %d accepted contributions, epoch has %d",
+			len(asgn.ParticipantIndexes), epoch.ContributionCount)
+	}
+	if len(asgn.ParticipantIndexes) < int(t) {
+		return nil, fmt.Errorf("only %d/%d accepted contributions", len(asgn.ParticipantIndexes), t)
+	}
+	return &snapshot{block: head, epoch: epoch, committee: committee, assignment: asgn}, nil
+}
+
+// recheck re-reads the epoch and every committee member's contribution record
+// at the head and compares them with the snapshot the statement was built
+// from. A finalization that landed meanwhile is ErrAlreadyLive; a different
+// accepted count, a different set of accepted dealers or a dealer whose
+// stored index or commitmentsHash changed is ErrStale, so a proof over a
+// reorged accepted set is never sent.
+func (s *snapshot) recheck(ctx context.Context, m *gtypes.DKGManager, epochID [12]byte) error {
+	callOpts := &bind.CallOpts{Context: ctx}
+	current, err := m.GetEpoch(callOpts, epochID)
+	if err != nil {
+		return fmt.Errorf("re-read epoch before sending: %w", err)
+	}
+	if current.Status == phaseLive {
+		return ErrAlreadyLive
+	}
+	if current.Status != phaseKeyAssembly {
+		return fmt.Errorf("epoch left KeyAssembly (phase %d) while proving", current.Status)
+	}
+	if current.ContributionCount != s.epoch.ContributionCount {
+		return fmt.Errorf("%w: accepted set changed while proving (%d → %d)",
+			ErrStale, s.epoch.ContributionCount, current.ContributionCount)
+	}
+	accepted := 0
+	for i, addr := range s.committee {
+		rec, err := m.GetContribution(callOpts, epochID, addr)
+		if err != nil {
+			return fmt.Errorf("re-read contribution of %s before sending: %w", addr, err)
+		}
+		if !rec.Accepted {
+			continue
+		}
+		if accepted >= len(s.assignment.ParticipantIndexes) ||
+			rec.ContributorIndex != s.assignment.ParticipantIndexes[accepted] ||
+			new(big.Int).SetBytes(rec.CommitmentsHash[:]).Cmp(s.assignment.ContributionHashes[accepted]) != 0 {
+			return fmt.Errorf("%w: contribution of %s (member %d) changed while proving", ErrStale, addr, i+1)
+		}
+		accepted++
+	}
+	if accepted != len(s.assignment.ParticipantIndexes) {
+		return fmt.Errorf("%w: %d accepted contributions at the head, statement has %d",
+			ErrStale, accepted, len(s.assignment.ParticipantIndexes))
+	}
+	return nil
+}
+
+// dealerTranscript recovers and decodes one accepted dealer's compact
+// transcript, checking that its commitments reproduce the commitmentsHash
+// the contract stored. The cache is consulted first; an entry that does not
+// decode or verify is replaced by a fresh fetch from the event log, so a
+// corrupted file can never strand the finalization.
+func dealerTranscript(
+	ctx context.Context,
+	c *web3.Contracts,
+	m *gtypes.DKGManager,
+	epochID [12]byte,
+	dealer common.Address,
+	index uint16,
+	startBlock uint64,
+	layout contribution.Layout,
+	roundHash, storedHash *big.Int,
+	cache CalldataCache,
+) (*contribution.Transcript, error) {
+	decode := func(data []byte) (*contribution.Transcript, error) {
+		tr, err := DecodeContribution(data, layout)
+		if err != nil {
+			return nil, err
+		}
+		got, err := ContributionHash(roundHash, index, layout.Threshold, tr.Commitments)
+		if err != nil {
+			return nil, err
+		}
+		if got.Cmp(storedHash) != 0 {
+			return nil, fmt.Errorf("commitments hash %s does not match the stored %s", got, storedHash)
+		}
+		return tr, nil
+	}
+	if cache != nil {
+		if data, ok := cache.Get(epochID, dealer); ok {
+			tr, err := decode(data)
+			if err == nil {
+				return tr, nil
+			}
+			log.Warnw("cached contribution calldata unusable, refetching", "dealer", dealer, "err", err)
+		}
+	}
+	data, err := ContributionCalldata(ctx, c.Client(), m, epochID, dealer, startBlock)
+	if err != nil {
+		return nil, fmt.Errorf("calldata: %w", err)
+	}
+	tr, err := decode(data)
+	if err != nil {
+		return nil, err
+	}
+	if cache != nil {
+		cache.Put(epochID, dealer, data)
+	}
+	return tr, nil
+}
+
+// ContributionHash recomputes the dealer's outer Poseidon commitmentsHash
+// from its decoded commitment vectors, exactly as the contribution circuit
+// did: every key digest absorbs the vector padded to MaxCoefficients. It is
+// what a reader of contribution calldata compares with the dealer's stored
+// ContributionRecord.CommitmentsHash before trusting the transcript.
+func ContributionHash(roundHash *big.Int, index uint16, threshold int, commitments [][]nodetypes.CurvePoint) (*big.Int, error) {
+	if len(commitments) != contribution.MaxKeys {
+		return nil, fmt.Errorf("got %d commitment sets, expected %d", len(commitments), contribution.MaxKeys)
+	}
+	digests := make([]*big.Int, contribution.MaxKeys)
+	for j := range contribution.MaxKeys {
+		padded, err := ccommon.PadPoints(commitments[j], contribution.MaxCoefficients)
+		if err != nil {
+			return nil, fmt.Errorf("pad key %d commitments: %w", j, err)
+		}
+		if digests[j], err = ccommon.CommitmentKeyDigestNative(padded); err != nil {
+			return nil, fmt.Errorf("digest key %d commitments: %w", j, err)
+		}
+	}
+	hash, err := ccommon.CommitmentsHashNative(roundHash, big.NewInt(int64(index)), big.NewInt(int64(threshold)), digests)
+	if err != nil {
+		return nil, fmt.Errorf("commitments hash: %w", err)
+	}
+	return hash, nil
 }
 
 // LogRangeBlocks bounds each eth_getLogs call; most public RPC providers cap
 // the range at 10k blocks.
 const LogRangeBlocks = 10_000
 
-// chainReader is the slice of ethclient.Client that ContributionCalldata
+// chainReader is the slice of the chain client that calldata recovery
 // needs, so tests can drive it without an RPC endpoint.
 type chainReader interface {
 	BlockNumber(ctx context.Context) (uint64, error)
@@ -343,21 +497,20 @@ func ContributionCalldata(
 		})
 }
 
-// ActivationCalldata locates the activatePoolKey tx for (epoch, keyIndex)
-// via the PoolKeyActivated event log and returns its raw calldata. The
-// per-member share commitments a partial decryption must prove a Merkle path
-// against only live there.
-func ActivationCalldata(
+// FinalizeCalldata locates the finalizeEpoch tx of the epoch via the
+// EpochLive event log and returns its raw calldata. The per-member share
+// commitments a partial decryption must prove a Merkle path against only
+// live there (the contract stores their Merkle roots).
+func FinalizeCalldata(
 	ctx context.Context,
 	client chainReader,
 	m *gtypes.DKGManager,
 	epochID [12]byte,
-	keyIndex uint8,
 	startBlock uint64,
 ) ([]byte, error) {
-	return calldataFromEvent(ctx, client, startBlock, "PoolKeyActivated",
+	return calldataFromEvent(ctx, client, startBlock, "EpochLive",
 		func(ctx context.Context, start, end uint64) (common.Hash, bool, error) {
-			return findActivationTx(ctx, m, epochID, keyIndex, start, end)
+			return findFinalizeTx(ctx, m, epochID, start, end)
 		})
 }
 
@@ -419,27 +572,22 @@ func findContributionTx(
 	return it.Event.Raw.TxHash, true, nil
 }
 
-// findActivationTx returns the hash of the tx that emitted
-// PoolKeyActivated(epochID, keyIndex) within [start, end].
-func findActivationTx(
+// findFinalizeTx returns the hash of the tx that emitted EpochLive(epochID)
+// within [start, end].
+func findFinalizeTx(
 	ctx context.Context,
 	m *gtypes.DKGManager,
 	epochID [12]byte,
-	keyIndex uint8,
 	start, end uint64,
 ) (common.Hash, bool, error) {
-	it, err := m.FilterPoolKeyActivated(
-		&bind.FilterOpts{Context: ctx, Start: start, End: &end},
-		[][12]byte{epochID},
-		[]uint8{keyIndex},
-	)
+	it, err := m.FilterEpochLive(&bind.FilterOpts{Context: ctx, Start: start, End: &end}, [][12]byte{epochID})
 	if err != nil {
-		return common.Hash{}, false, fmt.Errorf("filter PoolKeyActivated [%d,%d]: %w", start, end, err)
+		return common.Hash{}, false, fmt.Errorf("filter EpochLive [%d,%d]: %w", start, end, err)
 	}
 	defer func() { _ = it.Close() }()
 	if !it.Next() {
 		if err := it.Error(); err != nil {
-			return common.Hash{}, false, fmt.Errorf("iterate PoolKeyActivated: %w", err)
+			return common.Hash{}, false, fmt.Errorf("iterate EpochLive: %w", err)
 		}
 		return common.Hash{}, false, nil
 	}
@@ -465,7 +613,7 @@ func managerMethod(name string) func() (abi.Method, error) {
 
 var (
 	submitContributionMethod = managerMethod("submitContribution")
-	activatePoolKeyMethod    = managerMethod("activatePoolKey")
+	finalizeEpochMethod      = managerMethod("finalizeEpoch")
 )
 
 // ContributionTranscript extracts the `transcript` argument from raw
@@ -479,26 +627,39 @@ var (
 // transaction sender chose to put there, so the selector is checked against
 // the ABI and the dynamic offsets are decoded by the ABI unpacker, which
 // bounds-checks them without overflow. Any malformed input yields an error,
-// never a panic. The returned slice is the contribution.TranscriptWords
-// layout documented in DKGManager.submitContribution.
-func ContributionTranscript(data []byte) ([]byte, error) {
-	return bytesArg(data, submitContributionMethod, "transcript", contribution.TranscriptWords*32)
+// never a panic. The transcript is compact (docs/pool-keys-v4.md §3): its
+// length is a function of the epoch's (t, n), which the caller takes from
+// authoritative epoch state and passes as `layout`, never from the calldata.
+func ContributionTranscript(data []byte, layout contribution.Layout) ([]byte, error) {
+	return bytesArg(data, submitContributionMethod, "transcript", layout.Bytes())
 }
 
-// PoolKeyTranscript extracts the `transcript` argument from raw
-// activatePoolKey calldata:
+// DecodeContribution is ContributionTranscript followed by the layout's
+// decoder: the dealer's commitment vectors, the committee region and the
+// masked shares, indexed by committee slot (slot i is member i+1).
+func DecodeContribution(data []byte, layout contribution.Layout) (*contribution.Transcript, error) {
+	transcript, err := ContributionTranscript(data, layout)
+	if err != nil {
+		return nil, err
+	}
+	tr, err := layout.DecodeBytes(transcript)
+	if err != nil {
+		return nil, fmt.Errorf("decode contribution transcript: %w", err)
+	}
+	return tr, nil
+}
+
+// FinalizeTranscript extracts the `transcript` argument from raw
+// finalizeEpoch calldata:
 //
-//	activatePoolKey(bytes12 epochId, uint8 keyIndex, bytes32 transcriptDigest,
+//	finalizeEpoch(bytes12 epochId, bytes32 transcriptDigest,
 //	    bytes transcript, bytes proof, bytes input)
 //
-// Same hostile-calldata contract as ContributionTranscript.
-func PoolKeyTranscript(data []byte) ([]byte, error) {
-	return bytesArg(data, activatePoolKeyMethod, "transcript", poolkey.TranscriptWords*32)
+// Same hostile-calldata contract as ContributionTranscript. The transcript
+// has the fixed layout of docs/pool-keys-v4.md §7.
+func FinalizeTranscript(data []byte) ([]byte, error) {
+	return bytesArg(data, finalizeEpochMethod, "transcript", finalize.TranscriptWords*32)
 }
-
-// poolKeyPublicInputWords is the size of activatePoolKey's `input`: the 8
-// public scalars of the pool-key proof, 32 bytes each.
-const poolKeyPublicInputWords = 8
 
 // bytesArg unpacks the `bytes` argument named `name` of `method` from
 // calldata and checks it is exactly `size` bytes long. Arguments are looked
@@ -535,60 +696,66 @@ func bytesArg(data []byte, method func() (abi.Method, error), name string, size 
 	return value, nil
 }
 
-// PoolKeyShareCommitments decodes the committee's share commitments D_p from
-// an activatePoolKey transcript. The region is member-indexed: slot i holds
-// D_{i+1} for every committee member i < committeeSize, contributing or not
-// (the identity beyond). committeeSize is read from the call's public
-// inputs, which the contract checked against the epoch policy before the
-// transaction could land. The result is the (indexes 1..n, points) pair
-// ccommon.ShareCommitmentLeaves takes.
-func PoolKeyShareCommitments(data []byte) ([]uint16, []nodetypes.CurvePoint, error) {
-	tr, err := PoolKeyTranscript(data)
+// finalizeCommitteeSize reads the committee size from a finalizeEpoch call's
+// public inputs (position 2 of the 7), which the contract checked against
+// the epoch policy before the transaction could land.
+func finalizeCommitteeSize(data []byte) (int, error) {
+	input, err := bytesArg(data, finalizeEpochMethod, "input", finalize.PublicInputWords*32)
 	if err != nil {
-		return nil, nil, err
+		return 0, err
 	}
-	input, err := bytesArg(data, activatePoolKeyMethod, "input", poolKeyPublicInputWords*32)
-	if err != nil {
-		return nil, nil, err
-	}
-	const nn = poolkey.MaxParticipants
 	committeeSize := new(big.Int).SetBytes(input[2*32 : 3*32])
-	if committeeSize.Sign() == 0 || !committeeSize.IsUint64() || committeeSize.Uint64() > nn {
-		return nil, nil, fmt.Errorf("committee size %s out of range [1, %d]", committeeSize, nn)
+	if committeeSize.Sign() == 0 || !committeeSize.IsUint64() || committeeSize.Uint64() > finalize.MaxParticipants {
+		return 0, fmt.Errorf("committee size %s out of range [1, %d]", committeeSize, finalize.MaxParticipants)
 	}
-	n := int(committeeSize.Uint64())
-	word := func(i int) *big.Int { return new(big.Int).SetBytes(tr[i*32 : (i+1)*32]) }
+	return int(committeeSize.Uint64()), nil
+}
+
+// FinalizePoolKey decodes pool key `keyIndex` from a finalizeEpoch
+// transcript: the value the contract stored as poolKeys[eid][keyIndex].
+func FinalizePoolKey(data []byte, keyIndex uint8) (nodetypes.CurvePoint, error) {
+	if int(keyIndex) >= finalize.MaxKeys {
+		return nodetypes.CurvePoint{}, fmt.Errorf("key %d outside the pool [0, %d)", keyIndex, finalize.MaxKeys)
+	}
+	tr, err := FinalizeTranscript(data)
+	if err != nil {
+		return nodetypes.CurvePoint{}, err
+	}
+	q := finalize.PoolKeyOffset(int(keyIndex))
+	return nodetypes.CurvePoint{X: transcriptWord(tr, q), Y: transcriptWord(tr, q+1)}, nil
+}
+
+// FinalizeShareCommitments decodes the committee's share commitments of pool
+// key `keyIndex` from a finalizeEpoch transcript. The region is
+// member-indexed: slot i holds D_{keyIndex,i+1} for every committee member
+// i < committeeSize, contributing or not (the identity beyond). The result is
+// the (indexes 1..n, points) pair ccommon.ShareCommitmentLeaves takes.
+func FinalizeShareCommitments(data []byte, keyIndex uint8) ([]uint16, []nodetypes.CurvePoint, error) {
+	if int(keyIndex) >= finalize.MaxKeys {
+		return nil, nil, fmt.Errorf("key %d outside the pool [0, %d)", keyIndex, finalize.MaxKeys)
+	}
+	tr, err := FinalizeTranscript(data)
+	if err != nil {
+		return nil, nil, err
+	}
+	n, err := finalizeCommitteeSize(data)
+	if err != nil {
+		return nil, nil, err
+	}
 	idxs := make([]uint16, n)
 	points := make([]nodetypes.CurvePoint, n)
 	for i := range n {
 		idxs[i] = uint16(i + 1)
-		points[i] = nodetypes.CurvePoint{X: word(4*nn + 2*i), Y: word(4*nn + 2*i + 1)}
+		q := finalize.ShareCommitmentOffset(int(keyIndex), i)
+		points[i] = nodetypes.CurvePoint{X: transcriptWord(tr, q), Y: transcriptWord(tr, q+1)}
 	}
 	return idxs, points, nil
 }
 
-// parseCommitmentPoints extracts every pool key's first t Feldman commitment
-// points from the submitContribution calldata transcript. The result is
-// indexed by key then coefficient, the shape poolkey.Assignment wants.
-func parseCommitmentPoints(data []byte, t uint16) ([][]nodetypes.CurvePoint, error) {
-	tr, err := ContributionTranscript(data)
-	if err != nil {
-		return nil, err
-	}
-	const nn = contribution.MaxCoefficients
-	sets := make([][]nodetypes.CurvePoint, contribution.MaxKeys)
-	for j := range contribution.MaxKeys {
-		pts := make([]nodetypes.CurvePoint, t)
-		for k := range int(t) {
-			off := (j*nn + k) * 64
-			pts[k] = nodetypes.CurvePoint{
-				X: new(big.Int).SetBytes(tr[off : off+32]),
-				Y: new(big.Int).SetBytes(tr[off+32 : off+64]),
-			}
-		}
-		sets[j] = pts
-	}
-	return sets, nil
+// transcriptWord reads 32-byte word q of a transcript whose length the
+// caller has already checked.
+func transcriptWord(transcript []byte, q int) *big.Int {
+	return new(big.Int).SetBytes(transcript[q*32 : (q+1)*32])
 }
 
 // ── proof / witness helpers (duplicated from cmd/* until consolidated) ─────

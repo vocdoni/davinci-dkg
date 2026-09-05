@@ -1,0 +1,57 @@
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+% Encryption Scheme: Scalar ECIES
+%
+
+\section{Hashed ElGamal Encryption}
+\label{appendix:hashed-elgamal}
+
+% For the encryption of the shares, a straightforward choice is the standard Hashed ElGamal construction, which is often presented as the Diffie--Hellman KEM--DEM core of DHIES/ECIES.
+
+% (TODO: review, check if malleable is a problem) In the usual description, the sender publishes an ephemeral group element $R=rG$ and derives a one-time pad (or symmetric key) from the Diffie--Hellman shared secret $S=r\mathsf{PK}_j=\mathsf{sk}_jR$ via a hash/KDF; the message is then masked under this derived value. Since our plaintexts are scalars $m\in\FB_q$, we instantiate the DEM as additive masking $c = m + \mathsf{Hash}(S)\bmod q$ (instead of XOR or a block cipher). Like hashed ElGamal without authentication, this core is malleable; integrated schemes such as DHIES/ECIES add symmetric encryption and a MAC to target chosen-ciphertext security. \cite{cash_kiltz_shoup_twin_dh_2008,abdalla_bellare_rogaway_dhies_2001}
+
+For the encryption of the shares, a straightforward choice is the standard Hashed ElGamal construction, which is the Diffie--Hellman KEM--DEM core underlying DHIES / ECIES \cite{cash_kiltz_shoup_twin_dh_2008, abdalla_bellare_rogaway_dhies_2001}.
+Since our plaintext space is $\mathbb{F}_q$, we instantiate the DEM as additive masking
+$c = m + \mathsf{HashToField}(S) \bmod q$, where the hash output is reduced modulo $q$.
+
+Participant $i$ must encrypt the share $s_i(j) \in \FB_q$ in a ZK-friendly manner. Let participant $j$ have the BabyJubjub keypair:
+\[
+    \mathsf{sk}_j \in \FB_q, \qquad \mathsf{pub}_j = \mathsf{sk}_j \, G
+\]
+
+To encrypt a message $m \in \FB_q$ for participant $j$, pick $r \in \FB_q$ (with $r \neq 0$) and compute:
+\begin{align*}
+    R &= r \, G \hspace{.05cm } &\text{(ephemeral public key)}\\
+    S &= r \, \mathsf{pub}_j  &\text{(ephemeral secret point)}\\
+    s &= \mathsf{Hash}(S) &\text{(shared secret scalar)}\\
+    c &= m + s \text{ (mod } q \text{)} &\text{(masked message scalar)}
+\end{align*}
+
+Note that $\mathsf{Hash}$ is a hash function that maps BabyJubjub elliptic curve points to scalars in $\FB_q$. As is common in modern presentations, one may instead derive the pad as $s := \mathsf{Hash}(R \parallel S)$ in order to bind the derived scalar explicitly to the ephemeral public key.
+
+The ciphertext is then:
+\[
+    \mathsf{Enc}_{\mathtt{share}}[\mathsf{pub}_j, s_i(j)] = (R, c)
+\]
+
+The decryption works as follows:
+\begin{align*}
+    S' &= \mathsf{sk}_j \, R \hspace{.05cm } &\text{(recover secret point)}\\
+    s' &= \mathsf{Hash}(S') &\text{(recover secret scalar)}\\
+    m &= c - s' \text{ (mod } q \text{)} &\text{(unmask message scalar)}
+\end{align*}
+
+%\[
+%    S = sk_j\, R = r\,PK_j, \qquad M = C - S.
+%\]
+
+To verify correctness of $(R, c)$, the prover supplies a zero-knowledge proof of knowledge of $r$ such that:
+\begin{align*}
+    R &\overset{?}{=} r \, G \\
+    c &\overset{?}{=} m + \mathsf{Hash}(r \, \mathsf{pub}_j) \text{ mod ($q$)}
+\end{align*}
+
+All operations remain inside BabyJubjub and \(\FB_q\).
+
+Note that Hashed ElGamal is IND-CPA secure but malleable. In our protocol, the contract accepts only ciphertexts accompanied by valid ZK proofs of correct formation. This prevents adversaries from submitting malformed or adaptively manipulated ciphertexts. Within this restricted protocol model, the malleability of Hashed ElGamal does not yield practical attacks.

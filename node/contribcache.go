@@ -11,7 +11,7 @@ import (
 )
 
 // A node re-reads every accepted dealer's submitContribution calldata whenever
-// it rebuilds a private share or an activation statement (the encrypted shares
+// it rebuilds a private share or a finalization statement (the encrypted shares
 // and commitment points only live in that transaction). Under RPC rate
 // limiting each miss costs a full event-log rescan of the epoch's age, so
 // validated calldata is remembered on disk, next to the taint file, as plain

@@ -34,8 +34,6 @@ func TestCrossApplicationCiphertextIsUseless(t *testing.T) {
 
 	res := finalizedEpochForApps(ctx, c)
 	self := selfActor()
-	_, err := helpers.ActivateRoundPoolKey(ctx, services, res, 1)
-	c.Assert(err, qt.IsNil)
 
 	automatic := golangtypes.DKGTypesAppPolicy{Mode: uint8(types.AppModeAutomatic)}
 	aidA, aidB := randomAid(c), randomAid(c)
@@ -48,14 +46,15 @@ func TestCrossApplicationCiphertextIsUseless(t *testing.T) {
 	c.Assert(err, qt.IsNil)
 	c.Assert(appA.PoolIndex, qt.Not(qt.Equals), appB.PoolIndex, qt.Commentf("each application holds its own committee key"))
 
-	activationA, activationB := res.Activation(appA.PoolIndex), res.Activation(appB.PoolIndex)
-	c.Assert(activationA.PoolKey.X.Cmp(activationB.PoolKey.X), qt.Not(qt.Equals), 0)
+	poolKeyA, poolKeyB := res.PoolKey(appA.PoolIndex), res.PoolKey(appB.PoolIndex)
+	sharesA, sharesB := res.Shares(appA.PoolIndex), res.Shares(appB.PoolIndex)
+	c.Assert(poolKeyA.X.Cmp(poolKeyB.X), qt.Not(qt.Equals), 0)
 	shareA := poolShare(c, res, appA.PoolIndex, 1)
 	shareB := poolShare(c, res, appB.PoolIndex, 1)
 
 	// A genuine ciphertext for A, with randomness nobody else knows.
 	plaintext := big.NewInt(4242)
-	c1, c2, err := elgamal.Encrypt(activationA.PoolKey, plaintext)
+	c1, c2, err := elgamal.Encrypt(poolKeyA, plaintext)
 	c.Assert(err, qt.IsNil)
 
 	idxA, err := helpers.SubmitCiphertextAs(ctx, self, res.EpochID, aidA, c1, c2)
@@ -63,7 +62,7 @@ func TestCrossApplicationCiphertextIsUseless(t *testing.T) {
 
 	// ── the honest path: A's own key recovers the plaintext ───────────────
 	partialA, err := helpers.BuildPartialDecryptionSubmissionFromBase(
-		ctx, res.EpochID, aidA, idxA, 1, c1, c2, shareA, big.NewInt(7), activationA.Shares,
+		ctx, res.EpochID, aidA, idxA, 1, c1, c2, shareA, big.NewInt(7), sharesA,
 	)
 	c.Assert(err, qt.IsNil)
 	c.Assert(helpers.SubmitPartialDecryptionAs(ctx, self, res.EpochID, aidA, 1, idxA, partialA), qt.IsNil)
@@ -84,7 +83,7 @@ func TestCrossApplicationCiphertextIsUseless(t *testing.T) {
 	// A's partial cannot be replayed under B: its share commitment is not a
 	// leaf of B's pool share root.
 	replayed, err := helpers.BuildPartialDecryptionSubmissionFromBase(
-		ctx, res.EpochID, aidB, idxB, 1, c1, c2, shareA, big.NewInt(8), activationB.Shares,
+		ctx, res.EpochID, aidB, idxB, 1, c1, c2, shareA, big.NewInt(8), sharesB,
 	)
 	c.Assert(err, qt.IsNil)
 	c.Assert(helpers.SubmitPartialDecryptionAs(ctx, self, res.EpochID, aidB, 1, idxB, replayed), qt.IsNotNil,
@@ -93,7 +92,7 @@ func TestCrossApplicationCiphertextIsUseless(t *testing.T) {
 	// The committee's honest work under B produces δ' = e_{1,i}·C1 for B's
 	// key. The contract accepts it — and it is worthless.
 	partialB, err := helpers.BuildPartialDecryptionSubmissionFromBase(
-		ctx, res.EpochID, aidB, idxB, 1, c1, c2, shareB, big.NewInt(9), activationB.Shares,
+		ctx, res.EpochID, aidB, idxB, 1, c1, c2, shareB, big.NewInt(9), sharesB,
 	)
 	c.Assert(err, qt.IsNil)
 	c.Assert(helpers.SubmitPartialDecryptionAs(ctx, self, res.EpochID, aidB, 1, idxB, partialB), qt.IsNil)

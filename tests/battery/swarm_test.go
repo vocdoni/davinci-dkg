@@ -163,11 +163,11 @@ func (f *Fleet) swarmWave(
 		if err != nil {
 			return epochID, epoch, 0, err
 		}
-		next, activated, err := f.poolStatus(ctx, epochID)
+		next, err := f.poolStatus(ctx, epochID)
 		if err != nil {
 			return epochID, epoch, 0, err
 		}
-		unclaimed, _ := poolCounts(next, activated)
+		unclaimed, _ := poolCounts(next)
 		size := min(remaining, unclaimed, ccommon.MaxK)
 		ready, err := f.waitPoolKeys(ctx, epochID, size, cfg.activationWait, activationPlateau)
 		switch {

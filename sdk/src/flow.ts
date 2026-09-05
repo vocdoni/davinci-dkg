@@ -7,26 +7,26 @@
  * Full flow:
  *   1. anyone calls createEpoch() once the cadence window allows it
  *   2. DKG nodes call claimSlot() once the seed block is mined
- *   3. Nodes submit contributions, each dealing all MaxK pool keys
- *   4. A node finalizes the (now proof-less) epoch → epoch goes Live,
- *      freezing the accepted contributor set
- *   5. Anyone activates pool keys one at a time (activatePoolKey); each
- *      activation emits PoolKeyActivated(epochId, keyIndex, x, y)
- *   6. An organizer registers an application (registerApplication), claiming
- *      the next activated pool key P_j. In automatic mode the application
+ *   3. Nodes submit compact contributions, each dealing all MaxK pool keys
+ *   4. A node finalizes the epoch with one proof over the accepted
+ *      contributions (finalizeEpoch) → the epoch goes Live with all MaxK
+ *      pool keys P_j and share-commitment Merkle roots stored at once
+ *   5. An organizer registers an application (registerApplication), claiming
+ *      the next unclaimed pool key P_j. In automatic mode the application
  *      key is PK_aid = P_j; in organizer-locked mode it additionally
  *      registers PK_org and the key is PK_aid = P_j + PK_org
- *   7. A permitted submitter (the registrant, the allow-list or anyone, per
+ *   6. A permitted submitter (the registrant, the allow-list or anyone, per
  *      the policy) encrypts under PK_aid and publishes the ciphertext via
  *      DKGWriter.submitCiphertext(), which returns the on-chain-assigned
  *      ciphertext index
- *   8. DKG nodes submit partial decryptions (with a Merkle proof against the
- *      pool key's share root). For an organizer-locked application the
- *      contract refuses partials and combines (OrganizerSecretNotRevealed)
- *      until its organizer reveals sk_org once (revealOrganizerSecret); an
- *      automatic application needs no reveal
- *   9. A node calls combineDecryption → DecryptionCombined event emitted
- *   10. Caller can verify the plaintext matches the original message
+ *   7. DKG nodes submit partial decryptions (with a Merkle proof against the
+ *      pool key's share root, built from the finalization calldata). For an
+ *      organizer-locked application the contract refuses partials and
+ *      combines (OrganizerSecretNotRevealed) until its organizer reveals
+ *      sk_org once (revealOrganizerSecret); an automatic application needs
+ *      no reveal
+ *   8. A node calls combineDecryption → DecryptionCombined event emitted
+ *   9. Caller can verify the plaintext matches the original message
  */
 
 import { DKGClient } from './client.js';
@@ -35,14 +35,13 @@ import {
   type BabyJubPoint,
   type ElGamalCiphertext,
 } from './types.js';
-import { waitForEpochPhase, waitForDecryption, waitForPoolKeyActivated } from './monitor.js';
+import { waitForEpochPhase, waitForDecryption } from './monitor.js';
 import { applicationKey, buildElGamal } from './crypto/elgamal.js';
 
 /**
- * Wait until an epoch is Live, then activate and return pool key `keyIndex`
- * (the curve point `P_j`, TE form). Activation is permissionless and can
- * happen in any order once Live; this just waits for someone else to have
- * done it — call `writer.activatePoolKey` first if nobody has.
+ * Wait until an epoch is Live, then return pool key `keyIndex` (the curve
+ * point `P_j`, TE form). `finalizeEpoch` stores every key of the pool, so
+ * once the epoch is Live the key is there.
  */
 export async function waitForPoolKey(
   client: DKGClient,
@@ -51,7 +50,6 @@ export async function waitForPoolKey(
   options?: { intervalMs?: number; timeoutMs?: number },
 ): Promise<BabyJubPoint> {
   await waitForEpochPhase(client, epochId, EpochPhase.Live, options);
-  await waitForPoolKeyActivated(client, epochId, keyIndex, options);
   return client.getPoolKey(epochId, keyIndex);
 }
 

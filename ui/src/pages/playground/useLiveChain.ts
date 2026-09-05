@@ -207,17 +207,14 @@ export function useLiveChain(target: PlaygroundTarget): PlaygroundChain {
         ? 'Wallet client is not ready yet'
         : null
 
-  const pool = epoch?.finalization
-    ? { activated: epoch.poolActivated, claimed: epoch.poolClaimed, size: POOL_SIZE }
-    : null
-  const poolActivated = pool?.activated ?? -1
-  const poolClaimed = pool?.claimed ?? -1
+  // Every key exists once the epoch is Live; only the claim cursor moves.
+  const poolClaimed = epoch?.finalization ? epoch.poolClaimed : -1
 
   return useMemo<PlaygroundChain>(
     () => ({
       kind: 'live',
       headBlock,
-      pool: poolActivated < 0 ? null : { activated: poolActivated, claimed: poolClaimed, size: POOL_SIZE },
+      pool: poolClaimed < 0 ? null : { claimed: poolClaimed, size: POOL_SIZE },
       wallet: {
         connected: Boolean(isConnected && address),
         address: address ?? null,
@@ -234,7 +231,6 @@ export function useLiveChain(target: PlaygroundTarget): PlaygroundChain {
     }),
     [
       headBlock,
-      poolActivated,
       poolClaimed,
       isConnected,
       address,

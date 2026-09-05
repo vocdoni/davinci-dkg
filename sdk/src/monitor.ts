@@ -113,11 +113,11 @@ export function watchNewEpochs(
 export const watchNewRounds = watchNewEpochs;
 
 /**
- * Watch for a epoch being finalized (proof-less `finalizeEpoch`, freezing the
- * accepted contributor set). Calls `onLive` once when the EpochLive event
- * fires, with the number of accepted contributions. The epoch's pool keys
- * are not activated yet at this point — see `waitForPoolKeyActivated`.
- * Returns an unsubscribe function.
+ * Watch for an epoch being finalized. Calls `onLive` once when the EpochLive
+ * event fires, with the number of accepted contributions. From that block on
+ * every pool key and share root of the epoch is stored and readable
+ * (`client.getPoolKey`, `client.getPoolKeys`). Returns an unsubscribe
+ * function.
  */
 export function watchEpochLive(
   client: DKGClient,
@@ -251,39 +251,6 @@ export async function decryptionProgress(
     combined: record.completed,
     plaintext: record.plaintext,
   };
-}
-
-/**
- * Poll until pool key `keyIndex` is activated for the epoch (bit `keyIndex`
- * set in `client.getPoolStatus(epochId).activated`). Registering an
- * application under that key (`registerApplication` → `claimPoolKey`)
- * reverts `PoolKeyNotActive` until then.
- *
- * @throws If the epoch is Aborted or the timeout is exceeded.
- */
-export async function waitForPoolKeyActivated(
-  client: DKGClient,
-  epochId: `0x${string}`,
-  keyIndex: number,
-  options?: PollOptions,
-): Promise<void> {
-  const intervalMs = options?.intervalMs ?? DEFAULT_INTERVAL_MS;
-  const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const deadline = Date.now() + timeoutMs;
-
-  while (Date.now() < deadline) {
-    const { activated } = await client.getPoolStatus(epochId);
-    if ((activated & (1 << keyIndex)) !== 0) return;
-
-    const epoch = await client.getEpoch(epochId);
-    if (epoch.status === EpochPhase.Aborted) {
-      throw new Error(`Epoch ${epochId} was aborted`);
-    }
-    await sleep(intervalMs);
-  }
-  throw new Error(
-    `Timeout waiting for pool key ${keyIndex} to activate in epoch ${epochId}`,
-  );
 }
 
 /**

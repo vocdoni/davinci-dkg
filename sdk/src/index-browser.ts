@@ -5,7 +5,7 @@
 // organizer's registration Schnorr prover (`proveOrganizer`) among them,
 // since the organizer is expected to run in a browser.
 
-export { DKGClient } from './client.js';
+export { DKGClient, type FinalizeRecord, type ShareProofRecord } from './client.js';
 export { DKGWriter, normalizeAppPolicy, type SubmitCiphertextResult } from './writer.js';
 
 export {
@@ -43,7 +43,6 @@ export {
   type DecryptionCombinedEvent,
   type ApplicationRegisteredEvent,
   type PoolStatus,
-  type PoolKeyActivatedEvent,
   type PoolKeyClaimedEvent,
   type OrganizerSecretRevealedEvent,
 } from './types.js';
@@ -58,9 +57,42 @@ export {
 export { DomainOrganizerRegisterV1 } from './protocol.js';
 export { buildEpochId, parseEpochId } from './utils.js';
 export {
+  MAX_N,
+  MAX_K,
+  MERKLE_DEPTH,
+  contributionTranscriptWords,
+  ContributionLayout,
+  FINALIZE_KEY_WORDS,
+  FINALIZE_TRANSCRIPT_WORDS,
+  finalizeKeyOffset,
+  finalizePoolKeyOffset,
+  finalizeShareCommitmentOffset,
+} from './sizes.js';
+export {
+  wordsFromBytes,
+  decodeContributionTranscript,
+  decodeContributionCalldata,
+  decodeFinalizeTranscript,
+  decodeFinalizeCalldata,
+  type TranscriptPoint,
+  type ContributionTranscript,
+  type FinalizeTranscript,
+  type FinalizeCall,
+} from './transcript.js';
+export {
+  MERKLE_EMPTY_LEAF,
+  shareCommitmentLeaf,
+  merkleNode,
+  shareCommitmentLeaves,
+  merkleRoot,
+  merklePath,
+  merkleRootFromPath,
+  verifyMerklePath,
+  shareProof,
+} from './merkle.js';
+export {
   waitForEpochPhase,
   waitForDecryption,
-  waitForPoolKeyActivated,
   decryptionProgress,
   watchNewRounds,
   watchNewEpochs,

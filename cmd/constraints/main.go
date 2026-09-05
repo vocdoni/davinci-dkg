@@ -8,8 +8,8 @@ import (
 
 	"github.com/vocdoni/davinci-dkg/circuits/contribution"
 	"github.com/vocdoni/davinci-dkg/circuits/decryptcombine"
+	"github.com/vocdoni/davinci-dkg/circuits/finalize"
 	"github.com/vocdoni/davinci-dkg/circuits/partialdecrypt"
-	"github.com/vocdoni/davinci-dkg/circuits/poolkey"
 )
 
 func main() {
@@ -19,11 +19,11 @@ func main() {
 	}
 	fmt.Printf("Contribution    %d\n", c.GetNbConstraints())
 
-	k, err := poolkey.Compile()
+	k, err := finalize.Compile()
 	if err != nil {
 		panic(err)
 	}
-	fmt.Printf("PoolKey         %d\n", k.GetNbConstraints())
+	fmt.Printf("Finalize        %d\n", k.GetNbConstraints())
 
 	p, err := partialdecrypt.Compile()
 	if err != nil {

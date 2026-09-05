@@ -50,10 +50,10 @@ func (f *Fleet) registerApplicationWith(
 	ctx context.Context, a *actor, epoch [12]byte, aid [32]byte, skOrg *big.Int, policy golangtypes.DKGTypesAppPolicy,
 ) (*application, txOutcome, error) {
 	automatic := policy.Mode == uint8(types.AppModeAutomatic)
-	// A registration claims the key at the pool cursor and reverts
-	// PoolKeyNotActive until a node has activated it (one proof per key, a
-	// tick or two after the previous claim); wait for that proof rather than
-	// reporting the race as a failure.
+	// A registration claims the key at the pool cursor; every key of a Live
+	// epoch is stored by finalizeEpoch, so this only refuses an epoch whose
+	// pool is already claimed out (PoolExhausted) instead of reporting the
+	// revert as a failure.
 	if _, err := f.waitPoolKeys(ctx, epoch, 1, activationWait(), 0); err != nil {
 		return nil, txOutcome{}, err
 	}

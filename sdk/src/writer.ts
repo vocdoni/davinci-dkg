@@ -154,37 +154,25 @@ export class DKGWriter extends DKGClient {
   }
 
   /**
-   * Finalize a epoch: freezes the accepted-contributor set and opens it for
-   * `activatePoolKey`. Proof-less — no key material exists yet.
-   */
-  async finalizeEpoch(epochId: `0x${string}`): Promise<Hash> {
-    const { request } = await this.publicClient.simulateContract({
-      address: this.managerAddress,
-      abi: dkgManagerAbi,
-      functionName: 'finalizeEpoch',
-      args: [epochId as any],
-      account: this._writerAccount,
-    });
-    return this.walletClient.writeContract(request);
-  }
-
-  /**
-   * Activate pool key `keyIndex` of `(epochId)` by proving its Merkle-rooted
-   * transcript against the epoch's accepted contributions. Permissionless —
-   * anyone holding the transcript and proof may call it. Emits
-   * `PoolKeyActivated`; `registerApplication` cannot claim a key until this
-   * has run for it.
+   * Finalize an epoch: prove the whole key pool and flip it Live in one
+   * atomic call. The `circuits/finalize` Groth16 proof binds all `MAX_K`
+   * aggregate keys `P_j` and every member's share commitment to the accepted
+   * contributions; the contract stores every key and Merkle root before
+   * setting `Live`. Permissionless, but a direct EOA call only
+   * (`DirectCallRequired` otherwise): the transcript lives in the outer
+   * transaction calldata, which is where nodes and this SDK read it back from
+   * (`client.getFinalizeTranscript`).
    *
-   * `transcriptDigest` is the Poseidon digest of the masked transcript words
-   * (public input 5 of the poolkey circuit, `MultiHash(eid, keyIndex, w…)`).
-   * The contract checks it against `input` and anchors the BRLC challenge on
+   * `transcriptDigest` is the Poseidon digest of the transcript words (public
+   * input 4, `finalizeTranscriptDigest(...).digest`). The contract checks it
+   * against `input` and anchors the BRLC challenge on
    * `keccak(transcriptDigest ‖ keccak(transcript))`, so the prover's words
    * and the calldata words are bound together — pass the digest the prover
-   * emitted alongside `transcript`/`proof`/`input`.
+   * emitted alongside `transcript`/`proof`/`input`. `transcript` is exactly
+   * `32 · FINALIZE_TRANSCRIPT_WORDS` bytes.
    */
-  async activatePoolKey(
+  async finalizeEpoch(
     epochId: `0x${string}`,
-    keyIndex: number,
     transcriptDigest: `0x${string}`,
     transcript: `0x${string}`,
     proof: `0x${string}`,
@@ -193,8 +181,8 @@ export class DKGWriter extends DKGClient {
     const { request } = await this.publicClient.simulateContract({
       address: this.managerAddress,
       abi: dkgManagerAbi,
-      functionName: 'activatePoolKey',
-      args: [epochId as any, keyIndex, transcriptDigest, transcript, proof, input],
+      functionName: 'finalizeEpoch',
+      args: [epochId as any, transcriptDigest, transcript, proof, input],
       account: this._writerAccount,
     });
     return this.walletClient.writeContract(request);
@@ -213,7 +201,8 @@ export class DKGWriter extends DKGClient {
    *
    * `shareProof` is the depth-5 Merkle proof binding this participant's
    * share to `poolShareRoots[epochId][poolIndex]` (the application's pool
-   * key, resolved via `getAppPoolIndex`).
+   * key, resolved via `getAppPoolIndex`); `client.getShareProof` builds it
+   * from the finalization calldata.
    */
   async submitPartialDecryption(
     epochId: `0x${string}`,

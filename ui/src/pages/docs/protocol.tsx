@@ -57,25 +57,24 @@ export function DocsProtocolPage() {
 
       <Section id='lifecycle' title='Epoch lifecycle'>
         <P>
-          An <Em>epoch</Em> is one DKG run. It deals a pool of <C>MaxK = 8</C> keys <C>P_0 … P_7</C>, each shared by
-          the same <C>n</C> committee members, any <C>t</C> of which can decrypt under it. Epochs are scheduled on a
-          fixed block cadence and split into a short <Em>preparation</Em> and a long <Em>service</Em> window; the next
-          one may also open early once the pool is down to its last key.
+          An <Em>epoch</Em> is one DKG run. It deals a pool of <C>MaxK = 16</C> keys <C>P_0 … P_15</C>, each shared
+          by the same <C>n</C> committee members, any <C>t</C> of which can decrypt under it. Epochs are scheduled on
+          a fixed block cadence and split into a short <Em>preparation</Em> and a long <Em>service</Em> window; the
+          next one may also open early once the pool is down to its last key.
         </P>
         <Code caption='epoch windows'>{`  startBlock                                                          endBlock
   │ ── Preparation (small, fixed) ──►  ◄──────── Service ───────────► │
   │ CommitteeSelection │ KeyAssembly │ gap │        Live              │
   ├────────────────────┼─────────────┼─────┼──────────────────────────┤
-  │ claimSlot          │submitContrib│     │ activatePoolKey (×8) /   │
-  │ (lottery)          │  (Groth16)  │     │ registerApplication /    │
-  │                    │             │     │ submitCiphertext /       │
+  │ claimSlot          │submitContrib│     │ registerApplication /    │
+  │ (lottery)          │  (Groth16)  │     │ submitCiphertext /       │
   │                    │             │     │ submitPartialDecryption /│
   │                    │             │     │ revealOrganizerSecret /  │
   │                    │             │     │ combineDecryption        │
   └────────────────────┴─────────────┴─────┴──────────────────────────┘
                                       ▲
-                            finalizeEpoch (no proof)
-                            flips KeyAssembly → Live`}</Code>
+                            finalizeEpoch (one Groth16 proof)
+                            stores all 16 keys, flips KeyAssembly → Live`}</Code>
         <P>
           Each preparation window is an <Em>absolute</Em> block count, not a fraction of the epoch: the lottery is one
           keccak per claimer and a contribution is one transaction per member, so a fixed budget is the right shape. A
@@ -102,7 +101,7 @@ export function DocsProtocolPage() {
             { label: 'FINALIZE_GAP_BLOCKS', value: '5', mono: true, hint: 'cooldown before finalizeEpoch' },
             { label: 'SEED_DELAY_BLOCKS', value: '1', mono: true, hint: 'seed = blockhash(startBlock + this)' },
             { label: 'MaxN', value: '32', mono: true, hint: 'compile-time committee cap, mirrors the circuits' },
-            { label: 'MaxK', value: '8', mono: true, hint: 'pool keys dealt per epoch, one per application' },
+            { label: 'MaxK', value: '16', mono: true, hint: 'pool keys dealt per epoch, one per application' },
             { label: 'INACTIVITY_WINDOW', value: '50,400', mono: true, hint: '≈7 days — heartbeat window before reap' },
           ]}
         />
@@ -140,21 +139,27 @@ export function DocsProtocolPage() {
           items={[
             <>
               Each committee member publishes one Feldman verifiable secret sharing (VSS) contribution dealing{' '}
-              <C>MaxK</C> polynomials at once: <C>MaxK</C> sets of commitments plus, per recipient, <C>MaxK</C> shares
-              encrypted to that member&rsquo;s registry key under one shared ECDH secret, with a Groth16 proof that
-              commitments and shares are consistent. One transaction, verified on chain at submission.
+              <C>MaxK</C> polynomials at once: <C>MaxK</C> sets of <C>t</C> commitments plus, per recipient,{' '}
+              <C>MaxK</C> shares encrypted to that member&rsquo;s registry key under one shared ECDH secret, with a
+              Groth16 proof that commitments and shares are consistent. The calldata is compact —{' '}
+              <C>MaxK·(2t + n) + 5n</C> words, no padding — and verified on chain at submission.
             </>,
             <>
               Once at least <C>minValidContributions</C> are in and the finalize gap has passed, anyone calls{' '}
-              <C>finalizeEpoch</C> — <Em>no proof</Em>. It freezes the accepted contributor set, flips the epoch to{' '}
-              <C>Live</C> and emits <C>EpochLive(eid, contributionCount)</C>. No key exists yet.
+              <C>finalizeEpoch(eid, transcriptDigest, transcript, proof, input)</C> with <Em>one Groth16 proof</Em>{' '}
+              over the whole accepted contributor set. The proof shows that every{' '}
+              <C>P_j = Σ A&#95;&#123;i,j,0&#125;</C> is the sum of the accepted contributors&rsquo; zeroth commitments
+              for key <C>j</C> and that every member&rsquo;s share commitment <C>D&#95;&#123;j,i&#125;</C> follows
+              from those commitments; the contract checks the dealer rows against its stored contribution hashes,
+              stores all <C>MaxK</C> keys with the Merkle root of each key&rsquo;s share commitments, flips the epoch
+              to <C>Live</C> and emits <C>EpochLive(eid, contributionCount)</C>. Atomic: <C>Live</C> means every key
+              exists.
             </>,
             <>
-              Each pool key is then <Em>activated</Em> separately: <C>activatePoolKey(eid, j, …)</C> carries a Groth16
-              proof that <C>P_j = Σ A&#95;&#123;i,j,0&#125;</C> is the sum of the accepted contributors&rsquo; zeroth
-              commitments for key <C>j</C>, and stores <C>P_j</C> together with a Merkle root of every member&rsquo;s
-              share commitment <C>D&#95;&#123;j,i&#125;</C>. Permissionless, any order, one proof per key; nodes keep
-              a couple of keys activated ahead of demand.
+              The <C>1,120</C>-word finalization transcript — dealer indexes and hashes, then per key <C>P_j</C> and
+              the <C>MaxN</C> share commitments — lives only in the transaction&rsquo;s calldata (the call must be a
+              direct EOA transaction for that reason). Nodes and the SDK read it back to build the Merkle path every
+              partial decryption carries.
             </>,
           ]}
         />
@@ -174,9 +179,8 @@ export function DocsProtocolPage() {
         </P>
         <P>
           There is exactly one registration path, and it is not optional. <C>registerApplication</C> claims the
-          epoch&rsquo;s next unused <Em>activated</Em> pool key <C>P_j</C> (<C>PoolExhausted()</C> when none is left,{' '}
-          <C>PoolKeyNotActive()</C> when the next one is not proven yet) and records <C>poolIndex = j</C>. The
-          application key is then:
+          epoch&rsquo;s next unclaimed pool key <C>P_j</C> (<C>PoolExhausted()</C> when none is left — every key of a
+          Live epoch is already stored) and records <C>poolIndex = j</C>. The application key is then:
         </P>
         <Code caption='application key'>{`PK_aid = P_j            // automatic
 PK_aid = P_j + PK_org   // organizer-locked`}</Code>
@@ -285,9 +289,8 @@ PK_aid = P_j + PK_org   // organizer-locked`}</Code>
               at submission, not disputed afterwards.
             </>,
             <>
-              <Em>Verified on chain.</Em> Contribution, pool-key activation, partial decryption and combination are
-              each gated by a Groth16 verifier; finalization needs none because it proves nothing. Correctness is
-              enforced by the EVM.
+              <Em>Verified on chain.</Em> Contribution, finalization (the whole key pool in one proof), partial
+              decryption and combination are each gated by a Groth16 verifier. Correctness is enforced by the EVM.
             </>,
             <>
               <Em>Permissionless committee.</Em> Anyone can register and be drawn by the lottery; the selection is a

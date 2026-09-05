@@ -113,9 +113,8 @@ export interface DecryptionView {
   onChain: ElGamalCiphertext | null
 }
 
-/** How far the target epoch's pool has been dealt. */
+/** How far the target epoch's pool has been claimed (every key exists once Live). */
 export interface PoolView {
-  activated: number
   claimed: number
   size: number
 }

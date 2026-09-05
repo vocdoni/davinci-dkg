@@ -8,15 +8,14 @@ import {DKGAppManager} from "../src/DKGAppManager.sol";
 import {IDKGManager} from "../src/interfaces/IDKGManager.sol";
 import {IDKGAppManager} from "../src/interfaces/IDKGAppManager.sol";
 import {DKGTypes} from "../src/libraries/DKGTypes.sol";
-import {MAX_K} from "../src/libraries/Sizes.sol";
 import {BabyJubJub} from "../src/libraries/BabyJubJub.sol";
 import {
     MockContributionVerifier,
     MockPartialDecryptVerifier,
-    MockPoolKeyVerifier,
     MockDecryptCombineVerifier,
     TestHelpers
 } from "./TestHelpers.t.sol";
+import {MockVerifier} from "./MockVerifier.sol";
 
 /// @title DKGManagerAppTest
 /// @notice Tests for the per-application registration surface. Registration
@@ -26,9 +25,10 @@ import {
 ///         `Automatic` applications have no organizer half at all.
 ///
 ///         Setup drives the epoch lifecycle against the mock verifiers up to
-///         Live with every pool key activated; these tests then exercise the
-///         application entry points only. The end-to-end ciphertext / partial
-///         / combine flow lives in the broader DKGManagerTest suite.
+///         Live (one finalize proves and stores the whole pool); these tests
+///         then exercise the application entry points only. The end-to-end
+///         ciphertext / partial / combine flow lives in the broader
+///         DKGManagerTest suite.
 contract DKGManagerAppTest is Test, TestHelpers {
     DKGRegistry public registry;
     DKGManager public manager;
@@ -36,7 +36,7 @@ contract DKGManagerAppTest is Test, TestHelpers {
 
     // Schnorr operator vectors (ALICE / BEEF), copied from DKGManager.t.sol.
     // Committee members must be codeless addresses: submitContribution /
-    // activatePoolKey reject contract callers (DirectCallRequired), and the
+    // finalizeEpoch reject contract callers (DirectCallRequired), and the
     // test contract itself is a contract.
     address internal alice = address(0xA11CE);
     uint256 internal constant ALICE_PUBX =
@@ -73,7 +73,7 @@ contract DKGManagerAppTest is Test, TestHelpers {
             address(registry),
             address(new MockContributionVerifier()),
             address(new MockPartialDecryptVerifier()),
-            address(new MockPoolKeyVerifier()),
+            address(new MockVerifier()),
             address(new MockDecryptCombineVerifier()),
             0, 0, 0, 0, 0, 0, 0
         );
@@ -85,10 +85,10 @@ contract DKGManagerAppTest is Test, TestHelpers {
     }
 
     /// @dev Drive an epoch through its whole lifecycle (createEpoch →
-    ///      claimSlot × 2 → submitContribution × 2 → finalizeEpoch →
-    ///      activatePoolKey × MAX_K) so registration can claim any key. The
-    ///      mocks accept anything proof-shaped, so this shortcuts neatly.
-    ///      Contributions and activations are pranked with matching
+    ///      claimSlot × 2 → submitContribution × 2 → proof-carrying
+    ///      finalizeEpoch) so registration can claim any key. The mocks
+    ///      accept anything proof-shaped, so this shortcuts neatly.
+    ///      Contributions and the finalize are pranked with matching
     ///      msg.sender/tx.origin — they must be direct EOA calls.
     function _liveEpoch() internal returns (bytes12 epochId) {
         uint64 next = manager.nextEpochStartBlock();
@@ -103,13 +103,13 @@ contract DKGManagerAppTest is Test, TestHelpers {
         vm.prank(alice, alice);
         manager.submitContribution(
             epochId, 1, contributorCommitmentsHash(1), contributorSharesHash(1),
-            contributionTranscript(2), contributionProof(),
+            contributionTranscript(2, 2), contributionProof(),
             contributionInput(epochId, 2, 2, 1, contributorCommitmentsHash(1), contributorSharesHash(1))
         );
         vm.prank(address(0xBEEF), address(0xBEEF));
         manager.submitContribution(
             epochId, 2, contributorCommitmentsHash(2), contributorSharesHash(2),
-            contributionTranscript(2), contributionProof(),
+            contributionTranscript(2, 2), contributionProof(),
             contributionInput(epochId, 2, 2, 2, contributorCommitmentsHash(2), contributorSharesHash(2))
         );
 
@@ -117,14 +117,14 @@ contract DKGManagerAppTest is Test, TestHelpers {
         if (block.number < uint256(r.policy.liveNotBeforeBlock)) {
             vm.roll(uint256(r.policy.liveNotBeforeBlock));
         }
-        manager.finalizeEpoch(epochId);
-        for (uint8 j = 0; j < uint8(MAX_K); j++) {
-            vm.prank(alice, alice);
-            manager.activatePoolKey(
-                epochId, j, testTranscriptDigest(j), poolKeyTranscript(j, 2, 2), poolKeyProof(),
-                poolKeyInput(epochId, 2, 2, 2, j)
-            );
-        }
+        vm.prank(alice, alice);
+        manager.finalizeEpoch(
+            epochId,
+            testFinalizeDigest(),
+            finalizeTranscript(2, 2),
+            finalizeProof(),
+            finalizeInput(epochId, 2, 2, 2)
+        );
     }
 
     /// @dev Register `aid` with a freshly computed organizer PoP.
@@ -475,12 +475,10 @@ contract DKGManagerAppTest is Test, TestHelpers {
         appManager.registerApplication(epochId, aid, _emptyAppPolicy(), pkx, pky, bx, by, bz);
 
         // the honest proof still registers — and only now is a key claimed.
-        (uint8 nextBefore,) = manager.getPoolStatus(epochId);
-        assertEq(uint256(nextBefore), 0);
+        assertEq(uint256(manager.getPoolStatus(epochId)), 0);
         appManager.registerApplication(epochId, aid, _emptyAppPolicy(), pkx, pky, ax, ay, z);
         assertTrue(appManager.getApplication(epochId, aid).exists);
-        (uint8 nextAfter,) = manager.getPoolStatus(epochId);
-        assertEq(uint256(nextAfter), 1);
+        assertEq(uint256(manager.getPoolStatus(epochId)), 1);
     }
 
     function test_RegisterApplication_RejectsZeroAid() public {
@@ -515,8 +513,7 @@ contract DKGManagerAppTest is Test, TestHelpers {
         vm.expectRevert(IDKGAppManager.ApplicationAlreadyExists.selector);
         appManager.registerApplication(epochId, aid, _emptyAppPolicy(), pkx, pky, ax, ay, z);
         // The failed duplicate must not have burned a second pool key.
-        (uint8 nextIndex,) = manager.getPoolStatus(epochId);
-        assertEq(uint256(nextIndex), 1);
+        assertEq(uint256(manager.getPoolStatus(epochId)), 1);
     }
 
     function test_RegisterApplication_RejectsUnknownEpoch() public {

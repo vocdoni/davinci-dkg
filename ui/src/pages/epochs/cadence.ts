@@ -113,17 +113,20 @@ export function elapsedSince(
 }
 
 /**
- * Words in the `activatePoolKey` transcript the BRLC challenge is taken over:
- * `MaxN` participant indexes + `MaxN` contribution hashes + `2·MaxN`
- * aggregate-commitment coordinates + `2·MaxN` share-commitment coordinates
- * = `6·MaxN`, fixed by the circuit rather than by the committee size. Each
- * word is a 32-byte field element.
+ * Words in the `finalizeEpoch` transcript the BRLC challenge is taken over:
+ * `MaxN` participant indexes + `MaxN` contribution hashes, then per pool key
+ * `P_j` and `MaxN` share commitments (`2 + 2·MaxN` words) —
+ * `2·MaxN + MaxK·(2 + 2·MaxN)`, fixed by the circuit rather than by the
+ * committee size. Each word is a 32-byte field element.
  */
-export const POOLKEY_TRANSCRIPT_WORDS = 6 * MAX_COMMITTEE
+export const FINALIZE_TRANSCRIPT_WORDS = 2 * MAX_COMMITTEE + POOL_SIZE * (2 + 2 * MAX_COMMITTEE)
 
 /**
- * Words in a contribution transcript: `2·MaxK·MaxN` commitment coordinates,
- * `MaxN` recipient indexes, `2·MaxN` recipient keys, `2·MaxN` ephemerals and
- * `MaxK·MaxN` masked shares = `3·MaxK·MaxN + 5·MaxN`.
+ * Words in a compact contribution transcript for threshold `t` and committee
+ * size `n`: `2·MaxK·t` commitment coordinates, `n` recipient indexes, `2n`
+ * recipient keys, `2n` ephemerals and `MaxK·n` masked shares =
+ * `MaxK·(2t + n) + 5n`. No padding travels in calldata.
  */
-export const CONTRIBUTION_TRANSCRIPT_WORDS = 3 * POOL_SIZE * MAX_COMMITTEE + 5 * MAX_COMMITTEE
+export function contributionTranscriptWords(threshold: number, committeeSize: number): number {
+  return POOL_SIZE * (2 * threshold + committeeSize) + 5 * committeeSize
+}

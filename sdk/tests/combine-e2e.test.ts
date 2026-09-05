@@ -8,7 +8,8 @@
 // consumer hitting the chain.
 //
 // Flow:
-//   1. Go fixture (`--action=create`) → Live single-participant epoch with pool key 0 activated.
+//   1. Go fixture (`--action=create`) → Live single-participant epoch; the proof-carrying
+//      finalizeEpoch stores every pool key, and the application below claims key 0.
 //   2. SDK registers an application, encrypts a plaintext under PK_aid,
 //      calls writer.submitCiphertext and takes the on-chain-assigned index,
 //      then reveals the organizer secret — the contract refuses the partial
@@ -51,6 +52,7 @@ interface FixtureCreateResult {
   epochId: `0x${string}`;
   share: string;
   poolKey: { x: string; y: string };
+  /** `shares.length`: the keys the output describes; the pool itself is always whole. */
   activatedKeys: number;
 }
 

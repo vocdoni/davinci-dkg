@@ -45,6 +45,43 @@ MaxK = 8:
 | PartialDecrypt  |      29,026 |
 | DecryptCombine  |     287,338 |
 
+## v4: batched finalization and compact contributions (MaxK = 16, gnark v0.16.3)
+
+Measured 2026-09-05 on the `v4-batched-finalize` branch: one proof-carrying `finalizeEpoch` activates
+all 16 keys, contributions carry the unpadded transcript of `MaxK·(2t+n) + 5n` words, MaxN = 32.
+Same machine and method as the v3.1 tables (Anvil with the real verifiers, receipts' `gasUsed`;
+proving mean of five, 32 threads).
+
+| Circuit | Constraints | Public inputs | Proving time |
+|---|---:|---:|---:|
+| Contribution (16 keys, compact fold) | 5,904,167 | 8 | 3,540 ms |
+| Finalize (all 16 keys) | 2,328,130 | 7 | 2,259 ms |
+| PartialDecrypt | 29,026 | 15 | unchanged |
+| DecryptCombine | 287,338 | 9 | unchanged |
+
+| Call | n = 4, t = 3 | n = 32, t = 22 | Notes |
+|---|---:|---:|---|
+| `createEpoch` | 133,269 | 133,269 | 150,280 for the first seed |
+| `claimSlot` (avg) | 137,463 | 121,021 | |
+| `submitContribution` | 500,070 | 1,314,499 | 16 keys; 1.5 KB of calldata per member per key |
+| `finalizeEpoch` | 2,201,937 | 2,810,545 | verifier + 16 keys + 16 roots (48 cold stores) |
+| `registerApplication` locked / automatic | 619,074 / 232,394 | 620,994 / 232,394 | locked includes the 168k organizer-key subgroup check |
+| `revealOrganizerSecret` | 225,902 | 223,750 | |
+| `submitCiphertext` | 102,770 | 102,770 | |
+| `submitPartialDecryption` | 402,251 | 402,223 | |
+| `combineDecryption` | 410,614 | 483,955 | |
+
+Sweep (n = 8 … 28): contribution 622,141 / 722,287 / 844,682 / 967,364 / 1,068,474 / 1,191,409;
+finalize 2,288,989 / 2,375,993 / 2,462,841 / 2,549,557 / 2,636,513 / 2,723,469.
+
+An epoch yielding 16 keys costs about `0.15 + 4 × 0.14 + 4 × 0.50 + 2.20 ≈ 4.9 M` gas at n = 4
+(0.31 M per key, against 0.95 M per key in v3.1 and 3.1 M for a single-key epoch) and about
+`32 × (0.12 + 1.31) + 2.81 ≈ 48.9 M` at n = 32 (3.1 M per key, against 5.1 M). The price is on the
+node: the contribution proof takes 3.5 s instead of 1.6 s and the proving key doubles; the contribution
+prover peaks at 9.3 GB resident (5.0 GB at MaxK = 8) and the finalize prover at 5.5 GB (`/usr/bin/time -v`
+around the benchmark, proving key and circuit loaded). With MaxK = 8 the same design would keep the v3.1 proving cost and land
+near 0.5 M per key at n = 4.
+
 ## Proof generation time (v3.1, gnark v0.16.3)
 
 Wall-clock per single proof, mean of five runs (`go test ./circuits/... -run XXX

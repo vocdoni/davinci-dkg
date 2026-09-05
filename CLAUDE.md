@@ -83,38 +83,42 @@ Anything that touches encodings, hashes or constants has to be changed in all of
   `sdk/src/protocol.ts`. `cmd/protocol-vectors` emits `tests/vectors/*.json` from the Go side; the SDK
   (`sdk/tests/vectors.test.ts`) and Foundry (`DKGProtocol.t.sol`) assert against them.
 - **Committee size cap `MaxN`, pool size `MaxK`, Merkle depth**: `circuits/common/sizes.go` and
-  `solidity/src/libraries/Sizes.sol` (`MAX_N=32`, `MAX_K=8`, `MERKLE_DEPTH=5=log2(MaxN)`; `MaxN` must be a power of two, so 16, 32 or 64), then
+  `solidity/src/libraries/Sizes.sol` (`MAX_N=32`, `MAX_K=16`, `MERKLE_DEPTH=5=log2(MaxN)`; `MaxN` must be a power of two, so 16, 32 or 64), then
   `make circuits`. See `docs/pool-keys.md` for the normative pool-key spec.
 - **BRLC transcript encoding**: `circuits/common/brlc.go`, `web3/brlc.go` and
-  `solidity/src/libraries/BRLC.sol` must agree bit-for-bit. Contribution's transcript
-  (`CONTRIB_TRANSCRIPT_WORDS = 3·MaxK·MaxN + 5·MaxN`) is key-major (commitments and masked shares for
-  key `j` before key `j+1`) because each contribution now deals all `MaxK` pool-key polynomials at
-  once; its challenge anchor is unchanged: `keccak(commitmentsHash ‖ encryptedSharesHash ‖
-  keccak(transcript))`. Pool-key activation (`circuits/poolkey`, domain `davinci-dkg:poolkey:v1`,
-  `POOLKEY_TRANSCRIPT_WORDS = 6·MaxN`) has 8 public inputs `[eid, threshold, committeeSize,
-  acceptedCount, keyIndex, transcriptDigest, challenge, transcriptCommitment]`, where
-  `transcriptDigest = Poseidon MultiHash(eid, keyIndex, the 6·MaxN masked transcript words)`, and the
-  anchor `keccak(transcriptDigest ‖ keccak(transcript))` — the same discipline as contribution and
-  combine. Do not drop the digest again: with `keccak(keccak(transcript))` alone the challenge never
-  depends on the witness words, the calldata aggregate / share-commitment region (where the contract
-  reads `P_j` from) is bound to the proof only by the BRLC linear relation, and a permissionless
-  activator can grind a calldata transcript carrying a forged `P_j` that still verifies (a
-  generalized-birthday search, not `2^128` work) — see `docs/pool-keys.md`. Combine
+  `solidity/src/libraries/BRLC.sol` must agree bit-for-bit. The v4 contribution transcript
+  (`CompactContributionWords(t,n) = MaxK·(2t+n) + 5n`) is **compact** — no padding travels in
+  calldata; each commitment coordinate is gated by `b=[m<t]`, every recipient-index, public-key,
+  ephemeral and masked-share entry by `b=[i<n]`, and the BRLC fold neither counts nor advances
+  the exponent for inactive entries. Its challenge anchor is unchanged: `keccak(commitmentsHash ‖
+  encryptedSharesHash ‖ keccak(transcript))`. The batched finalization (`circuits/finalize`,
+  domain `davinci-dkg:finalize:v2`, `FINALIZE_TRANSCRIPT_WORDS = 2·MaxN + MaxK·(2+2·MaxN)` = 1,120
+  words at N=32, K=16) has 7 public inputs `[eid, threshold, committeeSize, acceptedCount,
+  transcriptDigest, challenge, transcriptCommitment]`, where
+  `transcriptDigest = Poseidon MultiHash(eid, t, n, a, K, L_F, R, B_0…B_{K−1})` over the masked
+  transcript words, and the anchor `keccak(transcriptDigest ‖ keccak(transcript))` — the same
+  discipline as contribution and combine. Do not drop the digest again: with
+  `keccak(keccak(transcript))` alone the challenge never depends on the witness words, the
+  calldata aggregate / share-commitment region (where the contract reads `P_j` from) is bound to
+  the proof only by the BRLC linear relation, and a permissionless finalizer can grind a calldata
+  transcript carrying a forged `P_j` that still verifies (a generalized-birthday search, not
+  `2^128` work) — see `docs/pool-keys.md`. Combine
   (`davinci-dkg:decrypt-combine:v1`, `COMBINE_TRANSCRIPT_WORDS = 6 + 3·MaxN`) is unchanged in shape but
   now carries `PK_org` and proves knowledge of `OrganizerSecret` instead of a DLEQ, and pins the
   Lagrange coefficients to the canonical vector of the qualifying set (masked by `shareCount`). On
   every proof-carrying call the BRLC calldata commitment refuses a non-canonical word (`>= p`), so a
   transcript has exactly one encoding.
-- **Share-commitment Merkle tree**: activation transcript region `[4N, 6N)` holds `D_p` for committee
-  position `p = i + 1`, `i < committeeSize` (identity for the rest) — every member, not only the
-  contributors, because a member that did not contribute still received a share from every accepted
-  dealer (so decryption liveness is `n − t`, not `m − t`). Leaves `keccak256(0x00 ‖ D_p.x ‖ D_p.y)`,
-  empty leaves `keccak256("davinci-dkg:merkle-empty:v1")`, internal nodes
+- **Share-commitment Merkle tree**: the finalization transcript's per-key region holds `D_j,i`
+  (share commitment for committee position `i+1`) for every `j < MaxK`, with `D_j,i = (0,1)` for
+  `i >= committeeSize` — every member, not only the contributors, because a member that did not
+  contribute still received a share from every accepted dealer (so decryption liveness is `n − t`,
+  not `m − t`). Leaves `keccak256(0x00 ‖ D.x ‖ D.y)`, empty leaves
+  `keccak256("davinci-dkg:merkle-empty:v1")`, internal nodes
   `keccak256(0x01 ‖ left ‖ right)`, `MERKLE_DEPTH = 5` levels over `MAX_N = 32` leaves — computed by
-  `activatePoolKey` from the transcript calldata (stored as `poolShareRoots[eid][j]`), checked again by
-  `submitPartialDecryption`'s trailing `shareProof` (`MERKLE_DEPTH` siblings, bottom-up, leaf index
-  `participantIndex − 1`) and by the node and the SDK when they build that proof. A one-bit divergence
-  in leaf order, prefix byte or hash order makes every partial revert.
+  `finalizeEpoch` from the finalization transcript calldata (stored as `poolShareRoots[eid][j]`),
+  checked again by `submitPartialDecryption`'s trailing `shareProof` (`MERKLE_DEPTH` siblings,
+  bottom-up, leaf index `participantIndex − 1`) and by the node and the SDK when they build that
+  proof. A one-bit divergence in leaf order, prefix byte or hash order makes every partial revert.
 - **Circuit ↔ verifier binding**: `config/circuit_artifacts.go` pins SHA-256 hashes of every circuit's
   ccs/pk/vk; `circuits/artifacts.go` verifies them on load (downloads from the CDN, else falls back to a
   local setup). `make circuits-update-hashes` keeps the file in sync.
@@ -135,13 +139,17 @@ Anything that touches encodings, hashes or constants has to be changed in all of
 ### Go packages
 
 - `node/` is the daemon (`cmd/davinci-dkg-node` is a thin main). `node.go` polls the two newest epochs
-  and does claimSlot → submitContribution (Groth16, dealing all `MaxK` pool-key polynomials at once) →
-  proof-less `finalizeEpoch` once the epoch qualifies. Once an epoch is Live the node activates pool
-  key 0 immediately and keeps `ActivateAhead` (default 2) activated-but-unclaimed keys available, in
-  the same seed-derived rotation contributions used, one small `circuits/poolkey` proof per key; it
-  also creates the next epoch early — bypassing the normal cadence gate — when the newest epoch has
-  fewer than `ActivateAhead` unclaimed keys and the contract allows it (newest epoch `Live` with
-  `poolNext >= MAX_K - 1`, or `Aborted`).
+  and does claimSlot → submitContribution (Groth16, dealing all `MaxK` pool-key polynomials at once,
+  compact `MaxK·(2t+n) + 5n`-word transcript) → one proof-carrying `finalizeEpoch` once the epoch
+  qualifies. There is no per-key activation any more: the finalization proof stores every pool key
+  and share root atomically, so a `Live` epoch is fully usable. The node runs **one** finalization
+  attempt per epoch in the existing seed-derived stagger (slot `mySlot`, anchored at
+  `liveNotBeforeBlock`); the first proof to land wins and the rest see `AlreadyLive` and stop. A
+  transient failure is retried with an exponential per-epoch backoff (the proof is expensive, so a
+  persistent fault must not cost one per tick). A qualifying epoch that was never finalized stays
+  discoverable across cadence changes and restarts. It also creates the next epoch early — bypassing
+  the normal cadence gate — when the newest epoch has at most one unclaimed key
+  (`poolNext >= MAX_K - 1`, i.e. `poolNext >= 15`) or is `Aborted`.
   `decrypt.go` scans `CiphertextSubmitted` events for every aid and checks the prime-subgroup
   membership of C1/C2 before computing a partial — the contract deliberately skips that check (about
   0.17 M gas for `C1`; skipped to keep submission cheap, not because it is prohibitive), so this one is
@@ -177,10 +185,11 @@ Anything that touches encodings, hashes or constants has to be changed in all of
   `reveal -aid -org-secret` (locked apps only, permissionless, once: posts `revealOrganizerSecret` and
   from then on the committee combines by itself, application-wide, not per-ciphertext), `encrypt`
   (ElGamal under `PK_aid = P_j` or `P_j + PK_org`, no proof), `plaintext`, `epoch` (shows pool status:
-  which keys are activated, which are claimed). Losing `sk_org` makes a locked application permanently
+  which keys are claimed vs. free — `getPoolStatus` returns the `poolNext` cursor; there is no
+  activation bitmap any more). Losing `sk_org` makes a locked application permanently
   undecryptable; never reuse an organizer secret across two locked applications (revealing it for one
   opens the other).
-- `circuits/{contribution,poolkey,partialdecrypt,decryptcombine}` — gnark circuits (BN254 / BabyJubJub /
+- `circuits/{contribution,finalize,partialdecrypt,decryptcombine}` — gnark circuits (BN254 / BabyJubJub /
   Poseidon). Each has `circuit.go`, `witness.go` (Go-side witness construction), `assignment.go`,
   `artifacts.go`. `circuits/common` has the shared point/hash/Lagrange gadgets.
 - `crypto/` — off-circuit primitives (feldman, shamir, schnorr, dleq, shareenc, group, hash).
@@ -188,8 +197,12 @@ Anything that touches encodings, hashes or constants has to be changed in all of
   No business logic. `web3/txmanager` allocates nonces locally inside the signer hook (safe for
   concurrent goroutines), applies gas headroom to estimates, rebroadcasts and fee-bumps stuck txs.
   Callers must `RecordPending` after sending and `WaitTxByHash`.
-- `finalizer/` — drives the proof-less `finalizeEpoch` and, per pool key, reconstructs the accepted
-  contributions from calldata, proves `circuits/poolkey` and submits `activatePoolKey`.
+- `finalizer/` — one batched finalization operation: it reconstructs every accepted contribution's
+  calldata at a single canonical block after the contribution deadline (recovered from the event log
+  via the `CalldataCache`), proves the `circuits/finalize` Groth16 statement, re-checks the epoch
+  state right before sending (a finalization that landed meanwhile is reported as `ErrAlreadyLive`, a
+  reorg divergence is an error the caller retries), and submits `finalizeEpoch`, which atomically
+  stores all `MaxK` keys and share roots and flips the epoch `Live`.
 - `prover/` — Groth16 backend wrapper; `GPU_PROVER=true` switches to the icicle backend.
 - `types/` — neutral structs shared by web3/finalizer/node to avoid import cycles.
 
@@ -203,23 +216,32 @@ they share one logical storage. Phase windows and policy floors are constructor 
 `DeployAll.s.sol`).
 Invariants worth knowing: only operators registered before `createEpoch` may claim; `createEpoch` may
 also run before the normal cadence only when the newest epoch is `Live` with at most one unclaimed key
-(`poolNext >= MAX_K - 1`) or `Aborted` — so an epoch serves at most `MAX_K = 8` applications before
-registrations revert `PoolExhausted` until the next epoch has gone through its preparation window
-(pool exhaustion), and anyone registering seven automatic applications forces a new epoch
-(registration-driven amplification; a registration fee or allow-list is future work); `abortEpoch`
+(`poolNext >= MAX_K - 1`, i.e. `poolNext >= 15`) or `Aborted` — so an epoch serves at most `MAX_K = 16`
+applications before registrations revert `PoolExhausted` until the next epoch has gone through its
+preparation window (pool exhaustion), and anyone registering fifteen automatic applications forces a new
+epoch (registration-driven amplification; a registration fee or allow-list is future work); `abortEpoch`
 only works on provably dead epochs; ciphertext indices are
 assigned on chain; `submitCiphertext` takes no proof and only accepts a registered `aid` (there is no
 `aid = 0` path; who may submit is the app's policy — `openSubmission`, else an exclusive `submitters`
 allow-list of ≤ 32, else the registrant only; contradictory policies revert `InvalidPolicy()`);
-`finalizeEpoch` takes **no proof** — it only checks phase/block/contribution-count and flips the epoch
-to Live, freezing the accepted contributor set; `activatePoolKey(eid, j, transcriptDigest, transcript,
-proof, input)` is permissionless, one per key, any order, only while Live — it checks `input[5] ==
-transcriptDigest`, derives the challenge from `keccak(transcriptDigest ‖ keccak(transcript))`, verifies
-one `circuits/poolkey` proof, stores `poolKeys[eid][j]` and the Merkle root of the whole committee's
-share commitments for that key (`poolShareRoots[eid][j]`), and emits `PoolKeyActivated`;
-`registerApplication` claims the next
-activated-but-unclaimed key via `claimPoolKey` (reverts `PoolExhausted` when the pool is empty,
-`PoolKeyNotActive` when the next key hasn't been activated yet) and has two modes
+`finalizeEpoch(eid, transcriptDigest, transcript, proof, input)` is permissionless (direct-call
+gated: `msg.sender == tx.origin`), one proof-carrying call per epoch while `KeyAssembly` (after the
+positive finalize gap, `contributionCount >= minValidContributions`) — it decodes the 7 public inputs
+`[eid, threshold, committeeSize, acceptedCount, transcriptDigest, challenge, transcriptCommitment]`,
+binds positions 0…4 to state and the digest argument, derives the challenge from
+`keccak(transcriptDigest ‖ keccak(transcript))` under the `davinci-dkg:finalize:v2` domain,
+canonical-streams the BRLC commitment over the `FINALIZE_TRANSCRIPT_WORDS` (= 1,120 at N=32, K=16)
+calldata words, validates every active dealer row against the stored `commitmentsHash`, requires the
+inactive share slots to hold the identity, verifies one `circuits/finalize` proof, then — atomically,
+with no partial state on revert — stores all `MAX_K` keys (`poolKeys[eid][j]`) and the Merkle root of
+the whole committee's share commitments for each key (`poolShareRoots[eid][j]`), flips the epoch to
+`Live` (freezing the accepted contributor set) and emits `EpochLive(eid, acceptedCount)`;
+`claimPoolKey(eid, aid)` (callable only by the app manager) assigns the next unclaimed pool key,
+reverts `PoolExhausted` when all `MAX_K` keys are taken, records the index-plus-one
+`appPoolIndex[eid][aid]` marker and emits `PoolKeyClaimed`;
+`registerApplication` claims the next unclaimed key via `claimPoolKey` (reverts `PoolExhausted` when
+all `MAX_K` keys are taken; there is no activation state — `finalizeEpoch` proved and stored the whole
+pool atomically, so every unclaimed key of a `Live` epoch is usable) and has two modes
 (`DKGTypes.AppMode`): organizer-locked verifies a Schnorr PoP of `sk_org` and sets `PK_aid = P_j +
 PK_org`, automatic stores the identity `(0, 1)` as `organizerPK` and `0` as `organizerSecret` and sets
 `PK_aid = P_j` directly — there is no organizer key at all in automatic mode; `revealOrganizerSecret(eid,
@@ -240,7 +262,7 @@ is accepted before the window or the reveal there are no on-chain partials from 
 `submitPartialDecryption` additionally verifies its trailing `shareProof` (`MERKLE_DEPTH` siblings,
 leaf `keccak256(0x00 ‖ D.x ‖ D.y)` at index `participantIndex − 1`) against
 `poolShareRoots[eid][appPoolIndex[eid][aid]]`; every BRLC challenge is keccak over the calldata *and*
-the circuit's digests (Fiat–Shamir on both sides, see BRLC.sol), pool-key activation included via
+the circuit's digests (Fiat–Shamir on both sides, see BRLC.sol), pool-key finalization included via
 `transcriptDigest`. Because
 every application claims a distinct pool key `P_j`, a ciphertext copied from one application into
 another decrypts under an unrelated key and yields garbage, not the original plaintext — the old
@@ -257,8 +279,9 @@ integration contract for the SDK/UI. Verifier wrappers in `src/verifiers` are ge
   epochs; `tests/helpers/proofs.go` builds the proofs. The harness registers only 6 operators and uses
   α=6.5535 so every actor passes the (real) lottery; `tests/node_service_test.go` runs three real
   `node.Node` instances end to end. Application ids in tests must be < the BN254 scalar field.
-  Every decryption test registers an application with `helpers.RegisterApplication` (claiming a pool
-  key that must already be activated) and, for organizer-locked applications, reveals the organizer
+  Every decryption test registers an application with `helpers.RegisterApplication` (claiming the next
+  unclaimed pool key — every key of a Live epoch is usable since `finalizeEpoch` stored the whole pool
+  atomically) and, for organizer-locked applications, reveals the organizer
   secret once before combining; automatic applications need no such step since they have no organizer
   key.
 - `sdk/tests/*-e2e.test.ts` start their own Anvil stack and use `cmd/sdk-test-fixture` to produce
