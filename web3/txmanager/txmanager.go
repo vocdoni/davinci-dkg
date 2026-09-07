@@ -383,8 +383,8 @@ func (m *Manager) suggestFees(ctx context.Context) (*big.Int, *big.Int, error) {
 //   - a transaction at or above the chain's pending nonce is unknown to the
 //     RPC's mempool (lost send or pool failover) and is re-broadcast as-is;
 //   - a transaction pending longer than MaxPendingTime is replaced by a
-//     fee-bumped copy, up to MaxRetries times, after which it is dropped so
-//     its nonce can be re-used.
+//     fee-bumped copy, up to MaxRetries attempts (refused broadcasts
+//     included), after which it is dropped so its nonce can be re-used.
 func (m *Manager) retryStuck(ctx context.Context) error {
 	m.mu.Lock()
 	snapshot := make([]pendingTx, 0, len(m.pending))
@@ -441,20 +441,25 @@ func (m *Manager) retryStuck(ctx context.Context) error {
 // schedule.
 func (m *Manager) resend(ctx context.Context, ptx pendingTx, tx *gethtypes.Transaction, bumped bool) {
 	m.note("eth_sendRawTransaction")
-	if _, err := withTimeout(ctx, func(c context.Context) (struct{}, error) {
+	_, err := withTimeout(ctx, func(c context.Context) (struct{}, error) {
 		return struct{}{}, m.clientFn().SendTransaction(c, tx)
-	}); err != nil {
-		return // "already known" and friends: the original may still confirm
-	}
+	})
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	cur, ok := m.pending[ptx.nonce]
 	if !ok || cur.hash != ptx.hash {
 		return
 	}
+	// A refused broadcast counts as an attempt too: a transaction the
+	// mempool rejects for good (insufficient funds, underpriced) would
+	// otherwise be re-sent on every pass forever, and the pending set —
+	// fed a fresh nonce by every caller retry — would grow without bound.
+	cur.retries++
+	if err != nil {
+		return // "already known" and friends: the original may still confirm
+	}
 	cur.hash = tx.Hash()
 	cur.signed = tx
-	cur.retries++
 	if bumped {
 		cur.submittedAt = time.Now()
 	}

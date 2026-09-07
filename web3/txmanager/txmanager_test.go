@@ -282,6 +282,33 @@ func TestRetryStuckRebroadcastsTxMissingFromMempool(t *testing.T) {
 	c.Assert(m.pending[5].hash, qt.Equals, tx.Hash())
 }
 
+// A broadcast the mempool refuses for good (insufficient funds, underpriced)
+// counts as an attempt: after MaxRetries the entry is dropped so the nonce
+// can be re-used, instead of being re-sent on every pass forever.
+func TestRetryStuckDropsATxTheMempoolKeepsRefusing(t *testing.T) {
+	c := qt.New(t)
+	f := newFakeRPC(t)
+	m := newTestManager(t, f)
+	tx := signedTx(t, m, 5)
+	m.RecordPending(tx)
+	m.pending[5].submittedAt = time.Now().Add(-2 * m.config.MonitorInterval)
+
+	f.handle("eth_getTransactionCount", func([]json.RawMessage) (any, error) { return "0x5", nil })
+	f.handle("eth_sendRawTransaction", func([]json.RawMessage) (any, error) {
+		return nil, fmt.Errorf("insufficient funds for gas * price + value")
+	})
+
+	for i := 1; i <= m.config.MaxRetries; i++ {
+		c.Assert(m.retryStuck(context.Background()), qt.IsNil)
+		c.Assert(m.pending[5].retries, qt.Equals, i)
+		c.Assert(m.pending[5].hash, qt.Equals, tx.Hash(), qt.Commentf("a refused send keeps the original"))
+	}
+	c.Assert(m.retryStuck(context.Background()), qt.IsNil)
+	_, has5 := m.pending[5]
+	c.Assert(has5, qt.IsFalse)
+	c.Assert(f.calls["eth_sendRawTransaction"], qt.Equals, m.config.MaxRetries)
+}
+
 // A transaction that has sat in the mempool for MaxPendingTime is replaced
 // with a fee-bumped copy under the same nonce; confirmed nonces are pruned.
 func TestRetryStuckBumpsFeesAndPrunesConfirmed(t *testing.T) {
