@@ -123,6 +123,30 @@ services:
       - shared:/shared
       - ../testnet:/testnet:ro   # entrypoint scripts
 
+  # Wardens claim slots, hold shares and decrypt but never deal or finalize
+  # (DAVINCI_DKG_ROLE=warden). Scale with --scale dkg-warden=N (make
+  # testnet-up DKG_WARDEN_COUNT=N) and keep DKG_MIN_VALID_CONTRIBUTIONS at or
+  # below the coordinator count, else no epoch can finalize.
+  dkg-warden:
+    <<: *build-image
+    entrypoint: ["/bin/sh", "/testnet/entrypoint-node.sh"]
+    depends_on:
+      deployer:
+        condition: service_healthy
+    environment:
+      <<: *node-env
+      DAVINCI_DKG_ROLE: warden
+      KEY_OFFSET: "${DKG_KEY_OFFSET:-0}"
+      DAVINCI_DKG_EPOCH_POLICY_THRESHOLD: "${DKG_THRESHOLD:-3}"
+      DAVINCI_DKG_EPOCH_POLICY_COMMITTEE_SIZE: "${DKG_COMMITTEE_SIZE:-4}"
+      DAVINCI_DKG_EPOCH_POLICY_MIN_VALID_CONTRIBUTIONS: "${DKG_MIN_VALID_CONTRIBUTIONS:-3}"
+      DAVINCI_DKG_EPOCH_POLICY_LOTTERY_ALPHA_BPS: "${DKG_ALPHA_BPS:-15000}"
+    volumes:
+      - addresses:/addresses:ro
+      - ${DAVINCI_ARTIFACTS_HOST_DIR:-${HOME:-/root}/.davinci/artifacts}:/artifacts:ro
+      - shared:/shared
+      - ../testnet:/testnet:ro
+
   # The testnet does NOT bundle a UI service any more. The new ui/
   # Dockerfile bakes chain config at build time, but the deployer's
   # addresses are only known at runtime — reconciling those needs a

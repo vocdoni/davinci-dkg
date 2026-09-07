@@ -74,7 +74,7 @@ type Node struct {
 	appManager *gtypes.DKGAppManager
 	registry   *gtypes.DKGRegistry
 	txm        *txmanager.Manager
-	runtimes   circuitRuntimes // the four pinned circuits, loaded once in New
+	warden     bool // claim, hold shares and decrypt; never deal or finalize (Config.Role)
 	// logs serves the one eth_getLogs of a scan over both contracts (see
 	// decrypt.go); managerAddr and appManagerAddr are its address filter.
 	logs           logFilterer
@@ -199,11 +199,10 @@ func New(cfg *Config) (*Node, error) {
 	if d := os.Getenv("DAVINCI_DKG_ARTIFACTS_DIR"); d != "" {
 		circuits.BaseDir = d
 	}
-	// Every proof this node will ever make needs the pinned release
+	// Every proof this role will ever make needs the pinned release
 	// artifacts; a missing file or a hash mismatch is fatal now rather than
 	// at the first deadline.
-	runtimes, err := loadRuntimes()
-	if err != nil {
+	if err := preloadRuntimes(context.Background(), cfg.Warden()); err != nil {
 		return nil, fmt.Errorf("load circuit artifacts from %s: %w", circuits.BaseDir, err)
 	}
 
@@ -215,7 +214,7 @@ func New(cfg *Config) (*Node, error) {
 		appManager:     appManager,
 		registry:       registry,
 		txm:            txm,
-		runtimes:       runtimes,
+		warden:         cfg.Warden(),
 		logs:           c.PooledBackend(),
 		managerAddr:    c.Addresses.Manager,
 		appManagerAddr: c.Addresses.AppManager,
@@ -290,6 +289,7 @@ func (n *Node) LogStartupSnapshot(ctx context.Context, cfg *Config) {
 		"registry", n.contracts.Addresses.Registry,
 		"manager", cfg.ManagerAddr)
 	log.Infow("config: participation",
+		"role", cfg.Role,
 		"pollInterval", cfg.PollInterval)
 
 	// ── on-chain state ───────────────────────────────────────────────────
@@ -995,6 +995,13 @@ func (n *Node) participate(ctx context.Context, tc *tickCtx, chain epochReader, 
 			n.finish(epochID)
 			return nil
 		}
+		if n.warden {
+			// A warden holds its slot and its shares but neither deals nor
+			// finalizes: the coordinators' contributions land on their own
+			// and the decryption scanner recovers this member's shares from
+			// them once the epoch is Live.
+			return nil
+		}
 		submitted, err := n.doContribution(ctx, epochID, idx, epoch, selected, tc.head)
 		if err != nil {
 			return err
@@ -1265,7 +1272,12 @@ func (n *Node) doContribution(
 	if err != nil {
 		return false, fmt.Errorf("build contribution witness: %w", err)
 	}
-	proof, err := n.runtimes.contribution.ProveAndVerify(witness)
+	rt, err := circuitRuntime(ctx, circuitContribution)
+	if err != nil {
+		return false, fmt.Errorf("load contribution circuit: %w", err)
+	}
+	proof, err := rt.ProveAndVerify(witness)
+	releaseRuntime(circuitContribution)
 	if err != nil {
 		return false, fmt.Errorf("prove contribution: %w", err)
 	}
@@ -1409,9 +1421,14 @@ func (n *Node) tryAutoFinalize(
 		"contributions", epoch.ContributionCount,
 	)
 
+	rt, err := circuitRuntime(ctx, circuitFinalize)
+	if err != nil {
+		return fmt.Errorf("load finalize circuit: %w", err)
+	}
 	res, err := finalizer.ProveAndSubmitFinalize(
-		ctx, n.contracts, n.manager, n.txm, n.runtimes.finalize, epochID, n.contribCache,
+		ctx, n.contracts, n.manager, n.txm, rt, epochID, n.contribCache,
 	)
+	releaseRuntime(circuitFinalize)
 	if err != nil {
 		// Only a lost race is final: AlreadyLive from the contract (or from
 		// the finalizer's own re-check), or the epoch having left

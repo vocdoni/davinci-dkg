@@ -90,3 +90,16 @@ func TestLoadConfigReportsInvalidFlags(t *testing.T) {
 func fixedPolicy(c *Config) {
 	c.EpochPolicy = EpochPolicyConfig{Threshold: 3, CommitteeSize: 4, MinValidContributions: 3, LotteryAlphaBps: 15_000}
 }
+
+func TestRoleFlag(t *testing.T) {
+	c := qt.New(t)
+	cfg, err := loadConfigFromArgs(nil)
+	c.Assert(err, qt.IsNil)
+	c.Assert(cfg.Role, qt.Equals, RoleCoordinator)
+	c.Assert(cfg.Warden(), qt.IsFalse)
+	cfg, err = loadConfigFromArgs([]string{"--role=warden"})
+	c.Assert(err, qt.IsNil)
+	c.Assert(cfg.Warden(), qt.IsTrue)
+	_, err = loadConfigFromArgs([]string{"--role=keymaster"})
+	c.Assert(err, qt.ErrorMatches, ".*role.*")
+}

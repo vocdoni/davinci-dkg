@@ -327,14 +327,27 @@ A few load-bearing knobs:
 Run a node and you become eligible to be drawn on every epoch created after you register. The
 Sepolia deployment below is open, so anyone can join the committee.
 
-You need an Ethereum key with a little Sepolia ETH (about 0.05 ETH covers weeks of
-participation, and any Sepolia faucet works), Docker, and a machine sized for the proofs:
-at least 4 cores and 16 GB of RAM minimum (more is safer). The v0.5.0 node keeps all four
-circuits and their proving keys preloaded: about 9 GB at rest (8.5–9.6 GB across the seed
-fleet, against 3.1 GB for v0.4) and up to about 10 GB while proving — the contribution proof
-(5.9 M constraints at `MaxK = 16`) peaks at 9.3 GB, a running seed node observed ~9.8 GB, and
-the finalization proof takes about 2.3 s and 5.5 GB. More cores shorten the proofs; less RAM is
-not an option (see [`BENCHMARKS.md`](BENCHMARKS.md)).
+You need an Ethereum key with a little Sepolia ETH (any Sepolia faucet works; under the public
+bot's load a coordinator spends about 0.02 ETH a day and a warden a fraction of that), Docker,
+and a machine sized for the role you run (`DAVINCI_DKG_ROLE`, default `coordinator`):
+
+- A **coordinator** claims a slot, deals shares to the committee (the contribution proof, 5.9 M
+  constraints at `MaxK = 16`), takes its turn at the finalization proof and decrypts. It needs at
+  least 4 cores and **12 GB of RAM, 16 GB to be comfortable**: the contribution proof peaks at
+  about 7 GB inside a container. The two heavy proving keys are loaded for a proof and dropped
+  again, so a coordinator at rest sits at about 3 GB (v0.5 kept them resident, idled at 9 GB and
+  peaked at 11 GB).
+- A **warden** (`DAVINCI_DKG_ROLE=warden`) claims a slot, receives its shares from the
+  coordinators' contributions and decrypts, but never deals or finalizes. It loads only the two
+  small decryption circuits and runs in **2 GB of RAM** (about 1.2 GB at rest,
+  1.3 GB peak while combining).
+
+Every member, warden or coordinator, is one of the `n` shareholders any `t` of which can decrypt.
+The key's secrecy rests on the coordinators: together they know it, so the contract requires at
+least `threshold` accepted contributions per epoch, and a fleet needs at least that many
+coordinators drawn into every committee. Wardens add shareholders and decryption liveness, not
+secrecy. More cores shorten the proofs; less RAM than stated is not an option (see
+[`BENCHMARKS.md`](BENCHMARKS.md)).
 
 The node's RPC list should hold at least two endpoints: the node classifies rate-limited or
 unreachable endpoints and rotates off them, so a single-endpoint config has no fallback when a
@@ -368,7 +381,7 @@ What happens on first start:
    then polls `DKGManager` and reacts to every phase it is eligible for.
 
 Epochs on Sepolia last about 24 hours. Once per epoch the node claims a slot if the lottery
-admits it and submits its contribution during key assembly, which is one Groth16 proof and a
+admits it and, as a coordinator, submits its contribution during key assembly, which is one Groth16 proof and a
 few seconds of CPU. When the epoch qualifies it takes its turn in the seed-derived finalize
 stagger — one node reconstructs the accepted contributions, proves the batched finalization and
 submits `finalizeEpoch`, which stores all 16 pool keys and share roots at once; the rest answer

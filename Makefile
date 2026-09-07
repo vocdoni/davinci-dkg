@@ -8,6 +8,7 @@
 # Default node count and threshold for testnet
 DKG_NODE_COUNT        ?= 3
 DKG_THRESHOLD         ?= 2
+DKG_WARDEN_COUNT      ?= 0
 BATTERY_RUN           ?= TestOrganizerSwarm|TestRevealAdversary
 DKG_DISCLOSURE_ALLOWED ?= false
 
@@ -59,6 +60,7 @@ help: ## Show this help message
 	@echo "                  chain with `make ui-dev`, see testnet/)."
 	@echo "                  DKG_NODE_COUNT     (default 3, max 32 containers)"
 	@echo "                  DKG_THRESHOLD      (default 2)"
+	@echo "                  DKG_WARDEN_COUNT   (default 0; extra decrypt-only nodes, see testnet/docker-compose.yml)"
 	@echo "                  Note: committee size is capped by the circuit"
 	@echo "                  bound MaxN (see circuits/common/sizes.go, currently 32)."
 	@echo "  testnet-run     Run the full DKG scenario (create round → encrypt → decrypt)"
@@ -174,10 +176,10 @@ circuits-release: ## Compile circuits, upload to CDN, update hashes, rebuild Sol
 # ── Testnet ───────────────────────────────────────────────────────────────
 
 testnet-up: ## Start the testnet with N nodes
-	@echo "Starting testnet with $(DKG_NODE_COUNT) nodes..."
+	@echo "Starting testnet with $(DKG_NODE_COUNT) coordinators and $(DKG_WARDEN_COUNT) wardens..."
 	@cd testnet && \
 	DKG_NODE_COUNT=$(DKG_NODE_COUNT) DKG_THRESHOLD=$(DKG_THRESHOLD) \
-	docker compose up -d --scale dkg-node=$(DKG_NODE_COUNT) --build
+	docker compose up -d --scale dkg-node=$(DKG_NODE_COUNT) --scale dkg-warden=$(DKG_WARDEN_COUNT) --build
 
 testnet-run: ## (Deprecated alias) Wait for the running dkg-node fleet to auto-create + drive an epoch
 	@echo "The dkg-runner orchestrator was removed; davinci-dkg-node now"

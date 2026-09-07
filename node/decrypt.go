@@ -854,7 +854,11 @@ func (n *Node) submitPartial(
 	if err != nil {
 		return false, fmt.Errorf("build partial decrypt witness: %w", err)
 	}
-	proof, err := n.runtimes.partialDecrypt.ProveAndVerify(witness)
+	rt, err := circuitRuntime(ctx, circuitPartialDecrypt)
+	if err != nil {
+		return false, fmt.Errorf("load partial decrypt circuit: %w", err)
+	}
+	proof, err := rt.ProveAndVerify(witness)
 	if err != nil {
 		return false, fmt.Errorf("prove partial decrypt: %w", err)
 	}
@@ -1281,7 +1285,11 @@ func (n *Node) combine(
 	if err != nil {
 		return &combineResult{err: fmt.Errorf("build combine witness: %w", err)}
 	}
-	proof, err := n.runtimes.combine.ProveAndVerify(witness)
+	rt, err := circuitRuntime(ctx, circuitCombine)
+	if err != nil {
+		return &combineResult{err: fmt.Errorf("load combine circuit: %w", err)}
+	}
+	proof, err := rt.ProveAndVerify(witness)
 	if err != nil {
 		return &combineResult{err: fmt.Errorf("prove combine: %w", err)}
 	}

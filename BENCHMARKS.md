@@ -65,12 +65,18 @@ prover peaks at 9.3 GB resident (5.0 GB at MaxK = 8) and the finalize prover at 
 around the benchmark, proving key and circuit loaded). With MaxK = 8 the same design would keep the v3.1 proving cost and land
 near 0.5 M per key at n = 4.
 
-**Hardware guidance:** a v0.5.0 node with all four circuits and their proving keys preloaded
-sits at 8.5–9.6 GB of resident memory at rest (docker stats on the three Sepolia seed nodes
-right after start, against 3.1 GB for a v0.4 node), and peaks at about 9.8 GB during its first
-contribution proof (sampled every five seconds across the three nodes). State the requirement as
-**16 GB of RAM minimum, more is safer** — the 9.3 GB proving peak sits on top of the ~9 GB
-resting footprint, so a node with less RAM will swap or be killed mid-proof.
+**Hardware guidance (roles and on-demand proving keys):** a coordinator loads the contribution
+and finalize proving keys for one proof and drops them right after (the decoded contribution key
+alone is 4.0 GB of heap; the process falls back to 0.26 GB once it is released), so it sits at
+about 3 GB at rest (2.4–3.0 GB measured on the local testnet after its proofs; v0.5.0 kept all
+four circuits resident, idled at 8.5–9.6 GB and peaked at 11.2 GB on the Sepolia seed
+containers) and peaks at about 7 GB during the contribution proof (cgroup `memory.peak`, local
+testnet). State the coordinator requirement as **12 GB of RAM minimum, 16 GB comfortable**. A
+warden (`--role warden`) loads only the partial-decryption (29 k constraints, 4 MB key) and
+combine (287 k constraints, 45 MB key) circuits: about 1.2 GB at rest and
+1.3 GB peak while combining (local testnet, `make testnet-up DKG_WARDEN_COUNT=1`), so
+**2 GB** is enough. On usage-billed hosting this is the whole bill: memory is billed by the
+GB-hour while CPU is negligible (0.005–0.014 vCPU average per Sepolia seed node).
 
 ## Circuit constraint counts after the gnark upgrade (v3.1, superseded by v4, 2026-09-04)
 
