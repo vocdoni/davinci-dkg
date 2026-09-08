@@ -74,7 +74,6 @@ type Node struct {
 	appManager *gtypes.DKGAppManager
 	registry   *gtypes.DKGRegistry
 	txm        *txmanager.Manager
-	warden     bool // claim, hold shares and decrypt; never deal or finalize (Config.Role)
 	// logs serves the one eth_getLogs of a scan over both contracts (see
 	// decrypt.go); managerAddr and appManagerAddr are its address filter.
 	logs           logFilterer
@@ -199,10 +198,10 @@ func New(cfg *Config) (*Node, error) {
 	if d := os.Getenv("DAVINCI_DKG_ARTIFACTS_DIR"); d != "" {
 		circuits.BaseDir = d
 	}
-	// Every proof this role will ever make needs the pinned release
+	// Every proof this node will ever make needs the pinned release
 	// artifacts; a missing file or a hash mismatch is fatal now rather than
 	// at the first deadline.
-	if err := preloadRuntimes(context.Background(), cfg.Warden()); err != nil {
+	if err := preloadRuntimes(context.Background()); err != nil {
 		return nil, fmt.Errorf("load circuit artifacts from %s: %w", circuits.BaseDir, err)
 	}
 
@@ -214,7 +213,6 @@ func New(cfg *Config) (*Node, error) {
 		appManager:     appManager,
 		registry:       registry,
 		txm:            txm,
-		warden:         cfg.Warden(),
 		logs:           c.PooledBackend(),
 		managerAddr:    c.Addresses.Manager,
 		appManagerAddr: c.Addresses.AppManager,
@@ -289,7 +287,6 @@ func (n *Node) LogStartupSnapshot(ctx context.Context, cfg *Config) {
 		"registry", n.contracts.Addresses.Registry,
 		"manager", cfg.ManagerAddr)
 	log.Infow("config: participation",
-		"role", cfg.Role,
 		"pollInterval", cfg.PollInterval)
 
 	// ── on-chain state ───────────────────────────────────────────────────
@@ -993,13 +990,6 @@ func (n *Node) participate(ctx context.Context, tc *tickCtx, chain epochReader, 
 			// Not selected: contributing and finalizing are the committee's
 			// job, and nothing here ever needs this node again.
 			n.finish(epochID)
-			return nil
-		}
-		if n.warden {
-			// A warden holds its slot and its shares but neither deals nor
-			// finalizes: the coordinators' contributions land on their own
-			// and the decryption scanner recovers this member's shares from
-			// them once the epoch is Live.
 			return nil
 		}
 		submitted, err := n.doContribution(ctx, epochID, idx, epoch, selected, tc.head)

@@ -32,21 +32,14 @@ func TestNodesServiceApplicationCiphertexts(t *testing.T) {
 	defer cancel()
 
 	// ── nodes ─────────────────────────────────────────────────────────────
-	// Two coordinators and one warden: the warden claims a slot and holds
-	// shares like any member but never deals or finalizes, so the epoch's
-	// floor of accepted contributions is two.
 	for _, idx := range []int{3, 4, 5} {
 		cfg := &node.Config{
 			Web3:                  node.Web3Config{RPC: []string{services.RPCURL}, GasMultiplier: 1.2},
 			PrivKey:               helpers.DefaultAnvilPrivateKeys[idx],
 			ManagerAddr:           services.Addresses.Manager.Hex(),
 			PollInterval:          time.Second,
-			Role:                  node.RoleCoordinator,
 			AutoCreateEpochs:      false,
 			DecryptLookbackBlocks: 5,
-		}
-		if idx == 5 {
-			cfg.Role = node.RoleWarden
 		}
 		n, err := node.New(cfg)
 		c.Assert(err, qt.IsNil)
@@ -66,7 +59,7 @@ func TestNodesServiceApplicationCiphertexts(t *testing.T) {
 	}), qt.IsNil)
 	auth, err := services.TxManager.NewTransactOpts(ctx)
 	c.Assert(err, qt.IsNil)
-	tx, err := services.Manager.CreateEpoch(auth, 2, 3, 2, helpers.DefaultLotteryAlphaBps)
+	tx, err := services.Manager.CreateEpoch(auth, 2, 3, 3, helpers.DefaultLotteryAlphaBps)
 	c.Assert(err, qt.IsNil)
 	c.Assert(services.TxManager.WaitTxByHash(tx.Hash(), helpers.DefaultTxTimeout), qt.IsNil)
 	nonce, err := services.Manager.EpochNonce(services.CallOpts(ctx))
@@ -81,8 +74,8 @@ func TestNodesServiceApplicationCiphertexts(t *testing.T) {
 	}), qt.IsNil, qt.Commentf("nodes must claim, contribute and finalize on their own"))
 	live, err := services.Contracts.GetEpoch(ctx, epochID)
 	c.Assert(err, qt.IsNil)
-	c.Assert(live.ClaimedCount, qt.Equals, uint16(3), qt.Commentf("the warden claims a slot like any member"))
-	c.Assert(live.ContributionCount, qt.Equals, uint16(2), qt.Commentf("only the two coordinators deal"))
+	c.Assert(live.ClaimedCount, qt.Equals, uint16(3))
+	c.Assert(live.ContributionCount, qt.Equals, uint16(3), qt.Commentf("every member deals"))
 
 	// Live means every pool key is stored: the two registrations below claim
 	// keys 0 and 1 without any further node work.

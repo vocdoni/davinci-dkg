@@ -22,16 +22,6 @@ type Config struct {
 	ManagerAddr  string        `mapstructure:"manager"`
 	PollInterval time.Duration `mapstructure:"poll-interval"`
 
-	// Role selects what the node does with a committee slot. A coordinator
-	// (the default) deals shares to the committee and takes its turn at the
-	// finalization proof; a warden only claims the slot, receives its shares
-	// and serves decryption. Every member, warden or not, is one of the n
-	// shareholders any t of which can decrypt; the key's secrecy rests on
-	// the coordinators, which together know it, so the contract requires at
-	// least `threshold` accepted contributions per epoch and a fleet needs
-	// at least that many coordinators drawn into every committee.
-	Role string `mapstructure:"role"`
-
 	// AutoCreateEpochs makes this node race other nodes to fire `createEpoch`
 	// once `nextEpochStartBlock()` is reached. Each candidate sleeps a random
 	// jitter (0..AutoCreateJitter) before firing, so the population spreads
@@ -52,15 +42,6 @@ type Config struct {
 	// true.
 	EpochPolicy EpochPolicyConfig `mapstructure:"epoch-policy"`
 }
-
-// Node roles, see Config.Role.
-const (
-	RoleCoordinator = "coordinator"
-	RoleWarden      = "warden"
-)
-
-// Warden reports whether the node only claims, holds shares and decrypts.
-func (c *Config) Warden() bool { return c.Role == RoleWarden }
 
 type EpochPolicyConfig struct {
 	Threshold             uint16 `mapstructure:"threshold"`
@@ -134,7 +115,6 @@ func defaultConfig() *Config {
 		},
 		Datadir:          filepath.Join(home, ".davinci-dkg"),
 		PollInterval:     5 * time.Second,
-		Role:             RoleCoordinator,
 		AutoCreateEpochs: true,
 		AutoCreateJitter: 12 * time.Second,
 		// ~7 days at 12 s blocks; matches the registry's default INACTIVITY_WINDOW.
@@ -168,7 +148,6 @@ func loadConfigFromArgs(args []string) (*Config, error) {
 	fs.String("privkey", cfg.PrivKey, "hex private key for signing transactions")
 	fs.String("manager", cfg.ManagerAddr, "DKGManager contract address (optional when --network is set)")
 	fs.Duration("poll-interval", cfg.PollInterval, "chain polling interval")
-	fs.String("role", cfg.Role, "coordinator (deal shares, prove finalization, decrypt) or warden (claim a slot, hold shares, decrypt only)")
 	fs.Bool("auto-create-epochs", cfg.AutoCreateEpochs, "race other nodes to fire createEpoch once nextEpochStartBlock() is reached (default true; disable to participate only)")
 	fs.Duration("auto-create-jitter", cfg.AutoCreateJitter, "max random delay before firing the auto-create transaction (spreads contention)")
 	fs.Uint64("decrypt-lookback-blocks", cfg.DecryptLookbackBlocks, "on startup, scan this many blocks behind head for ciphertexts still awaiting decryption")
@@ -206,9 +185,6 @@ func validateConfig(cfg *Config) error {
 	}
 	if cfg.PollInterval <= 0 {
 		return fmt.Errorf("poll interval must be greater than 0, got %s", cfg.PollInterval)
-	}
-	if cfg.Role != RoleCoordinator && cfg.Role != RoleWarden {
-		return fmt.Errorf("role must be %q or %q, got %q", RoleCoordinator, RoleWarden, cfg.Role)
 	}
 	if err := cfg.EpochPolicy.validate(); err != nil {
 		return fmt.Errorf("epoch policy: %w", err)

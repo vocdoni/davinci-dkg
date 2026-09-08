@@ -28,9 +28,9 @@ const (
 // circuitSpecs describes each circuit: its pinned artifacts, a fresh instance
 // for compilation, and whether its runtime stays resident. Only the two small
 // decryption circuits do: the contribution and finalize proving keys (800 MB
-// and 446 MB on disk, several GB decoded) are loaded for one proof and
-// dropped right after, so a coordinator at rest costs about as much memory
-// as a warden, which never loads them at all.
+// and 446 MB on disk, 4.0 GB and about 2 GB decoded) are loaded for one proof
+// and dropped right after, so a node at rest holds a few hundred MB instead
+// of the 5 GB of keys v0.5 kept resident.
 var circuitSpecs = [...]struct {
 	name      string
 	artifacts *circuits.CircuitArtifacts
@@ -112,15 +112,11 @@ func releaseRuntime(kind circuitKind) {
 	debug.FreeOSMemory()
 }
 
-// preloadRuntimes loads every runtime the role will ever prove with once at
-// startup, so a missing artifact or a hash that does not match the release
-// fails the process immediately rather than at the first deadline, then
-// drops the non-resident ones again.
-func preloadRuntimes(ctx context.Context, warden bool) error {
-	for kind, spec := range circuitSpecs {
-		if warden && !spec.resident {
-			continue
-		}
+// preloadRuntimes loads every runtime once at startup, so a missing artifact
+// or a hash that does not match the release fails the process immediately
+// rather than at the first deadline, then drops the non-resident ones again.
+func preloadRuntimes(ctx context.Context) error {
+	for kind := range circuitSpecs {
 		if _, err := circuitRuntime(ctx, circuitKind(kind)); err != nil {
 			return err
 		}

@@ -176,11 +176,9 @@ Anything that touches encodings, hashes or constants has to be changed in all of
   honest submitters. All
   secret scalars come from `scalars.go` (`crypto/rand`, never deterministic); `dlog.go` is a compact
   parallel BSGS (2^50 cap, ~256 MB). Every flag has a `DAVINCI_DKG_*` env equivalent (`config.go`).
-  `--role warden` (`DAVINCI_DKG_ROLE`) makes the node claim a slot, hold shares and decrypt only;
-  coordinators (default) also deal and finalize, and since the contract requires
-  `minValidContributions ≥ threshold` a fleet needs at least `t` coordinators in every committee.
   Proving keys are loaded on demand (`node/circuits.go`): only the two decryption runtimes stay
-  resident, the contribution and finalize keys are loaded per proof and released right after.
+  resident, the contribution and finalize keys are loaded per proof and released right after
+  (about 3 GB at rest, 7 GB peak, instead of 9 GB and 11 GB with everything resident).
   `--network sepolia` resolves the manager from `config/networks.go`; registry, verifiers and app
   manager are read from the manager on-chain.
 - `cmd/dkgapp` is the application/organizer CLI: `register` (`-mode locked|automatic`, default locked:
