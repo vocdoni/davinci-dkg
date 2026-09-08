@@ -39,7 +39,12 @@ deployments stopped (`deploymentStop`) until the plan allows the memory. The pla
 the Railway dashboard (a card is required); it cannot be changed through the
 API. `serviceInstanceLimits(serviceId, environmentId)` shows the effective
 `memoryBytes`; after an upgrade run `serviceInstanceRedeploy` on each node so
-the new limits apply.
+the new limits apply. **Volumes keep the size cap of the plan they were
+created under**: a volume made on Trial is 500 MB for good, too small for the
+1.1 GB of artifacts (`no space left on device` while downloading), and the API
+cannot grow it. Delete it (`volumeDelete`), create a new one (5 GB on Hobby)
+and redeploy; `volumeCreate` refuses while the old one is still attached, so
+delete first and check the project's volumes if a create fails half-way.
 
 ## One-time: create the project
 
@@ -121,8 +126,8 @@ by the memory cap (see the plan requirement above).
 
 | Node | Service id | Volume id | Operator |
 |---|---|---|---|
-| dkg-node9 | `b7c719f1-8a87-4de2-8033-b62bfea71c15` | `97e6615e-3110-4a80-bfc1-5eeaca159f80` | `0xf4FE1328f6a9C3391bFf4024d0348DdF188eD35c` |
-| dkg-node10 | `9bc7a731-1902-4bcf-b2fa-14052fd07cc0` | `7b29d9a9-4cf1-4ac5-adba-da85f5ef7b70` | `0x31e162dD9c3Bc94a903a90E710d8A3577F14203b` |
+| dkg-node9 | `b7c719f1-8a87-4de2-8033-b62bfea71c15` | `386e62ee-6a80-40f6-a3f5-cc665955cd1a` (5 GB) | `0xf4FE1328f6a9C3391bFf4024d0348DdF188eD35c` |
+| dkg-node10 | `9bc7a731-1902-4bcf-b2fa-14052fd07cc0` | `c8413cf6-83e2-44b0-a713-4d4be9853bc0` (5 GB) | `0x31e162dD9c3Bc94a903a90E710d8A3577F14203b` |
 
 Operator keys: `~/.davinci-dkg-sepolia/node9.json`, `node10.json` on the
 workstation (never in git).
