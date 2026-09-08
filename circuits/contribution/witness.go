@@ -6,7 +6,6 @@ import (
 
 	ccommon "github.com/vocdoni/davinci-dkg/circuits/common"
 	"github.com/vocdoni/davinci-dkg/crypto/group"
-	dkghash "github.com/vocdoni/davinci-dkg/crypto/hash"
 	"github.com/vocdoni/davinci-dkg/crypto/shareenc"
 	"github.com/vocdoni/davinci-dkg/internal/protocol"
 	"github.com/vocdoni/davinci-dkg/types"
@@ -47,7 +46,6 @@ func BuildWitness(a Assignment) (*ContributionCircuit, *PublicInputs, error) {
 	threshold := big.NewInt(int64(a.Threshold))
 	committeeSize := big.NewInt(int64(a.CommitteeSize))
 	contributorIndex := big.NewInt(int64(a.ContributorIndex))
-	subgroupOrder := group.ScalarField()
 	n := int(a.CommitteeSize)
 
 	recipientIndexes, err := ccommon.PadBigInts(ccommon.Uint16sToBigInts(a.RecipientIndexes), MaxRecipients)
@@ -70,7 +68,9 @@ func BuildWitness(a Assignment) (*ContributionCircuit, *PublicInputs, error) {
 	// Per pool key: the padded coefficient vector, its Feldman commitments
 	// (identity beyond the threshold) and the share of every recipient.
 	coefficients := make([][]*big.Int, MaxKeys)
+	constantTerms := make([]*big.Int, MaxKeys)
 	commitments := make([][]types.CurvePoint, MaxKeys)
+	preimages := make([][]types.CurvePoint, MaxKeys)
 	paddedCommitments := make([][]types.CurvePoint, MaxKeys)
 	shares := newScalarGrid()
 	for j := range MaxKeys {
@@ -88,6 +88,20 @@ func BuildWitness(a Assignment) (*ContributionCircuit, *PublicInputs, error) {
 		if err != nil {
 			return nil, nil, fmt.Errorf("pad key %d commitments: %w", j, err)
 		}
+		// The constant term stays a witness; every higher commitment gets
+		// its cofactor preimage (identity beyond the threshold, whose
+		// masked commitment is the identity too).
+		constantTerms[j] = coefficients[j][0]
+		preimages[j] = make([]types.CurvePoint, MaxCoefficients-1)
+		for m := 1; m < MaxCoefficients; m++ {
+			preimages[j][m-1] = ccommon.IdentityCurvePoint()
+			if m < len(commitments[j]) {
+				preimages[j][m-1], err = ccommon.CofactorPreimageNative(commitments[j][m])
+				if err != nil {
+					return nil, nil, fmt.Errorf("key %d commitment %d preimage: %w", j, m, err)
+				}
+			}
+		}
 		for i := range a.RecipientIndexes {
 			share, evalErr := ccommon.EvaluatePolynomialNative(a.Coefficients[j], big.NewInt(int64(a.RecipientIndexes[i])))
 			if evalErr != nil {
@@ -102,23 +116,14 @@ func BuildWitness(a Assignment) (*ContributionCircuit, *PublicInputs, error) {
 		return nil, nil, err
 	}
 	maskedShares := newScalarGrid()
-	shareMasks := newScalarGrid()
-	maskQuotients := newScalarGrid()
-	maskedShareCarries := newScalarGrid()
 	encryptedShares := make([][]types.EncryptedShare, MaxKeys)
 	for j := range MaxKeys {
 		encryptedShares[j] = make([]types.EncryptedShare, 0, len(a.RecipientIndexes))
 	}
 	for i := range a.RecipientIndexes {
-		recipientPoint, decodeErr := group.Decode(paddedRecipientKeys[i])
-		if decodeErr != nil {
-			return nil, nil, fmt.Errorf("decode recipient key %d: %w", i, decodeErr)
-		}
 		// One ECDH secret per recipient, reused by every pool key; the key
-		// index is what keeps the MaxK masks derived from it independent.
-		sharedPoint := group.NewPoint()
-		sharedPoint.ScalarMult(recipientPoint, a.EncryptionNonces[i])
-		shared := group.Encode(sharedPoint)
+		// index is what keeps the MaxK masks derived from it independent
+		// (shareenc derives seed and masks exactly as the circuit does).
 		for j := range MaxKeys {
 			ciphertext, encryptErr := shareenc.EncryptShareWithNonceRoundHash(
 				a.RoundHash,
@@ -132,24 +137,8 @@ func BuildWitness(a Assignment) (*ContributionCircuit, *PublicInputs, error) {
 			if encryptErr != nil {
 				return nil, nil, fmt.Errorf("encrypt key %d share %d: %w", j, i, encryptErr)
 			}
-			shareMask := new(big.Int).Sub(ciphertext.MaskedShare, shares[j][i])
-			shareMask.Mod(shareMask, subgroupOrder)
-			rawMask, maskErr := rawShareMask(a.RoundHash, a.ContributorIndex, a.RecipientIndexes[i], uint8(j), shared)
-			if maskErr != nil {
-				return nil, nil, fmt.Errorf("derive key %d raw mask %d: %w", j, i, maskErr)
-			}
-			maskQuotient := new(big.Int).Sub(rawMask, shareMask)
-			maskQuotient.Div(maskQuotient, subgroupOrder)
-			carry := big.NewInt(0)
-			if new(big.Int).Add(shares[j][i], shareMask).Cmp(subgroupOrder) >= 0 {
-				carry.SetInt64(1)
-			}
-
 			ephemerals[i] = ciphertext.Ephemeral
 			maskedShares[j][i] = ciphertext.MaskedShare
-			shareMasks[j][i] = shareMask
-			maskQuotients[j][i] = maskQuotient
-			maskedShareCarries[j][i] = carry
 			encryptedShares[j] = append(encryptedShares[j], types.EncryptedShare{
 				Recipient:      a.RecipientKeys[i].Operator,
 				RecipientIndex: a.RecipientIndexes[i],
@@ -248,16 +237,16 @@ func BuildWitness(a Assignment) (*ContributionCircuit, *PublicInputs, error) {
 		witness.RecipientIndexes[i] = recipientIndexes[i]
 	}
 	for j := range MaxKeys {
+		witness.ConstantTerms[j] = constantTerms[j]
 		for m := range MaxCoefficients {
-			witness.Coefficients[j][m] = coefficients[j][m]
 			witness.Commitments[j][m] = ccommon.CircuitPoint(paddedCommitments[j][m])
+			if m > 0 {
+				witness.CommitmentPreimages[j][m-1] = ccommon.CircuitPoint(preimages[j][m-1])
+			}
 		}
 		for i := range MaxRecipients {
 			witness.Shares[j][i] = shares[j][i]
 			witness.MaskedShares[j][i] = maskedShares[j][i]
-			witness.MaskQuotients[j][i] = maskQuotients[j][i]
-			witness.ShareMasks[j][i] = shareMasks[j][i]
-			witness.MaskedShareCarries[j][i] = maskedShareCarries[j][i]
 		}
 	}
 	return witness, publicInputs, nil
@@ -350,31 +339,6 @@ func (p PublicInputs) BRLCCommitment(challenge *big.Int) (*big.Int, error) {
 		return nil, err
 	}
 	return ccommon.BRLCNative(challenge, scalars...)
-}
-
-// rawShareMask recomputes ccommon.ShareMaskHash natively, before the
-// subgroup-order reduction: the circuit takes the quotient of that reduction
-// as a witness and shareenc only ever returns the reduced mask.
-func rawShareMask(
-	roundHash *big.Int,
-	contributorIndex, recipientIndex uint16,
-	keyIndex uint8,
-	shared types.CurvePoint,
-) (*big.Int, error) {
-	meta, err := dkghash.HashFieldElements(
-		ccommon.ShareEncryptionDomain(),
-		roundHash,
-		new(big.Int).SetUint64((uint64(contributorIndex)<<16)|uint64(recipientIndex)),
-		new(big.Int).SetUint64(uint64(keyIndex)),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("hash mask metadata: %w", err)
-	}
-	rawMask, err := dkghash.HashFieldElements(meta, shared.X, shared.Y)
-	if err != nil {
-		return nil, fmt.Errorf("hash shared secret: %w", err)
-	}
-	return rawMask, nil
 }
 
 // newScalarGrid allocates a zeroed MaxKeys × MaxRecipients scalar grid.

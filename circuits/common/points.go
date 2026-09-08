@@ -8,7 +8,6 @@ import (
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/std/algebra/native/twistededwards"
 	format "github.com/vocdoni/gnark-crypto-primitives/ecc/format"
-	"github.com/vocdoni/gnark-crypto-primitives/elgamal"
 	circuitposeidon "github.com/vocdoni/gnark-crypto-primitives/hash/native/bn254/poseidon"
 
 	"github.com/vocdoni/davinci-dkg/crypto/group"
@@ -50,8 +49,11 @@ func CircuitPoints(points []types.CurvePoint, size int) ([]twistededwards.Point,
 	return out, nil
 }
 
+// FixedBaseMul returns [scalar]·G for a scalar below 2^254, decomposing it
+// with ToBinary. Callers that also range-check the scalar should use
+// CanonicalScalarBits + FixedBaseMulBits and decompose once.
 func FixedBaseMul(api frontend.API, scalar frontend.Variable) twistededwards.Point {
-	return elgamal.FixedBaseScalarMulBN254(api, scalar)
+	return FixedBaseMulBits(api, api.ToBinary(scalar, 254))
 }
 
 func AssertPointEqual(api frontend.API, left, right twistededwards.Point) {
@@ -104,21 +106,7 @@ func AssertPointOnCurve(api frontend.API, point twistededwards.Point) error {
 // the canonical binary expansion, the unified twisted-Edwards formulas are
 // complete, so the result is exactly [s]·P for any scalar s < 2^254.
 func ScalarMulVar(api frontend.API, point twistededwards.Point, scalar frontend.Variable) twistededwards.Point {
-	curve, err := twistededwards.NewEdCurve(api, ecc_tweds.BN254)
-	if err != nil {
-		panic(err)
-	}
-	bits := api.ToBinary(scalar, 254)
-	acc := IdentityPoint()
-	for i := len(bits) - 1; i >= 0; i-- {
-		acc = curve.Double(acc)
-		sum := curve.Add(acc, point)
-		acc = twistededwards.Point{
-			X: api.Select(bits[i], sum.X, acc.X),
-			Y: api.Select(bits[i], sum.Y, acc.Y),
-		}
-	}
-	return acc
+	return ScalarMulVarBits(api, point, api.ToBinary(scalar, 254))
 }
 
 // ScalarMulSmallScalar computes `scalar · point` for a scalar that the
@@ -153,6 +141,13 @@ func ScalarMulSmallScalar(
 	curve, err := twistededwards.NewEdCurve(api, ecc_tweds.BN254)
 	if err != nil {
 		panic(err)
+	}
+	// A compile-time constant scalar (finalize evaluates at the committee
+	// position, contribution now too) needs no decomposition or lookups:
+	// a fixed double-and-add chain over its bits costs at most 5 doublings
+	// and 5 additions for scalars up to 32.
+	if k, isConst := api.Compiler().ConstantValue(scalar); isConst {
+		return scalarMulConst(curve, point, k)
 	}
 	bits := api.ToBinary(scalar, nbBits)
 	// 1-bit fallback: degenerate to a single conditional select.
@@ -201,6 +196,22 @@ func ScalarMulSmallScalar(
 		// identity, so `added` already equals `res`. Skip the Select.
 		res.X = added.X
 		res.Y = added.Y
+	}
+	return res
+}
+
+// scalarMulConst computes [k]·point for a non-negative constant k with a
+// left-to-right binary double-and-add chain.
+func scalarMulConst(curve twistededwards.Curve, point twistededwards.Point, k *big.Int) twistededwards.Point {
+	if k.Sign() <= 0 {
+		return IdentityPoint()
+	}
+	res := point
+	for i := k.BitLen() - 2; i >= 0; i-- {
+		res = curve.Double(res)
+		if k.Bit(i) == 1 {
+			res = curve.Add(res, point)
+		}
 	}
 	return res
 }

@@ -94,6 +94,9 @@ func encryptShareWithRoundValue(
 	if nonce.Sign() == 0 {
 		return nil, fmt.Errorf("nonce must be non-zero")
 	}
+	if share == nil || share.Sign() < 0 || share.Cmp(group.ScalarField()) >= 0 {
+		return nil, fmt.Errorf("share must be a canonical scalar in [0, r)")
+	}
 
 	recipientPoint, err := group.Decode(types.CurvePoint{X: recipient.PubX, Y: recipient.PubY})
 	if err != nil {
@@ -111,8 +114,10 @@ func encryptShareWithRoundValue(
 		return nil, err
 	}
 
+	// One-time pad in the BN254 scalar field: the recipient subtracts the
+	// same mask mod p and gets the canonical share back exactly.
 	maskedShare := new(big.Int).Add(share, mask)
-	maskedShare.Mod(maskedShare, modulus)
+	maskedShare.Mod(maskedShare, group.BaseField())
 
 	return &Ciphertext{
 		Ephemeral:   group.Encode(ephemeral),
@@ -166,29 +171,45 @@ func DecryptShareRoundHash(
 	}
 
 	share := new(big.Int).Sub(ciphertext.MaskedShare, mask)
-	share.Mod(share, group.ScalarField())
+	share.Mod(share, group.BaseField())
+	if share.Cmp(group.ScalarField()) >= 0 {
+		return nil, fmt.Errorf("recovered share is not a canonical scalar")
+	}
 	return share, nil
 }
 
-// shareMask mirrors circuits/common.ShareMaskHash: keyIndex separates the
-// MaxK shares one contributor sends the same recipient under one ECDH secret.
-func shareMask(
-	roundHash *big.Int, contributorIndex, recipientIndex uint16, keyIndex uint8, shared types.CurvePoint,
-) (*big.Int, error) {
-	meta, err := dkghash.HashFieldElements(
+// ShareMaskSeed is the per-recipient KDF seed all MaxK masks of one (dealer,
+// recipient) pair expand from: Poseidon(domain, roundHash,
+// contributorIndex·2^16 + recipientIndex, S.x, S.y) over the ECDH secret S.
+// Mirrors circuits/common.ShareMaskSeed.
+func ShareMaskSeed(roundHash *big.Int, contributorIndex, recipientIndex uint16, shared types.CurvePoint) (*big.Int, error) {
+	return dkghash.HashFieldElements(
 		dkghash.DomainValue(dkghash.DomainShareEncryption),
 		roundHash,
 		new(big.Int).SetUint64((uint64(contributorIndex)<<16)|uint64(recipientIndex)),
-		new(big.Int).SetUint64(uint64(keyIndex)),
+		shared.X,
+		shared.Y,
 	)
-	if err != nil {
-		return nil, fmt.Errorf("hash metadata: %w", err)
-	}
+}
 
-	mask, err := dkghash.HashFieldElements(meta, shared.X, shared.Y)
+// ShareMask expands the seed for pool key keyIndex: Poseidon(seed, j). It is
+// a uniform element of the BN254 scalar field and is added to the share in
+// that field, so no reduction to the subgroup order is involved. Mirrors
+// circuits/common.ShareMask.
+func ShareMask(seed *big.Int, keyIndex uint8) (*big.Int, error) {
+	return dkghash.HashFieldElements(seed, new(big.Int).SetUint64(uint64(keyIndex)))
+}
+
+func shareMask(
+	roundHash *big.Int, contributorIndex, recipientIndex uint16, keyIndex uint8, shared types.CurvePoint,
+) (*big.Int, error) {
+	seed, err := ShareMaskSeed(roundHash, contributorIndex, recipientIndex, shared)
 	if err != nil {
-		return nil, fmt.Errorf("hash shared secret: %w", err)
+		return nil, fmt.Errorf("hash mask seed: %w", err)
 	}
-	mask.Mod(mask, group.ScalarField())
+	mask, err := ShareMask(seed, keyIndex)
+	if err != nil {
+		return nil, fmt.Errorf("expand mask: %w", err)
+	}
 	return mask, nil
 }

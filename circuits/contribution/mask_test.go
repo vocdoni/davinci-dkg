@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/consensys/gnark-crypto/ecc"
-	ecc_tweds "github.com/consensys/gnark-crypto/ecc/twistededwards"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/std/algebra/native/twistededwards"
 	"github.com/consensys/gnark/test"
@@ -16,193 +15,75 @@ import (
 	"github.com/vocdoni/davinci-dkg/types"
 )
 
+// shareMaskCircuit derives the ECDH secret, the seed and one mask exactly as
+// ContributionCircuit does and checks the masked share.
 type shareMaskCircuit struct {
 	RoundHash        frontend.Variable    `gnark:",public"`
 	ContributorIndex frontend.Variable    `gnark:",public"`
 	RecipientIndex   frontend.Variable    `gnark:",public"`
 	KeyIndex         frontend.Variable    `gnark:",public"`
 	RecipientPubKey  twistededwards.Point `gnark:",public"`
-	ExpectedMask     frontend.Variable    `gnark:",public"`
-
-	Nonce        frontend.Variable
-	MaskQuotient frontend.Variable
-}
-
-type sharedSecretCircuit struct {
-	RecipientPubKey twistededwards.Point `gnark:",public"`
-	ExpectedShared  twistededwards.Point `gnark:",public"`
+	MaskedShare      frontend.Variable    `gnark:",public"`
 
 	Nonce frontend.Variable
-}
-
-type directShareMaskCircuit struct {
-	RoundHash        frontend.Variable `gnark:",public"`
-	ContributorIndex frontend.Variable `gnark:",public"`
-	RecipientIndex   frontend.Variable `gnark:",public"`
-	KeyIndex         frontend.Variable `gnark:",public"`
-	SharedX          frontend.Variable `gnark:",public"`
-	SharedY          frontend.Variable `gnark:",public"`
-	ExpectedMask     frontend.Variable `gnark:",public"`
-
-	MaskQuotient frontend.Variable
+	Share frontend.Variable
 }
 
 func (c *shareMaskCircuit) Define(api frontend.API) error {
-	curve, err := twistededwards.NewEdCurve(api, ecc_tweds.BN254)
+	nonceBits := api.ToBinary(c.Nonce, 254)
+	shared := ccommon.ScalarMulVarBits(api, c.RecipientPubKey, nonceBits)
+	seed, err := ccommon.ShareMaskSeed(api, c.RoundHash, c.ContributorIndex, c.RecipientIndex, shared.X, shared.Y)
 	if err != nil {
 		return err
 	}
-	shared := curve.ScalarMul(c.RecipientPubKey, c.Nonce)
-	rawMask, err := ccommon.ShareMaskHash(
-		api,
-		c.RoundHash,
-		c.ContributorIndex,
-		c.RecipientIndex,
-		shared.X,
-		shared.Y,
-		c.KeyIndex,
-	)
+	mask, err := ccommon.ShareMask(api, seed, c.KeyIndex)
 	if err != nil {
 		return err
 	}
-	mask := ccommon.ReduceToSubgroupOrder(api, rawMask, c.MaskQuotient, c.ExpectedMask)
-	api.AssertIsEqual(c.ExpectedMask, mask)
+	api.AssertIsEqual(c.MaskedShare, api.Add(c.Share, mask))
 	return nil
 }
 
+// The circuit's masked share equals crypto/shareenc's ciphertext for the
+// same nonce, so the recipient's DecryptShare recovers the share.
 func TestShareMaskMatchesNative(t *testing.T) {
 	c := qt.New(t)
-
-	privateKey := big.NewInt(17)
-	publicPoint := group.NewPoint()
-	publicPoint.ScalarBaseMult(privateKey)
-	encodedKey := group.Encode(publicPoint)
-	nonce := big.NewInt(23)
-	share := big.NewInt(33)
-	roundHash := big.NewInt(12345)
-
-	// Every pool key index must reproduce its own mask under the same ECDH
-	// secret, so exercise the whole range rather than key 0 alone.
-	for keyIndex := range MaxKeys {
-		recipient := types.NodeKey{PubX: encodedKey.X, PubY: encodedKey.Y}
-		ciphertext, err := shareenc.EncryptShareWithNonceRoundHash(
-			roundHash, 1, 2, uint8(keyIndex), share, recipient, nonce,
-		)
-		c.Assert(err, qt.IsNil)
-
-		expectedMask := new(big.Int).Sub(ciphertext.MaskedShare, share)
-		expectedMask.Mod(expectedMask, group.ScalarField())
-		quotient := maskQuotient(t, roundHash, 1, 2, uint8(keyIndex), encodedKey, nonce, expectedMask)
-
-		witness := &shareMaskCircuit{
-			RoundHash:        roundHash,
-			ContributorIndex: big.NewInt(1),
-			RecipientIndex:   big.NewInt(2),
-			KeyIndex:         big.NewInt(int64(keyIndex)),
-			RecipientPubKey:  ccommon.CircuitPoint(types.CurvePoint{X: encodedKey.X, Y: encodedKey.Y}),
-			ExpectedMask:     expectedMask,
-			Nonce:            nonce,
-			MaskQuotient:     quotient,
-		}
-		assert := test.NewAssert(t)
-		assert.SolvingSucceeded(&shareMaskCircuit{}, witness, test.WithCurves(ecc.BN254))
-	}
-}
-
-func (c *directShareMaskCircuit) Define(api frontend.API) error {
-	rawMask, err := ccommon.ShareMaskHash(
-		api, c.RoundHash, c.ContributorIndex, c.RecipientIndex, c.SharedX, c.SharedY, c.KeyIndex,
-	)
-	if err != nil {
-		return err
-	}
-	mask := ccommon.ReduceToSubgroupOrder(api, rawMask, c.MaskQuotient, c.ExpectedMask)
-	api.AssertIsEqual(c.ExpectedMask, mask)
-	return nil
-}
-
-func (c *sharedSecretCircuit) Define(api frontend.API) error {
-	curve, err := twistededwards.NewEdCurve(api, ecc_tweds.BN254)
-	if err != nil {
-		return err
-	}
-	shared := curve.ScalarMul(c.RecipientPubKey, c.Nonce)
-	ccommon.AssertPointEqual(api, shared, c.ExpectedShared)
-	return nil
-}
-
-func TestSharedSecretMatchesNative(t *testing.T) {
-	privateKey := big.NewInt(17)
-	publicPoint := group.NewPoint()
-	publicPoint.ScalarBaseMult(privateKey)
-	encodedKey := group.Encode(publicPoint)
-	nonce := big.NewInt(23)
-
-	sharedPoint := group.NewPoint()
-	sharedPoint.ScalarMult(publicPoint, nonce)
-	expectedShared := group.Encode(sharedPoint)
-
-	witness := &sharedSecretCircuit{
-		RecipientPubKey: ccommon.CircuitPoint(types.CurvePoint{X: encodedKey.X, Y: encodedKey.Y}),
-		ExpectedShared:  ccommon.CircuitPoint(types.CurvePoint{X: expectedShared.X, Y: expectedShared.Y}),
-		Nonce:           nonce,
-	}
-	assert := test.NewAssert(t)
-	assert.SolvingSucceeded(&sharedSecretCircuit{}, witness, test.WithCurves(ecc.BN254))
-}
-
-func TestDirectShareMaskMatchesNative(t *testing.T) {
 	const keyIndex = MaxKeys - 1
-
 	privateKey := big.NewInt(17)
 	publicPoint := group.NewPoint()
 	publicPoint.ScalarBaseMult(privateKey)
+	encodedKey := group.Encode(publicPoint)
+	recipient := types.NodeKey{PubX: encodedKey.X, PubY: encodedKey.Y}
 	nonce := big.NewInt(23)
-	share := big.NewInt(33)
 	roundHash := big.NewInt(12345)
+	// A share close to r, so the native-field sum wraps past r without
+	// wrapping past p.
+	share := new(big.Int).Sub(group.ScalarField(), big.NewInt(5))
 
-	sharedPoint := group.NewPoint()
-	sharedPoint.ScalarMult(publicPoint, nonce)
-	sharedEncoded := group.Encode(sharedPoint)
-
-	recipient := types.NodeKey{PubX: group.Encode(publicPoint).X, PubY: group.Encode(publicPoint).Y}
 	ciphertext, err := shareenc.EncryptShareWithNonceRoundHash(roundHash, 1, 2, keyIndex, share, recipient, nonce)
-	qt.New(t).Assert(err, qt.IsNil)
-	expectedMask := new(big.Int).Sub(ciphertext.MaskedShare, share)
-	expectedMask.Mod(expectedMask, group.ScalarField())
-	quotient := maskQuotient(t, roundHash, 1, 2, keyIndex, group.Encode(publicPoint), nonce, expectedMask)
+	c.Assert(err, qt.IsNil)
+	recovered, err := shareenc.DecryptShareRoundHash(roundHash, 1, 2, keyIndex, *ciphertext, privateKey)
+	c.Assert(err, qt.IsNil)
+	c.Assert(recovered.Cmp(share), qt.Equals, 0)
 
-	assert := test.NewAssert(t)
-	assert.SolvingSucceeded(&directShareMaskCircuit{}, &directShareMaskCircuit{
+	witness := &shareMaskCircuit{
 		RoundHash:        roundHash,
 		ContributorIndex: big.NewInt(1),
 		RecipientIndex:   big.NewInt(2),
 		KeyIndex:         big.NewInt(keyIndex),
-		SharedX:          sharedEncoded.X,
-		SharedY:          sharedEncoded.Y,
-		ExpectedMask:     expectedMask,
-		MaskQuotient:     quotient,
-	}, test.WithCurves(ecc.BN254))
-}
+		RecipientPubKey:  ccommon.CircuitPoint(encodedKey),
+		MaskedShare:      ciphertext.MaskedShare,
+		Nonce:            nonce,
+		Share:            share,
+	}
+	assert := test.NewAssert(t)
+	assert.SolvingSucceeded(&shareMaskCircuit{}, witness, test.WithCurves(ecc.BN254))
 
-// maskQuotient recomputes the subgroup-order quotient the circuit takes as a
-// witness for one (contributor, recipient, key) mask.
-func maskQuotient(
-	t *testing.T,
-	roundHash *big.Int,
-	contributorIndex, recipientIndex uint16,
-	keyIndex uint8,
-	recipientKey types.CurvePoint,
-	nonce, reducedMask *big.Int,
-) *big.Int {
-	t.Helper()
-
-	recipientPoint, err := group.Decode(recipientKey)
-	qt.New(t).Assert(err, qt.IsNil)
-	sharedPoint := group.NewPoint()
-	sharedPoint.ScalarMult(recipientPoint, nonce)
-	rawMask, err := rawShareMask(roundHash, contributorIndex, recipientIndex, keyIndex, group.Encode(sharedPoint))
-	qt.New(t).Assert(err, qt.IsNil)
-	quotient := new(big.Int).Sub(rawMask, reducedMask)
-	return quotient.Div(quotient, group.ScalarField())
+	// Another key index or another share does not match.
+	wrongKey := *witness
+	wrongKey.KeyIndex = big.NewInt(keyIndex - 1)
+	assert.SolvingFailed(&shareMaskCircuit{}, &wrongKey, test.WithCurves(ecc.BN254))
+	wrongShare := *witness
+	wrongShare.Share = new(big.Int).Add(share, big.NewInt(1))
+	assert.SolvingFailed(&shareMaskCircuit{}, &wrongShare, test.WithCurves(ecc.BN254))
 }

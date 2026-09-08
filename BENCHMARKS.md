@@ -28,6 +28,32 @@ kept for comparison; `MaxN` must be a power of two (the share-commitment Merkle 
 
 ---
 
+## Current release (v5 circuits, 2026-09-08): constraint counts
+
+Same protocol shape as v4 (`MaxK = 16`, `MaxN = 32`, `MaxT = 32`, transcripts
+and public inputs unchanged) with the reductions of
+[`docs/constraint-reduction-study.md`](docs/constraint-reduction-study.md):
+higher coefficient commitments certified in the prime subgroup instead of
+proven as `a·G`, constant recipient indexes, a 2-bit bilinear fixed-base
+gadget, one bit decomposition per scalar, native-field share masks with a
+per-recipient KDF seed, and constant addition chains in the Horner
+evaluations. Measured with `go run ./cmd/circuit-profile`.
+
+| Circuit | v4 | v5 | change |
+|---|---:|---:|---:|
+| Contribution | 5,904,167 | 1,689,543 | −71% |
+| Finalize | 2,328,130 | 2,228,434 | −4% |
+| PartialDecrypt | 29,026 | 26,179 | −10% |
+| DecryptCombine | 287,338 | 255,072 | −11% |
+
+Gas is unchanged: the proof shape and the public-input counts are the same,
+and Groth16 verification does not depend on circuit size. What follows the
+constraint count is the prover: the contribution proving key is 243 MB (800 MB
+in v4; the whole `circuits-v5` release is about 1.1 GB against 1.7 GB), the
+contribution prove-and-verify test runs in 8.6 s including compilation, and
+`/usr/bin/time -v` around it reports a **2.3 GB** peak resident set (9.3 GB in
+v4). The finalize proving key stays at 436 MB.
+
 ## Current release (v4): batched finalization and compact contributions (MaxN = 32, MaxK = 16, gnark v0.16.3)
 
 Measured 2026-09-05 on the v4 build now on main and deployed on Sepolia: one proof-carrying `finalizeEpoch` activates

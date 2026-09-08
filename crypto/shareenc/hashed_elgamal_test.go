@@ -50,8 +50,25 @@ func TestDecryptShareRejectsWrongKey(t *testing.T) {
 	c.Assert(err, qt.IsNil)
 
 	share, err := DecryptShare("epoch-1", 1, 2, 0, *ciphertext, big.NewInt(19))
-	c.Assert(err, qt.IsNil)
-	c.Assert(share.Cmp(big.NewInt(33)) == 0, qt.IsFalse)
+	// A wrong key unmasks an unrelated field element: usually not even a
+	// canonical scalar, so decryption errors; when it happens to be one, it
+	// is not the share.
+	if err == nil {
+		c.Assert(share.Cmp(big.NewInt(33)) == 0, qt.IsFalse)
+	}
+}
+
+func TestEncryptShareRejectsNonCanonicalShare(t *testing.T) {
+	c := qt.New(t)
+	privateKey := big.NewInt(17)
+	publicPoint := group.NewPoint()
+	publicPoint.ScalarBaseMult(privateKey)
+	encodedKey := group.Encode(publicPoint)
+	recipient := types.NodeKey{PubX: encodedKey.X, PubY: encodedKey.Y}
+	_, err := EncryptShare("epoch-1", 1, 2, 0, group.ScalarField(), recipient)
+	c.Assert(err, qt.IsNotNil)
+	_, err = EncryptShare("epoch-1", 1, 2, 0, big.NewInt(-1), recipient)
+	c.Assert(err, qt.IsNotNil)
 }
 
 func TestEncryptShareWithNonce(t *testing.T) {

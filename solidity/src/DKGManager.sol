@@ -13,6 +13,7 @@ import {DKGTypes} from "./libraries/DKGTypes.sol";
 import {PhaseLib} from "./libraries/PhaseLib.sol";
 import {
     MAX_N,
+    MAX_T,
     MAX_K,
     MERKLE_DEPTH,
     MERKLE_EMPTY_LEAF,
@@ -329,7 +330,7 @@ contract DKGManager is IDKGManager {
 
         if (
             threshold == 0 || committeeSize == 0 || threshold > committeeSize
-                || committeeSize > MAX_N
+                || committeeSize > MAX_N || threshold > MAX_T
                 || minValidContributions == 0 || minValidContributions > committeeSize
                 || minValidContributions < threshold
                 || lotteryAlphaBps < 10000

@@ -75,6 +75,9 @@ func (p EpochPolicyConfig) validate() error {
 	if p.CommitteeSize > ccommon.MaxN {
 		return fmt.Errorf("committee size %d exceeds the circuit cap MaxN=%d", p.CommitteeSize, ccommon.MaxN)
 	}
+	if p.Threshold > ccommon.MaxT {
+		return fmt.Errorf("threshold %d exceeds the circuit cap MaxT=%d", p.Threshold, ccommon.MaxT)
+	}
 	if p.MinValidContributions < p.Threshold {
 		return fmt.Errorf("min valid contributions %d must be at least the threshold %d", p.MinValidContributions, p.Threshold)
 	}

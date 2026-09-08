@@ -9,6 +9,8 @@ import (
 	"github.com/consensys/gnark/test"
 	qt "github.com/frankban/quicktest"
 	dkghash "github.com/vocdoni/davinci-dkg/crypto/hash"
+	"github.com/vocdoni/davinci-dkg/crypto/shareenc"
+	"github.com/vocdoni/davinci-dkg/types"
 )
 
 type hashFieldElementsCircuit struct {
@@ -18,29 +20,12 @@ type hashFieldElementsCircuit struct {
 	Expected frontend.Variable `gnark:",public"`
 }
 
-type shareMaskMetaCircuit struct {
-	RoundHash        frontend.Variable `gnark:",public"`
-	ContributorIndex frontend.Variable `gnark:",public"`
-	RecipientIndex   frontend.Variable `gnark:",public"`
-	Expected         frontend.Variable `gnark:",public"`
-}
-
 func (c *hashFieldElementsCircuit) Define(api frontend.API) error {
-	got, err := HashFieldElements(api, c.A, c.B, c.C)
+	h, err := HashFieldElements(api, c.A, c.B, c.C)
 	if err != nil {
 		return err
 	}
-	api.AssertIsEqual(c.Expected, got)
-	return nil
-}
-
-func (c *shareMaskMetaCircuit) Define(api frontend.API) error {
-	packedIndexes := api.Add(api.Mul(c.ContributorIndex, recipientIndexShift), c.RecipientIndex)
-	meta, err := HashFieldElements(api, ShareEncryptionDomain(), c.RoundHash, packedIndexes)
-	if err != nil {
-		return err
-	}
-	api.AssertIsEqual(c.Expected, meta)
+	api.AssertIsEqual(c.Expected, h)
 	return nil
 }
 
@@ -59,56 +44,56 @@ func TestHashFieldElementsMatchesNative(t *testing.T) {
 	}, test.WithCurves(ecc.BN254))
 }
 
-func TestShareMaskTranscriptTuplesMatchNative(t *testing.T) {
-	c := qt.New(t)
-
-	roundHash := big.NewInt(12345)
-	packed := new(big.Int).SetUint64((1 << 16) | 2)
-	meta, err := dkghash.HashFieldElements(ShareEncryptionDomain(), roundHash, packed)
-	c.Assert(err, qt.IsNil)
-	expected, err := dkghash.HashFieldElements(meta, big.NewInt(17), big.NewInt(19))
-	c.Assert(err, qt.IsNil)
-
-	assert := test.NewAssert(t)
-	assert.SolvingSucceeded(&hashFieldElementsCircuit{}, &hashFieldElementsCircuit{
-		A:        meta,
-		B:        big.NewInt(17),
-		C:        big.NewInt(19),
-		Expected: expected,
-	}, test.WithCurves(ecc.BN254))
+type shareMaskCircuit struct {
+	RoundHash        frontend.Variable `gnark:",public"`
+	ContributorIndex frontend.Variable `gnark:",public"`
+	RecipientIndex   frontend.Variable `gnark:",public"`
+	SharedX          frontend.Variable `gnark:",public"`
+	SharedY          frontend.Variable `gnark:",public"`
+	KeyIndex         frontend.Variable `gnark:",public"`
+	ExpectedSeed     frontend.Variable `gnark:",public"`
+	ExpectedMask     frontend.Variable `gnark:",public"`
 }
 
-func TestShareMaskSharedPointHashMatchesNative(t *testing.T) {
-	c := qt.New(t)
+func (c *shareMaskCircuit) Define(api frontend.API) error {
+	seed, err := ShareMaskSeed(api, c.RoundHash, c.ContributorIndex, c.RecipientIndex, c.SharedX, c.SharedY)
+	if err != nil {
+		return err
+	}
+	api.AssertIsEqual(c.ExpectedSeed, seed)
+	mask, err := ShareMask(api, seed, c.KeyIndex)
+	if err != nil {
+		return err
+	}
+	api.AssertIsEqual(c.ExpectedMask, mask)
+	return nil
+}
 
-	meta, err := dkghash.HashFieldElements(ShareEncryptionDomain(), big.NewInt(12345), new(big.Int).SetUint64((1<<16)|2))
-	c.Assert(err, qt.IsNil)
+// The in-circuit seed and mask must equal crypto/shareenc's, which is what
+// the recipient uses to unmask its share.
+func TestShareMaskMatchesNative(t *testing.T) {
+	c := qt.New(t)
+	roundHash := big.NewInt(12345)
 	sharedX, _ := new(big.Int).SetString("10815461618510795226726276893454730046020450225029756020987856892208744569026", 10)
 	sharedY, _ := new(big.Int).SetString("160151196236506387551997808635915570015226215386948734197202744433655535177", 10)
-	expected, err := dkghash.HashFieldElements(meta, sharedX, sharedY)
+	shared := types.CurvePoint{X: sharedX, Y: sharedY}
+	seed, err := shareenc.ShareMaskSeed(roundHash, 1, 2, shared)
 	c.Assert(err, qt.IsNil)
+	mask, err := shareenc.ShareMask(seed, MaxK-1)
+	c.Assert(err, qt.IsNil)
+	other, err := shareenc.ShareMask(seed, 0)
+	c.Assert(err, qt.IsNil)
+	c.Assert(mask.Cmp(other), qt.Not(qt.Equals), 0, qt.Commentf("the key index separates the masks"))
 
 	assert := test.NewAssert(t)
-	assert.SolvingSucceeded(&hashFieldElementsCircuit{}, &hashFieldElementsCircuit{
-		A:        meta,
-		B:        sharedX,
-		C:        sharedY,
-		Expected: expected,
-	}, test.WithCurves(ecc.BN254))
-}
-
-func TestShareMaskMetaMatchesNative(t *testing.T) {
-	c := qt.New(t)
-
-	roundHash := big.NewInt(12345)
-	meta, err := dkghash.HashFieldElements(ShareEncryptionDomain(), roundHash, new(big.Int).SetUint64((1<<16)|2))
-	c.Assert(err, qt.IsNil)
-
-	assert := test.NewAssert(t)
-	assert.SolvingSucceeded(&shareMaskMetaCircuit{}, &shareMaskMetaCircuit{
+	assert.SolvingSucceeded(&shareMaskCircuit{}, &shareMaskCircuit{
 		RoundHash:        roundHash,
 		ContributorIndex: big.NewInt(1),
 		RecipientIndex:   big.NewInt(2),
-		Expected:         meta,
+		SharedX:          sharedX,
+		SharedY:          sharedY,
+		KeyIndex:         big.NewInt(MaxK - 1),
+		ExpectedSeed:     seed,
+		ExpectedMask:     mask,
 	}, test.WithCurves(ecc.BN254))
 }

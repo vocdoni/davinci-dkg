@@ -1,6 +1,12 @@
 # Constraint reduction study (v4 circuits)
 
-Status: study, 2026-09-08, nothing implemented. Numbers are measured on `main`
+Status: the circuit-local set and the native-field masks (Route A with
+certificates, constant indexes, bilinear fixed-base, shared bits, KDF seeds,
+constant chains) are implemented on `main` as the v5 circuits: contribution
+1,689,543 constraints, finalize 2,228,434, partialdecrypt 26,179,
+decryptcombine 255,072. `MaxT` exists as a knob (`sizes.go`, `Sizes.sol`,
+enforced by `createEpoch`) and stays at 32 by decision. Written 2026-09-08 as
+a study; Numbers are measured on `main`
 (gnark v0.16.3, `MaxK = 16`, `MaxN = 32`) with `go run ./cmd/circuit-profile`
 and with micro-circuits compiled for each gadget; a second, independent
 source-level budget by the protocol-architect review agrees with them within 1%.

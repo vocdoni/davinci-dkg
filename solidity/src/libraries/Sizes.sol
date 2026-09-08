@@ -14,6 +14,14 @@ uint256 constant MAX_N = 32;
 ///      `finalizeEpoch`, and the pool cursor plus key indexes fit a `uint8`.
 uint256 constant MAX_K = 16;
 
+/// @dev Bound on the threshold `t`, i.e. on the number of coefficients of
+///      every dealt polynomial. Equal to `MAX_N` today; a deployment that
+///      lowers it (17 fits the default `t = n/2 + 1` policy at `n = 32` and
+///      takes the finalize circuit below 2^21 constraints) must rebuild the
+///      circuits with the same `MaxT`. `createEpoch` rejects `t > MAX_T` so
+///      no epoch can be created that the circuits cannot serve.
+uint256 constant MAX_T = 32;
+
 /// @dev Depth of the per-pool-key Merkle tree over the committee's share
 ///      commitments `D_i`. Must equal `log2(MAX_N)` (and
 ///      `circuits/common.MerkleDepth` on the Go side): the tree always has

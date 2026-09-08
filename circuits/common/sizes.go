@@ -10,6 +10,14 @@ package common
 // keys, the Solidity verifier wrappers, and the Go bindings).
 const MaxN = 32
 
+// MaxT bounds the threshold, i.e. the number of coefficients of every
+// dealt polynomial. It equals MaxN today (no policy is excluded); lowering
+// it to the thresholds a deployment actually uses shrinks the contribution
+// Horner chains and, above all, the finalize digests (17 takes finalize
+// below 2^21 constraints, see docs/constraint-reduction-study.md). Mirror of
+// `MAX_T` in `solidity/src/libraries/Sizes.sol`.
+const MaxT = MaxN
+
 // MaxK is the number of pool keys every epoch deals: each contribution
 // carries MaxK polynomials, finalization derives all MaxK keys at once and
 // each application claims one key. Mirror of `MAX_K` in

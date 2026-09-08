@@ -3,9 +3,7 @@ package common
 import (
 	"math/big"
 
-	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark/frontend"
-	"github.com/consensys/gnark/std/math/bits"
 	"github.com/vocdoni/davinci-dkg/crypto/group"
 	dkghash "github.com/vocdoni/davinci-dkg/crypto/hash"
 	nativeposeidon "github.com/vocdoni/davinci-node/crypto/hash/poseidon"
@@ -16,15 +14,6 @@ var (
 	recipientIndexShift   = big.NewInt(1 << 16)
 	subgroupOrder         = group.ScalarField()
 	subgroupOrderMinusOne = new(big.Int).Sub(new(big.Int).Set(subgroupOrder), big.NewInt(1))
-	// reduceQuotientMax = (p-1)/r = 7. The wider envelope p < 8r leaves a
-	// tiny gap δ := p - 7r at the top of the q=7 stratum where
-	// `value = 7r + remainder (mod p)` admits a second non-canonical
-	// decomposition. ReduceToSubgroupOrder closes that gap by also asserting
-	// `q==7 ⇒ remainder < δ`.
-	deltaMinusOne = new(big.Int).Sub(
-		new(big.Int).Sub(ecc.BN254.ScalarField(), new(big.Int).Mul(big.NewInt(7), subgroupOrder)),
-		big.NewInt(1),
-	)
 )
 
 // SubgroupOrderMinusOne returns r-1 as a *big.Int. Used by callers that need
@@ -54,50 +43,21 @@ func HashFieldElements(api frontend.API, inputs ...frontend.Variable) (frontend.
 	return circuitposeidon.MultiHash(api, inputs...)
 }
 
-// ShareMaskHash computes the raw hashed-ElGamal masking scalar before
-// subgroup-order reduction. keyIndex separates the MaxK shares one
-// contributor sends the same recipient under one ECDH secret; it mirrors
-// crypto/shareenc.shareMask.
-func ShareMaskHash(
+// ShareMaskSeed derives the per-recipient KDF seed that all MaxK share masks
+// of one (dealer, recipient) pair expand from: H(domain, roundHash,
+// contributorIndex·2^16 + recipientIndex, S.x, S.y) over the ECDH secret S.
+// Mirrors crypto/shareenc.ShareMaskSeed.
+func ShareMaskSeed(
 	api frontend.API,
-	roundHash, contributorIndex, recipientIndex, sharedX, sharedY, keyIndex frontend.Variable,
+	roundHash, contributorIndex, recipientIndex, sharedX, sharedY frontend.Variable,
 ) (frontend.Variable, error) {
 	packedIndexes := api.Add(api.Mul(contributorIndex, recipientIndexShift), recipientIndex)
-	meta, err := HashFieldElements(api, ShareEncryptionDomain(), roundHash, packedIndexes, keyIndex)
-	if err != nil {
-		return 0, err
-	}
-	return HashFieldElements(api, meta, sharedX, sharedY)
+	return HashFieldElements(api, ShareEncryptionDomain(), roundHash, packedIndexes, sharedX, sharedY)
 }
 
-// ReduceToSubgroupOrder proves value = quotient*subgroupOrder + remainder with
-// remainder in [0, subgroupOrder-1] and quotient in [0, 7].
-//
-// Because p = 7·r + δ with 0 < δ < r, the inner equality `value = q·r + r'`
-// is taken modulo p, and a single rawMask in [0, 8r − p) admits two
-// q-decompositions. To force the *unique* canonical decomposition we add the
-// auxiliary constraint `q == 7  ⇒  remainder < δ`, which together with
-// `q ≤ 7` and `remainder < r` makes `q·r + remainder < p` over the integers.
-func ReduceToSubgroupOrder(
-	api frontend.API,
-	value, quotient, remainder frontend.Variable,
-) frontend.Variable {
-	_ = bits.ToBinary(api, quotient, bits.WithNbDigits(3))
-	api.AssertIsLessOrEqual(remainder, subgroupOrderMinusOne)
-	api.AssertIsEqual(value, api.Add(remainder, api.Mul(quotient, subgroupOrder)))
-	isSeven := api.IsZero(api.Sub(quotient, 7))
-	api.AssertIsLessOrEqual(api.Mul(isSeven, remainder), deltaMinusOne)
-	return remainder
-}
-
-// AddModSubgroupOrder proves left + right = carry*subgroupOrder + remainder
-// with carry in {0,1} and remainder in [0, subgroupOrder-1].
-func AddModSubgroupOrder(
-	api frontend.API,
-	left, right, carry, remainder frontend.Variable,
-) frontend.Variable {
-	api.AssertIsBoolean(carry)
-	api.AssertIsLessOrEqual(remainder, subgroupOrderMinusOne)
-	api.AssertIsEqual(api.Add(left, right), api.Add(remainder, api.Mul(carry, subgroupOrder)))
-	return remainder
+// ShareMask expands a recipient's seed for pool key keyIndex: H(seed, j).
+// The mask is used as is, a uniform element of F_p added to the share in the
+// native field. Mirrors crypto/shareenc.ShareMask.
+func ShareMask(api frontend.API, seed, keyIndex frontend.Variable) (frontend.Variable, error) {
+	return HashFieldElements(api, seed, keyIndex)
 }

@@ -6,20 +6,30 @@ import (
 	ccommon "github.com/vocdoni/davinci-dkg/circuits/common"
 )
 
-// MaxCoefficients/MaxRecipients are aliases of the single shared constant
-// `circuits/common.MaxN`; MaxKeys is `circuits/common.MaxK`, the number of
+// MaxCoefficients is `circuits/common.MaxT`, MaxRecipients is
+// `circuits/common.MaxN` and MaxKeys is `circuits/common.MaxK`, the number of
 // pool keys every epoch deals. Edit `circuits/common/sizes.go` to change them.
 const (
-	MaxCoefficients = ccommon.MaxN
+	MaxCoefficients = ccommon.MaxT
 	MaxRecipients   = ccommon.MaxN
 	MaxKeys         = ccommon.MaxK
 )
 
 // ContributionCircuit proves the DKG dealing statement for the whole pool at
-// once: MaxK independent polynomials, their coefficient commitments, Feldman
-// consistency of every share, and hashed share encryption under one ECDH
-// secret per recipient — the key index separates the MaxK masks derived from
-// that single secret.
+// once: MaxK polynomials of degree below t, given by their coefficient
+// commitments, Feldman consistency of every recipient's share with them, and
+// hashed share encryption under one ECDH secret per recipient with the key
+// index separating the MaxK masks derived from it.
+//
+// Only the constant term of each polynomial is a witness: its commitment
+// C_{j,0} = a_{j,0}·G pins the pool-key contribution to the prime subgroup.
+// The higher coefficients are not needed — any t of the n ≥ t consistent
+// shares proven below interpolate the polynomial, so knowledge of the shares
+// is knowledge of the coefficients — but their commitments must lie in the
+// prime subgroup for that argument to speak about discrete logarithms (a
+// cofactor component in C_1 and C_2 that cancels at every integer position
+// would otherwise pass every Feldman check), so each one comes with a
+// cofactor preimage: a point Q with 8·Q = C. See docs/pool-keys.md.
 type ContributionCircuit struct {
 	RoundHash            frontend.Variable `gnark:",public"`
 	Threshold            frontend.Variable `gnark:",public"`
@@ -35,13 +45,11 @@ type ContributionCircuit struct {
 	Ephemerals       [MaxRecipients]twistededwards.Point
 	MaskedShares     [MaxKeys][MaxRecipients]frontend.Variable
 
-	Coefficients       [MaxKeys][MaxCoefficients]frontend.Variable
-	EncryptionNonces   [MaxRecipients]frontend.Variable
-	RecipientIndexes   [MaxRecipients]frontend.Variable
-	Shares             [MaxKeys][MaxRecipients]frontend.Variable
-	MaskQuotients      [MaxKeys][MaxRecipients]frontend.Variable
-	ShareMasks         [MaxKeys][MaxRecipients]frontend.Variable
-	MaskedShareCarries [MaxKeys][MaxRecipients]frontend.Variable
+	ConstantTerms       [MaxKeys]frontend.Variable
+	CommitmentPreimages [MaxKeys][MaxCoefficients - 1]twistededwards.Point
+	EncryptionNonces    [MaxRecipients]frontend.Variable
+	RecipientIndexes    [MaxRecipients]frontend.Variable
+	Shares              [MaxKeys][MaxRecipients]frontend.Variable
 }
 
 func (c *ContributionCircuit) Define(api frontend.API) error {
@@ -49,7 +57,7 @@ func (c *ContributionCircuit) Define(api frontend.API) error {
 	// PrefixMask returns all-active when count > size, so
 	// without these the statement could prove a partial set while
 	// claiming a larger one.
-	// 1 ≤ t ≤ n ≤ MaxN and 1 ≤ contributorIndex ≤ n (docs/pool-keys-v4.md
+	// 1 ≤ t ≤ n ≤ MaxN and 1 ≤ contributorIndex ≤ n (docs/pool-keys.md
 	// §3). The compact transcript length is a function of t and n, so the
 	// zero cases are excluded here and not left to the contract alone.
 	api.AssertIsDifferent(c.Threshold, 0)
@@ -61,13 +69,11 @@ func (c *ContributionCircuit) Define(api frontend.API) error {
 
 	coeffMask := ccommon.PrefixMask(api, c.Threshold, MaxCoefficients)
 	recipientMask := ccommon.PrefixMask(api, c.CommitteeSize, MaxRecipients)
-	subgroupOrderMinusOne := ccommon.SubgroupOrderMinusOne()
 
-	// Pre-mask each key's coefficients and commitment points once, so that the
-	// per-recipient CommitmentPolynomialValue calls below can iterate without
-	// repeating per-coefficient Select work. Inactive slots are folded to 0
-	// (scalars) and the curve identity (0, 1) (points), which makes a
-	// subsequent unconditional Add a no-op.
+	// Commitments, masked to the identity beyond the threshold so the
+	// per-recipient Horner evaluations below need no per-coefficient select.
+	// Slot 0 is proven as a·G from the canonical constant term; every other
+	// slot carries a cofactor preimage certifying its subgroup membership.
 	var maskedCommitments [MaxKeys][MaxCoefficients]twistededwards.Point
 	keyDigests := make([]frontend.Variable, MaxKeys)
 	var err error
@@ -76,21 +82,16 @@ func (c *ContributionCircuit) Define(api frontend.API) error {
 			if err := ccommon.AssertPointOnCurve(api, c.Commitments[j][m]); err != nil {
 				return err
 			}
-			// Range-check the coefficient witness to its canonical [0, r) form.
-			// FixedBaseMul itself wraps mod r, so the constraint is defence in
-			// depth against future composition.
-			api.AssertIsLessOrEqual(c.Coefficients[j][m], subgroupOrderMinusOne)
-			expectedCommitment := ccommon.FixedBaseMul(api, c.Coefficients[j][m])
-			// Conditional equality: when coeffMask[m] == 1 the witness commitment
-			// must equal the FixedBaseMul of the witness coefficient; otherwise the
-			// constraint is trivially satisfied. Replaces 4 Selects + 2 Asserts
-			// (~6 constraints) with 2 Muls + 2 Asserts (~4 constraints).
-			dCommitX := api.Sub(c.Commitments[j][m].X, expectedCommitment.X)
-			dCommitY := api.Sub(c.Commitments[j][m].Y, expectedCommitment.Y)
-			api.AssertIsEqual(api.Mul(coeffMask[m], dCommitX), 0)
-			api.AssertIsEqual(api.Mul(coeffMask[m], dCommitY), 0)
-
 			maskedCommitments[j][m] = ccommon.MaskPoint(api, coeffMask[m], c.Commitments[j][m])
+			if m == 0 {
+				// t ≥ 1, so slot 0 is always active.
+				bs := ccommon.CanonicalScalarBits(api, c.ConstantTerms[j])
+				ccommon.AssertPointEqual(api, c.Commitments[j][0], ccommon.FixedBaseMulBits(api, bs))
+				continue
+			}
+			if err := ccommon.AssertCofactorPreimage(api, c.CommitmentPreimages[j][m-1], maskedCommitments[j][m]); err != nil {
+				return err
+			}
 		}
 		keyDigests[j], err = ccommon.CommitmentKeyDigest(api, maskedCommitments[j][:])
 		if err != nil {
@@ -112,89 +113,68 @@ func (c *ContributionCircuit) Define(api frontend.API) error {
 		if err := ccommon.AssertPointOnCurve(api, c.RecipientPubKeys[i]); err != nil {
 			return err
 		}
-		// Ephemerals[i] doesn't need an explicit on-curve check: when
-		// recipientMask[i] == 1 the conditional equality below forces it
-		// to equal `expectedEphemeral = FixedBaseMul(EncryptionNonces[i])`
-		// which is on-curve by construction. When inactive the value is
-		// masked out of the share-hash and transcript and the sharedSecret
-		// scalar mul on RecipientPubKeys[i] is the only consumer left.
+		// Slot i of the committee snapshot is member i+1: the contract checks
+		// the transcript's index words against the snapshot, and the circuit
+		// pins the witness index to the same constant, so Horner below can
+		// evaluate at a constant and the transcript keeps its index words.
+		position := i + 1
+		api.AssertIsEqual(api.Mul(recipientMask[i], api.Sub(c.RecipientIndexes[i], position)), 0)
 
-		// Range-check the recipient index to ≤ MaxRecipients (one-based;
-		// the contract enforces non-zero). CommitmentPolynomialValue also
-		// bounds it to IndexBits bits for its short scalar multiplications.
-		api.AssertIsLessOrEqual(c.RecipientIndexes[i], MaxRecipients)
-
-		expectedEphemeral := ccommon.FixedBaseMul(api, c.EncryptionNonces[i])
-		// Conditional equality on the ephemeral consistency check.
-		dEphX := api.Sub(c.Ephemerals[i].X, expectedEphemeral.X)
-		dEphY := api.Sub(c.Ephemerals[i].Y, expectedEphemeral.Y)
-		api.AssertIsEqual(api.Mul(recipientMask[i], dEphX), 0)
-		api.AssertIsEqual(api.Mul(recipientMask[i], dEphY), 0)
-
+		// One decomposition of the nonce serves both R_i = r_i·G and the
+		// ECDH secret r_i·PK_i. Ephemerals[i] needs no on-curve check: when
+		// active it must equal the fixed-base product, on-curve by
+		// construction; when inactive it is masked out of every digest and
+		// the transcript.
+		nonceBits := api.ToBinary(c.EncryptionNonces[i], 254)
+		expectedEphemeral := ccommon.FixedBaseMulBits(api, nonceBits)
+		api.AssertIsEqual(api.Mul(recipientMask[i], api.Sub(c.Ephemerals[i].X, expectedEphemeral.X)), 0)
+		api.AssertIsEqual(api.Mul(recipientMask[i], api.Sub(c.Ephemerals[i].Y, expectedEphemeral.Y)), 0)
 		// One ECDH secret per recipient, shared by all MaxK keys: the whole
 		// point of dealing the pool in one proof. The key index enters the
-		// mask hash below so the MaxK masks derived from it stay independent
-		// — reusing one mask would be a one-time-pad reuse across keys.
-		sharedSecret := ccommon.ScalarMulVar(api, c.RecipientPubKeys[i], c.EncryptionNonces[i])
+		// mask expansion below so the MaxK masks stay independent — reusing
+		// one mask would be a one-time-pad reuse across keys.
+		sharedSecret := ccommon.ScalarMulVarBits(api, c.RecipientPubKeys[i], nonceBits)
+		seed, err := ccommon.ShareMaskSeed(api, c.RoundHash, c.ContributorIndex, position, sharedSecret.X, sharedSecret.Y)
+		if err != nil {
+			return err
+		}
 
 		// Every transcript word must be fixed by a digest before the BRLC
 		// challenge exists (the contract derives ρ from the digests and the
 		// calldata), so the share digest also absorbs the recipient keys and
 		// every vector is masked to constants in inactive slots.
-		maskedIndexes[i] = api.Select(recipientMask[i], c.RecipientIndexes[i], 0)
+		maskedIndexes[i] = api.Mul(recipientMask[i], position)
 		maskedKeys[i] = ccommon.MaskPoint(api, recipientMask[i], c.RecipientPubKeys[i])
 		maskedEphemerals[i] = ccommon.MaskPoint(api, recipientMask[i], c.Ephemerals[i])
 
 		rowShares := make([]frontend.Variable, MaxKeys)
 		for j := range MaxKeys {
-			// Shares[j][i] must lie in [0, r). Without this check
-			// the prover can pick s' = honest_share + 7·r (still <p when
-			// honest_share<δ) and have AddModSubgroupOrder publish a
-			// MaskedShare that decrypts to honest_share+(r−δ)≠honest_share.
-			// That breaks recipient-side Feldman and DoSes the epoch.
-			api.AssertIsLessOrEqual(c.Shares[j][i], subgroupOrderMinusOne)
-			activeShare := api.Select(recipientMask[i], c.Shares[j][i], 0)
-
-			feldmanPoint, err := ccommon.CommitmentPolynomialValue(api, maskedCommitments[j][:], c.RecipientIndexes[i])
+			// Shares[j][i] must be canonical, s < r: otherwise s' = s + k·r
+			// passes the Feldman check below (same point) and the recipient
+			// recovers a value it cannot use as its share, a DoS on the
+			// epoch. The same bits then drive the fixed-base product.
+			shareBits := ccommon.CanonicalScalarBits(api, c.Shares[j][i])
+			sharePoint := ccommon.FixedBaseMulBits(api, shareBits)
+			feldmanPoint, err := ccommon.CommitmentPolynomialValue(api, maskedCommitments[j][:], position)
 			if err != nil {
 				return err
 			}
-			sharePoint := ccommon.FixedBaseMul(api, activeShare)
-			// Conditional equality on the Feldman consistency check.
-			dFeldX := api.Sub(sharePoint.X, feldmanPoint.X)
-			dFeldY := api.Sub(sharePoint.Y, feldmanPoint.Y)
-			api.AssertIsEqual(api.Mul(recipientMask[i], dFeldX), 0)
-			api.AssertIsEqual(api.Mul(recipientMask[i], dFeldY), 0)
+			api.AssertIsEqual(api.Mul(recipientMask[i], api.Sub(sharePoint.X, feldmanPoint.X)), 0)
+			api.AssertIsEqual(api.Mul(recipientMask[i], api.Sub(sharePoint.Y, feldmanPoint.Y)), 0)
 
-			rawMask, err := ccommon.ShareMaskHash(
-				api,
-				c.RoundHash,
-				c.ContributorIndex,
-				c.RecipientIndexes[i],
-				sharedSecret.X,
-				sharedSecret.Y,
-				j,
-			)
+			// Hashed ElGamal in the native field: the mask is a Poseidon
+			// output, uniform in F_p, so masked = s + mask (mod p) is a
+			// one-time pad and the recipient recovers exactly the canonical
+			// s. Inactive slots publish 0.
+			mask, err := ccommon.ShareMask(api, seed, j)
 			if err != nil {
 				return err
 			}
-			mask := ccommon.ReduceToSubgroupOrder(
-				api,
-				api.Select(recipientMask[i], rawMask, 0),
-				api.Select(recipientMask[i], c.MaskQuotients[j][i], 0),
-				api.Select(recipientMask[i], c.ShareMasks[j][i], 0),
+			api.AssertIsEqual(
+				api.Mul(recipientMask[i], api.Sub(c.MaskedShares[j][i], api.Add(c.Shares[j][i], mask))), 0,
 			)
-			activeMaskedShare := api.Select(recipientMask[i], c.MaskedShares[j][i], 0)
-			// AddModSubgroupOrder pins activeMaskedShare to share + mask mod r.
-			ccommon.AddModSubgroupOrder(
-				api,
-				activeShare,
-				mask,
-				api.Select(recipientMask[i], c.MaskedShareCarries[j][i], 0),
-				activeMaskedShare,
-			)
-			maskedShares[j][i] = activeMaskedShare
-			rowShares[j] = activeMaskedShare
+			maskedShares[j][i] = api.Mul(recipientMask[i], c.MaskedShares[j][i])
+			rowShares[j] = maskedShares[j][i]
 		}
 		// One Poseidon per recipient row, one over the row digests: the flat
 		// list would exceed the sponge's input cap at MaxK·MaxRecipients words.
@@ -215,8 +195,8 @@ func (c *ContributionCircuit) Define(api frontend.API) error {
 	}
 	api.AssertIsEqual(c.ShareHash, shareHash)
 
-	// Compact BRLC (docs/pool-keys-v4.md §4): the same fixed-size region
-	// order as before, but every word is gated by the public counts — a
+	// Compact BRLC (docs/pool-keys.md §4): the same fixed-size region order
+	// as before, but every word is gated by the public counts — a
 	// commitment coordinate by [m < t], everything else by [i < n] — so an
 	// inactive slot neither contributes nor advances the exponent. The fold
 	// therefore equals the contract's canonical BRLC over the L_C calldata

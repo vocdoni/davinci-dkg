@@ -8,30 +8,30 @@ const (
 	// (see `make circuits-release`). DefaultArtifactsRelease is that release's tag.
 	DefaultArtifactsBaseURL = "https://github.com/vocdoni/davinci-dkg/releases/download"
 	// DefaultArtifactsRelease is the default remote artifact release channel.
-	DefaultArtifactsRelease = "circuits-v4"
+	DefaultArtifactsRelease = "circuits-v5"
 )
 
 var (
-	ContributionCircuitHash         = "ddc7238804648a9dcc58ad23357c2fbe7e3a677f5f1ae7f95d63be8ae7d26575"
-	ContributionProvingKeyHash      = "bff0af27903c29e2e759e5b9653430e743cd8d56d24a2a4556fad311ec650a6a"
-	ContributionVerificationKeyHash = "4433bd34f22742f6b76840a59c47816b9180fbfd3a040967cdca6a075bb887b9"
+	ContributionCircuitHash         = "67fc3d6c3e9abac0d019c2d0a27b15b9b70993ef699aae7935d7388eeab9b002"
+	ContributionProvingKeyHash      = "c7fa389cb59d476c6d89df8f1b45fb4094afefed299f0e486d0f5dbf93288345"
+	ContributionVerificationKeyHash = "c770faf0c5fe0700fc28601bd510394d3264aead45ceac44210049f90ba10277"
 
-	FinalizeCircuitHash         = "70da88c6564e25f618c023f02562e42de2198c196b4c977bc4b0254f1cd4cb23"
-	FinalizeProvingKeyHash      = "786fddb4f3190c1807ceb80865f0575c7f2f5ecf4ac1db52c890a37d280cea96"
-	FinalizeVerificationKeyHash = "bbeb7769feab6345c236dedf9ac3ba2a39a4b803456797543925bbf7d658862b"
+	FinalizeCircuitHash         = "30368e00297a19e07141802c50124527243340622ce11b529808d4154c5fff02"
+	FinalizeProvingKeyHash      = "cb4132e18b0a76184a7904a926546cf2fd02fa27fac833383b28796db10429c6"
+	FinalizeVerificationKeyHash = "65391b29e5f52b78931351bec8ad96442d5c915dd7808ede844ab68de5073c8a"
 
 	// Hashes regenerated in P6 after the P5 circuit changes (added Aid,
 	// CtIdx, Role public inputs to partialdecrypt; added Aid, CtIdx, Mode,
 	// S, DeltaOrg + mode-aware T branch to decryptcombine). These pk/vk
 	// hashes correspond to a DEV trusted setup; the production ceremony
 	// in S2 will regenerate fresh keys and bump these again.
-	PartialDecryptCircuitHash         = "7d7e54403dbde05297c09c40f1def8febaa38412d85248358aa4ab8b3d6dab00"
-	PartialDecryptProvingKeyHash      = "db96fe2f3ef7ecd40c137f819812bd892d6a29f4046dd7337524571dec8c1d9d"
-	PartialDecryptVerificationKeyHash = "6ed63ff4fa68e444811c14f0394b9b4c0ac3b9f9d2bfd08165fc61e79f743c7a"
+	PartialDecryptCircuitHash         = "503eca4896a825db777f9bb4e1beae8d27ede5cb923aaa4702ef451ec591ce8a"
+	PartialDecryptProvingKeyHash      = "0e827380dafca1282092a4afd188d67cbdaced28146a590e77a992415b05e94f"
+	PartialDecryptVerificationKeyHash = "ebfd45b83aec1c1e827db2daf81fc0aff902d309923b0bd8ff41a97c2dfac73f"
 
-	DecryptCombineCircuitHash         = "b1c67a2a1dbfab2ee84d451188e4faf26a9d02684ff4ca5c39557b3ff86db636"
-	DecryptCombineProvingKeyHash      = "580a117c037fe7ca3465d9e87421e09eec03f7f9dc5d4965369bedd4ec6fad10"
-	DecryptCombineVerificationKeyHash = "c493cfa7b8020299317c28f102d87969adc7cc6d2a698fbd72338cc3913c1aba"
+	DecryptCombineCircuitHash         = "c3d375b477c9ac80b27370ba6db64a00841372d50177d004d6fb504562db9243"
+	DecryptCombineProvingKeyHash      = "660a642c9798c925b8d3c838995e217089c48ef7bb4e26fa090c7b4bd805199a"
+	DecryptCombineVerificationKeyHash = "d2c499fc551c58d806fb3dc6fbf7dfb726e056037a992c6311f673092cf89a9b"
 
 	ContributionCircuitURL         = artifactURL(ContributionCircuitHash, "ccs")
 	ContributionProvingKeyURL      = artifactURL(ContributionProvingKeyHash, "pk")

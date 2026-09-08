@@ -360,9 +360,9 @@ What happens on first start:
 1. The node derives its BabyJubJub key from your operator EVM key and registers it in
    `DKGRegistry`. That is one transaction, skipped if you are already registered and active.
 2. Before its first proof it downloads the pinned circuit artifacts from the release built into
-   the binary — the [`circuits-v4`
-   release](https://github.com/vocdoni/davinci-dkg/releases/tag/circuits-v4), about 1.7 GB, of which
-   the contribution proving key is 762 MB and the finalization proving key 425 MB — and checks every
+   the binary — the [`circuits-v5`
+   release](https://github.com/vocdoni/davinci-dkg/releases/tag/circuits-v5), about 1.1 GB, of which
+   the contribution proving key is 243 MB and the finalization proving key 436 MB — and checks every
    file against the hashes built into the binary.
 3. It prints a startup banner with the chain head, registry statistics and its own `self:` row,
    then polls `DKGManager` and reacts to every phase it is eligible for.

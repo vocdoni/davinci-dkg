@@ -119,23 +119,48 @@ Require `1 ≤ t ≤ n ≤ N` and `1 ≤ contributorIndex ≤ n`. The contract b
 these values to epoch policy and sender membership. `K` is fixed by the
 circuit/verifier and contract release, not caller-selected.
 
-Private witness: `Coefficients[MaxK][MaxN]`, `Commitments[MaxK][MaxN]`,
-`RecipientIndexes[MaxN]`, `RecipientPubKeys[MaxN]`, `EncryptionNonces[MaxN]`,
-`Ephemerals[MaxN]`, `Shares[MaxK][MaxN]`, `MaskedShares[MaxK][MaxN]`,
-`MaskQuotients[MaxK][MaxN]`, `ShareMasks[MaxK][MaxN]`,
-`MaskedShareCarries[MaxK][MaxN]`.
+Private witness: `Commitments[MaxK][MaxT]`, `ConstantTerms[MaxK]`,
+`CommitmentPreimages[MaxK][MaxT−1]`, `RecipientIndexes[MaxN]`,
+`RecipientPubKeys[MaxN]`, `EncryptionNonces[MaxN]`, `Ephemerals[MaxN]`,
+`Shares[MaxK][MaxN]`, `MaskedShares[MaxK][MaxN]` (`MaxT = MaxN = 32` today,
+`sizes.go` / `Sizes.sol`; `createEpoch` rejects `t > MAX_T`).
 
-One ephemeral / ECDH secret per recipient, shared by all `MaxK` keys. Per key
-`j` and recipient `i`:
+Only the constant term `a_{j,0}` of each polynomial is a witness, range-checked
+to `[0, r)` and proven as the discrete logarithm of `C_{j,0}`, which pins the
+pool-key contribution to the prime subgroup. The higher coefficients are not:
+the Feldman checks below hold for every active recipient, `n ≥ t` of them at
+the committee positions `1..n`, and any `t` consistent shares interpolate the
+polynomial, so knowledge of the shares is knowledge of the coefficients. For
+that argument to speak about discrete logarithms every commitment must lie in
+the prime subgroup, which is what `CommitmentPreimages` certify: for `m ≥ 1`
+the circuit checks `Q_{j,m}` is on the curve and `8·Q_{j,m}` equals the
+(threshold-masked) commitment, three constrained doublings, the image of
+multiplication by the cofactor being exactly `⟨G⟩`. Without it the pair
+`C_1 + T, C_2 + T` with `T = (0, p−1)` of order two passes every Feldman check
+(`x·T + x²·T = x(x+1)·T = O`). An honest dealer sets `Q = [8⁻¹ mod r]·C`
+(`CofactorPreimageNative`) and the identity for inactive slots.
+
+Recipient slot `i` of the committee snapshot is member `i+1`; the circuit
+asserts `RecipientIndexes[i] = i+1` for active slots and evaluates the Feldman
+polynomial at that constant. Per active share it checks `s_{j,i} < r`,
+`s_{j,i}·G = Σ_{m<t} (i+1)^m C_{j,m}` and the encryption below.
+
+One ephemeral / ECDH secret per recipient, shared by all `MaxK` keys. Per
+recipient `i` and key `j` (`p` the BN254 scalar field, the circuit's native
+field):
 
 ```
-rawMask[j][i] = ShareMaskHash(eid, contributorIndex, recipientIndex_i, shared_i.x, shared_i.y, j)
+seed_i        = H(domain, eid, contributorIndex<<16 | recipientIndex_i, shared_i.x, shared_i.y)
+mask[j][i]    = H(seed_i, j)
+masked[j][i]  = s[j][i] + mask[j][i]  (mod p)
 ```
 
-`ShareMaskHash` gains the trailing key index as a Poseidon input of the meta
-hash: `meta = H(domain, eid, contributorIndex<<16 | recipientIndex, keyIndex)`,
-`raw = H(meta, shared.x, shared.y)`. `crypto/shareenc` mirrors it
-(`EncryptShare*` / `DecryptShare*` take `keyIndex uint8`).
+`domain = "davinci-dkg/share-encryption/v2"`. The mask is a Poseidon output,
+uniform in `F_p`, so the masked word is a one-time pad over `F_p`; the
+recipient computes `s = masked − mask (mod p)` and rejects `s ≥ r`
+(`crypto/shareenc` mirrors both hashes: `ShareMaskSeed`, `ShareMask`). The
+word is a canonical field element like every other transcript word. No
+reduction to `r` happens anywhere.
 
 Digests (Poseidon `MultiHash`, every input masked exactly as today):
 

@@ -27,10 +27,10 @@ const (
 
 // circuitSpecs describes each circuit: its pinned artifacts, a fresh instance
 // for compilation, and whether its runtime stays resident. Only the two small
-// decryption circuits do: the contribution and finalize proving keys (800 MB
-// and 446 MB on disk, 4.0 GB and about 2 GB decoded) are loaded for one proof
-// and dropped right after, so a node at rest holds a few hundred MB instead
-// of the 5 GB of keys v0.5 kept resident.
+// decryption circuits do: the contribution and finalize proving keys (243 MB
+// and 436 MB on disk, a few GB decoded) are loaded for one proof and dropped
+// right after, so a node at rest holds a few hundred MB instead of the 5 GB
+// of keys v0.5 kept resident.
 var circuitSpecs = [...]struct {
 	name      string
 	artifacts *circuits.CircuitArtifacts

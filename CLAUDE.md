@@ -82,9 +82,21 @@ Anything that touches encodings, hashes or constants has to be changed in all of
   `internal/protocol/protocol.go`; mirrors in `solidity/src/libraries/DKGProtocol.sol` and
   `sdk/src/protocol.ts`. `cmd/protocol-vectors` emits `tests/vectors/*.json` from the Go side; the SDK
   (`sdk/tests/vectors.test.ts`) and Foundry (`DKGProtocol.t.sol`) assert against them.
-- **Committee size cap `MaxN`, pool size `MaxK`, Merkle depth**: `circuits/common/sizes.go` and
-  `solidity/src/libraries/Sizes.sol` (`MAX_N=32`, `MAX_K=16`, `MERKLE_DEPTH=5=log2(MaxN)`; `MaxN` must be a power of two, so 16, 32 or 64), then
-  `make circuits`. See `docs/pool-keys.md` for the normative pool-key spec.
+- **Committee size cap `MaxN`, threshold cap `MaxT`, pool size `MaxK`, Merkle depth**:
+  `circuits/common/sizes.go` and `solidity/src/libraries/Sizes.sol` (`MAX_N=32`, `MAX_T=32`, `MAX_K=16`,
+  `MERKLE_DEPTH=5=log2(MaxN)`; `MaxN` must be a power of two, so 16, 32 or 64; `createEpoch` rejects
+  `t > MAX_T`), then `make circuits`. See `docs/pool-keys.md` for the normative pool-key spec.
+- **Contribution witness (v5 circuits)**: only the constant term of each polynomial is a witness
+  (`ConstantTerms`, proven as `C_{j,0} = a·G`); higher commitments carry a cofactor preimage
+  (`CommitmentPreimages`, `8·Q = C`, `ccommon.AssertCofactorPreimage`) so they are in the prime
+  subgroup and the per-share Feldman checks imply knowledge of the coefficients. Recipient slot `i`
+  is asserted to be member `i+1` and Horner runs at that constant. Shares are masked in the native
+  field, `masked = s + H(seed_i, j) mod p` with `seed_i = H(domain, eid, indexes, S_i)`
+  (`crypto/shareenc.ShareMaskSeed/ShareMask` mirror `ccommon.ShareMaskSeed/ShareMask`; domain
+  `davinci-dkg/share-encryption/v2`); no reduction mod `r` anywhere. Scalars go through
+  `ccommon.CanonicalScalarBits` once and feed `FixedBaseMulBits` (2-bit bilinear windows).
+  `go run ./cmd/circuit-profile <circuit>` + `go tool pprof -top /tmp/<circuit>.pprof` shows where
+  constraints go; `docs/constraint-reduction-study.md` records the budget and the reasoning.
 - **BRLC transcript encoding**: `circuits/common/brlc.go`, `web3/brlc.go` and
   `solidity/src/libraries/BRLC.sol` must agree bit-for-bit. The v4 contribution transcript
   (`CompactContributionWords(t,n) = MaxK·(2t+n) + 5n`) is **compact** — no padding travels in
