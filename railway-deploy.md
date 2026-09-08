@@ -31,7 +31,7 @@ The workspace must be on the **Hobby** plan or higher ($5 a month, offset by
 $5 of included usage; 48 GB of memory and 48 vCPU per service). A Trial or
 Free workspace caps every service at 2 vCPU and 1 GB, and a node needs about
 2.9 GB while it proves a contribution (startup itself is light since v0.7.1:
-artifacts are stream-verified, nothing is compiled). Under the cap a v0.7.0
+artifacts are stream-verified, nothing is compiled, 0.17 GB measured). Under the cap a v0.7.0
 container was killed during `building constraint builder` and restarted every
 few seconds; a v0.7.1 container would start, register and claim a slot and
 then be killed at its first proof, which hurts the committee, so keep the
