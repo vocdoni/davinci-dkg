@@ -11,11 +11,11 @@ package common
 const MaxN = 32
 
 // MaxT bounds the threshold, i.e. the number of coefficients of every
-// dealt polynomial. It equals MaxN today (no policy is excluded); lowering
-// it to the thresholds a deployment actually uses shrinks the contribution
-// Horner chains and, above all, the finalize digests (17 takes finalize
-// below 2^21 constraints, see docs/constraint-reduction-study.md). Mirror of
-// `MAX_T` in `solidity/src/libraries/Sizes.sol`.
+// dealt polynomial. It equals MaxN (no policy is excluded); a deployment
+// that only ever uses smaller thresholds can lower it to shrink the
+// contribution Horner chains and, above all, the finalize digests (17 takes
+// finalize below 2^21 constraints). Mirror of `MAX_T` in
+// `solidity/src/libraries/Sizes.sol`.
 const MaxT = MaxN
 
 // MaxK is the number of pool keys every epoch deals: each contribution

@@ -96,7 +96,7 @@ Anything that touches encodings, hashes or constants has to be changed in all of
   `davinci-dkg/share-encryption/v2`); no reduction mod `r` anywhere. Scalars go through
   `ccommon.CanonicalScalarBits` once and feed `FixedBaseMulBits` (2-bit bilinear windows).
   `go run ./cmd/circuit-profile <circuit>` + `go tool pprof -top /tmp/<circuit>.pprof` shows where
-  constraints go; `docs/constraint-reduction-study.md` records the budget and the reasoning.
+  constraints go (BENCHMARKS.md records the budget).
 - **BRLC transcript encoding**: `circuits/common/brlc.go`, `web3/brlc.go` and
   `solidity/src/libraries/BRLC.sol` must agree bit-for-bit. The v4 contribution transcript
   (`CompactContributionWords(t,n) = MaxK·(2t+n) + 5n`) is **compact** — no padding travels in

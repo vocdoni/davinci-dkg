@@ -1,28 +1,20 @@
-# Pool keys v4: per-application committee-held keys
+# Pool keys: per-application committee-held keys
 
-Status: implementation spec, v4 (2026-09-05). Every layout below is normative;
-Go, Solidity, the TypeScript SDK and the explorer must agree bit for bit.
-v4 changes, relative to v3.1: an atomic, proof-carrying `finalizeEpoch` that
-activates all `MaxK = 16` keys at once (replacing the proof-less finalize plus
-per-key `activatePoolKey` proofs), a compact contribution transcript of
-`K·(2t+n) + 5n` words (no padding in calldata), BRLC domains
-`davinci-dkg:contribution:v2` and `davinci-dkg:finalize:v2`, and the deletion
-of every activation-bitmap / activation-state field.
+Status: implementation spec. Every layout below is normative; Go, Solidity,
+the TypeScript SDK and the explorer must agree bit for bit. Constants:
+`MaxK = 16` pool keys per epoch, `MaxN = 32` committee members, `MaxT = 32`
+threshold, `MerkleDepth = 5`; BRLC domains `davinci-dkg:contribution:v2`,
+`davinci-dkg:finalize:v2`, `davinci-dkg:decrypt-combine:v1`; share-encryption
+KDF domain `davinci-dkg/share-encryption/v2`.
 
 ## Why
 
-With one epoch key, the committee's partials `d_i·C1` are the same for every
-application, so anyone who can register an application can copy any `C1`
-into it and learn `sk_ep·C1`. The organizer key masked that for
-organizer-locked applications; an automatic application that published its
-organizer secret had no mask at all (see README, "treat an automatic
-ciphertext as public").
-
-Fix: every application gets its own committee-held key `P_j`, dealt in the
-epoch's DKG as one of `MaxK` polynomials. Partials are now `e_{j,i}·C1` with
-`e_{j,i}` the member's share of `P_j`, so a ciphertext copied into another
-application yields a value under a different key and is useless. The
-organizer key becomes optional and, when present, is revealed once.
+If every application shared one epoch key, the committee's partials `d_i·C1`
+would be the same for every application: anyone able to register an
+application could copy any `C1` into it and learn `sk_ep·C1`, a decryption
+oracle across applications. Dealing `MaxK` independent keys per epoch and
+binding every application to its own key closes it: a ciphertext copied from
+one application decrypts under an unrelated secret and yields garbage.
 
 ## Constants
 
@@ -202,7 +194,7 @@ the same Fiat–Shamir discipline as finalization and combine, so every
 proof-carrying call anchors its challenge on the prover's digests *and* the
 calldata.
 
-## Batched finalization proof (`circuits/finalize`, replaces `circuits/poolkey`)
+## Batched finalization proof (`circuits/finalize`)
 
 `FinalizeCircuit` proves, over the accepted contributors listed in the
 transcript, that each contributor's on-chain `commitmentsHash` is reproduced
@@ -222,8 +214,7 @@ Require `1 ≤ t ≤ a ≤ n ≤ N`. For each active dealer row `d < a`: its
 participant index is in `[1, n]` and unique, names an accepted contributor,
 and recomputes that dealer's outer `commitmentsHash` **once** from all `K`
 key digests (the per-key digest absorbs the padded vectors — inactive
-scalars zero, inactive points `(0, 1)`); there is no `OtherKeyDigests`
-shortcut any more. Inactive rows contribute identity / zero everywhere;
+scalars zero, inactive points `(0, 1)`). Inactive rows contribute identity / zero everywhere;
 exactly `a` unique accepted rows prevent omitted dealers.
 
 The fixed finalization transcript has `L_F = 2N + K·(2+2N)` words (= 1,120
@@ -250,8 +241,8 @@ T   = H(2, eid, t, n, a, K, L_F, R, B_0, …, B_(K−1))
 Tags `0, 1, 2` are field integers. Require `transcriptDigest == T`, the
 ordinary BRLC commitment over all `L_F` words, and the challenge anchor
 `keccak256(transcriptDigest ‖ keccak256(transcript))` — the same anchor
-discipline as contribution and combine (see "Why the digest is in the anchor",
-v3.1): with `keccak(keccak(transcript))` alone the challenge would depend on
+discipline as contribution and combine: with `keccak(keccak(transcript))`
+alone the challenge would depend on
 the calldata only, and a permissionless finalizer could grind a calldata
 transcript carrying a forged `P_j` that still verifies.
 
@@ -378,84 +369,30 @@ submission by the block window, the submitter policy, `maxCiphertexts` and
 opens.
 
 Manager views: `getPoolKey(eid, j) → (x, y)` (requires `Live` and `j < MAX_K`,
-else `InvalidProofInput`), `getPoolStatus(eid) → (nextIndex)` (no activation
-bitmap — `poolNext` is all the status there is), `getPoolShareRoot(eid, j)`,
-`getAppPoolIndex(eid, aid)`. Removed: `getCollectivePublicKey`,
-`submitOrganizerShare`, `getOrganizerShareHash`, `OrganizerShareSubmitted`,
-`PoolKeyActivated`, `PoolKeyAlreadyActive`.
+else `InvalidProofInput`), `getPoolStatus(eid) → (nextIndex)` (the `poolNext`
+cursor), `getPoolShareRoot(eid, j)`, `getAppPoolIndex(eid, aid)`.
 
 ## Protocol constants and vectors
 
-`internal/protocol/protocol.go`, `DKGProtocol.sol`, `sdk/src/protocol.ts`:
-remove `DOMAIN_ORGANIZER_SHARE_V1`; the BRLC transcript domain strings are
-`davinci-dkg:contribution:v2`, `davinci-dkg:finalize:v2` (replaces
-`davinci-dkg:poolkey:v1`) and `davinci-dkg:decrypt-combine:v1` (unchanged).
-`tests/vectors/*.json` are regenerated; the organizer-share DLEQ vectors
-disappear.
+`internal/protocol/protocol.go` is the source of truth for the Fiat–Shamir
+domain strings, mirrored by `solidity/src/libraries/DKGProtocol.sol` and
+`sdk/src/protocol.ts`: `davinci-dkg:contribution:v2`, `davinci-dkg:finalize:v2`
+and `davinci-dkg:decrypt-combine:v1`. `cmd/protocol-vectors` writes
+`tests/vectors/*.json` (protocol constants, a compact contribution transcript,
+a finalization transcript) from the Go side; the SDK tests and the Foundry
+tests assert against them, and CI fails if `make vectors` changes them.
 
 ## Circuit toolchain
 
-Every circuit is compiled with gnark v0.16.3 / gnark-crypto v0.21.0
-(`go.mod`). Every gnark release up to v0.15.0, and the snapshot pinned
-before (`v0.14.1-0.20260126…`), has an unsound variable-base twisted-Edwards
-`ScalarMul`: the fake-GLV decomposition check `s1 + s2·s = k·order` is
-evaluated in the native field with the quotient `k` a free hint output, so a
-prover can make the gadget return any point (reproduced with verifying
-Groth16 proofs; fixed upstream in gnark v0.16.0, PR #1765, without an
-advisory — the weaker cofactor-torsion offset is IACR ePrint 2026/1776).
-Never downgrade gnark below v0.16.2. No circuit uses the hinted gadget any
-more: every variable-base multiplication is `ccommon.ScalarMulVar`, a
-hint-free double-and-add. The v4 changes (batched finalization circuit,
-compact contribution transcript, `MaxK = 16`) change every compiled R1CS, so
-all four circuits — contribution, finalize, partialdecrypt, decryptcombine —
-are recompiled and their hashes re-pinned in `config/circuit_artifacts.go`
-with this release.
-
-## Costs to measure
-
-Per contribution, per finalization, per partial (with path), per combine, per
-registration, per reveal; circuit constraints and proving times for all four
-circuits at MaxN = 32, MaxK = 16.
-
-### v4 estimates (superseded by measurements)
-
-The numbers below were **estimates** made before v4 was compiled; the measured
-values are in BENCHMARKS.md ("v4: batched finalization and compact contributions":
-contribution 5,904,167 constraints / 3.54 s / 9.3 GB peak, finalize 2,328,130 / 2.26 s /
-5.5 GB, finalize 2.20–2.81 M gas, contribution 0.50–1.31 M gas at n = 4…32). Kept for the record:
-
-- Finalization circuit: expect approximately **2.6–2.9 M R1CS constraints**,
-  budgeting 3.1 M pending compilation (estimate).
-- At `t = n = 32` the contribution calldata grows to ~55,108 ABI bytes;
-  check signed-transaction / RPC limits (Geth's usual 128 KiB transaction-pool
-  limit is not a consensus guarantee).
-- Estimated gas (Cancun, ±25% uncertainty):
-
-  | Call | (n, t) | transcript / full ABI bytes | estimated gas |
-  |---|---|---:|---:|
-  | Finalize | (4,3) | 35,840 / 36,580 | ~2.1 M |
-  | Finalize | (32,22) | 35,840 / 36,580 | ~2.8 M |
-  | Contribution | (4,3) | 5,760 / 6,596 | ~0.56 M |
-  | Contribution | (32,22) | 44,032 / 44,868 | ~1.28 M |
-
-  Finalization includes 48 cold key/root writes (~1.06 M gas), one verifier,
-  16 Merkle trees and one dealer-validation pass. On EIP-7623 chains the
-  large contribution (44,032-byte transcript) rises to about **1.77 M**
-  (`max(normalGas, 21000 + 10·(zeroBytes + 4·nonzeroBytes))`).
-
-### Measured (this worktree)
-
-`go run ./cmd/constraints` (MaxN = 32, MaxK = 16, gnark v0.16.3):
-
-| Circuit        | constraints |
-|-----------------|------------:|
-| Contribution    |   5,904,167 |
-| Finalize        |   2,328,130 |
-| PartialDecrypt  |      29,026 |
-| DecryptCombine  |     287,338 |
-
-The v4 contribution circuit is 5,904,167 constraints at `MaxK = 16` (vs. 3,060,692
-in v3.1 at `MaxK = 8`): 3.54 s and 9.3 GB peak resident memory per proof on the
-benchmark machine, against 1.57 s and 5.0 GB. The `Finalize` circuit is
-2,328,130 constraints, 2.26 s and 5.5 GB, below the 2.6–2.9 M estimate above.
-
+The circuits are compiled with gnark v0.16.3 / gnark-crypto v0.21.0
+(`go.mod`) and require gnark ≥ v0.16.2: older releases have an unsound
+variable-base twisted-Edwards `ScalarMul` (a hinted fake-GLV decomposition
+that a prover can satisfy for any output point). No circuit uses a hinted
+scalar multiplication: every variable-base product is
+`ccommon.ScalarMulVarBits`, a plain double-and-add over constrained bits, and
+every fixed-base product is `ccommon.FixedBaseMulBits`. `make circuits`
+recompiles the four circuits, runs the Groth16 setup, rewrites the Solidity
+verifying keys and pins the artifact hashes in `config/circuit_artifacts.go`;
+a node never compiles a circuit, it stream-verifies the release artifacts
+against those hashes. Constraint counts, proving times, memory and gas are in
+`BENCHMARKS.md`.
