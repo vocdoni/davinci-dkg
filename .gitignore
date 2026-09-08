@@ -74,3 +74,4 @@ logs/
 # Created at the repo root when pnpm runs in a container whose $HOME lives on
 # another filesystem (see the Docker invocations in ui/README.md).
 /.pnpm-store/
+/railway-api-key
