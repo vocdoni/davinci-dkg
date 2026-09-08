@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math/big"
 
+	edbn254 "github.com/consensys/gnark-crypto/ecc/bn254/twistededwards"
 	"github.com/vocdoni/davinci-dkg/types"
 )
 
@@ -43,16 +44,18 @@ func IsIdentity(x, y *big.Int) bool {
 var bigOne = big.NewInt(1)
 
 // IsOnCurve reports whether (x, y) satisfies the BabyJubJub curve equation
-// in reduced twisted-Edwards form: -x² + y² = 1 + d·x²·y² (mod Q).
+// in the twisted-Edwards form gnark-crypto uses: a·x² + y² = 1 + d·x²·y²
+// (mod Q). It evaluates the equation itself: Decode/SetPoint only copy the
+// coordinates and never checked it, so an off-curve pair such as (0, 0)
+// used to pass.
 func IsOnCurve(x, y *big.Int) bool {
 	if !IsCanonical(x, y) {
 		return false
 	}
-	// Encode and try to decode; the decoder runs the curve-equation check.
-	if _, err := Decode(types.CurvePoint{X: new(big.Int).Set(x), Y: new(big.Int).Set(y)}); err != nil {
-		return false
-	}
-	return true
+	var p edbn254.PointAffine
+	p.X.SetBigInt(x)
+	p.Y.SetBigInt(y)
+	return p.IsOnCurve()
 }
 
 // IsInPrimeSubgroup reports whether (x, y) lies in the prime-order
