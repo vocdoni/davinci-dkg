@@ -328,13 +328,14 @@ Run a node and you become eligible to be drawn on every epoch created after you 
 Sepolia deployment below is open, so anyone can join the committee.
 
 You need an Ethereum key with a little Sepolia ETH (any Sepolia faucet works; under the public
-bot's load a node spends about 0.02 ETH a day), Docker, and a machine with at least 4 cores and
-**12 GB of RAM, 16 GB to be comfortable**. Every node deals shares (the contribution proof, 5.9 M
-constraints at `MaxK = 16`), takes its turn at the finalization proof and decrypts. The two heavy
-proving keys are loaded for a proof and dropped again, so a node at rest sits at about 3 GB and
-peaks at about 7 GB during the contribution proof (v0.5 kept the keys resident, idled at 9 GB and
-peaked at 11 GB). More cores shorten the proofs; less RAM than stated is not an option (see
-[`BENCHMARKS.md`](BENCHMARKS.md)).
+bot's load a node spends about 0.02 ETH a day), Docker, and a machine with at least 2 cores and
+**4 GB of RAM, 8 GB to be comfortable**. Every node deals shares (the contribution proof, 1.69 M
+constraints at `MaxK = 16`), takes its turn at the finalization proof and decrypts. Proving keys
+are loaded for a proof and dropped again, so a v0.7 node sits at 0.2–0.7 GB at rest, peaks at
+about 2.9 GB during the contribution proof and at 3.6 GB while it compiles and checks the four
+circuits at startup (cgroup peaks of the Sepolia seed nodes; v0.5 idled at 9 GB and peaked at
+11 GB). More cores shorten the proofs (1.3 s on the 32-thread benchmark host); see
+[`BENCHMARKS.md`](BENCHMARKS.md).
 
 The node's RPC list should hold at least two endpoints: the node classifies rate-limited or
 unreachable endpoints and rotates off them, so a single-endpoint config has no fallback when a
