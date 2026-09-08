@@ -16,7 +16,7 @@ want() { [ "$(get "$1")" = "$2" ] || { echo "FAIL: $1 = $(get "$1"), want $2"; e
 # No file, no environment: the built-in snapshot.
 bash "$here/render-ui-config.sh" "$out" >/dev/null
 want chainName sepolia
-want managerAddress 0xf4fc804388211949b56b166281b2b86879b6278e
+want managerAddress 0xf7826a1bc67438856183833b6fbd1c3a93803e9a
 
 # The environment wins over both the file and the snapshot.
 MANAGER_ADDRESS=0xabc CHAIN_ID=31337 CHAIN_NAME=anvil bash "$here/render-ui-config.sh" "$out" >/dev/null
