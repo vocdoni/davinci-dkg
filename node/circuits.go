@@ -6,7 +6,6 @@ import (
 	"runtime/debug"
 	"sync"
 
-	"github.com/consensys/gnark/frontend"
 	"github.com/vocdoni/davinci-dkg/circuits"
 	"github.com/vocdoni/davinci-dkg/circuits/contribution"
 	"github.com/vocdoni/davinci-dkg/circuits/decryptcombine"
@@ -34,29 +33,24 @@ const (
 var circuitSpecs = [...]struct {
 	name      string
 	artifacts *circuits.CircuitArtifacts
-	circuit   func() frontend.Circuit
 	resident  bool
 }{
 	circuitContribution: {
 		name:      "contribution",
 		artifacts: contribution.Artifacts,
-		circuit:   func() frontend.Circuit { return &contribution.ContributionCircuit{} },
 	},
 	circuitFinalize: {
 		name:      "finalize",
 		artifacts: finalize.Artifacts,
-		circuit:   func() frontend.Circuit { return &finalize.FinalizeCircuit{} },
 	},
 	circuitPartialDecrypt: {
 		name:      "partialdecrypt",
 		artifacts: partialdecrypt.Artifacts,
-		circuit:   func() frontend.Circuit { return &partialdecrypt.PartialDecryptCircuit{} },
 		resident:  true,
 	},
 	circuitCombine: {
 		name:      "decryptcombine",
 		artifacts: decryptcombine.Artifacts,
-		circuit:   func() frontend.Circuit { return &decryptcombine.DecryptCombineCircuit{} },
 		resident:  true,
 	},
 }
@@ -70,10 +64,6 @@ var circuitSpecs = [...]struct {
 var runtimeCache struct {
 	sync.Mutex
 	rt [len(circuitSpecs)]*circuits.CircuitRuntime
-	// verified marks circuits whose compiled form already matched the pinned
-	// hash once (LoadPinned): later reloads read the hash-checked artifacts
-	// without recompiling, 8 s instead of 19 s for the contribution circuit.
-	verified [len(circuitSpecs)]bool
 }
 
 // circuitRuntime returns the pinned runtime of kind, loading it on first use.
@@ -84,19 +74,12 @@ func circuitRuntime(ctx context.Context, kind circuitKind) (*circuits.CircuitRun
 		return rt, nil
 	}
 	spec := circuitSpecs[kind]
-	var rt *circuits.CircuitRuntime
-	var err error
-	if runtimeCache.verified[kind] {
-		rt, err = spec.artifacts.LoadOrDownload(ctx)
-	} else {
-		rt, err = spec.artifacts.LoadPinned(ctx, spec.circuit())
-	}
+	rt, err := spec.artifacts.LoadPinned(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("%s circuit: %w", spec.name, err)
 	}
 	log.Infow("circuit artifacts loaded", "circuit", spec.name, "constraints", rt.ConstraintSystem().GetNbConstraints())
 	runtimeCache.rt[kind] = rt
-	runtimeCache.verified[kind] = true
 	return rt, nil
 }
 
@@ -112,15 +95,25 @@ func releaseRuntime(kind circuitKind) {
 	debug.FreeOSMemory()
 }
 
-// preloadRuntimes loads every runtime once at startup, so a missing artifact
-// or a hash that does not match the release fails the process immediately
-// rather than at the first deadline, then drops the non-resident ones again.
+// preloadRuntimes is the startup fail-fast: every artifact of the four
+// circuits is downloaded if missing and stream-verified against its pinned
+// hash (no decoding, no compilation, a few hundred MB of reads), so a bad
+// release fails the process now rather than at the first deadline; then only
+// the two resident decryption runtimes are decoded.
 func preloadRuntimes(ctx context.Context) error {
-	for kind := range circuitSpecs {
+	for _, spec := range circuitSpecs {
+		if err := spec.artifacts.EnsureCached(ctx); err != nil {
+			return err
+		}
+		log.Infow("circuit artifacts verified", "circuit", spec.name)
+	}
+	for kind, spec := range circuitSpecs {
+		if !spec.resident {
+			continue
+		}
 		if _, err := circuitRuntime(ctx, circuitKind(kind)); err != nil {
 			return err
 		}
-		releaseRuntime(circuitKind(kind))
 	}
 	return nil
 }

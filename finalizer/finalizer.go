@@ -128,7 +128,7 @@ func BuildAndSubmitFinalize(
 	epochID [12]byte,
 	cache CalldataCache,
 ) (*Result, error) {
-	runtime, err := finalize.Artifacts.LoadPinned(ctx, &finalize.FinalizeCircuit{})
+	runtime, err := finalize.Artifacts.LoadPinned(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("load finalize circuit: %w", err)
 	}

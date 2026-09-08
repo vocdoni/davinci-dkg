@@ -162,19 +162,27 @@ func TestLoadPinnedRefusesUnpinnedArtifacts(t *testing.T) {
 	BaseDir = t.TempDir()
 	defer func() { BaseDir = oldBaseDir }()
 
-	placeholder := &artifactsTestCircuit{}
 	// No hashes configured: LoadOrSetup would silently run a local setup.
 	unpinned := NewCircuitArtifacts("test", ecc.BN254, nil, nil, nil, nil, nil)
-	_, err := unpinned.LoadPinned(context.Background(), placeholder)
+	_, err := unpinned.LoadPinned(context.Background())
 	qt.Assert(t, err, qt.Not(qt.IsNil))
 
-	// Hashes configured but not matching the compiled circuit.
+	// Hashes configured but no such artifact cached or downloadable: never a
+	// local setup, an error.
 	mismatched := NewCircuitArtifacts(
 		"test", ecc.BN254, nil, nil,
 		&Artifact{Hash: []byte{1}}, &Artifact{Hash: []byte{2}}, &Artifact{Hash: []byte{3}},
 	)
-	_, err = mismatched.LoadPinned(context.Background(), placeholder)
-	qt.Assert(t, err, qt.ErrorMatches, ".*does not match the pinned release hash.*")
+	_, err = mismatched.LoadPinned(context.Background())
+	qt.Assert(t, err, qt.ErrorMatches, ".*load pinned test artifacts.*")
+
+	// A cached file whose content does not hash to the pinned value is
+	// rejected before anything decodes it.
+	bad := &Artifact{Hash: []byte{4, 5, 6}}
+	path, err := bad.cachePath()
+	qt.Assert(t, err, qt.IsNil)
+	qt.Assert(t, os.WriteFile(path, []byte("not the artifact"), 0o600), qt.IsNil)
+	qt.Assert(t, bad.verifyFile(path), qt.ErrorMatches, ".*hash mismatch.*")
 }
 
 func TestLoadOrSetupForCircuitFallsBackToSetupWithoutConfiguredArtifacts(t *testing.T) {

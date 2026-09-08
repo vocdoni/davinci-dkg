@@ -54,8 +54,8 @@ contribution prove-and-verify test runs in 8.6 s including compilation, and
 `/usr/bin/time -v` around it reports a **2.3 GB** peak resident set (9.3 GB in
 v4). The finalize proving key stays at 436 MB. On the Sepolia seed nodes (v0.7.0,
 on-demand keys) the containers sit at 0.2–0.7 GB at rest, peak at 2.9 GB during the
-contribution proof and at 3.6 GB during the startup preload that compiles and checks all
-four circuits, and average 0.05 vCPU; the first v5 contribution at `n = 6` cost 550,413
+contribution proof (3.6 GB at startup until v0.7.1, which stopped compiling the circuits at
+startup and streams the artifact hash checks instead), and average 0.05 vCPU; the first v5 contribution at `n = 6` cost 550,413
 gas, in line with the v4 table (same transcript). **4 GB of RAM minimum, 8 GB comfortable.**
 
 ## Current release (v4): batched finalization and compact contributions (MaxN = 32, MaxK = 16, gnark v0.16.3)

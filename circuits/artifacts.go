@@ -1,6 +1,7 @@
 package circuits
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -63,6 +64,72 @@ func (a *Artifact) cachePath() (string, error) {
 	return filepath.Join(BaseDir, hex.EncodeToString(a.Hash)), nil
 }
 
+// ensure returns the path of the cached artifact after verifying its SHA-256
+// against the pinned hash by streaming the file, downloading it first when
+// it is missing or corrupt. Nothing but a hash state is held in memory.
+func (a *Artifact) ensure(ctx context.Context) (string, error) {
+	path, err := a.cachePath()
+	if err != nil {
+		return "", err
+	}
+	switch err := a.verifyFile(path); {
+	case err == nil:
+		return path, nil
+	case errors.Is(err, ErrArtifactNotFound), errors.Is(err, ErrArtifactHashMismatch):
+		if err := a.downloadToCache(ctx); err != nil {
+			return "", err
+		}
+		return path, a.verifyFile(path)
+	default:
+		return "", err
+	}
+}
+
+// verifyFile streams the cached file through SHA-256 and compares it with the
+// pinned hash.
+func (a *Artifact) verifyFile(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return ErrArtifactNotFound
+		}
+		return fmt.Errorf("open cached artifact %s: %w", path, err)
+	}
+	defer func() { _ = f.Close() }()
+	hasher := sha256.New()
+	if _, err := io.Copy(hasher, f); err != nil {
+		return fmt.Errorf("read cached artifact %s: %w", path, err)
+	}
+	sum := hasher.Sum(nil)
+	if !bytes.Equal(sum, a.Hash) {
+		return fmt.Errorf("%w: expected %x, got %x", ErrArtifactHashMismatch, a.Hash, sum)
+	}
+	return nil
+}
+
+// open returns a buffered reader over the verified cached artifact, so a
+// decoder can stream it without a copy of the file in memory.
+func (a *Artifact) open(ctx context.Context) (io.ReadCloser, error) {
+	path, err := a.ensure(ctx)
+	if err != nil {
+		return nil, err
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open cached artifact %s: %w", path, err)
+	}
+	return &bufferedFile{Reader: bufio.NewReaderSize(f, 4<<20), f: f}, nil
+}
+
+type bufferedFile struct {
+	*bufio.Reader
+	f *os.File
+}
+
+func (b *bufferedFile) Close() error { return b.f.Close() }
+
+// loadOrDownload returns the whole verified artifact in memory; the runtime
+// loaders stream instead (open), this remains for callers that need bytes.
 func (a *Artifact) loadOrDownload(ctx context.Context) ([]byte, error) {
 	if a == nil {
 		return nil, fmt.Errorf("artifact not configured")
@@ -312,12 +379,13 @@ func (ca *CircuitArtifacts) LoadOrDownloadCircuitDefinition(ctx context.Context)
 	if ca.circuitDefinition == nil || len(ca.circuitDefinition.Hash) == 0 {
 		return nil, fmt.Errorf("circuit definition not configured")
 	}
-	content, err := ca.circuitDefinition.loadOrDownload(ctx)
+	r, err := ca.circuitDefinition.open(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("load circuit definition: %w", err)
 	}
+	defer func() { _ = r.Close() }()
 	ccs := newConstraintSystem(ca.curve)
-	if _, err := ccs.ReadFrom(bytes.NewReader(content)); err != nil {
+	if _, err := ccs.ReadFrom(r); err != nil {
 		return nil, fmt.Errorf("decode circuit definition: %w", err)
 	}
 	return ccs, nil
@@ -328,12 +396,13 @@ func (ca *CircuitArtifacts) LoadOrDownloadVerifyingKey(ctx context.Context) (gro
 	if ca.verifyingKey == nil || len(ca.verifyingKey.Hash) == 0 {
 		return nil, fmt.Errorf("verifying key not configured")
 	}
-	content, err := ca.verifyingKey.loadOrDownload(ctx)
+	r, err := ca.verifyingKey.open(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("load verifying key: %w", err)
 	}
+	defer func() { _ = r.Close() }()
 	vk := newVerifyingKey(ca.curve)
-	if _, err := vk.UnsafeReadFrom(bytes.NewReader(content)); err != nil {
+	if _, err := vk.UnsafeReadFrom(r); err != nil {
 		return nil, fmt.Errorf("decode verifying key: %w", err)
 	}
 	return vk, nil
@@ -344,12 +413,13 @@ func (ca *CircuitArtifacts) LoadOrDownloadProvingKey(ctx context.Context) (groth
 	if ca.provingKey == nil || len(ca.provingKey.Hash) == 0 {
 		return nil, fmt.Errorf("proving key not configured")
 	}
-	content, err := ca.provingKey.loadOrDownload(ctx)
+	r, err := ca.provingKey.open(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("load proving key: %w", err)
 	}
+	defer func() { _ = r.Close() }()
 	pk := newProvingKey(ca.curve)
-	if _, err := pk.UnsafeReadFrom(bytes.NewReader(content)); err != nil {
+	if _, err := pk.UnsafeReadFrom(r); err != nil {
 		return nil, fmt.Errorf("decode proving key: %w", err)
 	}
 	return pk, nil
@@ -444,29 +514,32 @@ func (ca *CircuitArtifacts) LoadOrSetupForCircuit(ctx context.Context, circuit f
 	return ca.Setup(ccs)
 }
 
-// LoadPinned is the strict variant of LoadOrSetupForCircuit: it only returns a
-// runtime backed by the pinned release artifacts and never falls back to a
-// local setup, whose proofs no deployed verifier would accept.
-func (ca *CircuitArtifacts) LoadPinned(ctx context.Context, circuit frontend.Circuit) (*CircuitRuntime, error) {
-	if circuit == nil {
-		return nil, fmt.Errorf("circuit not provided")
-	}
-	ccs, err := frontend.Compile(ca.Curve().ScalarField(), r1cs.NewBuilder, circuit)
-	if err != nil {
-		return nil, fmt.Errorf("compile circuit: %w", err)
-	}
-	matches, err := ca.Matches(ccs)
-	if err != nil {
-		return nil, fmt.Errorf("match artifacts: %w", err)
-	}
-	if !matches {
-		return nil, fmt.Errorf("compiled %s circuit does not match the pinned release hash", ca.Name())
-	}
+// LoadPinned returns the runtime backed by the pinned release artifacts and
+// never falls back to a local setup, whose proofs no deployed verifier would
+// accept. It does not compile the circuit: every artifact is verified against
+// the SHA-256 pinned in config/circuit_artifacts.go while it is streamed from
+// disk, and the match between the circuit code in this binary and those
+// artifacts is a build-time property checked by the circuit tests and
+// `make circuits-update-hashes` (Matches), not something to spend two
+// gigabytes on at every start.
+func (ca *CircuitArtifacts) LoadPinned(ctx context.Context) (*CircuitRuntime, error) {
 	runtime, err := ca.LoadOrDownload(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("load pinned %s artifacts (set DAVINCI_ARTIFACTS_DIR to the release artifacts): %w", ca.Name(), err)
 	}
 	return runtime, nil
+}
+
+// EnsureCached downloads any missing artifact of the circuit and verifies all
+// three against their pinned hashes by streaming them, without decoding: the
+// cheap fail-fast a process runs at startup.
+func (ca *CircuitArtifacts) EnsureCached(ctx context.Context) error {
+	for _, a := range []*Artifact{ca.circuitDefinition, ca.provingKey, ca.verifyingKey} {
+		if _, err := a.ensure(ctx); err != nil {
+			return fmt.Errorf("%s artifacts: %w", ca.Name(), err)
+		}
+	}
+	return nil
 }
 
 // CircuitRuntime is an in-memory runtime view of a compiled circuit and its keys.

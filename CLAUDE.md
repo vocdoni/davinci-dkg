@@ -132,8 +132,12 @@ Anything that touches encodings, hashes or constants has to be changed in all of
   bottom-up, leaf index `participantIndex − 1`) and by the node and the SDK when they build that
   proof. A one-bit divergence in leaf order, prefix byte or hash order makes every partial revert.
 - **Circuit ↔ verifier binding**: `config/circuit_artifacts.go` pins SHA-256 hashes of every circuit's
-  ccs/pk/vk; `circuits/artifacts.go` verifies them on load (downloads from the CDN, else falls back to a
-  local setup). `make circuits-update-hashes` keeps the file in sync.
+  ccs/pk/vk; `circuits/artifacts.go` downloads missing files from the GitHub release and stream-verifies
+  every file against the pinned hash before decoding it from disk (`EnsureCached`, `LoadPinned`); nothing
+  compiles a circuit at runtime. That the circuit code in the binary matches the pinned artifacts is a
+  build-time property: `make circuits-update-hashes` writes the hashes and the circuit tests assert
+  `Matches` on the compiled circuit. The node stream-verifies all four circuits at startup and decodes
+  only the two decryption runtimes; the heavy keys are decoded per proof.
 - **gnark pin** (`go.mod` invariant): gnark v0.16.3 / gnark-crypto v0.21.0. **Never downgrade gnark
   below v0.16.2.** Every gnark release up to and including v0.15.0, and the snapshot this repo pinned
   before (`v0.14.1-0.20260126…`), has an unsound variable-base twisted-Edwards `ScalarMul`

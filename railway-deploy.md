@@ -30,9 +30,12 @@ request body through a 0600 temp file, never passed as an argument.
 The workspace must be on the **Hobby** plan or higher ($5 a month, offset by
 $5 of included usage; 48 GB of memory and 48 vCPU per service). A Trial or
 Free workspace caps every service at 2 vCPU and 1 GB, and a node needs about
-3.6 GB while it compiles and checks the four circuits at startup and 2.9 GB
-while proving: under the cap the container is killed during `building
-constraint builder` and restarted every few seconds. The plan is upgraded in
+2.9 GB while it proves a contribution (startup itself is light since v0.7.1:
+artifacts are stream-verified, nothing is compiled). Under the cap a v0.7.0
+container was killed during `building constraint builder` and restarted every
+few seconds; a v0.7.1 container would start, register and claim a slot and
+then be killed at its first proof, which hurts the committee, so keep the
+deployments stopped (`deploymentStop`) until the plan allows the memory. The plan is upgraded in
 the Railway dashboard (a card is required); it cannot be changed through the
 API. `serviceInstanceLimits(serviceId, environmentId)` shows the effective
 `memoryBytes`; after an upgrade run `serviceInstanceRedeploy` on each node so
@@ -93,9 +96,9 @@ prints the latest deployment's status (`BUILDING`, `DEPLOYING`, `SUCCESS`,
 `circuit artifacts loaded` lines after the download, `self: registry row` once
 the registration transaction is mined, and then `node running`. On chain, the
 registry's `activeCount()` goes up by one per node. A node that logs
-`starting davinci-dkg-node` and `building constraint builder` every 10–20 s
-without ever reaching `circuit artifacts loaded` is being killed by the memory
-cap (see the plan requirement above).
+`starting davinci-dkg-node` every 10–20 s without ever reaching `node
+running`, or restarting right after `contribution assignment`, is being killed
+by the memory cap (see the plan requirement above).
 
 ## Operate
 

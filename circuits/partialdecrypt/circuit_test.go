@@ -89,7 +89,7 @@ func TestPinnedArtifactsDownload(t *testing.T) {
 	if os.Getenv("DAVINCI_DKG_TEST_DOWNLOAD") != "1" {
 		t.Skip("DAVINCI_DKG_TEST_DOWNLOAD not set")
 	}
-	runtime, err := Artifacts.LoadPinned(context.Background(), &PartialDecryptCircuit{})
+	runtime, err := Artifacts.LoadPinned(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

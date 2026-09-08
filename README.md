@@ -331,10 +331,12 @@ You need an Ethereum key with a little Sepolia ETH (any Sepolia faucet works; un
 bot's load a node spends about 0.02 ETH a day), Docker, and a machine with at least 2 cores and
 **4 GB of RAM, 8 GB to be comfortable**. Every node deals shares (the contribution proof, 1.69 M
 constraints at `MaxK = 16`), takes its turn at the finalization proof and decrypts. Proving keys
-are loaded for a proof and dropped again, so a v0.7 node sits at 0.2–0.7 GB at rest, peaks at
-about 2.9 GB during the contribution proof and at 3.6 GB while it compiles and checks the four
-circuits at startup (cgroup peaks of the Sepolia seed nodes; v0.5 idled at 9 GB and peaked at
-11 GB). More cores shorten the proofs (1.3 s on the 32-thread benchmark host); see
+are loaded for a proof and dropped again, so a v0.7 node sits at 0.2–0.7 GB at rest and peaks at
+about 2.9 GB during the contribution proof (cgroup peaks of the Sepolia seed nodes; v0.5 idled at
+9 GB and peaked at 11 GB). Startup only streams the four circuits' artifacts through a hash check
+and decodes the two small decryption circuits, a few hundred MB; nothing is compiled at runtime.
+`GOMEMLIMIT` (a Go runtime setting, e.g. `GOMEMLIMIT=2500MiB`) trades some CPU for a tighter
+peak on small machines. More cores shorten the proofs (1.3 s on the 32-thread benchmark host); see
 [`BENCHMARKS.md`](BENCHMARKS.md).
 
 The node's RPC list should hold at least two endpoints: the node classifies rate-limited or
@@ -363,8 +365,9 @@ What happens on first start:
 2. Before its first proof it downloads the pinned circuit artifacts from the release built into
    the binary — the [`circuits-v5`
    release](https://github.com/vocdoni/davinci-dkg/releases/tag/circuits-v5), about 1.1 GB, of which
-   the contribution proving key is 243 MB and the finalization proving key 436 MB — and checks every
-   file against the hashes built into the binary.
+   the contribution proving key is 243 MB and the finalization proving key 436 MB — and streams every
+   file through SHA-256 against the hashes built into the binary, at startup and again whenever a
+   proving key is loaded for a proof.
 3. It prints a startup banner with the chain head, registry statistics and its own `self:` row,
    then polls `DKGManager` and reacts to every phase it is eligible for.
 
