@@ -24,7 +24,7 @@ keys in `DAVINCI_ARTIFACTS_DIR`), wall-clock on the 32 threads of an idle AMD Ry
 `/usr/bin/time -v`, are in `docs/benchmarks/prove-2026-09-09/`. Observed on nodes: the Sepolia seed
 nodes log about 1.3 s per contribution proof, and the integration suite 3.7 s per finalization
 with two nodes proving concurrently. Verification is a constant few milliseconds. The whole
-artifact release (`circuits-v5`: compiled circuits, proving and verifying keys) is 1.1 GB.
+artifact release (`circuits-v6`: compiled circuits, proving and verifying keys) is 1.0 GB.
 
 Where the constraints go (gnark's constraint profiler, `go run ./cmd/circuit-profile <circuit>` then
 `go tool pprof -sample_index=0 -top /tmp/<circuit>.pprof`; attributions overlap where gadgets nest,
@@ -70,13 +70,13 @@ does not depend on circuit size, so these hold for any circuit build with the sa
 |---|---:|---:|---|
 | `createEpoch` | 133,312 | 133,312 | 150,323 for the first seed |
 | `claimSlot` (average) | 137,463 | 121,021 | |
-| `submitContribution` | 500,262 | 1,315,135 | 16 keys; `32·(K·(2t+n)+5n)` bytes of transcript calldata |
-| `finalizeEpoch` | 2,201,925 | 2,810,581 | verifier, 16 keys and 16 roots stored, 16 Merkle trees |
-| `registerApplication` locked / automatic | 616,490 / 232,394 | 619,169 / 232,394 | locked verifies a Schnorr proof of possession and a subgroup check |
-| `revealOrganizerSecret` | 225,262 | 228,980 | |
+| `submitContribution` | 500,286 | 1,315,171 | 16 keys; `32·(K·(2t+n)+5n)` bytes of transcript calldata |
+| `finalizeEpoch` | 2,201,901 | 2,810,569 | verifier, 16 keys and 16 roots stored, 16 Merkle trees |
+| `registerApplication` locked / automatic | 619,157 / 232,394 | 621,089 / 232,394 | locked verifies a Schnorr proof of possession and a subgroup check |
+| `revealOrganizerSecret` | 222,690 | 225,262 | |
 | `submitCiphertext` | 102,770 | 102,770 | no proof; on-curve and canonical checks only |
-| `submitPartialDecryption` | 402,275 | 402,283 | verifier plus a 5-level Merkle path |
-| `combineDecryption` | 410,566 | 483,955 | |
+| `submitPartialDecryption` | 402,263 | 402,271 | verifier plus a 5-level Merkle path |
+| `combineDecryption` | 410,626 | 483,931 | |
 
 Observed on Sepolia: `submitContribution` 550,413 at `n = 6`, `finalizeEpoch` 2,170,777 to
 2,180,237 at `n = 3`.

@@ -14,7 +14,7 @@
 #   MANAGER_ADDRESS=0x... \
 #   CHAIN_ID=31337 \
 #   CHAIN_NAME=anvil \
-#   DEPLOY_BLOCK=11663483 \
+#   DEPLOY_BLOCK=11668198 \
 #   EXPLORER_URL=https://sepolia.etherscan.io \
 #     scripts/render-ui-config.sh [output-path]
 #
@@ -44,10 +44,10 @@ resolve() {
 }
 
 resolve RPC_URL rpcUrl https://w3.ch4in.net/sepolia
-resolve MANAGER_ADDRESS managerAddress 0xf7826a1bc67438856183833b6fbd1c3a93803e9a
+resolve MANAGER_ADDRESS managerAddress 0xc73b7a868eca6ac7e3e647e2665aa16a793cf551
 resolve CHAIN_ID chainId 11155111
 resolve CHAIN_NAME chainName sepolia
-resolve DEPLOY_BLOCK deployBlock 11663483
+resolve DEPLOY_BLOCK deployBlock 11668198
 resolve EXPLORER_URL explorerUrl https://sepolia.etherscan.io
 resolve REGISTRY_ADDRESS registryAddress ""
 resolve START_BLOCK startBlock ""

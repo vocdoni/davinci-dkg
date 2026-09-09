@@ -313,7 +313,7 @@ On first start the node:
 1. derives its BabyJubJub key from the operator key and registers it in `DKGRegistry` (one
    transaction, skipped if already registered and active);
 2. downloads the pinned circuit artifacts from the
-   [`circuits-v5`](https://github.com/vocdoni/davinci-dkg/releases/tag/circuits-v5) release
+   [`circuits-v6`](https://github.com/vocdoni/davinci-dkg/releases/tag/circuits-v6) release
    (about 1.1 GB: the contribution proving key is 243 MB, the finalization proving key 436 MB) and
    stream-verifies every file against the hashes built into the binary;
 3. prints a startup banner with the chain head, registry statistics and its own registry row,
@@ -433,7 +433,7 @@ path:
 
 | Network | DKGManager | Details |
 |---------|------------|---------|
-| Sepolia | `0xf7826a1bc67438856183833b6fbd1c3a93803e9a` | Public testnet, built into the node and the SDK (`--network sepolia`). Registry `0x20ed76408981ae8bbf3a8658edd254f5ad69c3eb`, app manager `0x69e047134ed5080fe02e93db7d6548f3efe24655`; verifiers contribution `0x6d035f862d47e6019fb558f2236c5dfaa6c3525b`, finalize `0x4549ab46bc45c3806e30153c7034feac4ae3dab4`, partial `0x602bb41d21441044a54eb063eb63fdf4a278c70e`, combine `0xc7642f5fc6d531c8155261f08b33a5f38f711518`; deployed at block 11,663,483 with the [`circuits-v5`](https://github.com/vocdoni/davinci-dkg/releases/tag/circuits-v5) artifacts. Epochs last 7,200 blocks (about 24 h); committee selection 100 blocks, key assembly 150, finalize gap 10; floors `MIN_THRESHOLD=2`, `MIN_COMMITTEE_SIZE=3`, `MAX_LOTTERY_ALPHA_BPS=20000`, `MAX_T=32`; inactivity window 50,400 blocks. |
+| Sepolia | `0xc73b7a868eca6ac7e3e647e2665aa16a793cf551` | Public testnet, built into the node and the SDK (`--network sepolia`). Registry `0x6c4b8da67746677c3b0cb3122663186eea504737`, app manager `0x7d5c48696b8c29638cc7819403d5989d9b5b8a94`; verifiers contribution `0x40954188b8b63c0829c34e8d9b9835416bf51f6e`, finalize `0xa96519f22018ad8a9d91f8ec75431c2108d54ff3`, partial `0xf61356cb3cfdfca7cfe0a1dfc13eed9cad7d5a33`, combine `0xeef22b5b2174ce3d7c9d09b45892429216ecaefb`; deployed at block 11,668,198 with the [`circuits-v6`](https://github.com/vocdoni/davinci-dkg/releases/tag/circuits-v6) artifacts. Epochs last 7,200 blocks (about 24 h); committee selection 100 blocks, key assembly 150, finalize gap 10; floors `MIN_THRESHOLD=2`, `MIN_COMMITTEE_SIZE=3`, `MAX_LOTTERY_ALPHA_BPS=20000`, `MAX_T=32`; inactivity window 50,400 blocks. |
 
 Only the manager address needs configuring; the registry and the app manager are resolved from it
 on chain. The public explorer is at [dkg.davinci.vote](https://dkg.davinci.vote).

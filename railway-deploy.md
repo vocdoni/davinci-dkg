@@ -78,7 +78,7 @@ The script does four API calls, in this order, and prints the ids it gets back:
    `DAVINCI_DKG_POLL_INTERVAL=30s`, `DAVINCI_DKG_DATADIR=/app/run/data`,
    `DAVINCI_DKG_ARTIFACTS_DIR=/app/run/artifacts`.
 2. `volumeCreate` mounted at `/app/run`: the pinned circuit artifacts
-   (`circuits-v5`, about 1.1 GB, downloaded from the GitHub release and
+   (`circuits-v6`, about 1.0 GB, downloaded from the GitHub release and
    hash-checked on first start) and the node's caches survive redeploys.
 3. `serviceInstanceUpdate` with `restartPolicyType: ALWAYS`.
 4. `serviceInstanceDeployV2` to deploy with all of the above in place.

@@ -8,7 +8,7 @@ import {Verifier as BaseFinalizeVerifier} from "./finalize_vkey.sol";
 ///      patched by `make circuits-update-hashes` (cmd/circuit-compile).
 contract FinalizeVerifier is BaseFinalizeVerifier, IZKVerifier {
     bytes32 internal constant PROVING_KEY_HASH =
-        hex"cb4132e18b0a76184a7904a926546cf2fd02fa27fac833383b28796db10429c6";
+        hex"b359f97f8fef92093004dd4bf279d126e86b7c8d54b4b34fb6c714357abce759";
 
     function provingKeyHash() external pure returns (bytes32) {
         return PROVING_KEY_HASH;
