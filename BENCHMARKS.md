@@ -12,10 +12,10 @@ container cgroups of a running fleet.
 
 | Circuit | Constraints | Public inputs | Proving key | Proof time |
 |---|---:|---:|---:|---:|
-| Contribution (16 keys, compact transcript) | 1,689,551 | 8 | 243 MB | 1,035 ms |
-| Finalize (all 16 keys, up to 32 dealers) | 2,228,441 | 7 | 436 MB | 2,369 ms |
-| PartialDecrypt | 26,194 | 15 | 4 MB | 33 ms |
-| DecryptCombine | 255,081 | 9 | 35 MB | 146 ms |
+| Contribution (16 keys, compact transcript) | 1,689,551 | 8 | 243 MB | 898 ms |
+| Finalize (all 16 keys, up to 32 dealers) | 2,228,441 | 7 | 436 MB | 2,414 ms |
+| PartialDecrypt | 26,194 | 15 | 4 MB | 32 ms |
+| DecryptCombine | 255,081 | 9 | 35 MB | 154 ms |
 
 Proof times are the mean of five proofs from each circuit package's `BenchmarkProve`
 (`go test -run '^$' -bench '^BenchmarkProve$' -benchtime 5x ./circuits/<circuit>` with the pinned
@@ -48,8 +48,8 @@ of the same contribution circuit has 271,656 constraints.
 
 | Figure | Value |
 |---|---:|
-| Contribution prover, peak resident set of the `BenchmarkProve` process (key and circuit loaded, `/usr/bin/time -v`, which reports KiB) | 3.0 GiB |
-| Finalize prover, same measurement | 5.4 GiB |
+| Contribution prover, peak resident set of the `BenchmarkProve` process (pinned key and circuit loaded, `/usr/bin/time -v`, which reports KiB) | 3.2 GiB |
+| Finalize prover, same measurement | 4.9 GiB |
 | Node at rest (cgroup, Sepolia seed nodes) | 0.2–0.7 GB |
 | Node peak during its contribution proof | 2.9 GB |
 | Node peak at startup (stream-verifies the four circuits, decodes the two decryption runtimes) | 0.17 GB |
