@@ -11,6 +11,47 @@ index 4306a0b..a6fad9b 100644
  
  // MerkleDepth is log2(MaxN): the depth of the keccak Merkle tree over the
  // per-member share commitments of one pool key that `finalizeEpoch` stores
+diff --git a/config/circuit_artifacts.go b/config/circuit_artifacts.go
+index a50f9eb..c0c7ad7 100644
+--- a/config/circuit_artifacts.go
++++ b/config/circuit_artifacts.go
+@@ -12,13 +12,13 @@ const (
+ )
+ 
+ var (
+-	ContributionCircuitHash         = "aec533457d3d4ca89b05c7a53791e66b310a6431382e170887f040ad49011059"
+-	ContributionProvingKeyHash      = "c5970bb317278755591e5ef36ffe9f104ba6fb53d6531465584378c4528d33ba"
+-	ContributionVerificationKeyHash = "70d3cfebceb198a2176dad7e6de786348af3aa6110fa86c6eb6ca4401f5b55ba"
++	ContributionCircuitHash         = "0245f143dda61e00aeb46191a42d6121f3d25234bc3b27795574396af7a5bf0f"
++	ContributionProvingKeyHash      = "e79c9f1c7e8e7fda785874d0eeaefd73aaa72d02b5f05ff8604ae200379c9db0"
++	ContributionVerificationKeyHash = "70119b842223c9050614d6e39765daeb42b95d194b3670bee579ac5edd8cf5d3"
+ 
+-	FinalizeCircuitHash         = "95916b110aa591f8cd13fc3c96ea6a22be6e4158919a8710f4066864d1d7af59"
+-	FinalizeProvingKeyHash      = "b359f97f8fef92093004dd4bf279d126e86b7c8d54b4b34fb6c714357abce759"
+-	FinalizeVerificationKeyHash = "8002a4eea9c83ef6e93bb3d7e0a0b93a8ae95681eea1f9a39efeabe617b20054"
++	FinalizeCircuitHash         = "5042eaa743558c41fb3a11dd764d35da76b5265224963ba5633431d212c87b06"
++	FinalizeProvingKeyHash      = "0b89234dc13cc1c911d6d126bdf0bc4c67afe8977dac2a80c36b9c3e8505bfa4"
++	FinalizeVerificationKeyHash = "7e78db7fdf604f44b51801da21721ed930b226e60c3641f79726d4bec3b75669"
+ 
+ 	// Hashes regenerated in P6 after the P5 circuit changes (added Aid,
+ 	// CtIdx, Role public inputs to partialdecrypt; added Aid, CtIdx, Mode,
+@@ -26,12 +26,12 @@ var (
+ 	// hashes correspond to a DEV trusted setup; the production ceremony
+ 	// in S2 will regenerate fresh keys and bump these again.
+ 	PartialDecryptCircuitHash         = "532b6c2746e51a7b334bcdbc066a83e54c9ea3b81b46b64a4582540c1263c586"
+-	PartialDecryptProvingKeyHash      = "d80bfa3d4d43e86204180d8884a3b1bc5c60b5f5832974f3867d11eafb22f865"
+-	PartialDecryptVerificationKeyHash = "fffa38ca38523a5165d94d57cd9189f4701da852e74a9476b51eab20a395c649"
++	PartialDecryptProvingKeyHash      = "a3743d66f9c87986b018fb4fc2f85d584be9b7a02ef7be541e5b02ad70ee70ce"
++	PartialDecryptVerificationKeyHash = "e2ff6f704f243d3c975d635d3679755d866952c151687a98330e91cad05ae994"
+ 
+ 	DecryptCombineCircuitHash         = "c58a9ff79c8d84ac06f9d96764dc90c241ca892b4d5376812c87321eaf3373e7"
+-	DecryptCombineProvingKeyHash      = "0a82f57b9a605ea4fb7f72d305887e7b441e405ef42893eb16c0dfa462d93785"
+-	DecryptCombineVerificationKeyHash = "befaa56b10e1fe2d076cf948ecb3fdc8f1d0fa0dece4498a4af9b281b2bc5c68"
++	DecryptCombineProvingKeyHash      = "30e739942da3e3cbff662a3d870a1947d7f8d8672bf8249714a4feadf60d5185"
++	DecryptCombineVerificationKeyHash = "58a11c5b7fd1e9d55bb5ba03cafdde3aacd9a34b7edadb7431b3e97739e47fd4"
+ 
+ 	ContributionCircuitURL         = artifactURL(ContributionCircuitHash, "ccs")
+ 	ContributionProvingKeyURL      = artifactURL(ContributionProvingKeyHash, "pk")
 diff --git a/solidity/src/libraries/Sizes.sol b/solidity/src/libraries/Sizes.sol
 index 4003cdf..2587bc9 100644
 --- a/solidity/src/libraries/Sizes.sol

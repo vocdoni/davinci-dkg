@@ -90,8 +90,8 @@ about 1.7 M gas at `t = 3`.
 
 The same circuits, contracts and test built with `MaxK = 1` / `MAX_K = 1` (worktree patch and raw
 log: `docs/benchmarks/gas-k1-2026-09-09.patch`, `gas-k1-2026-09-09.txt`): the contribution circuit
-has 271,656 constraints; `submitContribution` costs 397,392 at
-`n = 4` and 529,452 at `n = 32`, `finalizeEpoch` 461,523 and 747,571, `createEpoch` and `claimSlot`
+has 271,656 constraints and the finalize circuit 154,823; `submitContribution` costs 397,392 at
+`n = 4` and 529,452 at `n = 32`, `finalizeEpoch` 461,499 and 747,571, `createEpoch` and `claimSlot`
 are unchanged. An epoch yielding one key therefore costs about 2.7 M gas at `n = 4` and 21.7 M at
 `n = 32`, nine and seven times the pooled per-key figure above, and dealing 16 keys costs 1.26–2.5×
 dealing one.
