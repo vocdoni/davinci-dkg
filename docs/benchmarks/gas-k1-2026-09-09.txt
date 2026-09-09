@@ -1,0 +1,247 @@
+2026/09/09 10:49:09 github.com/testcontainers/testcontainers-go - Connected to docker: 
+  Server Version: 29.5.3
+  API Version: 1.51
+  Operating System: Ubuntu 26.04 LTS
+  Total Memory: 60619 MB
+  Testcontainers for Go Version: v0.40.0
+  Resolved Docker Host: unix:///var/run/docker.sock
+  Resolved Docker Socket Path: /var/run/docker.sock
+  Test SessionID: 29910ecadd6570f388a749fa9275544c19974498926e9939c16902bda02332ab
+  Test ProcessID: 7dca066b-a847-4b31-9fbd-595b6f95dedc
+#1 [internal] load local bake definitions
+#1 reading from stdin 582B done
+#1 DONE 0.0s
+
+#2 [internal] load build definition from Dockerfile.deployer
+#2 transferring dockerfile: 932B done
+#2 DONE 0.0s
+
+#3 [internal] load metadata for ghcr.io/foundry-rs/foundry:stable
+#3 DONE 0.0s
+
+#4 [internal] load .dockerignore
+#4 transferring context: 2.41kB done
+#4 DONE 0.0s
+
+#5 [1/6] FROM ghcr.io/foundry-rs/foundry:stable@sha256:043752653d5be351c71709091b3db97c4421c907eb40ea294195e7f532aadf46
+#5 resolve ghcr.io/foundry-rs/foundry:stable@sha256:043752653d5be351c71709091b3db97c4421c907eb40ea294195e7f532aadf46 done
+#5 DONE 0.0s
+
+#6 [internal] load build context
+#6 transferring context: 1.17MB done
+#6 DONE 0.0s
+
+#7 [2/6] RUN apt-get update     && apt-get install -y --no-install-recommends bash curl jq python3 wget     && rm -rf /var/lib/apt/lists/*
+#7 CACHED
+
+#8 [3/6] WORKDIR /workspace
+#8 CACHED
+
+#9 [4/6] COPY solidity/         /workspace/solidity/
+#9 DONE 0.0s
+
+#10 [5/6] COPY testnet/deploy.sh /workspace/testnet/deploy.sh
+#10 DONE 0.0s
+
+#11 [6/6] RUN chmod +x /workspace/testnet/deploy.sh
+#11 DONE 0.1s
+
+#12 exporting to image
+#12 exporting layers 0.0s done
+#12 exporting manifest sha256:33d0538d0193be9401e3c3be6724e080a016f3bc8b5192a6c12e9ac117f440b3 done
+#12 exporting config sha256:c75ce320d9126d79c870926d8cd0044349c02eda61fd0084dfd20378432ba224 done
+#12 exporting attestation manifest sha256:7a25925bfeceb51a6f9a9edb13eba6283652645072f8b727dea6d6be76691637 done
+#12 exporting manifest list sha256:f7be825be16da8f75c0d057e9f6daf148660502a6f789f761295a0516ebc2af1 done
+#12 naming to docker.io/library/bbe95b66-6d1f-4ff6-9bb2-03044ee5fffb-deployer:latest done
+#12 unpacking to docker.io/library/bbe95b66-6d1f-4ff6-9bb2-03044ee5fffb-deployer:latest 0.0s done
+#12 DONE 0.1s
+
+#13 resolving provenance for metadata file
+#13 DONE 0.0s
+ bbe95b66-6d1f-4ff6-9bb2-03044ee5fffb-deployer  Built
+ Network bbe95b66-6d1f-4ff6-9bb2-03044ee5fffb_default  Creating
+ Network bbe95b66-6d1f-4ff6-9bb2-03044ee5fffb_default  Created
+ Container bbe95b66-6d1f-4ff6-9bb2-03044ee5fffb-anvil-1  Creating
+ Container bbe95b66-6d1f-4ff6-9bb2-03044ee5fffb-anvil-1  Created
+ Container bbe95b66-6d1f-4ff6-9bb2-03044ee5fffb-deployer-1  Creating
+ Container bbe95b66-6d1f-4ff6-9bb2-03044ee5fffb-deployer-1  Created
+ Container bbe95b66-6d1f-4ff6-9bb2-03044ee5fffb-anvil-1  Starting
+ Container bbe95b66-6d1f-4ff6-9bb2-03044ee5fffb-anvil-1  Started
+ Container bbe95b66-6d1f-4ff6-9bb2-03044ee5fffb-anvil-1  Waiting
+ Container bbe95b66-6d1f-4ff6-9bb2-03044ee5fffb-anvil-1  Healthy
+ Container bbe95b66-6d1f-4ff6-9bb2-03044ee5fffb-deployer-1  Starting
+ Container bbe95b66-6d1f-4ff6-9bb2-03044ee5fffb-deployer-1  Started
+ Container bbe95b66-6d1f-4ff6-9bb2-03044ee5fffb-anvil-1  Waiting
+ Container bbe95b66-6d1f-4ff6-9bb2-03044ee5fffb-deployer-1  Waiting
+ Container bbe95b66-6d1f-4ff6-9bb2-03044ee5fffb-anvil-1  Healthy
+ Container bbe95b66-6d1f-4ff6-9bb2-03044ee5fffb-deployer-1  Healthy
+2026/09/09 10:49:30 🐳 Creating container for image testcontainers/ryuk:0.13.0
+2026/09/09 10:49:30 ✅ Container created: 0cd20d7da4a6
+2026/09/09 10:49:30 🐳 Starting container: 0cd20d7da4a6
+2026/09/09 10:49:30 ✅ Container started: 0cd20d7da4a6
+2026/09/09 10:49:30 ⏳ Waiting for container id 0cd20d7da4a6 image: testcontainers/ryuk:0.13.0. Waiting for: port 8080/tcp to be listening
+2026/09/09 10:49:31 Shell not found in container
+2026/09/09 10:49:31 🔔 Container is ready: 0cd20d7da4a6
+=== RUN   TestGasProfilesMultiNode
+    gas_profile_multi_test.go:61: === n=4 t=3 ===
+2026-09-09T10:49:55Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=430.613298ms
+2026-09-09T10:49:55Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="435.305µs"
+2026-09-09T10:49:56Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=239.012872ms
+2026-09-09T10:49:56Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="456.745µs"
+2026-09-09T10:49:58Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=242.237825ms
+2026-09-09T10:49:58Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="480.455µs"
+2026-09-09T10:50:00Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=701.001802ms
+2026-09-09T10:50:00Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="452.795µs"
+2026-09-09T10:50:03Z DBG log/log.go:87 > proof generated circuit=finalize elapsed=180.204659ms
+2026-09-09T10:50:03Z DBG log/log.go:87 > proof verified circuit=finalize elapsed="440.655µs"
+    gas_profile_multi_test.go:62: second registerApplication in epoch (expect PoolExhausted at MAX_K=1): register application: execution reverted: custom error 0x8d3f5fe8
+2026-09-09T10:50:07Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=37.135361ms
+2026-09-09T10:50:07Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="353.414µs"
+2026-09-09T10:50:07Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=30.708635ms
+2026-09-09T10:50:07Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="386.734µs"
+2026-09-09T10:50:07Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=31.475843ms
+2026-09-09T10:50:07Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="373.024µs"
+2026-09-09T10:50:08Z DBG log/log.go:87 > proof generated circuit=decryptcombine elapsed=143.321131ms
+2026-09-09T10:50:08Z DBG log/log.go:87 > proof verified circuit=decryptcombine elapsed="443.715µs"
+    gas_profile_multi_test.go:62: n=4 t=3 create=150326 claim_avg=137466 contrib=397392 finalize=461523 reg_locked=0 reg_auto=246700 reveal=0 ciphertext=102749 pdecrypt=402182 combine=410569
+    gas_profile_multi_test.go:61: === n=32 t=22 ===
+2026-09-09T10:52:19Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=2.997304201s
+2026-09-09T10:52:19Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="668.186µs"
+2026-09-09T10:52:20Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=288.704159ms
+2026-09-09T10:52:20Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="427.664µs"
+2026-09-09T10:52:22Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=280.427956ms
+2026-09-09T10:52:22Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="450.115µs"
+2026-09-09T10:52:24Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=273.405286ms
+2026-09-09T10:52:24Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="450.285µs"
+2026-09-09T10:52:26Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=264.408297ms
+2026-09-09T10:52:26Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="454.825µs"
+2026-09-09T10:52:28Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=280.661988ms
+2026-09-09T10:52:28Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="460.635µs"
+2026-09-09T10:52:30Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=270.462878ms
+2026-09-09T10:52:30Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="733.368µs"
+2026-09-09T10:52:32Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=269.176414ms
+2026-09-09T10:52:32Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="450.065µs"
+2026-09-09T10:52:34Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=269.956553ms
+2026-09-09T10:52:34Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="450.315µs"
+2026-09-09T10:52:37Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=271.927212ms
+2026-09-09T10:52:37Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="632.156µs"
+2026-09-09T10:52:38Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=271.989922ms
+2026-09-09T10:52:38Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="434.184µs"
+2026-09-09T10:52:40Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=315.210442ms
+2026-09-09T10:52:40Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="456.745µs"
+2026-09-09T10:52:43Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=433.275034ms
+2026-09-09T10:52:43Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="449.084µs"
+2026-09-09T10:52:44Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=265.788961ms
+2026-09-09T10:52:44Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="389.124µs"
+2026-09-09T10:52:46Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=274.80601ms
+2026-09-09T10:52:46Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="447.354µs"
+2026-09-09T10:52:48Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=273.260365ms
+2026-09-09T10:52:48Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="434.474µs"
+2026-09-09T10:52:50Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=282.467456ms
+2026-09-09T10:52:50Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="419.834µs"
+2026-09-09T10:52:52Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=292.475456ms
+2026-09-09T10:52:52Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="462.334µs"
+2026-09-09T10:52:54Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=262.017243ms
+2026-09-09T10:52:54Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="465.685µs"
+2026-09-09T10:52:56Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=431.336376ms
+2026-09-09T10:52:56Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="412.824µs"
+2026-09-09T10:52:58Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=273.543098ms
+2026-09-09T10:52:58Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="696.157µs"
+2026-09-09T10:53:00Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=259.64051ms
+2026-09-09T10:53:00Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="416.855µs"
+2026-09-09T10:53:02Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=276.984502ms
+2026-09-09T10:53:02Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="427.845µs"
+2026-09-09T10:53:04Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=279.382076ms
+2026-09-09T10:53:04Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="447.555µs"
+2026-09-09T10:53:06Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=290.217683ms
+2026-09-09T10:53:06Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="456.715µs"
+2026-09-09T10:53:08Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=268.396716ms
+2026-09-09T10:53:08Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="454.095µs"
+2026-09-09T10:53:10Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=286.88724ms
+2026-09-09T10:53:10Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="732.597µs"
+2026-09-09T10:53:12Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=265.441477ms
+2026-09-09T10:53:12Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="467.905µs"
+2026-09-09T10:53:14Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=292.097013ms
+2026-09-09T10:53:14Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="453.114µs"
+2026-09-09T10:53:16Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=266.948023ms
+2026-09-09T10:53:16Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="485.264µs"
+2026-09-09T10:53:18Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=274.584418ms
+2026-09-09T10:53:18Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="486.985µs"
+2026-09-09T10:53:20Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=281.058683ms
+2026-09-09T10:53:20Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="456.924µs"
+2026-09-09T10:53:22Z DBG log/log.go:87 > proof generated circuit=finalize elapsed=186.095389ms
+2026-09-09T10:53:22Z DBG log/log.go:87 > proof verified circuit=finalize elapsed="439.645µs"
+    gas_profile_multi_test.go:62: second registerApplication in epoch (expect PoolExhausted at MAX_K=1): register application: execution reverted: custom error 0x8d3f5fe8
+2026-09-09T10:53:26Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=36.882686ms
+2026-09-09T10:53:26Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="494.035µs"
+2026-09-09T10:53:26Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=37.25415ms
+2026-09-09T10:53:26Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="438.594µs"
+2026-09-09T10:53:26Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=36.585213ms
+2026-09-09T10:53:26Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="381.794µs"
+2026-09-09T10:53:27Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=31.388302ms
+2026-09-09T10:53:27Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="401.534µs"
+2026-09-09T10:53:27Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=30.19831ms
+2026-09-09T10:53:27Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="404.034µs"
+2026-09-09T10:53:27Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=31.427152ms
+2026-09-09T10:53:27Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="419.244µs"
+2026-09-09T10:53:27Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=32.486833ms
+2026-09-09T10:53:27Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="420.654µs"
+2026-09-09T10:53:27Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=31.655824ms
+2026-09-09T10:53:27Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="367.874µs"
+2026-09-09T10:53:27Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=30.059209ms
+2026-09-09T10:53:27Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="398.444µs"
+2026-09-09T10:53:27Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=32.013528ms
+2026-09-09T10:53:27Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="421.234µs"
+2026-09-09T10:53:27Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=31.323991ms
+2026-09-09T10:53:27Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="385.963µs"
+2026-09-09T10:53:27Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=32.075009ms
+2026-09-09T10:53:27Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="377.983µs"
+2026-09-09T10:53:27Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=30.821646ms
+2026-09-09T10:53:27Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="377.254µs"
+2026-09-09T10:53:27Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=31.588083ms
+2026-09-09T10:53:27Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="373.543µs"
+2026-09-09T10:53:27Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=31.994698ms
+2026-09-09T10:53:27Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="426.924µs"
+2026-09-09T10:53:27Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=31.685575ms
+2026-09-09T10:53:27Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="386.383µs"
+2026-09-09T10:53:27Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=33.304211ms
+2026-09-09T10:53:27Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="430.914µs"
+2026-09-09T10:53:27Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=32.958547ms
+2026-09-09T10:53:27Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="416.774µs"
+2026-09-09T10:53:27Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=33.325521ms
+2026-09-09T10:53:27Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="412.414µs"
+2026-09-09T10:53:27Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=31.987748ms
+2026-09-09T10:53:27Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="404.364µs"
+2026-09-09T10:53:27Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=30.353391ms
+2026-09-09T10:53:27Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="381.664µs"
+2026-09-09T10:53:27Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=32.885796ms
+2026-09-09T10:53:27Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="359.174µs"
+2026-09-09T10:53:27Z DBG log/log.go:87 > proof generated circuit=decryptcombine elapsed=167.09262ms
+2026-09-09T10:53:27Z DBG log/log.go:87 > proof verified circuit=decryptcombine elapsed="382.654µs"
+    gas_profile_multi_test.go:62: n=32 t=22 create=133315 claim_avg=121024 contrib=529452 finalize=747571 reg_locked=0 reg_auto=246700 reveal=0 ciphertext=102773 pdecrypt=402250 combine=483995
+    gas_profile_multi_test.go:66: 
+        
+        === GAS PROFILE RESULTS (MaxN=32) ===
+    gas_profile_multi_test.go:67: | n | t | createEpoch | claimSlot (avg) | submitContribution | finalizeEpoch | registerApplication (locked) | registerApplication (automatic) | revealOrganizerSecret | submitCiphertext | submitPartialDecryption | combineDecryption |
+    gas_profile_multi_test.go:70: |---|---|---|---|---|---|---|---|---|---|---|---|
+    gas_profile_multi_test.go:73: | 4 | 3 | 150326 | 137466 | 397392 | 461523 | 0 | 246700 | 0 | 102749 | 402182 | 410569 |
+    gas_profile_multi_test.go:73: | 32 | 22 | 133315 | 121024 | 529452 | 747571 | 0 | 246700 | 0 | 102773 | 402250 | 483995 |
+    gas_profile_multi_test.go:82: 
+        === Compact (submitContribution | finalizeEpoch | submitPartialDecryption | combineDecryption) ===
+    gas_profile_multi_test.go:91: | 4 | 3 | 397392 | 461523 | 402182 | 410569 |
+        | 32 | 22 | 529452 | 747571 | 402250 | 483995 |
+        
+--- PASS: TestGasProfilesMultiNode (271.90s)
+PASS
+ Container bbe95b66-6d1f-4ff6-9bb2-03044ee5fffb-deployer-1  Stopping
+ Container bbe95b66-6d1f-4ff6-9bb2-03044ee5fffb-deployer-1  Stopped
+ Container bbe95b66-6d1f-4ff6-9bb2-03044ee5fffb-deployer-1  Removing
+ Container bbe95b66-6d1f-4ff6-9bb2-03044ee5fffb-deployer-1  Removed
+ Container bbe95b66-6d1f-4ff6-9bb2-03044ee5fffb-anvil-1  Stopping
+ Container bbe95b66-6d1f-4ff6-9bb2-03044ee5fffb-anvil-1  Stopped
+ Container bbe95b66-6d1f-4ff6-9bb2-03044ee5fffb-anvil-1  Removing
+ Container bbe95b66-6d1f-4ff6-9bb2-03044ee5fffb-anvil-1  Removed
+ Network bbe95b66-6d1f-4ff6-9bb2-03044ee5fffb_default  Removing
+ Network bbe95b66-6d1f-4ff6-9bb2-03044ee5fffb_default  Removed
+ok  	github.com/vocdoni/davinci-dkg/tests	317.201s
+exit=0

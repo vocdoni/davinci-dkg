@@ -1,0 +1,79 @@
+diff --git a/circuits/common/sizes.go b/circuits/common/sizes.go
+index 4306a0b..a6fad9b 100644
+--- a/circuits/common/sizes.go
++++ b/circuits/common/sizes.go
+@@ -22,7 +22,7 @@ const MaxT = MaxN
+ // carries MaxK polynomials, finalization derives all MaxK keys at once and
+ // each application claims one key. Mirror of `MAX_K` in
+ // `solidity/src/libraries/Sizes.sol`. See docs/pool-keys-v4.md.
+-const MaxK = 16
++const MaxK = 1
+ 
+ // MerkleDepth is log2(MaxN): the depth of the keccak Merkle tree over the
+ // per-member share commitments of one pool key that `finalizeEpoch` stores
+diff --git a/solidity/src/libraries/Sizes.sol b/solidity/src/libraries/Sizes.sol
+index 4003cdf..2587bc9 100644
+--- a/solidity/src/libraries/Sizes.sol
++++ b/solidity/src/libraries/Sizes.sol
+@@ -12,7 +12,7 @@ uint256 constant MAX_N = 32;
+ ///      `MAX_K` applications; unused keys cost only calldata at contribution
+ ///      time. All of them are proven and stored by the single proof-carrying
+ ///      `finalizeEpoch`, and the pool cursor plus key indexes fit a `uint8`.
+-uint256 constant MAX_K = 16;
++uint256 constant MAX_K = 1;
+ 
+ /// @dev Bound on the threshold `t`, i.e. on the number of coefficients of
+ ///      every dealt polynomial. Equal to `MAX_N` today; a deployment that
+diff --git a/tests/gas_profile_multi_test.go b/tests/gas_profile_multi_test.go
+index 041ff8a..c00f5f4 100644
+--- a/tests/gas_profile_multi_test.go
++++ b/tests/gas_profile_multi_test.go
+@@ -29,7 +29,7 @@ import (
+ // benchSizes lists the committee sizes to benchmark.
+ // Threshold = ceil(2n/3).
+ // Adjust to match the current MaxN; sizes exceeding MaxN will be skipped.
+-var benchSizes = []int{4, 8, 12, 16, 20, 24, 28, 32}
++var benchSizes = []int{4, 32}
+ 
+ func TestGasProfilesMultiNode(t *testing.T) {
+ 	if !helpers.IsIntegrationEnabled() {
+@@ -167,25 +167,28 @@ func benchmarkGasForN(t *testing.T, n, threshold int) gasProfile {
+ 	profile.finalizeEpoch, err = helpers.FinalizeEpochMeasured(ctx, services, self, epochID, finalization)
+ 	c.Assert(err, qt.IsNil)
+ 
+-	// ── 5. the pool is claimed one key per application ──────────────────────
+-	const secondKey uint8 = 1
++	// ── 5. K=1 baseline: the pool holds exactly one key ─────────────────────
++	// (k1v5 measurement patch) MaxK = 1, so only one application can claim a
++	// key per epoch. Register the automatic application only (key index 0);
++	// the locked registration and the reveal are not measured.
++	const secondKey uint8 = 0
+ 
+-	// ── 6. registerApplication in both modes, plus the reveal ───────────────
+-	lockedAid, skOrg := randomAid(c), randomOrganizerSecret(c)
+-	profile.registerLocked, err = helpers.RegisterApplicationMeasured(
+-		ctx, services, self, services.AppManager, epochID, lockedAid, skOrg, golangtypes.DKGTypesAppPolicy{},
+-	)
+-	c.Assert(err, qt.IsNil)
++	// ── 6. registerApplication (automatic only) ─────────────────────────────
+ 	autoAid := randomAid(c)
+ 	profile.registerAutomatic, err = helpers.RegisterApplicationMeasured(
+ 		ctx, services, self, services.AppManager, epochID, autoAid, nil,
+ 		golangtypes.DKGTypesAppPolicy{Mode: uint8(types.AppModeAutomatic)},
+ 	)
+ 	c.Assert(err, qt.IsNil)
+-	profile.revealSecret, err = helpers.RevealOrganizerSecretMeasured(
+-		ctx, services, self, services.AppManager, epochID, lockedAid, skOrg,
++	profile.registerLocked, profile.revealSecret = 0, 0
++	// (k1v5) deployed-contract check: with MAX_K = 1 a second registration in
++	// the same epoch must revert PoolExhausted() (selector 0x8d3f5fe8).
++	_, secondErr := helpers.RegisterApplicationMeasured(
++		ctx, services, self, services.AppManager, epochID, randomAid(c), nil,
++		golangtypes.DKGTypesAppPolicy{Mode: uint8(types.AppModeAutomatic)},
+ 	)
+-	c.Assert(err, qt.IsNil)
++	c.Assert(secondErr, qt.IsNotNil)
++	t.Logf("second registerApplication in epoch (expect PoolExhausted at MAX_K=1): %v", secondErr)
+ 
+ 	// ── 7. the decryption pass under the automatic application ──────────────
+ 	shares, err := helpers.RecoverParticipantShares(contributions, secondKey, participantIndexes)

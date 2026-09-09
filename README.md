@@ -292,7 +292,7 @@ comfortable**. Every node deals shares, takes its turn at the finalization proof
 Proving keys are loaded for a proof and released afterwards: a node sits at 0.2–0.7 GB at rest,
 peaks at about 2.9 GB during its contribution proof, and starts in under 0.2 GB. `GOMEMLIMIT`
 (a Go runtime setting, e.g. `GOMEMLIMIT=2500MiB`) trades some CPU for a tighter peak. More cores
-shorten the proofs (1.3 s for a contribution on 32 threads).
+shorten the proofs (0.9 s for a contribution on 32 threads).
 
 ```bash
 git clone https://github.com/vocdoni/davinci-dkg.git

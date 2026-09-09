@@ -1,0 +1,656 @@
+2026/09/09 10:58:12 github.com/testcontainers/testcontainers-go - Connected to docker: 
+  Server Version: 29.5.3
+  API Version: 1.51
+  Operating System: Ubuntu 26.04 LTS
+  Total Memory: 60619 MB
+  Testcontainers for Go Version: v0.40.0
+  Resolved Docker Host: unix:///var/run/docker.sock
+  Resolved Docker Socket Path: /var/run/docker.sock
+  Test SessionID: 96a0d126ec8ce5bbdf5ff23fc7a2228b40c314d9b9d21a3678d8a80ab3a11bf7
+  Test ProcessID: 40a03c17-2368-4e4c-95ee-d099d3cc4705
+#1 [internal] load local bake definitions
+#1 reading from stdin 572B done
+#1 DONE 0.0s
+
+#2 [internal] load build definition from Dockerfile.deployer
+#2 transferring dockerfile: 932B done
+#2 DONE 0.0s
+
+#3 [internal] load metadata for ghcr.io/foundry-rs/foundry:stable
+#3 DONE 0.0s
+
+#4 [internal] load .dockerignore
+#4 transferring context: 2.41kB done
+#4 DONE 0.0s
+
+#5 [1/6] FROM ghcr.io/foundry-rs/foundry:stable@sha256:043752653d5be351c71709091b3db97c4421c907eb40ea294195e7f532aadf46
+#5 resolve ghcr.io/foundry-rs/foundry:stable@sha256:043752653d5be351c71709091b3db97c4421c907eb40ea294195e7f532aadf46 done
+#5 DONE 0.0s
+
+#6 [internal] load build context
+#6 transferring context: 3.84kB done
+#6 DONE 0.0s
+
+#7 [3/6] WORKDIR /workspace
+#7 CACHED
+
+#8 [5/6] COPY testnet/deploy.sh /workspace/testnet/deploy.sh
+#8 CACHED
+
+#9 [4/6] COPY solidity/         /workspace/solidity/
+#9 CACHED
+
+#10 [2/6] RUN apt-get update     && apt-get install -y --no-install-recommends bash curl jq python3 wget     && rm -rf /var/lib/apt/lists/*
+#10 CACHED
+
+#11 [6/6] RUN chmod +x /workspace/testnet/deploy.sh
+#11 CACHED
+
+#12 exporting to image
+#12 exporting layers done
+#12 exporting manifest sha256:7567671906511afb34d3581c35a927069cd8c12d410a80faefef1945c918b405 done
+#12 exporting config sha256:bc54dcc60cbcad1cf4c8d2d738f93e24b80ab1f5c977c756cbaf999c41b8968e done
+#12 exporting attestation manifest sha256:43b3a978da0cf115737e303212a918d46e35991945d5de9db9e32646b2155668 done
+#12 exporting manifest list sha256:4cf6ec496ece09e5c7d6a2e52077954d06def391fc61eaad4d49db07999155e7 done
+#12 naming to docker.io/library/91040d49-801c-4579-8404-bb26d4c0b58f-deployer:latest done
+#12 unpacking to docker.io/library/91040d49-801c-4579-8404-bb26d4c0b58f-deployer:latest done
+#12 DONE 0.0s
+
+#13 resolving provenance for metadata file
+#13 DONE 0.0s
+ 91040d49-801c-4579-8404-bb26d4c0b58f-deployer  Built
+ Network 91040d49-801c-4579-8404-bb26d4c0b58f_default  Creating
+ Network 91040d49-801c-4579-8404-bb26d4c0b58f_default  Created
+ Container 91040d49-801c-4579-8404-bb26d4c0b58f-anvil-1  Creating
+ Container 91040d49-801c-4579-8404-bb26d4c0b58f-anvil-1  Created
+ Container 91040d49-801c-4579-8404-bb26d4c0b58f-deployer-1  Creating
+ Container 91040d49-801c-4579-8404-bb26d4c0b58f-deployer-1  Created
+ Container 91040d49-801c-4579-8404-bb26d4c0b58f-anvil-1  Starting
+ Container 91040d49-801c-4579-8404-bb26d4c0b58f-anvil-1  Started
+ Container 91040d49-801c-4579-8404-bb26d4c0b58f-anvil-1  Waiting
+ Container 91040d49-801c-4579-8404-bb26d4c0b58f-anvil-1  Healthy
+ Container 91040d49-801c-4579-8404-bb26d4c0b58f-deployer-1  Starting
+ Container 91040d49-801c-4579-8404-bb26d4c0b58f-deployer-1  Started
+ Container 91040d49-801c-4579-8404-bb26d4c0b58f-deployer-1  Waiting
+ Container 91040d49-801c-4579-8404-bb26d4c0b58f-anvil-1  Waiting
+ Container 91040d49-801c-4579-8404-bb26d4c0b58f-anvil-1  Healthy
+ Container 91040d49-801c-4579-8404-bb26d4c0b58f-deployer-1  Healthy
+2026/09/09 10:58:33 🐳 Creating container for image testcontainers/ryuk:0.13.0
+2026/09/09 10:58:33 ✅ Container created: 34222b0534fa
+2026/09/09 10:58:33 🐳 Starting container: 34222b0534fa
+2026/09/09 10:58:33 ✅ Container started: 34222b0534fa
+2026/09/09 10:58:33 ⏳ Waiting for container id 34222b0534fa image: testcontainers/ryuk:0.13.0. Waiting for: port 8080/tcp to be listening
+2026/09/09 10:58:33 Shell not found in container
+2026/09/09 10:58:33 🔔 Container is ready: 34222b0534fa
+=== RUN   TestGasProfilesMultiNode
+    gas_profile_multi_test.go:61: === n=4 t=3 ===
+2026-09-09T10:59:03Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=925.183103ms
+2026-09-09T10:59:03Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="469.375µs"
+2026-09-09T10:59:05Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=907.621108ms
+2026-09-09T10:59:05Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="461.854µs"
+2026-09-09T10:59:07Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=919.242053ms
+2026-09-09T10:59:07Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="459.635µs"
+2026-09-09T10:59:09Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=922.414605ms
+2026-09-09T10:59:09Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="500.645µs"
+2026-09-09T10:59:29Z DBG log/log.go:87 > proof generated circuit=finalize elapsed=2.218932897s
+2026-09-09T10:59:29Z DBG log/log.go:87 > proof verified circuit=finalize elapsed="525.885µs"
+2026-09-09T10:59:37Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=34.979337ms
+2026-09-09T10:59:37Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="443.055µs"
+2026-09-09T10:59:37Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=33.076448ms
+2026-09-09T10:59:37Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="415.715µs"
+2026-09-09T10:59:37Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=31.929737ms
+2026-09-09T10:59:37Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="379.483µs"
+2026-09-09T10:59:38Z DBG log/log.go:87 > proof generated circuit=decryptcombine elapsed=134.081062ms
+2026-09-09T10:59:38Z DBG log/log.go:87 > proof verified circuit=decryptcombine elapsed="373.273µs"
+    gas_profile_multi_test.go:62: n=4 t=3 create=150323 claim_avg=137463 contrib=500262 finalize=2201925 reg_locked=616490 reg_auto=232394 reveal=225262 ciphertext=102770 pdecrypt=402275 combine=410566
+    gas_profile_multi_test.go:61: === n=8 t=6 ===
+2026-09-09T11:00:09Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=964.237151ms
+2026-09-09T11:00:09Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="420.404µs"
+2026-09-09T11:00:11Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=944.114331ms
+2026-09-09T11:00:11Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="487.545µs"
+2026-09-09T11:00:13Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=915.499277ms
+2026-09-09T11:00:13Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="535.635µs"
+2026-09-09T11:00:15Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=932.482455ms
+2026-09-09T11:00:15Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="438.044µs"
+2026-09-09T11:00:17Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.01249448s
+2026-09-09T11:00:17Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="457.725µs"
+2026-09-09T11:00:19Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=922.775798ms
+2026-09-09T11:00:19Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="426.215µs"
+2026-09-09T11:00:21Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=939.091711ms
+2026-09-09T11:00:21Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="448.585µs"
+2026-09-09T11:00:23Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=931.247313ms
+2026-09-09T11:00:23Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="448.404µs"
+2026-09-09T11:00:27Z DBG log/log.go:87 > proof generated circuit=finalize elapsed=2.240042997s
+2026-09-09T11:00:27Z DBG log/log.go:87 > proof verified circuit=finalize elapsed="487.435µs"
+2026-09-09T11:00:35Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=39.846195ms
+2026-09-09T11:00:35Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="452.314µs"
+2026-09-09T11:00:35Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=36.015128ms
+2026-09-09T11:00:35Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="428.894µs"
+2026-09-09T11:00:35Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=35.003778ms
+2026-09-09T11:00:35Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="434.134µs"
+2026-09-09T11:00:35Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=30.960867ms
+2026-09-09T11:00:35Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="373.194µs"
+2026-09-09T11:00:35Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=31.491363ms
+2026-09-09T11:00:35Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="376.724µs"
+2026-09-09T11:00:35Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=31.113839ms
+2026-09-09T11:00:35Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="404.984µs"
+2026-09-09T11:00:35Z DBG log/log.go:87 > proof generated circuit=decryptcombine elapsed=191.25593ms
+2026-09-09T11:00:35Z DBG log/log.go:87 > proof verified circuit=decryptcombine elapsed="440.064µs"
+    gas_profile_multi_test.go:62: n=8 t=6 create=133312 claim_avg=128056 contrib=622513 finalize=2289001 reg_locked=619169 reg_auto=232394 reveal=224622 ciphertext=102758 pdecrypt=402225 combine=422173
+    gas_profile_multi_test.go:61: === n=12 t=8 ===
+2026-09-09T11:01:26Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=980.749315ms
+2026-09-09T11:01:26Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="450.555µs"
+2026-09-09T11:01:28Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.059549728s
+2026-09-09T11:01:28Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="544.555µs"
+2026-09-09T11:01:30Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=946.354143ms
+2026-09-09T11:01:30Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="428.854µs"
+2026-09-09T11:01:32Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=963.656625ms
+2026-09-09T11:01:32Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="430.635µs"
+2026-09-09T11:01:34Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.214551288s
+2026-09-09T11:01:34Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="439.555µs"
+2026-09-09T11:01:37Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=961.843686ms
+2026-09-09T11:01:37Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="669.156µs"
+2026-09-09T11:01:39Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=963.715466ms
+2026-09-09T11:01:39Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="452.525µs"
+2026-09-09T11:01:41Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=952.524564ms
+2026-09-09T11:01:41Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="439.404µs"
+2026-09-09T11:01:43Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=958.394512ms
+2026-09-09T11:01:43Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="505.175µs"
+2026-09-09T11:01:45Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=971.311201ms
+2026-09-09T11:01:45Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="438.334µs"
+2026-09-09T11:01:47Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=941.330233ms
+2026-09-09T11:01:47Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="438.004µs"
+2026-09-09T11:01:49Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=974.105978ms
+2026-09-09T11:01:49Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="477.964µs"
+2026-09-09T11:01:53Z DBG log/log.go:87 > proof generated circuit=finalize elapsed=2.265855823s
+2026-09-09T11:01:53Z DBG log/log.go:87 > proof verified circuit=finalize elapsed="661.187µs"
+2026-09-09T11:02:01Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=369.538142ms
+2026-09-09T11:02:01Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="742.427µs"
+2026-09-09T11:02:01Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=330.857108ms
+2026-09-09T11:02:01Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="725.248µs"
+2026-09-09T11:02:01Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=132.382965ms
+2026-09-09T11:02:01Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="382.524µs"
+2026-09-09T11:02:01Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=31.618984ms
+2026-09-09T11:02:01Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="409.544µs"
+2026-09-09T11:02:01Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=30.1141ms
+2026-09-09T11:02:01Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="374.754µs"
+2026-09-09T11:02:01Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=31.003118ms
+2026-09-09T11:02:01Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="364.423µs"
+2026-09-09T11:02:01Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=30.309371ms
+2026-09-09T11:02:01Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="398.524µs"
+2026-09-09T11:02:01Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=32.262501ms
+2026-09-09T11:02:01Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="373.164µs"
+2026-09-09T11:02:01Z DBG log/log.go:87 > proof generated circuit=decryptcombine elapsed=151.440004ms
+2026-09-09T11:02:01Z DBG log/log.go:87 > proof verified circuit=decryptcombine elapsed="391.224µs"
+    gas_profile_multi_test.go:62: n=12 t=8 create=133312 claim_avg=124923 contrib=722731 finalize=2375993 reg_locked=622369 reg_auto=232394 reveal=227822 ciphertext=102770 pdecrypt=402283 combine=429874
+    gas_profile_multi_test.go:61: === n=16 t=11 ===
+2026-09-09T11:03:03Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=995.860364ms
+2026-09-09T11:03:03Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="457.944µs"
+2026-09-09T11:03:05Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.162769833s
+2026-09-09T11:03:05Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="494.465µs"
+2026-09-09T11:03:07Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=972.400362ms
+2026-09-09T11:03:07Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="441.604µs"
+2026-09-09T11:03:10Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=985.494522ms
+2026-09-09T11:03:10Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="424.115µs"
+2026-09-09T11:03:12Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=979.920956ms
+2026-09-09T11:03:12Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="465.465µs"
+2026-09-09T11:03:14Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=972.992407ms
+2026-09-09T11:03:14Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="457.305µs"
+2026-09-09T11:03:16Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.005957795s
+2026-09-09T11:03:16Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="498.495µs"
+2026-09-09T11:03:18Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=974.560254ms
+2026-09-09T11:03:18Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="456.344µs"
+2026-09-09T11:03:20Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=990.32314ms
+2026-09-09T11:03:20Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="435.325µs"
+2026-09-09T11:03:22Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=983.359851ms
+2026-09-09T11:03:22Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="468.485µs"
+2026-09-09T11:03:24Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=971.046288ms
+2026-09-09T11:03:24Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="459.864µs"
+2026-09-09T11:03:27Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.709565646s
+2026-09-09T11:03:27Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="709.787µs"
+2026-09-09T11:03:30Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=979.826216ms
+2026-09-09T11:03:30Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="468.995µs"
+2026-09-09T11:03:32Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=965.857047ms
+2026-09-09T11:03:32Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="442.394µs"
+2026-09-09T11:03:34Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=985.169219ms
+2026-09-09T11:03:34Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="468.615µs"
+2026-09-09T11:03:36Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=999.352989ms
+2026-09-09T11:03:36Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="432.695µs"
+2026-09-09T11:03:40Z DBG log/log.go:87 > proof generated circuit=finalize elapsed=2.8330247s
+2026-09-09T11:03:40Z DBG log/log.go:87 > proof verified circuit=finalize elapsed="431.835µs"
+2026-09-09T11:03:48Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=36.310131ms
+2026-09-09T11:03:48Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="459.124µs"
+2026-09-09T11:03:48Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=37.129509ms
+2026-09-09T11:03:48Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="545.366µs"
+2026-09-09T11:03:48Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=36.18376ms
+2026-09-09T11:03:48Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="378.964µs"
+2026-09-09T11:03:48Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=29.913928ms
+2026-09-09T11:03:48Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="405.785µs"
+2026-09-09T11:03:49Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=30.968248ms
+2026-09-09T11:03:49Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="415.074µs"
+2026-09-09T11:03:49Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=32.219191ms
+2026-09-09T11:03:49Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="373.253µs"
+2026-09-09T11:03:49Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=31.367381ms
+2026-09-09T11:03:49Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="357.424µs"
+2026-09-09T11:03:49Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=30.764235ms
+2026-09-09T11:03:49Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="365.624µs"
+2026-09-09T11:03:49Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=30.16679ms
+2026-09-09T11:03:49Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="476.905µs"
+2026-09-09T11:03:49Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=30.043508ms
+2026-09-09T11:03:49Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="353.523µs"
+2026-09-09T11:03:49Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=29.951408ms
+2026-09-09T11:03:49Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="367.193µs"
+2026-09-09T11:03:49Z DBG log/log.go:87 > proof generated circuit=decryptcombine elapsed=155.918409ms
+2026-09-09T11:03:49Z DBG log/log.go:87 > proof verified circuit=decryptcombine elapsed="387.014µs"
+    gas_profile_multi_test.go:62: n=16 t=11 create=133312 claim_avg=123358 contrib=845222 finalize=2462829 reg_locked=617889 reg_auto=232394 reveal=230260 ciphertext=102770 pdecrypt=402285 combine=441477
+    gas_profile_multi_test.go:61: === n=20 t=14 ===
+2026-09-09T11:05:06Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.035178746s
+2026-09-09T11:05:06Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="575.886µs"
+2026-09-09T11:05:09Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.050393157s
+2026-09-09T11:05:09Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="428.894µs"
+2026-09-09T11:05:11Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.067287865s
+2026-09-09T11:05:11Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="442.314µs"
+2026-09-09T11:05:13Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.048270105s
+2026-09-09T11:05:13Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="497.935µs"
+2026-09-09T11:05:16Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.041754191s
+2026-09-09T11:05:16Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="774.168µs"
+2026-09-09T11:05:18Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.41003109s
+2026-09-09T11:05:18Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="433.015µs"
+2026-09-09T11:05:21Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.040789502s
+2026-09-09T11:05:21Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="773.327µs"
+2026-09-09T11:05:23Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.008938425s
+2026-09-09T11:05:23Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="462.774µs"
+2026-09-09T11:05:25Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.003863944s
+2026-09-09T11:05:25Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="453.725µs"
+2026-09-09T11:05:28Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.060745919s
+2026-09-09T11:05:28Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="470.935µs"
+2026-09-09T11:05:30Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.014638912s
+2026-09-09T11:05:30Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="448.354µs"
+2026-09-09T11:05:32Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.00448325s
+2026-09-09T11:05:32Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="464.665µs"
+2026-09-09T11:05:34Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.482264668s
+2026-09-09T11:05:34Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="428.224µs"
+2026-09-09T11:05:39Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=2.351384333s
+2026-09-09T11:05:39Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="706.427µs"
+2026-09-09T11:05:42Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.019168216s
+2026-09-09T11:05:42Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="472.914µs"
+2026-09-09T11:05:44Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.011723102s
+2026-09-09T11:05:44Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="457.775µs"
+2026-09-09T11:05:46Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.009763613s
+2026-09-09T11:05:46Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="432.974µs"
+2026-09-09T11:05:51Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=3.319630874s
+2026-09-09T11:05:51Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="450.154µs"
+2026-09-09T11:05:54Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.018953054s
+2026-09-09T11:05:54Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="447.305µs"
+2026-09-09T11:05:56Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.036895772s
+2026-09-09T11:05:56Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="671.826µs"
+2026-09-09T11:06:00Z DBG log/log.go:87 > proof generated circuit=finalize elapsed=2.652788278s
+2026-09-09T11:06:00Z DBG log/log.go:87 > proof verified circuit=finalize elapsed="480.465µs"
+2026-09-09T11:06:07Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=35.524663ms
+2026-09-09T11:06:07Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="438.995µs"
+2026-09-09T11:06:07Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=36.22594ms
+2026-09-09T11:06:07Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="431.314µs"
+2026-09-09T11:06:07Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=37.20352ms
+2026-09-09T11:06:07Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="370.053µs"
+2026-09-09T11:06:07Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=31.293251ms
+2026-09-09T11:06:07Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="385.253µs"
+2026-09-09T11:06:07Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=31.374312ms
+2026-09-09T11:06:07Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="350.034µs"
+2026-09-09T11:06:07Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=29.514033ms
+2026-09-09T11:06:07Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="370.384µs"
+2026-09-09T11:06:07Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=30.450803ms
+2026-09-09T11:06:07Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="369.934µs"
+2026-09-09T11:06:07Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=31.870697ms
+2026-09-09T11:06:07Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="373.314µs"
+2026-09-09T11:06:07Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=32.682645ms
+2026-09-09T11:06:07Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="400.974µs"
+2026-09-09T11:06:07Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=30.604734ms
+2026-09-09T11:06:07Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="398.374µs"
+2026-09-09T11:06:07Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=30.718395ms
+2026-09-09T11:06:07Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="369.593µs"
+2026-09-09T11:06:07Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=30.841636ms
+2026-09-09T11:06:07Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="424.824µs"
+2026-09-09T11:06:07Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=30.978668ms
+2026-09-09T11:06:07Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="365.564µs"
+2026-09-09T11:06:07Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=30.18909ms
+2026-09-09T11:06:07Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="378.614µs"
+2026-09-09T11:06:08Z DBG log/log.go:87 > proof generated circuit=decryptcombine elapsed=153.808669ms
+2026-09-09T11:06:08Z DBG log/log.go:87 > proof verified circuit=decryptcombine elapsed="392.504µs"
+    gas_profile_multi_test.go:62: n=20 t=14 create=133312 claim_avg=122421 contrib=968048 finalize=2549593 reg_locked=615329 reg_auto=232394 reveal=227182 ciphertext=102770 pdecrypt=402271 combine=453057
+    gas_profile_multi_test.go:61: === n=24 t=16 ===
+2026-09-09T11:07:38Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.06271667s
+2026-09-09T11:07:38Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="470.164µs"
+2026-09-09T11:07:41Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.043820651s
+2026-09-09T11:07:41Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="430.435µs"
+2026-09-09T11:07:43Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.039438578s
+2026-09-09T11:07:43Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="433.244µs"
+2026-09-09T11:07:45Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.0426823s
+2026-09-09T11:07:45Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="436.914µs"
+2026-09-09T11:07:48Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.024088606s
+2026-09-09T11:07:48Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="445.964µs"
+2026-09-09T11:07:50Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.06985477s
+2026-09-09T11:07:50Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="469.265µs"
+2026-09-09T11:07:52Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.051846858s
+2026-09-09T11:07:52Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="460.604µs"
+2026-09-09T11:07:54Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.038941679s
+2026-09-09T11:07:54Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="447.515µs"
+2026-09-09T11:07:57Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.608564633s
+2026-09-09T11:07:57Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="460.335µs"
+2026-09-09T11:08:00Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.08033473s
+2026-09-09T11:08:00Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="470.485µs"
+2026-09-09T11:08:02Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.029535586s
+2026-09-09T11:08:02Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="498.895µs"
+2026-09-09T11:08:04Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.034093982s
+2026-09-09T11:08:04Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="441.344µs"
+2026-09-09T11:08:07Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.054815948s
+2026-09-09T11:08:07Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="458.934µs"
+2026-09-09T11:08:09Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.053513225s
+2026-09-09T11:08:09Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="485.425µs"
+2026-09-09T11:08:12Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.06610937s
+2026-09-09T11:08:12Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="461.154µs"
+2026-09-09T11:08:14Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.035725998s
+2026-09-09T11:08:14Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="446.594µs"
+2026-09-09T11:08:16Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.013006892s
+2026-09-09T11:08:16Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="427.985µs"
+2026-09-09T11:08:18Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.03902092s
+2026-09-09T11:08:18Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="412.904µs"
+2026-09-09T11:08:20Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.460742836s
+2026-09-09T11:08:20Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="521.846µs"
+2026-09-09T11:08:24Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.065740016s
+2026-09-09T11:08:24Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="452.015µs"
+2026-09-09T11:08:26Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.039771878s
+2026-09-09T11:08:26Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="429.314µs"
+2026-09-09T11:08:28Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.045275632s
+2026-09-09T11:08:28Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="452.694µs"
+2026-09-09T11:08:30Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.026998191s
+2026-09-09T11:08:30Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="450.955µs"
+2026-09-09T11:08:33Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.042648417s
+2026-09-09T11:08:33Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="460.435µs"
+2026-09-09T11:08:37Z DBG log/log.go:87 > proof generated circuit=finalize elapsed=2.351113511s
+2026-09-09T11:08:37Z DBG log/log.go:87 > proof verified circuit=finalize elapsed="378.994µs"
+2026-09-09T11:08:44Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=39.654704ms
+2026-09-09T11:08:44Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="437.844µs"
+2026-09-09T11:08:44Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=36.685664ms
+2026-09-09T11:08:44Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="490.065µs"
+2026-09-09T11:08:44Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=37.27226ms
+2026-09-09T11:08:44Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="373.744µs"
+2026-09-09T11:08:44Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=35.170319ms
+2026-09-09T11:08:44Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="417.334µs"
+2026-09-09T11:08:44Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=32.131359ms
+2026-09-09T11:08:44Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="399.024µs"
+2026-09-09T11:08:45Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=30.897916ms
+2026-09-09T11:08:45Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="406.464µs"
+2026-09-09T11:08:45Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=30.289481ms
+2026-09-09T11:08:45Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="365.974µs"
+2026-09-09T11:08:45Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=31.21216ms
+2026-09-09T11:08:45Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="373.934µs"
+2026-09-09T11:08:45Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=31.2819ms
+2026-09-09T11:08:45Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="364.724µs"
+2026-09-09T11:08:45Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=32.829996ms
+2026-09-09T11:08:45Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="360.804µs"
+2026-09-09T11:08:45Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=34.678864ms
+2026-09-09T11:08:45Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="406.704µs"
+2026-09-09T11:08:45Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=31.24022ms
+2026-09-09T11:08:45Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="409.804µs"
+2026-09-09T11:08:45Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=31.341201ms
+2026-09-09T11:08:45Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="368.063µs"
+2026-09-09T11:08:45Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=32.019868ms
+2026-09-09T11:08:45Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="365.683µs"
+2026-09-09T11:08:45Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=31.828696ms
+2026-09-09T11:08:45Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="470.534µs"
+2026-09-09T11:08:45Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=31.509953ms
+2026-09-09T11:08:45Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="420.615µs"
+2026-09-09T11:08:45Z DBG log/log.go:87 > proof generated circuit=decryptcombine elapsed=163.752185ms
+2026-09-09T11:08:45Z DBG log/log.go:87 > proof verified circuit=decryptcombine elapsed="415.114µs"
+    gas_profile_multi_test.go:62: n=24 t=16 create=133312 claim_avg=121797 contrib=1068990 finalize=2636501 reg_locked=619062 reg_auto=232394 reveal=225890 ciphertext=102770 pdecrypt=402257 combine=460817
+    gas_profile_multi_test.go:61: === n=28 t=19 ===
+2026-09-09T11:10:28Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.076513172s
+2026-09-09T11:10:28Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="467.595µs"
+2026-09-09T11:10:30Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.092163808s
+2026-09-09T11:10:30Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="466.965µs"
+2026-09-09T11:10:32Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.077847406s
+2026-09-09T11:10:32Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="458.644µs"
+2026-09-09T11:10:35Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.10043283s
+2026-09-09T11:10:35Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="706.957µs"
+2026-09-09T11:10:37Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.083132059s
+2026-09-09T11:10:37Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="418.274µs"
+2026-09-09T11:10:40Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.051504094s
+2026-09-09T11:10:40Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="480.734µs"
+2026-09-09T11:10:42Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.089146438s
+2026-09-09T11:10:42Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="450.914µs"
+2026-09-09T11:10:44Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.092745724s
+2026-09-09T11:10:44Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="454.574µs"
+2026-09-09T11:10:46Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.083577343s
+2026-09-09T11:10:46Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="763.147µs"
+2026-09-09T11:10:49Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.071343631s
+2026-09-09T11:10:49Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="444.245µs"
+2026-09-09T11:10:52Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.08932442s
+2026-09-09T11:10:52Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="434.094µs"
+2026-09-09T11:10:54Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.084994287s
+2026-09-09T11:10:54Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="447.935µs"
+2026-09-09T11:10:56Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.089914395s
+2026-09-09T11:10:56Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="459.475µs"
+2026-09-09T11:10:58Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.162082532s
+2026-09-09T11:10:58Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="506.245µs"
+2026-09-09T11:11:01Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.08127836s
+2026-09-09T11:11:01Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="458.014µs"
+2026-09-09T11:11:04Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.089475872s
+2026-09-09T11:11:04Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="452.154µs"
+2026-09-09T11:11:06Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.124376308s
+2026-09-09T11:11:06Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="436.794µs"
+2026-09-09T11:11:08Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.053954199s
+2026-09-09T11:11:08Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="467.824µs"
+2026-09-09T11:11:10Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.324381083s
+2026-09-09T11:11:10Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="473.265µs"
+2026-09-09T11:11:14Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.071369082s
+2026-09-09T11:11:14Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="469.985µs"
+2026-09-09T11:11:16Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.070239811s
+2026-09-09T11:11:16Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="461.024µs"
+2026-09-09T11:11:18Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.062542454s
+2026-09-09T11:11:18Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="722.087µs"
+2026-09-09T11:11:20Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.072380982s
+2026-09-09T11:11:20Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="398.004µs"
+2026-09-09T11:11:23Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.101624312s
+2026-09-09T11:11:23Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="594.706µs"
+2026-09-09T11:11:25Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.0641133s
+2026-09-09T11:11:25Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="454.525µs"
+2026-09-09T11:11:28Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.074828476s
+2026-09-09T11:11:28Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="428.865µs"
+2026-09-09T11:11:30Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.072123089s
+2026-09-09T11:11:30Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="452.014µs"
+2026-09-09T11:11:32Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.075151399s
+2026-09-09T11:11:32Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="448.465µs"
+2026-09-09T11:11:36Z DBG log/log.go:87 > proof generated circuit=finalize elapsed=2.318581189s
+2026-09-09T11:11:36Z DBG log/log.go:87 > proof verified circuit=finalize elapsed="429.134µs"
+2026-09-09T11:11:44Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=35.814435ms
+2026-09-09T11:11:44Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="441.184µs"
+2026-09-09T11:11:44Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=38.870896ms
+2026-09-09T11:11:44Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="430.854µs"
+2026-09-09T11:11:44Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=36.197709ms
+2026-09-09T11:11:44Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="449.595µs"
+2026-09-09T11:11:44Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=30.634593ms
+2026-09-09T11:11:44Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="421.814µs"
+2026-09-09T11:11:44Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=29.953607ms
+2026-09-09T11:11:44Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="403.684µs"
+2026-09-09T11:11:44Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=29.565434ms
+2026-09-09T11:11:44Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="401.624µs"
+2026-09-09T11:11:44Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=31.287011ms
+2026-09-09T11:11:44Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="382.674µs"
+2026-09-09T11:11:44Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=35.074758ms
+2026-09-09T11:11:44Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="838.059µs"
+2026-09-09T11:11:45Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=338.747382ms
+2026-09-09T11:11:45Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="732.307µs"
+2026-09-09T11:11:45Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=336.216317ms
+2026-09-09T11:11:45Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="729.208µs"
+2026-09-09T11:11:45Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=252.879089ms
+2026-09-09T11:11:45Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="406.184µs"
+2026-09-09T11:11:45Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=33.955897ms
+2026-09-09T11:11:45Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="395.094µs"
+2026-09-09T11:11:45Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=33.816576ms
+2026-09-09T11:11:45Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="412.754µs"
+2026-09-09T11:11:45Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=32.095208ms
+2026-09-09T11:11:45Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="373.693µs"
+2026-09-09T11:11:45Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=31.133159ms
+2026-09-09T11:11:45Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="366.114µs"
+2026-09-09T11:11:45Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=32.302321ms
+2026-09-09T11:11:45Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="379.633µs"
+2026-09-09T11:11:46Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=31.21524ms
+2026-09-09T11:11:46Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="447.035µs"
+2026-09-09T11:11:46Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=31.879216ms
+2026-09-09T11:11:46Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="378.664µs"
+2026-09-09T11:11:46Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=31.881766ms
+2026-09-09T11:11:46Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="376.684µs"
+2026-09-09T11:11:46Z DBG log/log.go:87 > proof generated circuit=decryptcombine elapsed=174.630473ms
+2026-09-09T11:11:46Z DBG log/log.go:87 > proof verified circuit=decryptcombine elapsed="382.834µs"
+    gas_profile_multi_test.go:62: n=28 t=19 create=133312 claim_avg=121353 contrib=1192165 finalize=2723481 reg_locked=615957 reg_auto=232394 reveal=224610 ciphertext=102770 pdecrypt=402285 combine=472458
+    gas_profile_multi_test.go:61: === n=32 t=22 ===
+2026-09-09T11:13:42Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.146175174s
+2026-09-09T11:13:42Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="419.735µs"
+2026-09-09T11:13:44Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.110836563s
+2026-09-09T11:13:44Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="472.624µs"
+2026-09-09T11:13:47Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.124206496s
+2026-09-09T11:13:47Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="521.095µs"
+2026-09-09T11:13:50Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.953149522s
+2026-09-09T11:13:50Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="449.334µs"
+2026-09-09T11:13:54Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.126727921s
+2026-09-09T11:13:54Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="481.285µs"
+2026-09-09T11:13:56Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.112050035s
+2026-09-09T11:13:56Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="426.345µs"
+2026-09-09T11:13:58Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.110119356s
+2026-09-09T11:13:58Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="415.004µs"
+2026-09-09T11:14:01Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.997002687s
+2026-09-09T11:14:01Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="464.045µs"
+2026-09-09T11:14:03Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.104480251s
+2026-09-09T11:14:03Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="409.114µs"
+2026-09-09T11:14:06Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.112745212s
+2026-09-09T11:14:06Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="462.935µs"
+2026-09-09T11:14:08Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.089123597s
+2026-09-09T11:14:08Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="489.335µs"
+2026-09-09T11:14:10Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.10039694s
+2026-09-09T11:14:10Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="421.024µs"
+2026-09-09T11:14:12Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.10136362s
+2026-09-09T11:14:12Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="487.914µs"
+2026-09-09T11:14:15Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.119804022s
+2026-09-09T11:14:15Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="441.084µs"
+2026-09-09T11:14:18Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.097054016s
+2026-09-09T11:14:18Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="665.447µs"
+2026-09-09T11:14:20Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.138347716s
+2026-09-09T11:14:20Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="432.684µs"
+2026-09-09T11:14:22Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.080506233s
+2026-09-09T11:14:22Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="436.554µs"
+2026-09-09T11:14:25Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.329779896s
+2026-09-09T11:14:25Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="467.435µs"
+2026-09-09T11:14:28Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.09133988s
+2026-09-09T11:14:28Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="591.916µs"
+2026-09-09T11:14:30Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.097698653s
+2026-09-09T11:14:30Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="461.374µs"
+2026-09-09T11:14:32Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.095562772s
+2026-09-09T11:14:32Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="446.985µs"
+2026-09-09T11:14:35Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.081058828s
+2026-09-09T11:14:35Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="683.137µs"
+2026-09-09T11:14:38Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.163694828s
+2026-09-09T11:14:38Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="605.236µs"
+2026-09-09T11:14:40Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.13169656s
+2026-09-09T11:14:40Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="447.945µs"
+2026-09-09T11:14:42Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.102839574s
+2026-09-09T11:14:42Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="642.006µs"
+2026-09-09T11:14:44Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.100922775s
+2026-09-09T11:14:44Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="747.257µs"
+2026-09-09T11:14:47Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.120454609s
+2026-09-09T11:14:47Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="456.124µs"
+2026-09-09T11:14:50Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.130763521s
+2026-09-09T11:14:50Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="474.155µs"
+2026-09-09T11:14:52Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.123865023s
+2026-09-09T11:14:52Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="429.984µs"
+2026-09-09T11:14:54Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.122178756s
+2026-09-09T11:14:54Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="463.395µs"
+2026-09-09T11:14:57Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.111789143s
+2026-09-09T11:14:57Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="460.284µs"
+2026-09-09T11:15:00Z DBG log/log.go:87 > proof generated circuit=contribution elapsed=1.11654404s
+2026-09-09T11:15:00Z DBG log/log.go:87 > proof verified circuit=contribution elapsed="734.887µs"
+2026-09-09T11:15:04Z DBG log/log.go:87 > proof generated circuit=finalize elapsed=2.331607268s
+2026-09-09T11:15:04Z DBG log/log.go:87 > proof verified circuit=finalize elapsed="402.454µs"
+2026-09-09T11:15:11Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=38.769905ms
+2026-09-09T11:15:11Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="487.075µs"
+2026-09-09T11:15:11Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=35.310801ms
+2026-09-09T11:15:11Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="409.534µs"
+2026-09-09T11:15:11Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=33.124279ms
+2026-09-09T11:15:11Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="365.934µs"
+2026-09-09T11:15:11Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=29.906767ms
+2026-09-09T11:15:11Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="382.654µs"
+2026-09-09T11:15:11Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=32.16634ms
+2026-09-09T11:15:11Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="457.234µs"
+2026-09-09T11:15:11Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=31.23223ms
+2026-09-09T11:15:11Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="372.174µs"
+2026-09-09T11:15:11Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=34.000757ms
+2026-09-09T11:15:11Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="435.874µs"
+2026-09-09T11:15:11Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=32.133409ms
+2026-09-09T11:15:11Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="371.184µs"
+2026-09-09T11:15:11Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=33.111409ms
+2026-09-09T11:15:11Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="390.484µs"
+2026-09-09T11:15:11Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=33.936967ms
+2026-09-09T11:15:11Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="432.384µs"
+2026-09-09T11:15:11Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=34.2509ms
+2026-09-09T11:15:11Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="386.294µs"
+2026-09-09T11:15:11Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=32.428761ms
+2026-09-09T11:15:11Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="396.164µs"
+2026-09-09T11:15:11Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=34.444812ms
+2026-09-09T11:15:11Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="408.814µs"
+2026-09-09T11:15:11Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=32.902446ms
+2026-09-09T11:15:11Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="550.155µs"
+2026-09-09T11:15:11Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=33.437662ms
+2026-09-09T11:15:11Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="428.245µs"
+2026-09-09T11:15:12Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=33.22392ms
+2026-09-09T11:15:12Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="398.534µs"
+2026-09-09T11:15:12Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=34.101848ms
+2026-09-09T11:15:12Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="428.764µs"
+2026-09-09T11:15:12Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=42.679393ms
+2026-09-09T11:15:12Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="443.134µs"
+2026-09-09T11:15:12Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=35.990587ms
+2026-09-09T11:15:12Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="397.084µs"
+2026-09-09T11:15:12Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=33.717264ms
+2026-09-09T11:15:12Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="390.114µs"
+2026-09-09T11:15:12Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=33.304961ms
+2026-09-09T11:15:12Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="392.184µs"
+2026-09-09T11:15:12Z DBG log/log.go:87 > proof generated circuit=partialdecrypt elapsed=32.782215ms
+2026-09-09T11:15:12Z DBG log/log.go:87 > proof verified circuit=partialdecrypt elapsed="411.094µs"
+2026-09-09T11:15:12Z DBG log/log.go:87 > proof generated circuit=decryptcombine elapsed=193.655571ms
+2026-09-09T11:15:12Z DBG log/log.go:87 > proof verified circuit=decryptcombine elapsed="397.214µs"
+    gas_profile_multi_test.go:62: n=32 t=22 create=133312 claim_avg=121021 contrib=1315135 finalize=2810581 reg_locked=619169 reg_auto=232394 reveal=228980 ciphertext=102770 pdecrypt=402283 combine=483955
+    gas_profile_multi_test.go:66: 
+        
+        === GAS PROFILE RESULTS (MaxN=32) ===
+    gas_profile_multi_test.go:67: | n | t | createEpoch | claimSlot (avg) | submitContribution | finalizeEpoch | registerApplication (locked) | registerApplication (automatic) | revealOrganizerSecret | submitCiphertext | submitPartialDecryption | combineDecryption |
+    gas_profile_multi_test.go:70: |---|---|---|---|---|---|---|---|---|---|---|---|
+    gas_profile_multi_test.go:73: | 4 | 3 | 150323 | 137463 | 500262 | 2201925 | 616490 | 232394 | 225262 | 102770 | 402275 | 410566 |
+    gas_profile_multi_test.go:73: | 8 | 6 | 133312 | 128056 | 622513 | 2289001 | 619169 | 232394 | 224622 | 102758 | 402225 | 422173 |
+    gas_profile_multi_test.go:73: | 12 | 8 | 133312 | 124923 | 722731 | 2375993 | 622369 | 232394 | 227822 | 102770 | 402283 | 429874 |
+    gas_profile_multi_test.go:73: | 16 | 11 | 133312 | 123358 | 845222 | 2462829 | 617889 | 232394 | 230260 | 102770 | 402285 | 441477 |
+    gas_profile_multi_test.go:73: | 20 | 14 | 133312 | 122421 | 968048 | 2549593 | 615329 | 232394 | 227182 | 102770 | 402271 | 453057 |
+    gas_profile_multi_test.go:73: | 24 | 16 | 133312 | 121797 | 1068990 | 2636501 | 619062 | 232394 | 225890 | 102770 | 402257 | 460817 |
+    gas_profile_multi_test.go:73: | 28 | 19 | 133312 | 121353 | 1192165 | 2723481 | 615957 | 232394 | 224610 | 102770 | 402285 | 472458 |
+    gas_profile_multi_test.go:73: | 32 | 22 | 133312 | 121021 | 1315135 | 2810581 | 619169 | 232394 | 228980 | 102770 | 402283 | 483955 |
+    gas_profile_multi_test.go:82: 
+        === Compact (submitContribution | finalizeEpoch | submitPartialDecryption | combineDecryption) ===
+    gas_profile_multi_test.go:91: | 4 | 3 | 500262 | 2201925 | 402275 | 410566 |
+        | 8 | 6 | 622513 | 2289001 | 402225 | 422173 |
+        | 12 | 8 | 722731 | 2375993 | 402283 | 429874 |
+        | 16 | 11 | 845222 | 2462829 | 402285 | 441477 |
+        | 20 | 14 | 968048 | 2549593 | 402271 | 453057 |
+        | 24 | 16 | 1068990 | 2636501 | 402257 | 460817 |
+        | 28 | 19 | 1192165 | 2723481 | 402285 | 472458 |
+        | 32 | 22 | 1315135 | 2810581 | 402283 | 483955 |
+        
+--- PASS: TestGasProfilesMultiNode (1031.77s)
+PASS
+ Container 91040d49-801c-4579-8404-bb26d4c0b58f-deployer-1  Stopping
+ Container 91040d49-801c-4579-8404-bb26d4c0b58f-deployer-1  Stopped
+ Container 91040d49-801c-4579-8404-bb26d4c0b58f-deployer-1  Removing
+ Container 91040d49-801c-4579-8404-bb26d4c0b58f-deployer-1  Removed
+ Container 91040d49-801c-4579-8404-bb26d4c0b58f-anvil-1  Stopping
+ Container 91040d49-801c-4579-8404-bb26d4c0b58f-anvil-1  Stopped
+ Container 91040d49-801c-4579-8404-bb26d4c0b58f-anvil-1  Removing
+ Container 91040d49-801c-4579-8404-bb26d4c0b58f-anvil-1  Removed
+ Network 91040d49-801c-4579-8404-bb26d4c0b58f_default  Removing
+ Network 91040d49-801c-4579-8404-bb26d4c0b58f_default  Removed
+ok  	github.com/vocdoni/davinci-dkg/tests	1077.380s

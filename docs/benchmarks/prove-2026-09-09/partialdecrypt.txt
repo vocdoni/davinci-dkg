@@ -1,0 +1,30 @@
+goos: linux
+goarch: amd64
+pkg: github.com/vocdoni/davinci-dkg/circuits/partialdecrypt
+cpu: AMD Ryzen 9 9950X3D 16-Core Processor          
+BenchmarkProve-32    	       5	  31865555 ns/op
+PASS
+ok  	github.com/vocdoni/davinci-dkg/circuits/partialdecrypt	0.393s
+	Command being timed: "go test -run ^$ -bench ^BenchmarkProve$ -benchtime 5x -count=1 -timeout 60m ./circuits/partialdecrypt"
+	User time (seconds): 5.11
+	System time (seconds): 1.36
+	Percent of CPU this job got: 578%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:01.11
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 378976
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 134112
+	Voluntary context switches: 45796
+	Involuntary context switches: 1540
+	Swaps: 0
+	File system inputs: 12386
+	File system outputs: 48
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0
