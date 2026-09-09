@@ -12,10 +12,10 @@ container cgroups of a running fleet.
 
 | Circuit | Constraints | Public inputs | Proving key | Proof time |
 |---|---:|---:|---:|---:|
-| Contribution (16 keys, compact transcript) | 1,689,543 | 8 | 243 MB | 903 ms |
-| Finalize (all 16 keys, up to 32 dealers) | 2,228,434 | 7 | 436 MB | 2,380 ms |
-| PartialDecrypt | 26,179 | 15 | 4 MB | 32 ms |
-| DecryptCombine | 255,072 | 9 | 35 MB | 143 ms |
+| Contribution (16 keys, compact transcript) | 1,689,551 | 8 | 243 MB | 1,035 ms |
+| Finalize (all 16 keys, up to 32 dealers) | 2,228,441 | 7 | 436 MB | 2,369 ms |
+| PartialDecrypt | 26,194 | 15 | 4 MB | 33 ms |
+| DecryptCombine | 255,081 | 9 | 35 MB | 146 ms |
 
 Proof times are the mean of five proofs from each circuit package's `BenchmarkProve`
 (`go test -run '^$' -bench '^BenchmarkProve$' -benchtime 5x ./circuits/<circuit>` with the pinned
@@ -36,17 +36,20 @@ the per-key Poseidon digest that re-absorbs every dealer's 2·16·32 commitment 
 constant-position Horner evaluation of the aggregated polynomials. Profiler attribution per call of
 the shared gadgets: `FixedBaseMulBits` 875 (plus the caller's scalar decomposition, 254 bits or a
 639-constraint `CanonicalScalarBits`), `ScalarMulVarBits` 3,291, `AssertCofactorPreimage` 21,
-`AssertPointOnCurve` 4, Poseidon ≈ 43 per absorbed element. The
-circuit size is fixed by the compiled capacities (`MaxN`, `MaxT`, `MaxK`); the live `(t, n)` size
-only the calldata. A single-key build (`MaxK = 1`) of the same contribution circuit has 271,648
-constraints.
+`AssertPointOnCurve` 4, Poseidon ≈ 43 per absorbed element. Every circuit also
+spends one row per public input (8, 7, 15 and 9) on `ccommon.CertifyPublicInputs`, which puts each
+public wire alone on the left-hand side of a constraint so that the QAP meets the hypothesis of
+Groth16's weak simulation-extractability theorem (`MissingDedicatedPublicRows` checks the compiled
+matrices in each circuit's `qap_test.go`). The circuit size is fixed by the compiled capacities
+(`MaxN`, `MaxT`, `MaxK`); the live `(t, n)` size only the calldata. A single-key build (`MaxK = 1`)
+of the same contribution circuit has 271,656 constraints.
 
 ## Memory
 
 | Figure | Value |
 |---|---:|
-| Contribution prover, peak resident set of the `BenchmarkProve` process (key and circuit loaded, `/usr/bin/time -v`, which reports KiB) | 3.2 GiB |
-| Finalize prover, same measurement | 5.0 GiB |
+| Contribution prover, peak resident set of the `BenchmarkProve` process (key and circuit loaded, `/usr/bin/time -v`, which reports KiB) | 3.0 GiB |
+| Finalize prover, same measurement | 5.4 GiB |
 | Node at rest (cgroup, Sepolia seed nodes) | 0.2–0.7 GB |
 | Node peak during its contribution proof | 2.9 GB |
 | Node peak at startup (stream-verifies the four circuits, decodes the two decryption runtimes) | 0.17 GB |
@@ -87,7 +90,7 @@ about 1.7 M gas at `t = 3`.
 
 The same circuits, contracts and test built with `MaxK = 1` / `MAX_K = 1` (worktree patch and raw
 log: `docs/benchmarks/gas-k1-2026-09-09.patch`, `gas-k1-2026-09-09.txt`): the contribution circuit
-has 271,648 constraints and the finalize circuit 154,816; `submitContribution` costs 397,392 at
+has 271,656 constraints; `submitContribution` costs 397,392 at
 `n = 4` and 529,452 at `n = 32`, `finalizeEpoch` 461,523 and 747,571, `createEpoch` and `claimSlot`
 are unchanged. An epoch yielding one key therefore costs about 2.7 M gas at `n = 4` and 21.7 M at
 `n = 32`, nine and seven times the pooled per-key figure above, and dealing 16 keys costs 1.26–2.5×

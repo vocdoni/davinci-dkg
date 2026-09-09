@@ -32,6 +32,10 @@ type PartialDecryptCircuit struct {
 }
 
 func (c *PartialDecryptCircuit) Define(api frontend.API) error {
+	// One dedicated left-hand row per public input certifies the QAP hypothesis
+	// of weak simulation-extractability (ccommon.CertifyPublicInputs).
+	ccommon.CertifyPublicInputs(api, c.RoundHash, c.Aid, c.CtIdx, c.ParticipantIndex, c.Base.X, c.Base.Y, c.PublicKey.X, c.PublicKey.Y, c.Delta.X, c.Delta.Y, c.A1.X, c.A1.Y, c.A2.X, c.A2.Y, c.Response)
+
 	curve, err := twistededwards.NewEdCurve(api, ccommon.BabyJubJubCurveID())
 	if err != nil {
 		return err

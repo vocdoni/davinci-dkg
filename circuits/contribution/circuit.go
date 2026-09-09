@@ -53,6 +53,10 @@ type ContributionCircuit struct {
 }
 
 func (c *ContributionCircuit) Define(api frontend.API) error {
+	// One dedicated left-hand row per public input certifies the QAP hypothesis
+	// of weak simulation-extractability (ccommon.CertifyPublicInputs).
+	ccommon.CertifyPublicInputs(api, c.RoundHash, c.Threshold, c.CommitteeSize, c.ContributorIndex, c.CommitmentHash, c.ShareHash, c.Challenge, c.TranscriptCommitment)
+
 	// Bound the public count inputs to their fixed array sizes.
 	// PrefixMask returns all-active when count > size, so
 	// without these the statement could prove a partial set while

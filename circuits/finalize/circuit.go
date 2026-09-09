@@ -83,6 +83,10 @@ type FinalizeCircuit struct {
 }
 
 func (c *FinalizeCircuit) Define(api frontend.API) error {
+	// One dedicated left-hand row per public input certifies the QAP hypothesis
+	// of weak simulation-extractability (ccommon.CertifyPublicInputs).
+	ccommon.CertifyPublicInputs(api, c.RoundHash, c.Threshold, c.CommitteeSize, c.AcceptedCount, c.TranscriptDigest, c.Challenge, c.TranscriptCommitment)
+
 	curve, err := twistededwards.NewEdCurve(api, ccommon.BabyJubJubCurveID())
 	if err != nil {
 		return err

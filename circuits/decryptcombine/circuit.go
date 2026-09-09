@@ -74,6 +74,10 @@ type DecryptCombineCircuit struct {
 }
 
 func (c *DecryptCombineCircuit) Define(api frontend.API) error {
+	// One dedicated left-hand row per public input certifies the QAP hypothesis
+	// of weak simulation-extractability (ccommon.CertifyPublicInputs).
+	ccommon.CertifyPublicInputs(api, c.RoundHash, c.Aid, c.CtIdx, c.Threshold, c.ShareCount, c.CombineHash, c.PlaintextHash, c.Challenge, c.TranscriptCommitment)
+
 	curve, err := twistededwards.NewEdCurve(api, ccommon.BabyJubJubCurveID())
 	if err != nil {
 		return err
