@@ -128,30 +128,6 @@ type bufferedFile struct {
 
 func (b *bufferedFile) Close() error { return b.f.Close() }
 
-// loadOrDownload returns the whole verified artifact in memory; the runtime
-// loaders stream instead (open), this remains for callers that need bytes.
-func (a *Artifact) loadOrDownload(ctx context.Context) ([]byte, error) {
-	if a == nil {
-		return nil, fmt.Errorf("artifact not configured")
-	}
-	if len(a.Hash) == 0 {
-		return nil, fmt.Errorf("artifact hash not provided")
-	}
-
-	content, err := a.loadFromCache()
-	switch {
-	case err == nil:
-		return content, nil
-	case errors.Is(err, ErrArtifactNotFound), errors.Is(err, ErrArtifactHashMismatch):
-		if err := a.downloadToCache(ctx); err != nil {
-			return nil, err
-		}
-	default:
-		return nil, err
-	}
-	return a.readFromCache()
-}
-
 func (a *Artifact) loadFromCache() ([]byte, error) {
 	content, err := a.readFromCache()
 	if err != nil {
