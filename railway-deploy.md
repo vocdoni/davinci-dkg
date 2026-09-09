@@ -126,8 +126,23 @@ by the memory cap (see the plan requirement above).
 
 | Node | Service id | Volume id | Operator |
 |---|---|---|---|
+| dkg-node1 | `7f2d0623-f369-4158-b568-5f4aa3d9c4e7` | `dacac9f5-a70c-4705-88b7-92a389467a16` (5 GB) | `0x6aFbc1474dA64a25cD12842C0B2410053a245DD5` |
+| dkg-node2 | `5f1bcff1-e82c-402b-8a60-8ddc7f2035fb` | `9dc37e56-175c-4b01-9281-2b57e73488e3` (5 GB) | `0x9D417cB81380B09546e8EbA8d1d215D8C98F81FF` |
+| dkg-node3 | `8c94159e-70fe-4cb0-876d-69a4a3d6775d` | `4eb4e660-dfa7-4ae2-8f72-d782f5a15f33` (5 GB) | `0x51084b010395C62b5294599e06617bAc22d55F36` |
+| dkg-node4 | `c8aa6050-0dde-4ce8-a395-b238321cbea0` | `81be8d2f-9728-40df-812b-d440d922b3cf` (5 GB) | `0xb8860186663Aa9b282A3aa873BAccb438Defa76B` |
+| dkg-node5 | `d1acc7d3-5227-4e73-bcf8-8dba4af03258` | `fb8af313-d013-4ed7-bac2-8b57ed9159f4` (5 GB) | `0x7736a6c997DFef24463B42FB29234d6539e83cCC` |
+| dkg-node6 | `4c71c556-bc19-4237-b86f-c96d3ed2ca0d` | `56f4d802-44fc-4792-b5c7-1a066a3369cf` (5 GB) | `0xE0D26f0C10a8091EAFed58c8c642714aDa8bCDfA` |
+| dkg-node7 | `c8a78a6e-fc51-4a5b-b133-6c6f6cfec266` | `6694e6ac-0085-451b-aa3a-b9159a545737` (5 GB) | `0x8EDd1838db9fc9A833B759Ee0C78242273dA0459` |
+| dkg-node8 | `66e1f124-465f-43d7-b485-de96454335d8` | `65a055be-d258-4fde-9c5b-8a2acc93ce1d` (5 GB) | `0x647F35C2f7F308c75c52b2c64b5e7615068a4a5b` |
 | dkg-node9 | `b7c719f1-8a87-4de2-8033-b62bfea71c15` | `386e62ee-6a80-40f6-a3f5-cc665955cd1a` (5 GB) | `0xf4FE1328f6a9C3391bFf4024d0348DdF188eD35c` |
 | dkg-node10 | `9bc7a731-1902-4bcf-b2fa-14052fd07cc0` | `c8413cf6-83e2-44b0-a713-4d4be9853bc0` (5 GB) | `0x31e162dD9c3Bc94a903a90E710d8A3577F14203b` |
 
-Operator keys: `~/.davinci-dkg-sepolia/node9.json`, `node10.json` on the
+Operator keys: `~/.davinci-dkg-sepolia/node1.json` … `node10.json` on the
 workstation (never in git).
+
+Since 2026-09-09 13:27 UTC the whole public Sepolia fleet (nodes 1–10, v0.8.0 image via `:latest`,
+Sepolia v6 deployment at manager `0xc73b7a868eca6ac7e3e647e2665aa16a793cf551`) runs on Railway; the
+former workstation/z5/z7 compose fleets are stopped. Fresh volumes download the 1.0 GB of `circuits-v6`
+artifacts on first start; with eight nodes starting at once GitHub answered a few downloads with a
+non-200 status, the node exited (`unexpected http status`) and the ALWAYS restart policy retried until
+it succeeded, within a minute.
