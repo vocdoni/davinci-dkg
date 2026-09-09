@@ -45,8 +45,8 @@ constraints.
 
 | Figure | Value |
 |---|---:|
-| Contribution prover, peak resident set of the `BenchmarkProve` process (key and circuit loaded, `/usr/bin/time -v`) | 3.3 GB |
-| Finalize prover, same measurement | 5.2 GB |
+| Contribution prover, peak resident set of the `BenchmarkProve` process (key and circuit loaded, `/usr/bin/time -v`, which reports KiB) | 3.2 GiB |
+| Finalize prover, same measurement | 5.0 GiB |
 | Node at rest (cgroup, Sepolia seed nodes) | 0.2–0.7 GB |
 | Node peak during its contribution proof | 2.9 GB |
 | Node peak at startup (stream-verifies the four circuits, decodes the two decryption runtimes) | 0.17 GB |
