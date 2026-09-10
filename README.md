@@ -244,7 +244,7 @@ removes and range-checks. The compiled circuits, proving keys and verifying keys
 SHA-256 in `config/circuit_artifacts.go` and published as a GitHub release; a node downloads them
 on first start and stream-verifies every file against those hashes, at startup and again whenever
 a proving key is loaded for a proof. Nothing is compiled at runtime. The normative encodings live
-in [`docs/pool-keys.md`](docs/pool-keys.md); measurements in [`BENCHMARKS.md`](BENCHMARKS.md).
+in [`docs/pool-keys.md`](docs/pool-keys.md); measurements in [`BENCHMARKS.md`](BENCHMARKS.md); application patterns in [`docs/use-cases.md`](docs/use-cases.md).
 
 ---
 
@@ -490,6 +490,7 @@ through load, concurrency and adversarial scenarios and writes a per-transaction
 | `cmd/` | `davinci-dkg-node`, `dkgapp`, `circuit-compile`, `circuit-profile`, `protocol-vectors` |
 | `tests/` | Chain-backed integration tests, fixtures, the battery |
 | `docs/pool-keys.md` | Normative encodings and proof statements |
+| `docs/use-cases.md` | Applications beyond voting: auctions, batch clearing, scheduled disclosure, lotteries, private aggregation |
 | `BENCHMARKS.md` | Constraints, proving times, memory, gas, RPC load |
 
 ---
