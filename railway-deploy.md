@@ -152,3 +152,7 @@ removed (`deploymentRemove`) and the organizer bot unit stopped and disabled. Se
 (10 × 5 GB, billed until deleted) and the operator keys are kept, so `serviceInstanceRedeploy` on each
 service brings the fleet back with the same operators. The Sepolia v6 contracts stay on chain; the
 last Live epoch remains usable only while nodes run, so no new ciphertext will be decrypted.
+21:20 UTC: the ten volumes were deleted as well (`volumeDelete` returned `true` for each; they are
+detached from every service but the project still lists them for a while, as the Trial volumes did
+on 2026-09-08 — check the dashboard if billing continues). Operator and organizer private keys are
+consolidated in `~/.davinci-dkg-sepolia/operator-keys-2026-09-23.txt` (mode 600, never in git).
