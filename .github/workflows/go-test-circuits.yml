@@ -18,6 +18,7 @@ on:
       - release**
   schedule:
     - cron: "0 1 * * *" # 02:00 UTC+1
+  workflow_dispatch:
 
 permissions:
   contents: read
