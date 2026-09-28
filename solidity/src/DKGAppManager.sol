@@ -25,9 +25,6 @@ contract DKGAppManager is IDKGAppManager {
     ///         applications against. Immutable.
     address public immutable MANAGER;
 
-    /// @notice The deployer, the only address allowed to call `setRegistrar`.
-    address public immutable registrarAdmin;
-
     /// @dev Per-application registrations, keyed by `(eid, aid)`. See
     ///      DKGTypes.Application for the record shape.
     mapping(bytes12 epochId => mapping(bytes32 aid => DKGTypes.Application app)) internal applications;
@@ -36,29 +33,9 @@ contract DKGAppManager is IDKGAppManager {
     ///      for explorers. Append-only; never reordered.
     mapping(bytes12 epochId => bytes32[] aids) internal epochAidsList;
 
-    /// @notice When set, the only address allowed to `registerApplication`.
-    ///         It exists for single-integrator deployments (e.g. a DAVINCI
-    ///         registry adapter): anyone can otherwise take an aid the
-    ///         integrator is about to use, or drain the epoch's pool keys.
-    ///         Zero, the default, keeps registration permissionless.
-    address public registrar;
-
     constructor(address _manager) {
         if (_manager == address(0)) revert InvalidAddress();
         MANAGER = _manager;
-        registrarAdmin = msg.sender;
-    }
-
-    /// @notice Set or rotate the registrar. Admin only, never back to zero.
-    ///         Rotation lets a successor integrator (e.g. a redeployed
-    ///         registry's adapter) take over without a new DKG stack. It
-    ///         gates new registrations only: existing applications keep their
-    ///         policy and submitters.
-    function setRegistrar(address r) external {
-        if (msg.sender != registrarAdmin) revert Unauthorized();
-        if (r == address(0)) revert InvalidRegistrar();
-        registrar = r;
-        emit RegistrarSet(r);
     }
 
     // ─── Application lifecycle ───────────────────────────────────────────────
@@ -84,8 +61,7 @@ contract DKGAppManager is IDKGAppManager {
     /// @dev    Submission is open to anyone (`policy.openSubmission`), to the
     ///         `policy.submitters` allow-list, or — when both are empty — to
     ///         `msg.sender` only. The pool claim is the last step so a
-    ///         rejected registration never burns a key. Once a `registrar`
-    ///         is set, every other caller reverts `NotRegistrar`.
+    ///         rejected registration never burns a key.
     function registerApplication(
         bytes12 epochId,
         bytes32 aid,
@@ -96,7 +72,6 @@ contract DKGAppManager is IDKGAppManager {
         uint256 schnorrAy,
         uint256 schnorrZ
     ) external {
-        if (registrar != address(0) && msg.sender != registrar) revert NotRegistrar();
         IDKGManager.Epoch memory epoch = IDKGManager(MANAGER).getEpoch(epochId);
         if (epoch.organizer == address(0)) revert InvalidEpoch();
         if (epoch.status != DKGTypes.EpochPhase.Live) revert InvalidPhase();

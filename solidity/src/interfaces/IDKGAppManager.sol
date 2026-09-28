@@ -22,9 +22,6 @@ interface IDKGAppManager {
     ///         every ciphertext of the application becomes decryptable by the
     ///         threshold alone. Emitted at most once per application.
     event OrganizerSecretRevealed(bytes12 indexed epochId, bytes32 indexed aid, uint256 organizerSecret);
-    /// @notice `registerApplication` is restricted to `registrar` from now on.
-    ///         Emitted on every set or rotation.
-    event RegistrarSet(address registrar);
 
     // ─── Errors ────────────────────────────────────────────────────────────────
     error InvalidApplication();
@@ -60,28 +57,6 @@ interface IDKGAppManager {
     ///      manager raises it from `claimPoolKey`, which registration
     ///      calls, so it surfaces out of `registerApplication`.
     error PoolExhausted();
-    /// @dev `setRegistrar` from anyone but `registrarAdmin`. Same selector
-    ///      as `IDKGManager.Unauthorized`.
-    error Unauthorized();
-    /// @dev `setRegistrar(address(0))`.
-    error InvalidRegistrar();
-    /// @dev A registrar is set and `msg.sender` is not it.
-    error NotRegistrar();
-
-    // ─── Registrar ────────────────────────────────────────────────────────────
-
-    /// @notice The deployer; the only address allowed to call `setRegistrar`.
-    function registrarAdmin() external view returns (address);
-
-    /// @notice The only address allowed to `registerApplication`, or zero
-    ///         when registration is permissionless (the default).
-    function registrar() external view returns (address);
-
-    /// @notice Restrict `registerApplication` to `r`. `registrarAdmin` only,
-    ///         `r` non-zero; a later call rotates it. Meant for
-    ///         single-integrator deployments (e.g. a DAVINCI registry adapter),
-    ///         where it closes aid front-running and pool draining.
-    function setRegistrar(address r) external;
 
     // ─── Application lifecycle ────────────────────────────────────────────────
 

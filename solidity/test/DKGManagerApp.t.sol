@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 pragma solidity 0.8.28;
 
-import {Test, Vm} from "forge-std/Test.sol";
+import {Test} from "forge-std/Test.sol";
 import {DKGRegistry} from "../src/DKGRegistry.sol";
 import {DKGManager} from "../src/DKGManager.sol";
 import {DKGAppManager} from "../src/DKGAppManager.sol";
@@ -558,121 +558,6 @@ contract DKGManagerAppTest is Test, TestHelpers {
         bytes12 epochId = _liveEpoch();
         vm.expectRevert(IDKGAppManager.InvalidApplication.selector);
         appManager.requireDecryptionOpen(epochId, bytes32(uint256(0xDEAD)));
-    }
-
-    // ─── Registrar ────────────────────────────────────────────────────────────
-
-    address internal constant REGISTRAR = address(0xDA7C1);
-    address internal constant STRANGER = address(0xCAFE);
-
-    /// @dev Unset by default, and registration stays open to anyone.
-    function test_Registrar_UnsetKeepsRegistrationPermissionless() public {
-        assertEq(appManager.registrarAdmin(), address(this));
-        assertEq(appManager.registrar(), address(0));
-
-        bytes12 epochId = _liveEpoch();
-        bytes32 aid = bytes32(uint256(90));
-        (uint256 pkx, uint256 pky, uint256 ax, uint256 ay, uint256 z) = organizerPoP(epochId, aid);
-        vm.prank(STRANGER);
-        appManager.registerApplication(epochId, aid, _emptyAppPolicy(), pkx, pky, ax, ay, z);
-        assertEq(appManager.getApplication(epochId, aid).creator, STRANGER);
-
-        DKGTypes.AppPolicy memory automatic = _emptyAppPolicy();
-        automatic.mode = DKGTypes.AppMode.Automatic;
-        vm.prank(address(0xB0B));
-        appManager.registerApplication(epochId, bytes32(uint256(91)), automatic, 0, 0, 0, 0, 0);
-        assertEq(appManager.getApplication(epochId, bytes32(uint256(91))).creator, address(0xB0B));
-        assertEq(uint256(manager.getPoolStatus(epochId)), 2);
-    }
-
-    function test_SetRegistrar_AdminSetsAndRotates() public {
-        vm.recordLogs();
-        appManager.setRegistrar(REGISTRAR);
-        assertEq(appManager.registrar(), REGISTRAR);
-
-        Vm.Log[] memory logs = vm.getRecordedLogs();
-        assertEq(logs.length, 1);
-        assertEq(logs[0].emitter, address(appManager));
-        assertTrue(logs[0].topics[0] == IDKGAppManager.RegistrarSet.selector);
-        assertEq(abi.decode(logs[0].data, (address)), REGISTRAR);
-
-        // The admin rotates it; the old registrar loses the gate at once.
-        address successor = address(0xB0B);
-        appManager.setRegistrar(successor);
-        assertEq(appManager.registrar(), successor);
-
-        bytes12 epochId = _liveEpoch();
-        DKGTypes.AppPolicy memory automatic = _emptyAppPolicy();
-        automatic.mode = DKGTypes.AppMode.Automatic;
-        vm.prank(REGISTRAR);
-        vm.expectRevert(IDKGAppManager.NotRegistrar.selector);
-        appManager.registerApplication(epochId, bytes32(uint256(95)), automatic, 0, 0, 0, 0, 0);
-        vm.prank(successor);
-        appManager.registerApplication(epochId, bytes32(uint256(95)), automatic, 0, 0, 0, 0, 0);
-        assertEq(appManager.getApplication(epochId, bytes32(uint256(95))).creator, successor);
-
-        // Never back to permissionless.
-        vm.expectRevert(IDKGAppManager.InvalidRegistrar.selector);
-        appManager.setRegistrar(address(0));
-    }
-
-    function test_SetRegistrar_AdminOnly() public {
-        vm.prank(STRANGER);
-        vm.expectRevert(IDKGAppManager.Unauthorized.selector);
-        appManager.setRegistrar(STRANGER);
-        // Not even the registrar-to-be may set itself.
-        vm.prank(REGISTRAR);
-        vm.expectRevert(IDKGAppManager.Unauthorized.selector);
-        appManager.setRegistrar(REGISTRAR);
-        assertEq(appManager.registrar(), address(0));
-    }
-
-    function test_SetRegistrar_RejectsZero() public {
-        vm.expectRevert(IDKGAppManager.InvalidRegistrar.selector);
-        appManager.setRegistrar(address(0));
-        assertEq(appManager.registrar(), address(0));
-        appManager.setRegistrar(REGISTRAR);
-        assertEq(appManager.registrar(), REGISTRAR);
-    }
-
-    function test_Registrar_RestrictsRegistration() public {
-        bytes12 epochId = _liveEpoch();
-        appManager.setRegistrar(REGISTRAR);
-        bytes32 aid = bytes32(uint256(92));
-        (uint256 pkx, uint256 pky, uint256 ax, uint256 ay, uint256 z) = organizerPoP(epochId, aid);
-        DKGTypes.AppPolicy memory automatic = _emptyAppPolicy();
-        automatic.mode = DKGTypes.AppMode.Automatic;
-
-        // Everyone else is out, the admin included, in both modes.
-        vm.prank(STRANGER);
-        vm.expectRevert(IDKGAppManager.NotRegistrar.selector);
-        appManager.registerApplication(epochId, aid, _emptyAppPolicy(), pkx, pky, ax, ay, z);
-        vm.prank(STRANGER);
-        vm.expectRevert(IDKGAppManager.NotRegistrar.selector);
-        appManager.registerApplication(epochId, aid, automatic, 0, 0, 0, 0, 0);
-        vm.expectRevert(IDKGAppManager.NotRegistrar.selector);
-        appManager.registerApplication(epochId, aid, automatic, 0, 0, 0, 0, 0);
-        // The check runs first: an unknown epoch still reports NotRegistrar.
-        vm.prank(STRANGER);
-        vm.expectRevert(IDKGAppManager.NotRegistrar.selector);
-        appManager.registerApplication(bytes12(uint96(0xdead)), aid, automatic, 0, 0, 0, 0, 0);
-        assertFalse(appManager.getApplication(epochId, aid).exists);
-        assertEq(uint256(manager.getPoolStatus(epochId)), 0);
-
-        // The registrar gets through in both modes and becomes the creator,
-        // so it is also the default (only) submitter.
-        vm.prank(REGISTRAR);
-        appManager.registerApplication(epochId, aid, _emptyAppPolicy(), pkx, pky, ax, ay, z);
-        assertEq(appManager.getApplication(epochId, aid).creator, REGISTRAR);
-        vm.prank(REGISTRAR);
-        appManager.registerApplication(epochId, bytes32(uint256(93)), automatic, 0, 0, 0, 0, 0);
-        assertEq(appManager.getApplication(epochId, bytes32(uint256(93))).creator, REGISTRAR);
-        assertEq(uint256(manager.getPoolStatus(epochId)), 2);
-
-        _submitCiphertextAs(REGISTRAR, epochId, aid);
-        vm.prank(STRANGER);
-        vm.expectRevert(IDKGAppManager.NotOwner.selector);
-        manager.submitCiphertext(epochId, aid, TEST_CT_C1X, TEST_CT_C1Y, TEST_CT_C2X, TEST_CT_C2Y);
     }
 
     // ─── getApplicationKey ────────────────────────────────────────────────────
