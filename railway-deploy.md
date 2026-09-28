@@ -4,8 +4,9 @@ Railway (https://railway.com) runs a node as a container from the public image
 `ghcr.io/vocdoni/davinci-dkg:latest`, bills per second on the memory and CPU
 the container actually uses (about $11 a month per v0.7 node, see
 `BENCHMARKS.md`), and is fully driven through its GraphQL API, which is what
-`scripts/railway-deploy-node.sh` uses. This is how the Sepolia fleet's nodes 9
-and 10 were deployed on 2026-09-08 and how to add more.
+`scripts/railway-deploy-node.sh` uses. The script deploys a node on the node's
+default network, Gnosis Chain; the Sepolia testnet fleet recorded at the end
+was deployed the same way in September 2026.
 
 ## What you need
 
@@ -15,10 +16,11 @@ and 10 were deployed on 2026-09-08 and how to add more.
   manage projects in its workspace.
 - An operator key per node in the fleet format
   `[{"address": "0x…", "private_key": "0x…"}]`, e.g. generated with
-  `cast wallet new --json` and stored under `~/.davinci-dkg-sepolia/nodeN.json`
-  (mode 0600). Fund the address with a little Sepolia ETH before the first
-  start: registration is one transaction, a node spends about 0.02 ETH a day
-  under the public bot's load.
+  `cast wallet new --json` and stored outside the repository, e.g.
+  `~/davinci-dkg-keys/nodeN.json` (mode 0600). Fund the address with a little
+  xDAI (Sepolia ETH for the testnet) before the first start: registration is
+  one transaction, and on Sepolia a node spent about 0.02 ETH a day under the
+  public bot's load.
 - `curl` and `python3`.
 
 The scripts read the token from `RAILWAY_TOKEN_FILE` and send it only in the
@@ -53,39 +55,43 @@ export RAILWAY_TOKEN_FILE=railway-api-key
 curl -sS https://backboard.railway.com/graphql/v2 \
   -H "Authorization: Bearer $(tr -d '[:space:]' < $RAILWAY_TOKEN_FILE)" \
   -H 'Content-Type: application/json' \
-  --data '{"query":"mutation { projectCreate(input: { name: \"davinci-dkg-sepolia\" }) { id environments { edges { node { id name } } } } }"}'
+  --data '{"query":"mutation { projectCreate(input: { name: \"davinci-dkg-gnosis\" }) { id environments { edges { node { id name } } } } }"}'
 ```
 
-Keep the project id and the `production` environment id. The Sepolia fleet's
-project is `a2242bc7-5e58-4fda-a326-86464d4670cd`, environment
+Keep the project id and the `production` environment id. The Sepolia testnet
+fleet's project is `a2242bc7-5e58-4fda-a326-86464d4670cd`, environment
 `f1a9f7a4-ed36-4bca-9369-06e290fdd0b0`.
 
 ## Per node: deploy
 
 ```bash
 export RAILWAY_TOKEN_FILE=railway-api-key
-export RAILWAY_PROJECT_ID=a2242bc7-5e58-4fda-a326-86464d4670cd
-export RAILWAY_ENVIRONMENT_ID=f1a9f7a4-ed36-4bca-9369-06e290fdd0b0
-NODE_NAME=dkg-node11 NODE_KEY_FILE=~/.davinci-dkg-sepolia/node11.json scripts/railway-deploy-node.sh
+export RAILWAY_PROJECT_ID=<project id>
+export RAILWAY_ENVIRONMENT_ID=<environment id>
+NODE_NAME=dkg-node1 NODE_KEY_FILE=~/davinci-dkg-keys/node1.json scripts/railway-deploy-node.sh
 ```
 
 The script does four API calls, in this order, and prints the ids it gets back:
 
 1. `serviceCreate` with `source.image = ghcr.io/vocdoni/davinci-dkg:latest` and
    the node's variables, so the very first start already has them:
-   `DAVINCI_DKG_NETWORK=sepolia`, `DAVINCI_DKG_PRIVKEY`, `DAVINCI_DKG_WEB3_RPC`
-   (three public endpoints; the node rotates off rate-limited ones),
-   `DAVINCI_DKG_POLL_INTERVAL=30s`, `DAVINCI_DKG_DATADIR=/app/run/data`,
-   `DAVINCI_DKG_ARTIFACTS_DIR=/app/run/artifacts`.
+   `DAVINCI_DKG_PRIVKEY`, `DAVINCI_DKG_POLL_INTERVAL=30s`,
+   `DAVINCI_DKG_DATADIR=/app/run/data`, `DAVINCI_DKG_ARTIFACTS_DIR=/app/run/artifacts`,
+   and `DAVINCI_DKG_NETWORK` / `DAVINCI_DKG_WEB3_RPC` only when `NETWORK` / `RPC`
+   are set. Without them the node runs on Gnosis Chain through the three public
+   endpoints built into the binary, rotating off rate-limited ones.
 2. `volumeCreate` mounted at `/app/run`: the pinned circuit artifacts
    (`circuits-v6`, about 1.0 GB, downloaded from the GitHub release and
-   hash-checked on first start) and the node's caches survive redeploys.
+   hash-checked on first start) and the node's state, kept per deployment
+   under `/app/run/data/<chainid>-<manager>`, survive redeploys.
 3. `serviceInstanceUpdate` with `restartPolicyType: ALWAYS`.
 4. `serviceInstanceDeployV2` to deploy with all of the above in place.
 
 Overridable through the environment: `IMAGE`, `NETWORK`, `RPC`,
-`POLL_INTERVAL`, `MOUNT_PATH`. On another network set `NETWORK` to its preset
-name, or add `DAVINCI_DKG_MANAGER` to the variables in the script.
+`POLL_INTERVAL`, `MOUNT_PATH`. The older Sepolia testnet needs
+`NETWORK=sepolia` and `RPC` (it has no endpoints built in). A custom
+deployment needs `RPC` and `DAVINCI_DKG_MANAGER` added to the variables in the
+script. The node refuses endpoints that serve another chain than its network's.
 
 Each node is its own service. Do not use Railway replicas for nodes: replicas
 share variables, so they would share the operator key.
@@ -109,8 +115,11 @@ by the memory cap (see the plan requirement above).
 
 - **New image**: Railway watches the image tag and offers an update; to force
   it, `serviceInstanceRedeploy(serviceId, environmentId)` pulls `:latest`
-  again. Pin `IMAGE` to a version tag (`ghcr.io/vocdoni/davinci-dkg:v0.7.0`)
-  for a fleet that must not move on its own.
+  again. `latest` moves on stable releases only. A release that moves the
+  Gnosis preset to a new deployment takes a node without `DAVINCI_DKG_MANAGER`
+  there on its next redeploy, with a fresh state directory. Pin `IMAGE` to a
+  version tag (`ghcr.io/vocdoni/davinci-dkg:v0.7.0`) for a fleet that must not
+  move on its own.
 - **Logs and status**: the status script, or the deployments/deploymentLogs
   queries it wraps.
 - **Remove a node**: `serviceDelete(id)` then `volumeDelete(volumeId)`; a
@@ -122,7 +131,7 @@ by the memory cap (see the plan requirement above).
 - **API limits**: 1,000 requests per hour and 10 per second on Hobby (10,000
   and 50 on Pro). The scripts make four calls per node.
 
-## Fleet record
+## Fleet record (Sepolia testnet)
 
 | Node | Service id | Volume id | Operator |
 |---|---|---|---|

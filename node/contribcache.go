@@ -15,15 +15,15 @@ import (
 // and commitment points only live in that transaction). Under RPC rate
 // limiting each miss costs a full event-log rescan of the epoch's age, so
 // validated calldata is remembered on disk, next to the taint file, as plain
-// bytes under <datadir>/contributions/<epochId hex>/<dealer address>.bin. A
-// contribution is immutable once accepted (the contract refuses a second one),
-// so entries never go stale.
+// bytes under <datadir>/<chainid>-<manager>/contributions/<epochId hex>/
+// <dealer address>.bin (see datadir.go). A contribution is immutable once
+// accepted (the contract refuses a second one), so entries never go stale.
 
 // contributionCache memoises raw submitContribution calldata under the node
 // datadir. It implements finalizer.CalldataCache. A nil receiver or an empty
 // dir disables it: Get is always a miss and Put does nothing.
 type contributionCache struct {
-	dir string // <datadir>/contributions, "" disables
+	dir string // <datadir>/<chainid>-<manager>/contributions, "" disables
 }
 
 // contributionCacheDir returns the cache directory of a datadir ("" for no

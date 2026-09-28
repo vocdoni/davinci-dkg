@@ -81,8 +81,9 @@ func main() {
 
 func run() error {
 	global := flag.NewFlagSet("dkgapp", flag.ContinueOnError)
-	rpc := global.String("rpc", envOr("DAVINCI_DKG_WEB3_RPC", ""), "comma-separated JSON-RPC endpoints")
-	network := global.String("network", envOr("DAVINCI_DKG_NETWORK", ""), "well-known network preset (e.g. sepolia)")
+	rpc := global.String("rpc", envOr("DAVINCI_DKG_WEB3_RPC", ""),
+		"comma-separated JSON-RPC endpoints (default: the network's public ones)")
+	network := global.String("network", envOr("DAVINCI_DKG_NETWORK", ""), "well-known network preset (gnosis, sepolia)")
 	managerAddr := global.String("manager", envOr("DAVINCI_DKG_MANAGER", ""), "DKGManager address (overrides -network)")
 	privkey := global.String("privkey", envOr("DAVINCI_DKG_PRIVKEY", ""), "hex private key used to sign transactions")
 	global.Usage = func() { fmt.Fprint(os.Stderr, usage) }
@@ -95,17 +96,26 @@ func run() error {
 	}
 	log.Init("info", "stderr", nil)
 
-	if *managerAddr == "" && *network != "" {
+	// A preset's chain is checked unless -manager names a custom deployment.
+	var chainID uint64
+	if *network != "" {
 		dep, err := config.NetworkByName(*network)
 		if err != nil {
 			return err
 		}
-		*managerAddr = dep.Manager.Hex()
+		if *managerAddr == "" {
+			*managerAddr = dep.Manager.Hex()
+			chainID = dep.ChainID
+		}
+		if *rpc == "" {
+			*rpc = strings.Join(dep.RPCs, ",")
+		}
 	}
 	if *managerAddr == "" || *rpc == "" {
-		return fmt.Errorf("-rpc and -manager (or -network) are required")
+		return fmt.Errorf("-manager (or -network) and -rpc (unless the network has public endpoints) are required")
 	}
-	contracts, err := web3.New(strings.Split(*rpc, ","), types.ContractAddresses{Manager: common.HexToAddress(*managerAddr)})
+	addrs := types.ContractAddresses{Manager: common.HexToAddress(*managerAddr)}
+	contracts, err := web3.NewOnChain(strings.Split(*rpc, ","), addrs, chainID)
 	if err != nil {
 		return err
 	}

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -90,6 +91,10 @@ func (p EpochPolicyConfig) validate() error {
 	return nil
 }
 
+// localRPC is the endpoint a custom deployment (--manager without --network)
+// uses when no --web3.rpc is given.
+const localRPC = "http://127.0.0.1:8545"
+
 type Web3Config struct {
 	Network       string   `mapstructure:"network"`
 	RPC           []string `mapstructure:"rpc"`
@@ -109,7 +114,6 @@ func defaultConfig() *Config {
 	return &Config{
 		Web3: Web3Config{
 			Network:       "localhost",
-			RPC:           []string{"http://127.0.0.1:8545"},
 			GasMultiplier: 1.2,
 		},
 		Log: LogConfig{
@@ -120,7 +124,8 @@ func defaultConfig() *Config {
 		PollInterval:     5 * time.Second,
 		AutoCreateEpochs: true,
 		AutoCreateJitter: 12 * time.Second,
-		// ~7 days at 12 s blocks; matches the registry's default INACTIVITY_WINDOW.
+		// ~7 days at 12 s blocks, ~3 on Gnosis Chain (5 s); matches the
+		// registry's default INACTIVITY_WINDOW.
 		DecryptLookbackBlocks: 50_400,
 		// Committee size 0 means "derive from the registry" (see adaptivePolicy).
 		EpochPolicy: EpochPolicyConfig{
@@ -141,15 +146,18 @@ func loadConfigFromArgs(args []string) (*Config, error) {
 	cfg := defaultConfig()
 
 	fs := flag.NewFlagSet("davinci-dkg-node", flag.ContinueOnError)
-	fs.String("network", cfg.Network, "well-known network preset (e.g. sepolia, sep); sets the DKGManager address automatically")
-	fs.String("web3.network", cfg.Web3.Network, "network display name (overridden by --network when a preset is matched)")
-	fs.StringSlice("web3.rpc", cfg.Web3.RPC, "web3 rpc endpoints")
+	fs.String("network", cfg.Network,
+		"network preset ("+config.DefaultNetwork+", sepolia); default "+config.DefaultNetwork+" unless --manager is set")
+	fs.String("web3.network", cfg.Web3.Network, "display name of a custom deployment (a preset uses its own name)")
+	fs.StringSlice("web3.rpc", cfg.Web3.RPC,
+		"web3 rpc endpoints (default: the preset's public endpoints; "+localRPC+" for --manager without --network)")
 	fs.Float64("web3.gasMultiplier", cfg.Web3.GasMultiplier, "gas multiplier")
 	fs.String("log.level", cfg.Log.Level, "log level")
 	fs.String("log.output", cfg.Log.Output, "log output")
 	fs.String("datadir", cfg.Datadir, "data directory")
 	fs.String("privkey", cfg.PrivKey, "hex private key for signing transactions")
-	fs.String("manager", cfg.ManagerAddr, "DKGManager contract address (optional when --network is set)")
+	fs.String("manager", cfg.ManagerAddr,
+		"DKGManager address of a custom deployment; overrides the preset's manager and its chain id check")
 	fs.Duration("poll-interval", cfg.PollInterval, "chain polling interval")
 	fs.Bool("auto-create-epochs", cfg.AutoCreateEpochs, "race other nodes to fire createEpoch once nextEpochStartBlock() is reached (default true; disable to participate only)")
 	fs.Duration("auto-create-jitter", cfg.AutoCreateJitter, "max random delay before firing the auto-create transaction (spreads contention)")
@@ -179,18 +187,11 @@ func loadConfigFromArgs(args []string) (*Config, error) {
 	return cfg, validateConfig(cfg)
 }
 
+// validateConfig checks cfg and fills the RPC endpoints from the network
+// when none are set.
 func validateConfig(cfg *Config) error {
 	if cfg.Web3.GasMultiplier <= 0 {
 		return fmt.Errorf("gas multiplier must be greater than 0")
-	}
-	if len(cfg.Web3.RPC) == 0 {
-		return fmt.Errorf("at least one web3 rpc endpoint is required")
-	}
-	if cfg.PollInterval <= 0 {
-		return fmt.Errorf("poll interval must be greater than 0, got %s", cfg.PollInterval)
-	}
-	if err := cfg.EpochPolicy.validate(); err != nil {
-		return fmt.Errorf("epoch policy: %w", err)
 	}
 	// Validate the network name early so the user gets a clear error message
 	// rather than a confusing failure later during chain connection.
@@ -199,24 +200,69 @@ func validateConfig(cfg *Config) error {
 			return err
 		}
 	}
+	if len(cfg.Web3.RPC) == 0 {
+		cfg.Web3.RPC = cfg.defaultRPCs()
+	}
+	if len(cfg.Web3.RPC) == 0 {
+		return fmt.Errorf("at least one web3 rpc endpoint is required: network %s has no public endpoints built in",
+			cfg.ResolvedNetworkName())
+	}
+	if cfg.PollInterval <= 0 {
+		return fmt.Errorf("poll interval must be greater than 0, got %s", cfg.PollInterval)
+	}
+	if err := cfg.EpochPolicy.validate(); err != nil {
+		return fmt.Errorf("epoch policy: %w", err)
+	}
 	return nil
 }
 
-// HasChainConfig reports whether enough configuration is present to connect to
-// the chain and participate in DKG epochs. A private key is always required; the
-// DKGManager address may come from --manager or from a --network preset.
-func (c *Config) HasChainConfig() bool {
-	if c.PrivKey == "" {
-		return false
+// preset returns the network preset the node runs on: --network when set,
+// otherwise config.DefaultNetwork unless --manager names a custom deployment.
+// ok is false for a custom deployment and for an unknown name.
+func (c *Config) preset() (name string, dep config.NetworkDeployment, ok bool) {
+	name = c.Network
+	if name == "" {
+		if c.ManagerAddr != "" {
+			return "", config.NetworkDeployment{}, false
+		}
+		name = config.DefaultNetwork
 	}
+	canonical, dep, err := config.ResolveNetwork(name)
+	if err != nil {
+		return "", config.NetworkDeployment{}, false
+	}
+	return canonical, dep, true
+}
+
+// defaultRPCs are the endpoints used when --web3.rpc is empty: the preset's
+// public ones, or a local node for a custom deployment.
+func (c *Config) defaultRPCs() []string {
+	if _, dep, ok := c.preset(); ok {
+		return slices.Clone(dep.RPCs)
+	}
+	if c.Network == "" {
+		return []string{localRPC}
+	}
+	return nil
+}
+
+// requiredChainID is the chain the RPC endpoints must serve: the preset's,
+// or 0 (any chain) when --manager names a custom deployment.
+func (c *Config) requiredChainID() uint64 {
 	if c.ManagerAddr != "" {
-		return true
+		return 0
 	}
-	if c.Network != "" {
-		_, err := config.NetworkByName(c.Network)
-		return err == nil
+	if _, dep, ok := c.preset(); ok {
+		return dep.ChainID
 	}
-	return false
+	return 0
+}
+
+// HasChainConfig reports whether enough configuration is present to connect to
+// the chain and participate in DKG epochs: a private key and a DKGManager,
+// from --manager or from the network preset.
+func (c *Config) HasChainConfig() bool {
+	return c.PrivKey != "" && c.resolvedManagerAddr() != ""
 }
 
 // resolvedManagerAddr returns the effective DKGManager address: the explicit
@@ -225,22 +271,16 @@ func (c *Config) resolvedManagerAddr() string {
 	if c.ManagerAddr != "" {
 		return c.ManagerAddr
 	}
-	if c.Network != "" {
-		dep, err := config.NetworkByName(c.Network)
-		if err == nil {
-			return dep.Manager.Hex()
-		}
+	if _, dep, ok := c.preset(); ok {
+		return dep.Manager.Hex()
 	}
 	return ""
 }
 
 // ResolvedNetworkName returns the canonical network name for display/logging.
 func (c *Config) ResolvedNetworkName() string {
-	if c.Network != "" {
-		canonical, _, err := config.ResolveNetwork(c.Network)
-		if err == nil {
-			return canonical
-		}
+	if name, _, ok := c.preset(); ok {
+		return name
 	}
 	return c.Web3.Network
 }

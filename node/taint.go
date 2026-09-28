@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -44,24 +45,16 @@ func (n *Node) tainted(key ctKey, submitter common.Address) bool {
 	return submitter != (common.Address{}) && n.taints[taintKey{epoch: key.epoch, aid: key.aid, submitter: submitter}]
 }
 
-// loadTaints fills taints from the datadir; a missing file is fine. Entries
-// written before per-submitter taints existed (epoch:aid) load as
-// whole-application taints.
+// loadTaints fills taints from the deployment's state directory; a missing
+// file is fine. Entries written before per-submitter taints existed
+// (epoch:aid) load as whole-application taints.
 func (n *Node) loadTaints() {
 	if n.taintFile == "" {
 		return
 	}
-	raw, err := os.ReadFile(n.taintFile)
-	if errors.Is(err, os.ErrNotExist) {
-		return
-	}
+	keys, err := readTaintKeys(n.taintFile)
 	if err != nil {
 		log.Warnw("tainted applications: cannot read, starting empty", "path", n.taintFile, "err", err)
-		return
-	}
-	var keys []string
-	if err := json.Unmarshal(raw, &keys); err != nil {
-		log.Warnw("tainted applications: malformed file, starting empty", "path", n.taintFile, "err", err)
 		return
 	}
 	for _, k := range keys {
@@ -83,21 +76,45 @@ func (n *Node) saveTaints() {
 	for tk := range n.taints {
 		keys = append(keys, tk.String())
 	}
+	if err := writeTaintKeys(n.taintFile, keys); err != nil {
+		log.Warnw("tainted applications: cannot persist", "path", n.taintFile, "err", err)
+	}
+}
+
+// readTaintKeys reads a taint file; a missing file is an empty list.
+func readTaintKeys(path string) ([]string, error) {
+	raw, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var keys []string
+	if err := json.Unmarshal(raw, &keys); err != nil {
+		return nil, fmt.Errorf("malformed file: %w", err)
+	}
+	return keys, nil
+}
+
+// writeTaintKeys replaces a taint file atomically (temp file + rename).
+func writeTaintKeys(path string, keys []string) error {
 	raw, err := json.Marshal(keys)
 	if err != nil {
-		return
+		return err
 	}
-	tmp := n.taintFile + ".tmp"
-	err = os.MkdirAll(filepath.Dir(n.taintFile), 0o700)
+	tmp := path + ".tmp"
+	err = os.MkdirAll(filepath.Dir(path), 0o700)
 	if err == nil {
 		err = os.WriteFile(tmp, raw, 0o600)
 	}
 	if err == nil {
-		err = os.Rename(tmp, n.taintFile)
+		err = os.Rename(tmp, path)
 	}
 	if err != nil {
-		log.Warnw("tainted applications: cannot persist", "path", n.taintFile, "err", err)
+		_ = os.Remove(tmp)
 	}
+	return err
 }
 
 // String is the persisted form: epoch:aid:submitter. The two-part

@@ -2,9 +2,9 @@ name: Docker
 
 # Reusable workflow that builds the davinci-dkg multi-stage Docker image
 # and optionally publishes it to Docker Hub + GHCR. Callers pass an
-# `image-tag` (typically the git ref name); when the tag matches a semver
-# pattern, the image is additionally tagged as `latest` so Watchtower-based
-# deployments pick it up automatically.
+# `image-tag` (typically the git ref name); a stable release tag (vX.Y.Z)
+# additionally moves `latest`, which Watchtower-based deployments follow.
+# Prereleases (v1.2.3-rc1) publish their own tag only.
 
 on:
   workflow_call:
@@ -59,10 +59,10 @@ jobs:
           tags="vocdoni/davinci-dkg:${primary}"
           tags="${tags}"$'\n'"ghcr.io/vocdoni/davinci-dkg:${primary}"
 
-          # A semver tag (v0.1.0, v1.2.3-rc1, …) additionally gets the
-          # `latest` alias so Watchtower users tracking `:latest` always
-          # land on the newest tagged release.
-          if [[ "${primary}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-.*)?$ ]]; then
+          # A stable release tag (v0.1.0) also moves `latest`, so Watchtower
+          # users tracking `:latest` land on the newest stable release and
+          # never on a release candidate (v1.2.3-rc1 keeps its own tag only).
+          if [[ "${primary}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             tags="${tags}"$'\n'"vocdoni/davinci-dkg:latest"
             tags="${tags}"$'\n'"ghcr.io/vocdoni/davinci-dkg:latest"
           fi

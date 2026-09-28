@@ -14,6 +14,17 @@ const CONFIG = {
   explorerUrl: 'https://sepolia.etherscan.io',
 }
 
+const GNOSIS = {
+  chainName: 'gnosis',
+  chainId: 100,
+  managerAddress: '0x9999F38Ff8Bf959E98Ddd5D4551f82775219c01B' as `0x${string}`,
+  rpcUrl: 'https://gnosis-rpc.publicnode.com',
+  deployBlock: 48_483_860,
+  explorerUrl: 'https://gnosisscan.io',
+}
+
+const SEPOLIA_MANAGER = '0xc73b7a868eca6ac7e3e647e2665aa16a793cf551' as `0x${string}`
+
 /** Every heading the outline names must exist as a section, and vice versa. */
 function expectOutlineMatchesSections() {
   const outline = screen.getByText('On this page').parentElement as HTMLElement
@@ -73,10 +84,31 @@ describe('docs/run-a-node', () => {
     expect(screen.getByRole('heading', { name: 'Limits worth knowing', level: 2 })).toBeInTheDocument()
   })
 
-  it('templates the snippets with the configured deployment', () => {
+  it('needs no network settings on the default Gnosis deployment', () => {
+    renderWithProviders(<DocsRunANodePage />, { config: GNOSIS })
+    const env = screen.getByText(/DAVINCI_DKG_PRIVKEY=/)
+    expect(env.textContent).toMatch(/with no network setting the node joins gnosis/)
+    expect(env.textContent).toMatch(/^# DAVINCI_DKG_WEB3_RPC=/m)
+    expect(env.textContent).not.toMatch(/^DAVINCI_DKG_WEB3_RPC=/m)
+    expect(env.textContent).not.toMatch(/DAVINCI_DKG_(NETWORK|MANAGER)=/)
+    expect(screen.getByText('none, the default network')).toBeInTheDocument()
+    expect(screen.getAllByText(/XDAI on gnosis/).length).toBeGreaterThan(0)
+  })
+
+  it('selects the Sepolia preset by name', () => {
+    renderWithProviders(<DocsRunANodePage />, { config: { ...CONFIG, managerAddress: SEPOLIA_MANAGER } })
+    const env = screen.getByText(/DAVINCI_DKG_PRIVKEY=/)
+    expect(env.textContent).toMatch(/^DAVINCI_DKG_NETWORK=sepolia$/m)
+    expect(env.textContent).toMatch(/^DAVINCI_DKG_WEB3_RPC=https:\/\/rpc.example\/sepolia$/m)
+    expect(env.textContent).not.toMatch(/DAVINCI_DKG_MANAGER=/)
+  })
+
+  it('points a custom deployment at its manager and endpoints', () => {
     renderWithProviders(<DocsRunANodePage />, { config: CONFIG })
-    expect(screen.getByText(/DAVINCI_DKG_WEB3_RPC=https:\/\/rpc.example\/sepolia/)).toBeInTheDocument()
-    expect(screen.getByText(/DAVINCI_DKG_NETWORK=sepolia/)).toBeInTheDocument()
+    const env = screen.getByText(/DAVINCI_DKG_PRIVKEY=/)
+    expect(env.textContent).toMatch(new RegExp(`^DAVINCI_DKG_MANAGER=${CONFIG.managerAddress}$`, 'm'))
+    expect(env.textContent).toMatch(/^DAVINCI_DKG_WEB3_RPC=https:\/\/rpc.example\/sepolia$/m)
+    expect(env.textContent).not.toMatch(/DAVINCI_DKG_NETWORK=/)
   })
 
   it('has a matching outline', () => {

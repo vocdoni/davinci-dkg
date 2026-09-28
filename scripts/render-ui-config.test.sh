@@ -13,10 +13,14 @@ out=$tmp/config.json
 get() { sed -n "s/^[[:space:]]*\"$1\"[[:space:]]*:[[:space:]]*\"\{0,1\}\([^\",]*\)\"\{0,1\},\{0,1\}[[:space:]]*$/\1/p" "$out" | head -1; }
 want() { [ "$(get "$1")" = "$2" ] || { echo "FAIL: $1 = $(get "$1"), want $2"; exit 1; }; }
 
-# No file, no environment: the built-in snapshot.
+# No file, no environment: the built-in snapshot, which is the committed
+# Gnosis Chain config.
 bash "$here/render-ui-config.sh" "$out" >/dev/null
-want chainName sepolia
-want managerAddress 0xc73b7a868eca6ac7e3e647e2665aa16a793cf551
+want chainName gnosis
+want chainId 100
+want managerAddress 0x9999F38Ff8Bf959E98Ddd5D4551f82775219c01B
+want deployBlock 48483860
+diff -q "$here/../ui/public/config.json" "$out" >/dev/null || { echo "FAIL: snapshot differs from ui/public/config.json"; exit 1; }
 
 # The environment wins over both the file and the snapshot.
 MANAGER_ADDRESS=0xabc CHAIN_ID=31337 CHAIN_NAME=anvil bash "$here/render-ui-config.sh" "$out" >/dev/null

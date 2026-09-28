@@ -1,8 +1,8 @@
 {
-  "rpcUrl": "https://ethereum-sepolia-rpc.publicnode.com",
-  "managerAddress": "0xc73b7a868eca6ac7e3e647e2665aa16a793cf551",
-  "chainId": 11155111,
-  "chainName": "sepolia",
-  "deployBlock": 11668198,
-  "explorerUrl": "https://sepolia.etherscan.io"
+  "rpcUrl": "https://gnosis-rpc.publicnode.com",
+  "managerAddress": "0x9999F38Ff8Bf959E98Ddd5D4551f82775219c01B",
+  "chainId": 100,
+  "chainName": "gnosis",
+  "deployBlock": 48483860,
+  "explorerUrl": "https://gnosisscan.io"
 }

@@ -2,6 +2,7 @@ package web3
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/big"
 	"strings"
@@ -38,6 +39,10 @@ var (
 	managerABI  = mustParseABI(dkgManagerABIJSON)
 	registryABI = mustParseABI(dkgRegistryABIJSON)
 )
+
+// ErrWrongChain reports an RPC endpoint that serves another chain than the
+// deployment's (see NewOnChain).
+var ErrWrongChain = errors.New("rpc endpoint serves the wrong chain")
 
 type Contracts struct {
 	ChainID   uint64
@@ -100,6 +105,13 @@ type CombinedDecryptionView struct {
 // Multiple RPC URLs may be provided; they are used in a epoch-robin pool with
 // automatic failover (see RPCPool).
 func New(rpcURLs []string, addresses types.ContractAddresses) (*Contracts, error) {
+	return NewOnChain(rpcURLs, addresses, 0)
+}
+
+// NewOnChain is New for a deployment known to live on chainID: an endpoint
+// that serves another chain fails with ErrWrongChain before any contract is
+// read. A zero chainID skips the check.
+func NewOnChain(rpcURLs []string, addresses types.ContractAddresses, chainID uint64) (*Contracts, error) {
 	if addresses.Manager == (common.Address{}) {
 		return nil, fmt.Errorf("manager address is required")
 	}
@@ -115,11 +127,11 @@ func New(rpcURLs []string, addresses types.ContractAddresses) (*Contracts, error
 	// Every startup read goes through the same rotation as the runtime paths:
 	// a rate-limited or unreachable first endpoint must not make the whole
 	// process exit before it ever tried the others.
-	var chainID *big.Int
+	var gotChainID *big.Int
 	for attempt := 0; ; attempt++ {
 		var derived types.ContractAddresses
 		var derr error
-		chainID, derived, derr = deriveStartup(pool.Current(), addresses)
+		gotChainID, derived, derr = deriveStartup(pool.Current(), addresses, chainID)
 		if derr == nil {
 			addresses = derived
 			break
@@ -138,7 +150,7 @@ func New(rpcURLs []string, addresses types.ContractAddresses) (*Contracts, error
 	}
 
 	return &Contracts{
-		ChainID:     chainID.Uint64(),
+		ChainID:     gotChainID.Uint64(),
 		Addresses:   addresses,
 		pool:        pool,
 		managerABI:  managerABI,
@@ -146,12 +158,18 @@ func New(rpcURLs []string, addresses types.ContractAddresses) (*Contracts, error
 	}, nil
 }
 
-// deriveStartup reads the chain id and fills in every address the caller left
-// empty from the manager's public immutable fields, using one endpoint.
-func deriveStartup(client *ethclient.Client, addresses types.ContractAddresses) (*big.Int, types.ContractAddresses, error) {
+// deriveStartup reads the chain id, checks it against want (0 accepts any),
+// and fills in every address the caller left empty from the manager's public
+// immutable fields, using one endpoint.
+func deriveStartup(
+	client *ethclient.Client, addresses types.ContractAddresses, want uint64,
+) (*big.Int, types.ContractAddresses, error) {
 	chainID, err := client.ChainID(context.Background())
 	if err != nil {
 		return nil, addresses, fmt.Errorf("get chain id: %w", err)
+	}
+	if want != 0 && (!chainID.IsUint64() || chainID.Uint64() != want) {
+		return nil, addresses, fmt.Errorf("%w: got chain %s, want chain %d", ErrWrongChain, chainID, want)
 	}
 	if addresses.Registry == (common.Address{}) {
 		addr, err := fetchAddressFromManager(client, addresses.Manager, "REGISTRY")

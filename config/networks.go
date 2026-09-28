@@ -7,13 +7,17 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 )
 
+// DefaultNetwork is the preset a node runs on when neither --network nor
+// --manager is given.
+const DefaultNetwork = "gnosis"
+
 // NetworkDeployment is the canonical on-chain deployment for a well-known network.
 // Only the DKGManager address is stored here; all other contract addresses (registry,
 // verifiers) are derived at startup by querying the manager's public immutable fields
 // via the RPC endpoint.
 type NetworkDeployment struct {
-	// ChainID is the EIP-155 chain identifier, stored for display and validation.
-	// The authoritative chain ID is always fetched from the RPC endpoint at runtime.
+	// ChainID is the EIP-155 chain identifier. The node refuses RPC endpoints
+	// that serve another chain.
 	ChainID uint64
 	// Manager is the deployed DKGManager contract address.
 	Manager common.Address
@@ -22,11 +26,23 @@ type NetworkDeployment struct {
 	// genesis (most free-tier RPC providers cap getLogs ranges at 10 000
 	// blocks).
 	StartBlock uint64
+	// RPCs are public JSON-RPC endpoints, used when the operator sets none.
+	RPCs []string
 }
 
 // KnownNetworks maps canonical lowercase network names to their deployments.
 // Add a new entry here after each production deployment.
 var KnownNetworks = map[string]NetworkDeployment{
+	"gnosis": {
+		ChainID:    100,
+		Manager:    common.HexToAddress("0x9999F38Ff8Bf959E98Ddd5D4551f82775219c01B"),
+		StartBlock: 48_483_860, // DKGManager deployment block on Gnosis Chain (2026-09-28)
+		RPCs: []string{
+			"https://gnosis-rpc.publicnode.com",
+			"https://gnosis-rpc.blockreq.com/v1/rpc/public",
+			"https://rpc.gnosischain.com",
+		},
+	},
 	"sepolia": {
 		ChainID:    11155111,
 		Manager:    common.HexToAddress("0xc73b7a868eca6ac7e3e647e2665aa16a793cf551"),

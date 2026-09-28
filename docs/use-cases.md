@@ -30,7 +30,8 @@ shape every use case below:
   index or a 32-bit chunk, not a document. Anything larger is carried by a symmetric key encrypted
   as eight 32-bit chunks, eight ciphertexts.
 
-The costs (Sepolia, 16-key pool, `n = 32`, `t = 22`; see [BENCHMARKS.md](../BENCHMARKS.md)):
+The costs (measured on Sepolia, the same gas on the default Gnosis Chain deployment; 16-key pool,
+`n = 32`, `t = 22`; see [BENCHMARKS.md](../BENCHMARKS.md)):
 registration 0.23 M gas (automatic) or 0.62 M (locked), one ciphertext 0.10 M paid by the
 submitter, one decryption `t × 0.40 M + 0.48 M` paid by the committee, one reveal 0.23 M. Any
 number of ciphertexts can wait in an application; only decrypted ones cost the committee anything.
@@ -51,6 +52,9 @@ number of ciphertexts can wait in an application; only decrypted ones cost the c
   could decrypt off chain at any time (for a locked application they would still need `sk_org`).
 - A locked application whose organizer loses `sk_org` is undecryptable forever; an organizer who
   reuses one secret across two applications opens both with one reveal.
+- It does not reserve application ids. Registration is open to anyone, so anyone can register an
+  `aid` first or claim an epoch's pool keys; an integrator that needs a specific `aid` checks that
+  its registration succeeded.
 
 ## Sealed-bid auctions
 
@@ -215,7 +219,8 @@ for the reveal plus one decryption.
 ## Integration checklist
 
 1. Register the application with `dkgapp register` or the SDK (`registerApplication`), choosing
-   mode, submitter policy, ciphertext cap and windows.
+   mode, submitter policy, ciphertext cap and windows, and check that it succeeded: anyone may
+   register, so the `aid` or the epoch's last free key can already be taken.
 2. If participants may gain by copying or shifting each other's inputs, put an application contract
    in front as the sole submitter and have it verify a proof of knowledge of `r` (or a commitment)
    before forwarding.

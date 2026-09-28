@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -41,6 +42,29 @@ func TestNewRejectsMissingAddresses(t *testing.T) {
 
 	c.Assert(err, qt.Not(qt.IsNil))
 	c.Assert(err.Error(), qt.Contains, "manager address is required")
+}
+
+func TestNewOnChainChecksTheChainID(t *testing.T) {
+	c := qt.New(t)
+
+	server := testRPCServer() // serves chain 31337
+	defer server.Close()
+	addrs := types.ContractAddresses{
+		Registry:               common.HexToAddress("0x1000000000000000000000000000000000000001"),
+		Manager:                common.HexToAddress("0x2000000000000000000000000000000000000002"),
+		ContributionVerifier:   common.HexToAddress("0x3000000000000000000000000000000000000003"),
+		FinalizeVerifier:       common.HexToAddress("0x4000000000000000000000000000000000000004"),
+		PartialDecryptVerifier: common.HexToAddress("0x5000000000000000000000000000000000000005"),
+		DecryptCombineVerifier: common.HexToAddress("0x6000000000000000000000000000000000000006"),
+	}
+
+	_, err := NewOnChain([]string{server.URL}, addrs, 100)
+	c.Assert(errors.Is(err, ErrWrongChain), qt.IsTrue, qt.Commentf("err: %v", err))
+
+	contracts, err := NewOnChain([]string{server.URL}, addrs, 31337)
+	c.Assert(err, qt.IsNil)
+	c.Assert(contracts.ChainID, qt.Equals, uint64(31337))
+	c.Assert(contracts.Close(), qt.IsNil)
 }
 
 func TestVerifierKeyHashes(t *testing.T) {

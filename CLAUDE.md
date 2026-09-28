@@ -61,8 +61,9 @@ make ui-dev / ui-build / ui-test                            # builds sdk first; 
 cd ui && pnpm lint                                          # tsc --noEmit && eslint (CI)
 ```
 
-`ui/public/config.json` picks the chain (defaults to Sepolia). `make ui-dev RPC_URL=... MANAGER_ADDRESS=...`
-templates it via `scripts/render-ui-config.sh`.
+`ui/public/config.json` picks the chain (defaults to the Gnosis Chain deployment). `make ui-dev RPC_URL=...
+MANAGER_ADDRESS=...` templates it via `scripts/render-ui-config.sh`, whose fallback literals mirror the committed file
+(`bash scripts/render-ui-config.test.sh` checks both).
 
 ### Local multi-node testnet
 
@@ -187,7 +188,7 @@ Anything that touches encodings, hashes or constants has to be changed in all of
   application's ciphertexts from its registration block), because epochs stay Live on chain forever. The combine (dlog search, proof, send) runs in a per-slot goroutine, one at a time
   per node (`combineSem`), yielding to an in-progress contribution or finalization (`critical`). A
   ciphertext whose plaintext is out of range taints its source for the epoch (`taints`, persisted
-  in `<datadir>/tainted-apps.json`): always the offending (application, submitter) pair, so an
+  in `<datadir>/<chainid>-<manager>/tainted-apps.json`): always the offending (application, submitter) pair, so an
   attacker pays one search per submitter address and cannot silence an application for its
   honest submitters. All
   secret scalars come from `scalars.go` (`crypto/rand`, never deterministic); `dlog.go` is a compact
@@ -195,8 +196,16 @@ Anything that touches encodings, hashes or constants has to be changed in all of
   Proving keys are loaded on demand (`node/circuits.go`): only the two decryption runtimes stay
   resident, the contribution and finalize keys are loaded per proof and released right after
   (about 3 GB at rest, 7 GB peak, instead of 9 GB and 11 GB with everything resident).
-  `--network sepolia` resolves the manager from `config/networks.go`; registry, verifiers and app
-  manager are read from the manager on-chain.
+  With no `--network` and no `--manager` the node runs on `config.DefaultNetwork` (`gnosis`); the
+  preset (`config/networks.go`, mirrored in `sdk/src/networks.ts`) supplies the manager, the start
+  block and public RPC endpoints, and registry, verifiers and app manager are read from the manager
+  on-chain. `--network sepolia` selects the older testnet (no built-in endpoints, needs
+  `--web3.rpc`); `--manager` runs a custom deployment (default RPC `http://127.0.0.1:8545`).
+  `web3.NewOnChain` refuses endpoints serving another chain than the preset's (`ErrWrongChain`);
+  `--manager` skips that check. Persistent state (contribution cache, taints) lives under
+  `<datadir>/<chainid>-<manager>` (`node/datadir.go`), so a release that moves the Gnosis preset
+  (Watchtower pulls it) starts the node on a fresh directory; on startup, entries an older release
+  kept directly in `<datadir>` move there once, filtered by the manager's `EPOCH_PREFIX`.
 - `cmd/dkgapp` is the application/organizer CLI: `register` (`-mode locked|automatic`, default locked:
   locked = organizer key + Schnorr PoP, automatic = no organizer key at all; submission policy
   `-submitters 0xA,0xB` (exclusive allow-list, ≤ 32) / `-open` / neither = registrant only; `-max`;
@@ -238,7 +247,9 @@ also run before the normal cadence only when the newest epoch is `Live` with at 
 (`poolNext >= MAX_K - 1`, i.e. `poolNext >= 15`) or `Aborted` — so an epoch serves at most `MAX_K = 16`
 applications before registrations revert `PoolExhausted` until the next epoch has gone through its
 preparation window (pool exhaustion), and anyone registering fifteen automatic applications forces a new
-epoch (registration-driven amplification; a registration fee or allow-list is future work); `abortEpoch`
+epoch (registration-driven amplification; a registration fee or allow-list is future work); registration
+is open to anyone, so anyone can take an `aid` first or claim pool keys and an integrator that needs a
+specific `aid` checks its registration succeeded; `abortEpoch`
 only works on provably dead epochs; ciphertext indices are
 assigned on chain; `submitCiphertext` takes no proof and only accepts a registered `aid` (there is no
 `aid = 0` path; who may submit is the app's policy — `openSubmission`, else an exclusive `submitters`
@@ -313,4 +324,8 @@ integration contract for the SDK/UI. Verifier wrappers in `src/verifiers` are ge
   for the disabled ones). Max line length 130.
 - Generated files: `solidity/golang-types/*.go`, `solidity/src/verifiers/*`, `tests/vectors/*.json`,
   `ui/tests/vectors/*.json`. Regenerate, don't edit.
-- New production deployments go in `config/networks.go` (`KnownNetworks`) and `README.md` Deployments.
+- New production deployments go in `config/networks.go` (`KnownNetworks`), its mirror `sdk/src/networks.ts` and
+  `README.md` Deployments. Moving the default network also means `ui/public/config.json`, the fallbacks in
+  `scripts/render-ui-config.sh` and `ui/.do/davinci-dkg-ui.yaml`.
+- Docker `latest` moves only on stable release tags (`vX.Y.Z`); prereleases publish their own tag. Watchtower
+  deployments follow `latest`.

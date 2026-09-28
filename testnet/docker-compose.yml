@@ -136,7 +136,7 @@ services:
   #   make ui-dev \
   #     RPC_URL=http://127.0.0.1:8545 \
   #     MANAGER_ADDRESS=$(grep MANAGER testnet/addresses.env | cut -d= -f2) \
-  #     CHAIN_ID=1337 CHAIN_NAME=anvil-testnet
+  #     CHAIN_ID=1337 CHAIN_NAME=anvil-testnet DEPLOY_BLOCK=0
   #
   # (After `make testnet-up` has produced testnet/addresses.env via the
   # deployer.) Vite's dev server on :5174 serves the UI against your

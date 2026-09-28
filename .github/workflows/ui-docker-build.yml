@@ -8,11 +8,12 @@ name: UI Docker
 #   - operators who want to extract the dist via `docker create + cp`
 #     and serve it from their own CDN / nginx / Caddy.
 #
-# The published image bakes the *default* chain config (Sepolia public
-# RPC + Sepolia DKGManager). For other deployments, build locally with
+# The published image bakes the *default* chain config (Gnosis Chain public
+# RPC + Gnosis DKGManager). For other deployments, build locally with
 # `--build-arg RPC_URL=… MANAGER_ADDRESS=… CHAIN_ID=… CHAIN_NAME=…`.
 #
-# A semver tag additionally aliases as `latest`.
+# A stable release tag (vX.Y.Z) additionally moves `latest`; prereleases
+# (v1.2.3-rc1) publish their own tag only.
 
 on:
   workflow_call:
@@ -59,7 +60,8 @@ jobs:
 
           tags="ghcr.io/vocdoni/davinci-dkg-ui:${primary}"
 
-          if [[ "${primary}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-.*)?$ ]]; then
+          # Only a stable release tag moves `latest`.
+          if [[ "${primary}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             tags="${tags}"$'\n'"ghcr.io/vocdoni/davinci-dkg-ui:latest"
           fi
 

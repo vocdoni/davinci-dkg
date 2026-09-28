@@ -13,7 +13,7 @@
 #
 # Override RPC_URL / MANAGER_ADDRESS / CHAIN_ID / CHAIN_NAME below to
 # point the deployment at a different chain. The values here target the
-# public Sepolia deployment.
+# Gnosis Chain deployment, the same as the committed ui/public/config.json.
 
 name: davinci-dkg-ui
 region: ams3
@@ -54,25 +54,25 @@ static_sites:
       #    writes ui/public/config.json before `pnpm build`) ──────────────
       - key: RPC_URL
         scope: BUILD_TIME
-        value: https://eth-sepolia.public.blastapi.io
+        value: https://gnosis-rpc.publicnode.com
       - key: MANAGER_ADDRESS
         scope: BUILD_TIME
-        value: "0x01ee71fdce1705c8823f9f8b2f312100165fdd70"
+        value: "0x9999F38Ff8Bf959E98Ddd5D4551f82775219c01B"
       - key: CHAIN_ID
         scope: BUILD_TIME
-        value: "11155111"
+        value: "100"
       - key: CHAIN_NAME
         scope: BUILD_TIME
-        value: sepolia
+        value: gnosis
       - key: EXPLORER_URL
         scope: BUILD_TIME
-        value: https://sepolia.etherscan.io
+        value: https://gnosisscan.io
       # Block the DKGManager was deployed at — the floor of every historical
       # getLogs scan (operator statistics, per-epoch activity). 0 = unknown,
       # which makes those scans fall back to a recent-block window.
       - key: DEPLOY_BLOCK
         scope: BUILD_TIME
-        value: "11619019"
+        value: "48483860"
       # Optional — leave unset to let the SDK auto-derive from DKGManager.
       # - key: REGISTRY_ADDRESS
       #   scope: BUILD_TIME
@@ -80,7 +80,7 @@ static_sites:
       # Optional — sets the lower bound for getLogs scans.
       # - key: START_BLOCK
       #   scope: BUILD_TIME
-      #   value: "10718978"
+      #   value: "48483860"
 
       # ── Vite build envs ─────────────────────────────────────────────────
       - key: VITE_BUILD_VERSION

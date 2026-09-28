@@ -116,6 +116,7 @@ type Node struct {
 	combineSem  chan struct{} // capacity 1: serialises the CPU-bound combine jobs
 	critical    atomic.Int32  // > 0 while a contribution or finalization is in progress
 	taintFile   string        // where taintedApps is persisted ("" disables)
+	stateDir    string        // <datadir>/<chainid>-<manager>, "" without a datadir
 
 	// auto-create-epoch state. autoCreateNextStart is the
 	// nextEpochStartBlock() value the most recent attempt was scheduled
@@ -161,12 +162,22 @@ func New(cfg *Config) (*Node, error) {
 	addrs := nodetypes.ContractAddresses{
 		Manager: common.HexToAddress(cfg.resolvedManagerAddr()),
 	}
-	// web3.New() derives Registry and all verifier addresses from the manager's
-	// public immutable fields when they are not supplied (zero address).
-	c, err := web3.New(cfg.Web3.RPC, addrs)
+	// web3.NewOnChain() derives Registry and all verifier addresses from the
+	// manager's public immutable fields when they are not supplied (zero
+	// address), after checking the endpoints serve the preset's chain.
+	c, err := web3.NewOnChain(cfg.Web3.RPC, addrs, cfg.requiredChainID())
+	if errors.Is(err, web3.ErrWrongChain) {
+		return nil, fmt.Errorf("network %s: %w; set --web3.rpc to %s endpoints, or --manager for a custom deployment",
+			cfg.ResolvedNetworkName(), err, cfg.ResolvedNetworkName())
+	}
 	if err != nil {
 		return nil, fmt.Errorf("web3 connect: %w", err)
 	}
+	if name, dep, ok := cfg.preset(); ok && cfg.ManagerAddr != "" && dep.ChainID != c.ChainID {
+		log.Warnw("rpc endpoints serve another chain than the network preset; using the custom manager there",
+			"network", name, "presetChainId", dep.ChainID, "chainId", c.ChainID, "manager", c.Addresses.Manager)
+	}
+	stateDir := deploymentDir(cfg.Datadir, c.ChainID, c.Addresses.Manager)
 	txm, err := txmanager.New(c.Pool().Current, c.ChainID, cfg.PrivKey)
 	if err != nil {
 		return nil, fmt.Errorf("tx manager: %w", err)
@@ -224,7 +235,7 @@ func New(cfg *Config) (*Node, error) {
 		ownContribs:    make(map[[12]byte]*savedContrib),
 		selectedCache:  make(map[[12]byte][]common.Address),
 		finalizeRetry:  make(map[[12]byte]*serviceBackoff),
-		contribCache:   &contributionCache{dir: contributionCacheDir(cfg.Datadir)},
+		contribCache:   &contributionCache{dir: contributionCacheDir(stateDir)},
 		lookback:       cfg.DecryptLookbackBlocks,
 		pending:        make(map[ctKey]*ciphertext),
 		parked:         make(map[ctKey]*parkedSlot),
@@ -232,7 +243,7 @@ func New(cfg *Config) (*Node, error) {
 		served:         make(map[ctKey]uint64),
 		shareProofs:    make(map[poolSlot][][32]byte),
 		taints:         make(map[taintKey]bool),
-		taintFile:      taintPath(cfg.Datadir),
+		taintFile:      taintPath(stateDir),
 		backoff:        make(map[ctKey]*serviceBackoff),
 		inflight:       make(map[ctKey]inflightTx),
 		combineJobs:    make(map[ctKey]*combineResult),
@@ -240,6 +251,14 @@ func New(cfg *Config) (*Node, error) {
 		epochCache:     make(map[[12]byte]epochView),
 		apps:           make(map[appKey]appView),
 		partials:       make(map[ctKey][]partialRecord),
+		stateDir:       stateDir,
+	}
+	if stateDir != "" {
+		if prefix, err := n.epochPrefixValue(context.Background()); err != nil {
+			log.Warnw("cannot read EPOCH_PREFIX, legacy datadir state not moved this time", "err", err)
+		} else {
+			migrateLegacyState(cfg.Datadir, stateDir, prefix)
+		}
 	}
 	n.loadTaints()
 	return n, nil
@@ -277,15 +296,16 @@ func (n *Node) LogStartupSnapshot(ctx context.Context, cfg *Config) {
 	// ── local configuration ──────────────────────────────────────────────
 	log.Infow("config: node identity",
 		"address", n.address,
-		"datadir", cfg.Datadir)
+		"datadir", cfg.Datadir,
+		"stateDir", n.stateDir)
 	log.Infow("config: chain connection",
-		"network", cfg.Web3.Network,
+		"network", cfg.ResolvedNetworkName(),
 		"chainId", n.contracts.ChainID,
 		"rpcHost", rpcHost(cfg.Web3.RPC[0]),
 		"gasMultiplier", cfg.Web3.GasMultiplier)
 	log.Infow("config: contracts",
 		"registry", n.contracts.Addresses.Registry,
-		"manager", cfg.ManagerAddr)
+		"manager", n.managerAddr)
 	log.Infow("config: participation",
 		"pollInterval", cfg.PollInterval)
 

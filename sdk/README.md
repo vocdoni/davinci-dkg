@@ -53,6 +53,26 @@ const writer = new DKGWriter({
 });
 ```
 
+## Well-known deployments
+
+`KNOWN_NETWORKS` mirrors the node's presets (chain id, `DKGManager`, deploy block, public RPC
+endpoints). `NODE_DEFAULT_NETWORK` is `gnosis`, the Gnosis Chain deployment a `davinci-dkg-node`
+joins when started without `--network` or `--manager`; `sepolia` is the older testnet and has no
+endpoints built in.
+
+```ts
+import { gnosis } from 'viem/chains';
+import { getNetwork, NODE_DEFAULT_NETWORK } from '@vocdoni/davinci-dkg-sdk';
+
+const dep = getNetwork(NODE_DEFAULT_NETWORK); // chain 100, manager 0x9999…c01B, startBlock 48_483_860n
+const publicClient = createPublicClient({ chain: gnosis, transport: http(dep.rpcUrls[0]) });
+const client = new DKGClient({ publicClient, managerAddress: dep.managerAddress });
+```
+
+`findNetwork(chainId, managerAddress)` goes the other way. Registration is open to anyone, so
+anyone can take an application id first or claim an epoch's pool keys: check that
+`registerApplication` succeeded before relying on a specific `aid`.
+
 ## Reading on-chain state
 
 ```ts

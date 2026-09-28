@@ -2,7 +2,7 @@
 // application records, the pool cursor and transaction metadata.
 //
 // Everything goes through `multicall` against the canonical Multicall3
-// address (deployed on Sepolia and pre-deployed by Anvil). A chain without it
+// address (deployed on Gnosis Chain and Sepolia, pre-deployed by Anvil). A chain without it
 // simply falls back to bounded-concurrency `eth_call`s, so the explorer still
 // works — it just costs more requests.
 

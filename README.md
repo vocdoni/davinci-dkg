@@ -11,8 +11,8 @@ verifies is final. Built as the key layer of the [DAVINCI](https://davinci.vote)
 protocol is generic and any application that needs a collective key on an EVM chain can use it.
 
 The repository holds the Go node and circuits, the Solidity contracts, a TypeScript SDK and a web
-explorer. A public testnet runs on Sepolia, and a deployment on Gnosis chain serves DAVINCI (see
-[Deployments](#deployments)).
+explorer. The node runs on Gnosis Chain by default, on the deployment DAVINCI uses; an older public
+testnet runs on Sepolia (see [Deployments](#deployments)).
 
 ---
 
@@ -147,6 +147,10 @@ A `Live` epoch hosts many independent encryption contexts, one per **application
 scalar-field public input, so it must be non-zero and below the field modulus (clear the top three
 bits of a random or hashed id).
 
+Registration is open to anyone. The known limitation: anyone can register an `aid` first or claim
+an epoch's pool keys, so an integrator that needs a specific `aid` checks that its registration
+succeeded.
+
 `registerApplication` claims the next unclaimed pool key `P_j` for the application and fixes one of
 two **modes** for its life:
 
@@ -277,29 +281,8 @@ the node and the finalizer recover contributions from transaction calldata.
 | `MAX_K`                      | `Sizes.sol`                          | `16`                    | Pool keys per epoch; mirrors `circuits/common.MaxK` |
 | `MERKLE_DEPTH`               | `Sizes.sol`                          | `5` (= log2 `MAX_N`)    | Share-commitment tree depth |
 | `SEED_DELAY_BLOCKS`          | `Sizes.sol`                          | `1`                     | Lottery seed block offset |
-| `INACTIVITY_WINDOW`          | `DKGRegistry` constructor            | `50 400` blocks (~7 d)  | Heartbeat window before `reap` |
+| `INACTIVITY_WINDOW`          | `DKGRegistry` constructor            | `50 400` blocks (~7 d at 12 s) | Heartbeat window before `reap` |
 | `MAX_SUBMITTERS`             | `DKGAppManager`                      | `32`                    | Allow-list cap |
-
-### Optional registrar gate
-
-`DKGAppManager` supports an optional **registrar**: a single address that is the only one
-permitted to call `registerApplication`. When the registrar is unset (zero), registration
-stays permissionless.
-
-The deployer (`registrarAdmin`, an immutable set in the constructor) may call
-`setRegistrar(address r)` at any time to install or rotate the registrar; it may never be
-cleared back to zero. Rotation only gates new registrations — existing applications are
-unaffected. A single-integrator deployment sets it to its own adapter, which closes aid
-front-running and pool draining by third parties.
-
-Events and errors:
-
-| Item | Notes |
-|---|---|
-| `event RegistrarSet(address registrar)` | emitted on every `setRegistrar` call |
-| `error Unauthorized()` | caller is not `registrarAdmin` |
-| `error InvalidRegistrar()` | `setRegistrar(0)` |
-| `error NotRegistrar()` | `registerApplication` by a non-registrar when one is set |
 
 ### `getApplicationKey`
 
@@ -318,16 +301,17 @@ This view lets integrators derive the encryption key on-chain without off-chain 
 
 ## Running a node
 
-Run a node and you are eligible to be drawn into every epoch created after you register. The
-Sepolia deployment is open.
+Run a node and you are eligible to be drawn into every epoch created after you register. With no
+network settings the node joins the Gnosis Chain deployment, the one DAVINCI uses, and anyone may
+join it.
 
-You need an Ethereum key with a little Sepolia ETH (a node spends about 0.02 ETH a day under the
-public testnet's load), Docker, and a machine with at least 2 cores and **4 GB of RAM, 8 GB to be
-comfortable**. Every node deals shares, takes its turn at the finalization proof and decrypts.
-Proving keys are loaded for a proof and released afterwards: a node sits at 0.2–0.7 GB at rest,
-peaks at about 2.9 GB during its contribution proof, and starts in under 0.2 GB. `GOMEMLIMIT`
-(a Go runtime setting, e.g. `GOMEMLIMIT=2500MiB`) trades some CPU for a tighter peak. More cores
-shorten the proofs (0.9 s for a contribution on 32 threads).
+You need an EVM key with a little xDAI, Gnosis Chain's native currency, for gas (on the Sepolia
+testnet a node spent about 0.02 ETH a day under public load), Docker, and a machine with at least 2
+cores and **4 GB of RAM, 8 GB to be comfortable**. Every node deals shares, takes its turn at the
+finalization proof and decrypts. Proving keys are loaded for a proof and released afterwards: a node
+sits at 0.2–0.7 GB at rest, peaks at about 2.9 GB during its contribution proof, and starts in under
+0.2 GB. `GOMEMLIMIT` (a Go runtime setting, e.g. `GOMEMLIMIT=2500MiB`) trades some CPU for a tighter
+peak. More cores shorten the proofs (0.9 s for a contribution on 32 threads).
 
 ```bash
 git clone https://github.com/vocdoni/davinci-dkg.git
@@ -337,11 +321,35 @@ docker compose --profile node up -d
 docker compose --profile node logs -f node
 ```
 
-Three entries in `.env` are enough: `DAVINCI_DKG_NETWORK=sepolia`, your operator key in
-`DAVINCI_DKG_PRIVKEY`, and at least two RPC endpoints in `DAVINCI_DKG_WEB3_RPC` (comma-separated;
-the node rotates off rate-limited or unreachable endpoints, so a single endpoint has no fallback).
-For a named network the contract addresses are built into the binary; on any other network set
-`DAVINCI_DKG_MANAGER=0x…` and the node resolves the registry and the app manager from it.
+One entry in `.env` is enough: your operator key in `DAVINCI_DKG_PRIVKEY`. The Gnosis `DKGManager`
+address and three public RPC endpoints are built into the binary, and the node reads the registry,
+the app manager and the verifiers from the manager. A long-lived node should set its own endpoints
+in `DAVINCI_DKG_WEB3_RPC`, at least two and comma-separated: the node rotates off rate-limited or
+unreachable endpoints, so a single endpoint has no fallback.
+
+To run elsewhere:
+
+- `--network sepolia` (`DAVINCI_DKG_NETWORK=sepolia`) selects the older Sepolia testnet. It has no
+  endpoints built in, so set `--web3.rpc` too.
+- `--manager <address>` with `--web3.rpc <endpoints>` (`DAVINCI_DKG_MANAGER`,
+  `DAVINCI_DKG_WEB3_RPC`) runs any other deployment, overriding the preset's manager.
+
+The node checks that the RPC endpoints serve the network's chain (100 for Gnosis, 11155111 for
+Sepolia) and refuses to start on any other. `--manager` skips the check, since a custom deployment
+can live on any chain.
+
+The node's state, a cache of contribution calldata and the list of tainted applications, lives under
+`<datadir>/<chainid>-<manager>`, one directory per deployment. A node moved to another deployment
+starts from an empty directory and finds its old state again when moved back. A node upgraded from a
+release that kept this state directly in the data directory moves its entries for the current
+deployment there once, on first start.
+
+The compose file runs the `latest` image under Watchtower, and `latest` moves on stable releases
+only (`vX.Y.Z`, never a release candidate). When a release moves the Gnosis preset to a new
+deployment, Watchtower pulls the new image and a node on the preset (no network settings, or
+`--network gnosis`) follows the new manager, starting from a fresh state directory; a node started
+with `--manager` stays where it is. Pin `DAVINCI_DKG_TAG` to a version, or drop the watchtower
+service, to upgrade by hand.
 
 On first start the node:
 
@@ -377,8 +385,7 @@ explorer image to host a UI of your own. Every flag has a `DAVINCI_DKG_…` envi
 ciphertext, reveal the organizer secret, read the plaintext.
 
 ```bash
-export DAVINCI_DKG_WEB3_RPC=https://ethereum-sepolia-rpc.publicnode.com
-export DAVINCI_DKG_NETWORK=sepolia DAVINCI_DKG_PRIVKEY=0x...
+export DAVINCI_DKG_NETWORK=gnosis DAVINCI_DKG_PRIVKEY=0x...   # public Gnosis endpoints unless DAVINCI_DKG_WEB3_RPC is set
 go run ./cmd/dkgapp epoch                                    # newest epoch and its pool status
 go run ./cmd/dkgapp register  -aid 0x0a…                     # organizer-locked; generates and prints the organizer secret
 go run ./cmd/dkgapp register  -aid 0x0b… -org-secret …       # or bring your own
@@ -457,19 +464,48 @@ path:
    application as a whole should become decryptable.
 6. Once `t` partials are on chain, a node whose turn comes in the seed-derived rotation calls
    `combineDecryption`; the plaintext is readable through `getPlaintext`. A restarted node re-scans
-   the last `--decrypt-lookback-blocks` (default about seven days) for ciphertexts still awaiting
-   decryption; a slot past its window is dropped; and a ciphertext whose plaintext is out of range
-   taints its (application, submitter) pair for the epoch, so one bad submitter cannot silence an
-   application for its honest submitters.
+   the last `--decrypt-lookback-blocks` (default 50,400: about seven days at 12 s blocks, three on
+   Gnosis) for ciphertexts still awaiting decryption; a slot past its window is dropped; and a
+   ciphertext whose plaintext is out of range taints its (application, submitter) pair for the
+   epoch, so one bad submitter cannot silence an application for its honest submitters.
 
 ---
 
 ## Deployments
 
+### Gnosis Chain (default)
+
+Chain id 100, deployed on 2026-09-28 with the
+[`circuits-v6`](https://github.com/vocdoni/davinci-dkg/releases/tag/circuits-v6) artifacts. It is
+the node's default network (`--network gnosis`) and the SDK's `NODE_DEFAULT_NETWORK`. Every contract
+is source-verified on [Gnosisscan](https://gnosisscan.io).
+
+| Contract | Address | Block |
+|---|---|---|
+| DKGManager | `0x9999F38Ff8Bf959E98Ddd5D4551f82775219c01B` | 48483860 |
+| DKGAppManager | `0xd4d8f9708c380d81aec294b199081c5d2c782087` | 48483862 |
+| DKGRegistry | `0x45ab8b64633076ddc020b12d1f1325fa55f629c5` | 48483859 |
+| ContributionVerifier | `0x6d198bc613205957444b53a09bb22ed7bc650912` | 48483855 |
+| FinalizeVerifier | `0xc354ea7f3ef6db4ca0b89a1a5a6395c2d6126b38` | 48483856 |
+| PartialDecryptVerifier | `0x0f19886ee73fd74e3f88ce3a061490facd7561db` | 48483857 |
+| DecryptCombineVerifier | `0x2980e664edef91f554cc75b15cb8eeea61586644` | 48483858 |
+
+Epochs last 17,280 blocks (about 24 h at 5 s blocks) with short preparation windows for a small
+committee: committee selection 8 blocks, key assembly 12, finalize gap 1, so an epoch is Live about
+two minutes after `createEpoch`. Policy floors are `MIN_THRESHOLD=2`, `MIN_COMMITTEE_SIZE=3` and
+`MAX_LOTTERY_ALPHA_BPS=20000`. A committee of three nodes runs it; its first epoch,
+`aab5fe7d0000000000000001`, is Live. The DAVINCI ProcessRegistry on the same chain,
+`0x48a5091B64434a6690AeA32455712Bd2b7EE3E77`, registers one DKG application per voting process
+through its DavinciDKGAdapter, `0xd79B9B55830Bf6C277850c56B29Fe9b75cF2543b`.
+
+### Sepolia (older testnet)
+
+The public testnet the project ran first, still built into the node and the SDK
+(`--network sepolia`, which needs `--web3.rpc`).
+
 | Network | DKGManager | Details |
 |---------|------------|---------|
-| Sepolia | `0xc73b7a868eca6ac7e3e647e2665aa16a793cf551` | Public testnet, built into the node and the SDK (`--network sepolia`). Registry `0x6c4b8da67746677c3b0cb3122663186eea504737`, app manager `0x7d5c48696b8c29638cc7819403d5989d9b5b8a94`; verifiers contribution `0x40954188b8b63c0829c34e8d9b9835416bf51f6e`, finalize `0xa96519f22018ad8a9d91f8ec75431c2108d54ff3`, partial `0xf61356cb3cfdfca7cfe0a1dfc13eed9cad7d5a33`, combine `0xeef22b5b2174ce3d7c9d09b45892429216ecaefb`; deployed at block 11,668,198 with the [`circuits-v6`](https://github.com/vocdoni/davinci-dkg/releases/tag/circuits-v6) artifacts. Epochs last 7,200 blocks (about 24 h); committee selection 100 blocks, key assembly 150, finalize gap 10; floors `MIN_THRESHOLD=2`, `MIN_COMMITTEE_SIZE=3`, `MAX_LOTTERY_ALPHA_BPS=20000`, `MAX_T=32`; inactivity window 50,400 blocks. |
-| Gnosis | `0x6fa82ffe5dfadce7f9d538fdab648bd01d2e15e6` | Chain 100, used by the DAVINCI registry `0x3CDE68c39E26ecf94bD029b6ED3b9F945441daf3` (registrar: its adapter `0x21FDE45181d31CcefAA722CE648b4BB37dd7645c`); not a `--network` preset, pass `--manager`. Registry `0x272a91c149df48b21960c89cc6cf9596f7a65990`, app manager `0x1c673318d91016e292ea18031b3f80a7a2e790e5`; verifiers contribution `0x518aa569c554531ea29a3ac4930cfc8cd0debedf`, finalize `0xb1d2f3777b1798b36260bed5dd5c6780c82aa733`, partial `0x40dde04d5176095e427ec246f8a7ecc27c6bbb76`, combine `0xa4bb18a9c0b5400470101cf7f6e1da6a1cc54910`; deployed at block 48,476,742 with the `circuits-v6` artifacts. Short windows for a small committee: epochs 17,280 blocks (about 24 h at 5 s), committee selection 8 blocks, key assembly 12, finalize gap 1 (an epoch is Live about 2 minutes after `createEpoch`); floors `MIN_THRESHOLD=2`, `MIN_COMMITTEE_SIZE=3`, `MAX_LOTTERY_ALPHA_BPS=20000`; inactivity window 50,400 blocks. |
+| Sepolia | `0xc73b7a868eca6ac7e3e647e2665aa16a793cf551` | Registry `0x6c4b8da67746677c3b0cb3122663186eea504737`, app manager `0x7d5c48696b8c29638cc7819403d5989d9b5b8a94`; verifiers contribution `0x40954188b8b63c0829c34e8d9b9835416bf51f6e`, finalize `0xa96519f22018ad8a9d91f8ec75431c2108d54ff3`, partial `0xf61356cb3cfdfca7cfe0a1dfc13eed9cad7d5a33`, combine `0xeef22b5b2174ce3d7c9d09b45892429216ecaefb`; deployed at block 11,668,198 with the [`circuits-v6`](https://github.com/vocdoni/davinci-dkg/releases/tag/circuits-v6) artifacts. Epochs last 7,200 blocks (about 24 h); committee selection 100 blocks, key assembly 150, finalize gap 10; floors `MIN_THRESHOLD=2`, `MIN_COMMITTEE_SIZE=3`, `MAX_LOTTERY_ALPHA_BPS=20000`, `MAX_T=32`; inactivity window 50,400 blocks. |
 
 Only the manager address needs configuring; the registry and the app manager are resolved from it
 on chain. The public explorer is at [dkg.davinci.vote](https://dkg.davinci.vote).
@@ -507,8 +543,9 @@ DKG_THRESHOLD=16 DKG_COMMITTEE_SIZE=24 DKG_MIN_VALID_CONTRIBUTIONS=20 \
 
 Phase windows and the epoch policy the nodes propose are compose variables; point the explorer at
 it with `make ui-dev RPC_URL=http://127.0.0.1:8545 MANAGER_ADDRESS=<from
-http://127.0.0.1:8888/addresses.env> CHAIN_ID=1337`. `tests/battery/` drives a running fleet
-through load, concurrency and adversarial scenarios and writes a per-transaction report.
+http://127.0.0.1:8888/addresses.env> CHAIN_ID=1337 CHAIN_NAME=anvil DEPLOY_BLOCK=0` (a variable
+left out keeps the committed Gnosis value). `tests/battery/` drives a running fleet through load,
+concurrency and adversarial scenarios and writes a per-transaction report.
 
 ---
 

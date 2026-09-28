@@ -25,7 +25,7 @@ S3_BUCKET     ?= dev
 # RPC_URL and CHAIN_ID are read by both the solidity-deploy target and by
 # `make ui-dev` / `make ui-build` (which template ui/public/config.json so
 # the dev server / built bundle targets the chain you specify). When unset,
-# the UI keeps the defaults baked into ui/public/config.json (Sepolia).
+# the UI keeps the defaults baked into ui/public/config.json (Gnosis Chain).
 RPC_URL         ?=
 CHAIN_ID        ?=
 CHAIN_NAME      ?=
@@ -56,7 +56,7 @@ help: ## Show this help message
 	@echo "Testnet Commands:"
 	@echo "  testnet-up      Start the local DKG testnet: Anvil + deployer +"
 	@echo "                  N dkg-node replicas (no UI service — browse the"
-	@echo "                  chain with `make ui-dev`, see testnet/)."
+	@echo "                  chain with 'make ui-dev', see testnet/)."
 	@echo "                  DKG_NODE_COUNT     (default 3, max 32 containers)"
 	@echo "                  DKG_THRESHOLD      (default 2)"
 	@echo "                  Note: committee size is capped by the circuit"
@@ -81,13 +81,14 @@ help: ## Show this help message
 	@echo "  ui-clean         Remove ui/dist and ui/node_modules"
 	@echo "  ui-config        Re-render ui/public/config.json from RPC_URL et al."
 	@echo "                   Optional vars (override which chain the UI targets):"
-	@echo "                     RPC_URL          (default: Sepolia public RPC)"
-	@echo "                     MANAGER_ADDRESS  (default: Sepolia DKGManager)"
-	@echo "                     CHAIN_ID         (default: 11155111)"
-	@echo "                     CHAIN_NAME       (default: sepolia)"
+	@echo "                     RPC_URL          (default: Gnosis Chain public RPC)"
+	@echo "                     MANAGER_ADDRESS  (default: Gnosis Chain DKGManager)"
+	@echo "                     CHAIN_ID         (default: 100)"
+	@echo "                     CHAIN_NAME       (default: gnosis)"
+	@echo "                     EXPLORER_URL     (default: https://gnosisscan.io)"
 	@echo "                     REGISTRY_ADDRESS (optional)"
 	@echo "                     START_BLOCK      (optional)"
-	@echo "                     DEPLOY_BLOCK     (optional, block DKGManager was deployed at)"
+	@echo "                     DEPLOY_BLOCK     (default: 48483860, block DKGManager was deployed at)"
 	@echo "                   ui-build / ui-dev call ui-config automatically when"
 	@echo "                   RPC_URL is set on the command line."
 	@echo ""

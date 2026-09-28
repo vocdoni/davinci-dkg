@@ -9,11 +9,12 @@
 # committed ui/public/config.json is the source of truth for the chain
 # we ship.
 #
-# Usage:
-#   RPC_URL=http://127.0.0.1:8545 \
-#   MANAGER_ADDRESS=0x... \
-#   CHAIN_ID=31337 \
-#   CHAIN_NAME=anvil \
+# Usage (here: point the explorer at the Sepolia testnet instead of the
+# default Gnosis Chain deployment):
+#   RPC_URL=https://ethereum-sepolia-rpc.publicnode.com \
+#   MANAGER_ADDRESS=0xc73b7a868eca6ac7e3e647e2665aa16a793cf551 \
+#   CHAIN_ID=11155111 \
+#   CHAIN_NAME=sepolia \
 #   DEPLOY_BLOCK=11668198 \
 #   EXPLORER_URL=https://sepolia.etherscan.io \
 #     scripts/render-ui-config.sh [output-path]
@@ -43,12 +44,12 @@ resolve() {
 	printf -v "$name" '%s' "$value"
 }
 
-resolve RPC_URL rpcUrl https://w3.ch4in.net/sepolia
-resolve MANAGER_ADDRESS managerAddress 0xc73b7a868eca6ac7e3e647e2665aa16a793cf551
-resolve CHAIN_ID chainId 11155111
-resolve CHAIN_NAME chainName sepolia
-resolve DEPLOY_BLOCK deployBlock 11668198
-resolve EXPLORER_URL explorerUrl https://sepolia.etherscan.io
+resolve RPC_URL rpcUrl https://gnosis-rpc.publicnode.com
+resolve MANAGER_ADDRESS managerAddress 0x9999F38Ff8Bf959E98Ddd5D4551f82775219c01B
+resolve CHAIN_ID chainId 100
+resolve CHAIN_NAME chainName gnosis
+resolve DEPLOY_BLOCK deployBlock 48483860
+resolve EXPLORER_URL explorerUrl https://gnosisscan.io
 resolve REGISTRY_ADDRESS registryAddress ""
 resolve START_BLOCK startBlock ""
 

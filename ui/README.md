@@ -35,7 +35,7 @@ Edit it directly, or have `make` template it from env vars:
 make ui-dev \
   RPC_URL=http://127.0.0.1:8545 \
   MANAGER_ADDRESS=0xabc... \
-  CHAIN_ID=31337 CHAIN_NAME=anvil
+  CHAIN_ID=31337 CHAIN_NAME=anvil DEPLOY_BLOCK=0
 ```
 
 Recognised vars (all optional; defaults match the bundled
@@ -43,13 +43,24 @@ Recognised vars (all optional; defaults match the bundled
 
 | Var | Default |
 |---|---|
-| `RPC_URL` | Sepolia public RPC |
-| `MANAGER_ADDRESS` | Sepolia DKGManager |
-| `CHAIN_ID` | 11155111 |
-| `CHAIN_NAME` | sepolia |
+| `RPC_URL` | `https://gnosis-rpc.publicnode.com` |
+| `MANAGER_ADDRESS` | Gnosis Chain DKGManager, `0x9999F38Ff8Bf959E98Ddd5D4551f82775219c01B` |
+| `CHAIN_ID` | 100 |
+| `CHAIN_NAME` | gnosis |
+| `EXPLORER_URL` | `https://gnosisscan.io` |
 | `REGISTRY_ADDRESS` | (auto-derived) |
 | `START_BLOCK` | (none) |
-| `DEPLOY_BLOCK` | `0` |
+| `DEPLOY_BLOCK` | 48483860 |
+
+To browse the older Sepolia testnet instead:
+
+```sh
+make ui-dev \
+  RPC_URL=https://ethereum-sepolia-rpc.publicnode.com \
+  MANAGER_ADDRESS=0xc73b7a868eca6ac7e3e647e2665aa16a793cf551 \
+  CHAIN_ID=11155111 CHAIN_NAME=sepolia DEPLOY_BLOCK=11668198 \
+  EXPLORER_URL=https://sepolia.etherscan.io
+```
 
 `DEPLOY_BLOCK` is the block the `DKGManager` was deployed at, and it is the
 floor of every historical log scan the explorer runs — the operator
@@ -88,8 +99,8 @@ the static `dist/` at `/usr/share/nginx/html`, no nginx runtime. Chain
 config is **baked in at build time** via `--build-arg`s.
 
 ```sh
-# Build a Sepolia-targeted bundle (defaults).
-docker build -f ui/Dockerfile -t davinci-dkg-ui:sepolia ..
+# Build a Gnosis Chain bundle (defaults).
+docker build -f ui/Dockerfile -t davinci-dkg-ui:gnosis ..
 
 # Build a different deployment by overriding the args.
 docker build -f ui/Dockerfile \
@@ -97,6 +108,7 @@ docker build -f ui/Dockerfile \
   --build-arg MANAGER_ADDRESS=0x... \
   --build-arg CHAIN_ID=31337 \
   --build-arg CHAIN_NAME=anvil \
+  --build-arg DEPLOY_BLOCK=0 \
   -t davinci-dkg-ui:anvil ..
 ```
 
@@ -105,7 +117,7 @@ App Platform spec at `.do/davinci-dkg-ui.yaml`) or extracted and served
 manually:
 
 ```sh
-docker create --name extract davinci-dkg-ui:sepolia
+docker create --name extract davinci-dkg-ui:gnosis
 docker cp extract:/usr/share/nginx/html ./dist
 docker rm extract
 # Then serve ./dist with anything (nginx, Caddy, S3, Cloudflare R2, …).
@@ -120,7 +132,7 @@ once with the chain args you want, then bring up the service:
 ```sh
 make ui-build \
   RPC_URL=http://127.0.0.1:8545 \
-  MANAGER_ADDRESS=0x... CHAIN_ID=31337 CHAIN_NAME=anvil
+  MANAGER_ADDRESS=0x... CHAIN_ID=31337 CHAIN_NAME=anvil DEPLOY_BLOCK=0
 
 docker compose --profile ui up                       # UI alone, on :8082
 docker compose --profile node --profile ui up        # node + UI together

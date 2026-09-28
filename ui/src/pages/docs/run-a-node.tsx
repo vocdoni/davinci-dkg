@@ -1,9 +1,48 @@
+import { findNetwork, KNOWN_NETWORKS, NODE_DEFAULT_NETWORK } from '@vocdoni/davinci-dkg-sdk'
+import { chainFromConfig } from '~app/wagmi'
 import { Address, KeyValue } from '~kit'
 import { useRuntimeConfig } from '~config/config-context'
+import type { RuntimeConfig } from '~config/runtime-config'
 import { DocsLayout, type DocsSection } from './DocsLayout'
 import { Bullets, C, Code, Em, Ext, Note, P, Section, Steps, Sub } from './prose'
 
 const REPO = 'https://github.com/vocdoni/davinci-dkg'
+const SEPOLIA_CHAIN_ID = 11155111
+
+/**
+ * The `.env` lines that put a node on the deployment this explorer shows:
+ * nothing for the node's default network, `DAVINCI_DKG_NETWORK` for another
+ * preset, the manager and an RPC endpoint for anything else.
+ */
+function networkEnv(config: RuntimeConfig, preset: string | undefined): string {
+  if (preset === NODE_DEFAULT_NETWORK) {
+    return `# Nothing else: with no network setting the node joins ${preset} through
+# the public RPC endpoints built into the binary. Your own endpoints,
+# comma-separated, take precedence:
+# DAVINCI_DKG_WEB3_RPC=https://<provider-1>,https://<provider-2>`
+  }
+  if (preset !== undefined) {
+    const builtIn = KNOWN_NETWORKS[preset].rpcUrls.length > 0
+    return `# Named deployment: the manager address is built into the binary.
+DAVINCI_DKG_NETWORK=${preset}
+
+# JSON-RPC endpoints, comma-separated. Keep at least two.
+${builtIn ? '# ' : ''}DAVINCI_DKG_WEB3_RPC=${config.rpcUrl}`
+  }
+  return `# A deployment the binary does not know: the manager is enough, the
+# registry and the app manager are read from it on chain.
+DAVINCI_DKG_MANAGER=${config.managerAddress}
+
+# JSON-RPC endpoints, comma-separated. Keep at least two.
+DAVINCI_DKG_WEB3_RPC=${config.rpcUrl}`
+}
+
+/** How a node selects this deployment, for the summary table. */
+function nodeSetting(config: RuntimeConfig, preset: string | undefined): string {
+  if (preset === NODE_DEFAULT_NETWORK) return 'none, the default network'
+  if (preset !== undefined) return `--network ${preset}`
+  return `--manager ${config.managerAddress}`
+}
 
 const SECTIONS: DocsSection[] = [
   { id: 'prerequisites', title: 'Prerequisites' },
@@ -19,6 +58,8 @@ const SECTIONS: DocsSection[] = [
 
 export function DocsRunANodePage() {
   const config = useRuntimeConfig()
+  const preset = findNetwork(config.chainId, config.managerAddress)
+  const currency = chainFromConfig(config).nativeCurrency.symbol
   return (
     <DocsLayout
       label='Docs'
@@ -33,16 +74,23 @@ export function DocsRunANodePage() {
               <C>docker</C> ≥ 24 and <C>docker compose</C> v2.
             </>,
             <>
-              An Ethereum Virtual Machine (EVM) private key, holding a little {config.chainName} native currency for
-              fees. The node pays for registry registration, slot claims, contributions and partial decryptions, only
-              for the phases it actually takes part in. For Sepolia, the{' '}
-              <Ext href='https://sepolia-faucet.pk910.de/'>pk910 proof-of-work faucet</Ext> and the{' '}
-              <Ext href='https://cloud.google.com/application/web3/faucet/ethereum/sepolia'>Google Cloud faucet</Ext>{' '}
-              both work.
+              An Ethereum Virtual Machine (EVM) private key, holding a little {currency} on {config.chainName} for fees.
+              The node pays for registry registration, slot claims, contributions and partial decryptions, only for the
+              phases it actually takes part in.
+              {config.chainId === SEPOLIA_CHAIN_ID && (
+                <>
+                  {' '}
+                  For Sepolia, the <Ext href='https://sepolia-faucet.pk910.de/'>pk910 proof-of-work faucet</Ext> and the{' '}
+                  <Ext href='https://cloud.google.com/application/web3/faucet/ethereum/sepolia'>
+                    Google Cloud faucet
+                  </Ext>{' '}
+                  both work.
+                </>
+              )}
             </>,
             <>
-              A JSON-RPC endpoint. Public providers are fine to try it out; a long-lived node wants a dedicated provider
-              or your own node.
+              JSON-RPC endpoints. The node carries public Gnosis Chain endpoints, which are fine to try it out; a
+              long-lived node wants a dedicated provider or your own node, and any other network needs its own.
             </>,
           ]}
         />
@@ -56,20 +104,12 @@ export function DocsRunANodePage() {
         <Code>{`git clone https://github.com/vocdoni/davinci-dkg.git
 cd davinci-dkg
 cp .env.example .env && $EDITOR .env`}</Code>
-        <P>The minimum set of entries:</P>
-        <Code caption='.env'>{`# JSON-RPC endpoint (use your own provider in production).
-DAVINCI_DKG_WEB3_RPC=${config.rpcUrl}
-
-# Hex private key (0x-prefixed). This wallet pays the node's fees and is
+        <P>The minimum set of entries for the deployment this explorer shows:</P>
+        <Code caption='.env'>{`# Hex private key (0x-prefixed). This wallet pays the node's fees and is
 # your operator identity in the registry.
 DAVINCI_DKG_PRIVKEY=0x<your-private-key>
 
-# Named deployment: contract addresses are built into the binary.
-DAVINCI_DKG_NETWORK=${config.chainName}
-
-# Any other network: point at the manager instead and the node resolves
-# the registry and the app manager from it on chain.
-# DAVINCI_DKG_MANAGER=${config.managerAddress}`}</Code>
+${networkEnv(config, preset)}`}</Code>
         <Note>
           Every flag has a <C>DAVINCI_DKG_…</C> environment equivalent; run <C>davinci-dkg-node --help</C> for the full
           list. Release binaries and source builds are configured exactly the same way.
@@ -78,18 +118,28 @@ DAVINCI_DKG_NETWORK=${config.chainName}
 
       <Section id='start' title='Start the node'>
         <P>
-          One command brings up the node and Watchtower, which recreates the container when a new image is published.
-          The container restarts on failure by default.
+          One command brings up the node and Watchtower, which recreates the container when a new stable release is
+          published. The container restarts on failure by default.
         </P>
         <Code>{`docker compose --profile node up -d
 docker compose --profile node logs -f node`}</Code>
+        <P>
+          A release can move a built-in network to a new deployment. A node on that network, by default or through{' '}
+          <C>--network</C>, then follows the new manager after the next Watchtower update and starts from a fresh state
+          directory; a node started with <C>--manager</C> stays where it is.
+        </P>
       </Section>
 
       <Section id='first-boot' title='What happens on first boot'>
         <Steps
           items={[
             <>
-              The node derives a BabyJubJub encryption key from your EVM key and registers (or updates) it in{' '}
+              The node checks that its RPC endpoints serve the network&rsquo;s chain (chain id 100 for Gnosis) and
+              refuses to start otherwise; <C>--manager</C> skips the check. It reads the registry, the app manager and
+              the verifiers from <C>DKGManager</C>.
+            </>,
+            <>
+              It derives a BabyJubJub encryption key from your EVM key and registers (or updates) it in{' '}
               <C>DKGRegistry</C> — one transaction, skipped if you are already registered and active.
             </>,
             <>
@@ -144,12 +194,16 @@ docker compose --profile node --profile ui up -d
         <Bullets
           items={[
             <>
-              <Em>Upgrades.</Em> Watchtower follows the <C>latest</C> tag. Pin <C>DAVINCI_DKG_TAG=v0.1.0</C> in{' '}
-              <C>.env</C>, or drop the watchtower service, for manual control.
+              <Em>Upgrades.</Em> Watchtower follows the <C>latest</C> tag, which moves on stable releases only (
+              <C>vX.Y.Z</C>, never a release candidate). Pin <C>DAVINCI_DKG_TAG=v0.1.0</C> in <C>.env</C>, or drop the
+              watchtower service, for manual control.
             </>,
             <>
-              <Em>State.</Em> The node mounts a volume for its data directory, but all per-epoch state is rebuilt from
-              on-chain records on restart — stopping and starting mid-epoch is safe.
+              <Em>State.</Em> The node keeps its contribution cache and taint list under{' '}
+              <C>&lt;datadir&gt;/&lt;chainid&gt;-&lt;manager&gt;</C>, one directory per deployment, so a node moved to
+              another deployment starts empty and finds its old state again when moved back. State an older release kept
+              directly in the data directory is moved there once, on first start. Everything else is rebuilt from
+              on-chain records on restart, so stopping and starting mid-epoch is safe.
             </>,
             <>
               <Em>Circuit artifacts.</Em> Proving keys are downloaded once and cached under <C>~/.davinci/artifacts</C>{' '}
@@ -202,7 +256,7 @@ docker compose --profile node --profile ui up -d
 
       <Section id='networks' title='This network'>
         <P>
-          The values this explorer is pointed at. A named network resolves its addresses from the binary; anything else
+          The values this explorer is pointed at. A named network resolves its manager from the binary; anything else
           only needs the manager, since the registry and app manager are read from it on chain.
         </P>
         <KeyValue
@@ -213,12 +267,18 @@ docker compose --profile node --profile ui up -d
             { label: 'DKGManager', value: <Address value={config.managerAddress} full /> },
             { label: 'rpc endpoint', value: config.rpcUrl, mono: true },
             { label: 'deploy block', value: config.deployBlock.toLocaleString(), mono: true },
+            { label: 'node setting', value: nodeSetting(config, preset), mono: true },
           ]}
         />
         <Sub>Other networks</Sub>
         <P>
-          New deployments are added to <C>config/networks.go</C>, after which <C>DAVINCI_DKG_NETWORK=&lt;name&gt;</C>{' '}
-          works without any other change.
+          With no network settings the node runs on Gnosis Chain. <C>--network sepolia</C> (
+          <C>DAVINCI_DKG_NETWORK=sepolia</C>) selects the older Sepolia testnet and needs <C>--web3.rpc</C>. Any other
+          deployment runs with <C>--manager &lt;address&gt;</C> and <C>--web3.rpc &lt;endpoints&gt;</C>.
+        </P>
+        <P>
+          New production deployments are added to <C>config/networks.go</C>, after which{' '}
+          <C>DAVINCI_DKG_NETWORK=&lt;name&gt;</C> works without any other change.
         </P>
       </Section>
 

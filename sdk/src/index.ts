@@ -45,6 +45,16 @@ export {
 // ── ABI ───────────────────────────────────────────────────────────────────────
 export { dkgManagerAbi, dkgRegistryAbi, dkgAppManagerAbi } from './abi.js';
 
+// ── Network presets ───────────────────────────────────────────────────────────
+export {
+  KNOWN_NETWORKS,
+  NODE_DEFAULT_NETWORK,
+  canonicalNetworkName,
+  getNetwork,
+  findNetwork,
+  type NetworkDeployment,
+} from './networks.js';
+
 // ── Utilities ─────────────────────────────────────────────────────────────────
 export { buildEpochId, parseEpochId } from './utils.js';
 

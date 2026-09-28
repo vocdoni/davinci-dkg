@@ -26,7 +26,7 @@ func main() {
 	defer cancel()
 
 	if !cfg.HasChainConfig() {
-		log.Infow("no chain config provided — node is idle (set --privkey, --manager to enable participation)")
+		log.Infow("no private key provided — node is idle (set --privkey to enable participation)")
 		waitForSignal()
 		return
 	}

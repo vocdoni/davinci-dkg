@@ -101,3 +101,13 @@ export {
   watchCiphertextSubmitted,
   networkSummary,
 } from './monitor.js';
+
+// ── Network presets ───────────────────────────────────────────────────────────
+export {
+  KNOWN_NETWORKS,
+  NODE_DEFAULT_NETWORK,
+  canonicalNetworkName,
+  getNetwork,
+  findNetwork,
+  type NetworkDeployment,
+} from './networks.js';

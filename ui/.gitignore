@@ -16,7 +16,7 @@ coverage/
 *.tsbuildinfo
 
 # ---- Local config overrides ----------------------------------------------
-# public/config.json is committed with the published Sepolia defaults; a
+# public/config.json is committed with the published Gnosis Chain defaults; a
 # `make ui-dev RPC_URL=…` invocation rewrites it locally for ad-hoc dev.
 # Don't ignore it outright (we want the published file tracked), but DO
 # ignore developer-local overrides.

@@ -6,7 +6,7 @@ import { WagmiProvider, usePublicClient } from 'wagmi'
 import '@rainbow-me/rainbowkit/styles.css'
 import { ConfigProvider } from '~config/ConfigProvider'
 import { useRuntimeConfig } from '~config/config-context'
-import { createWagmiConfig } from '~app/wagmi'
+import { blockTimeSeconds, createWagmiConfig } from '~app/wagmi'
 import { walletTheme } from '~app/rainbowkit-theme'
 import { router } from '~routes/router'
 import { DataSourceProvider } from '~data/context'
@@ -33,7 +33,10 @@ const queryClient = new QueryClient({
 function DataProviders({ children }: { children: ReactNode }) {
   const config = useRuntimeConfig()
   const client = usePublicClient()
-  const source = useMemo(() => createDataSource({ client, config }), [client, config])
+  const source = useMemo(
+    () => createDataSource({ client, config, blockTimeSeconds: blockTimeSeconds(config.chainId) }),
+    [client, config]
+  )
   return <DataSourceProvider source={source}>{children}</DataSourceProvider>
 }
 

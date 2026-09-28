@@ -98,8 +98,9 @@ jobs:
           retention-days: 7
 
   # ---------------------------------------------------------------------------
-  # 2. Publish the node Docker image for the tag (and refresh the `latest`
-  #    alias so Watchtower-based deployments pick up the new release).
+  # 2. Publish the node Docker image for the tag. A stable release also moves
+  #    the `latest` alias, which Watchtower-based deployments follow; a
+  #    prerelease (v1.2.3-rc1) does not.
   # ---------------------------------------------------------------------------
   docker:
     name: Docker

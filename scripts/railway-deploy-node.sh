@@ -4,8 +4,13 @@
 #
 #   RAILWAY_TOKEN_FILE=railway-api-key \
 #   RAILWAY_PROJECT_ID=<uuid> RAILWAY_ENVIRONMENT_ID=<uuid> \
-#   NODE_NAME=dkg-node9 NODE_KEY_FILE=~/.davinci-dkg-sepolia/node9.json \
+#   NODE_NAME=dkg-node9 NODE_KEY_FILE=~/davinci-dkg-keys/node9.json \
 #   scripts/railway-deploy-node.sh
+#
+# With NETWORK and RPC unset the node runs on its default network, Gnosis
+# Chain, through the public endpoints built into the binary. The older
+# Sepolia testnet needs both, e.g. NETWORK=sepolia
+# RPC=https://ethereum-sepolia-rpc.publicnode.com,https://1rpc.io/sepolia.
 #
 # NODE_KEY_FILE holds `[{"address": "0x…", "private_key": "0x…"}]` (the fleet
 # format). The key travels only inside the request body read from a 0600
@@ -18,8 +23,8 @@ set -euo pipefail
 : "${NODE_NAME:?service name, e.g. dkg-node9}"
 : "${NODE_KEY_FILE:?operator key file}"
 : "${IMAGE:=ghcr.io/vocdoni/davinci-dkg:latest}"
-: "${NETWORK:=sepolia}"
-: "${RPC:=https://ethereum-sepolia-rpc.publicnode.com,https://1rpc.io/sepolia,https://sepolia.gateway.tenderly.co}"
+: "${NETWORK:=}"
+: "${RPC:=}"
 : "${POLL_INTERVAL:=30s}"
 : "${MOUNT_PATH:=/app/run}"
 API=https://backboard.railway.com/graphql/v2
@@ -52,17 +57,20 @@ python3 - "$NODE_KEY_FILE" "$RAILWAY_PROJECT_ID" "$RAILWAY_ENVIRONMENT_ID" "$NOD
 import sys, json
 keyfile, project, env, name, image, network, rpc, poll, mount = sys.argv[1:]
 k = json.load(open(keyfile)); k = k[0] if isinstance(k, list) else k
+variables = {
+    "DAVINCI_DKG_NETWORK": network,
+    "DAVINCI_DKG_PRIVKEY": k["private_key"],
+    "DAVINCI_DKG_WEB3_RPC": rpc,
+    "DAVINCI_DKG_POLL_INTERVAL": poll,
+    "DAVINCI_DKG_DATADIR": mount + "/data",
+    "DAVINCI_DKG_ARTIFACTS_DIR": mount + "/artifacts",
+}
 print(json.dumps({"input": {
     "projectId": project, "environmentId": env, "name": name,
     "source": {"image": image},
-    "variables": {
-        "DAVINCI_DKG_NETWORK": network,
-        "DAVINCI_DKG_PRIVKEY": k["private_key"],
-        "DAVINCI_DKG_WEB3_RPC": rpc,
-        "DAVINCI_DKG_POLL_INTERVAL": poll,
-        "DAVINCI_DKG_DATADIR": mount + "/data",
-        "DAVINCI_DKG_ARTIFACTS_DIR": mount + "/artifacts",
-    }}}))
+    # Unset network and endpoints leave the node on its default network.
+    "variables": {key: value for key, value in variables.items() if value},
+}}))
 PY
 resp=$(gql 'mutation($input: ServiceCreateInput!) { serviceCreate(input: $input) { id name } }' "$vars")
 service=$(field "$resp" data.serviceCreate.id)
