@@ -11,7 +11,8 @@ verifies is final. Built as the key layer of the [DAVINCI](https://davinci.vote)
 protocol is generic and any application that needs a collective key on an EVM chain can use it.
 
 The repository holds the Go node and circuits, the Solidity contracts, a TypeScript SDK and a web
-explorer. A public testnet runs on Sepolia (see [Deployments](#deployments)).
+explorer. A public testnet runs on Sepolia, and a deployment on Gnosis chain serves DAVINCI (see
+[Deployments](#deployments)).
 
 ---
 
@@ -279,6 +280,40 @@ the node and the finalizer recover contributions from transaction calldata.
 | `INACTIVITY_WINDOW`          | `DKGRegistry` constructor            | `50 400` blocks (~7 d)  | Heartbeat window before `reap` |
 | `MAX_SUBMITTERS`             | `DKGAppManager`                      | `32`                    | Allow-list cap |
 
+### Optional registrar gate
+
+`DKGAppManager` supports an optional **registrar**: a single address that is the only one
+permitted to call `registerApplication`. When the registrar is unset (zero), registration
+stays permissionless.
+
+The deployer (`registrarAdmin`, an immutable set in the constructor) may call
+`setRegistrar(address r)` at any time to install or rotate the registrar; it may never be
+cleared back to zero. Rotation only gates new registrations — existing applications are
+unaffected. A single-integrator deployment sets it to its own adapter, which closes aid
+front-running and pool draining by third parties.
+
+Events and errors:
+
+| Item | Notes |
+|---|---|
+| `event RegistrarSet(address registrar)` | emitted on every `setRegistrar` call |
+| `error Unauthorized()` | caller is not `registrarAdmin` |
+| `error InvalidRegistrar()` | `setRegistrar(0)` |
+| `error NotRegistrar()` | `registerApplication` by a non-registrar when one is set |
+
+### `getApplicationKey`
+
+```solidity
+function getApplicationKey(bytes12 epochId, bytes32 aid)
+    external view returns (uint256 x, uint256 y);
+```
+
+Returns the application's public key in the DKG's reduced TE form: `P_j` for automatic
+applications and `P_j + PK_org` for organizer-locked ones. Reverts `InvalidApplication`
+for an unregistered `(epochId, aid)`. The key does not change after `revealOrganizerSecret`.
+
+This view lets integrators derive the encryption key on-chain without off-chain computation.
+
 ---
 
 ## Running a node
@@ -434,6 +469,7 @@ path:
 | Network | DKGManager | Details |
 |---------|------------|---------|
 | Sepolia | `0xc73b7a868eca6ac7e3e647e2665aa16a793cf551` | Public testnet, built into the node and the SDK (`--network sepolia`). Registry `0x6c4b8da67746677c3b0cb3122663186eea504737`, app manager `0x7d5c48696b8c29638cc7819403d5989d9b5b8a94`; verifiers contribution `0x40954188b8b63c0829c34e8d9b9835416bf51f6e`, finalize `0xa96519f22018ad8a9d91f8ec75431c2108d54ff3`, partial `0xf61356cb3cfdfca7cfe0a1dfc13eed9cad7d5a33`, combine `0xeef22b5b2174ce3d7c9d09b45892429216ecaefb`; deployed at block 11,668,198 with the [`circuits-v6`](https://github.com/vocdoni/davinci-dkg/releases/tag/circuits-v6) artifacts. Epochs last 7,200 blocks (about 24 h); committee selection 100 blocks, key assembly 150, finalize gap 10; floors `MIN_THRESHOLD=2`, `MIN_COMMITTEE_SIZE=3`, `MAX_LOTTERY_ALPHA_BPS=20000`, `MAX_T=32`; inactivity window 50,400 blocks. |
+| Gnosis | `0x6fa82ffe5dfadce7f9d538fdab648bd01d2e15e6` | Chain 100, used by the DAVINCI registry `0x3CDE68c39E26ecf94bD029b6ED3b9F945441daf3` (registrar: its adapter `0x21FDE45181d31CcefAA722CE648b4BB37dd7645c`); not a `--network` preset, pass `--manager`. Registry `0x272a91c149df48b21960c89cc6cf9596f7a65990`, app manager `0x1c673318d91016e292ea18031b3f80a7a2e790e5`; verifiers contribution `0x518aa569c554531ea29a3ac4930cfc8cd0debedf`, finalize `0xb1d2f3777b1798b36260bed5dd5c6780c82aa733`, partial `0x40dde04d5176095e427ec246f8a7ecc27c6bbb76`, combine `0xa4bb18a9c0b5400470101cf7f6e1da6a1cc54910`; deployed at block 48,476,742 with the `circuits-v6` artifacts. Short windows for a small committee: epochs 17,280 blocks (about 24 h at 5 s), committee selection 8 blocks, key assembly 12, finalize gap 1 (an epoch is Live about 2 minutes after `createEpoch`); floors `MIN_THRESHOLD=2`, `MIN_COMMITTEE_SIZE=3`, `MAX_LOTTERY_ALPHA_BPS=20000`; inactivity window 50,400 blocks. |
 
 Only the manager address needs configuring; the registry and the app manager are resolved from it
 on chain. The public explorer is at [dkg.davinci.vote](https://dkg.davinci.vote).
@@ -501,3 +537,7 @@ through load, concurrency and adversarial scenarios and writes a per-transaction
 - Feldman VSS: P. Feldman, *A Practical Scheme for Non-interactive Verifiable Secret Sharing*, FOCS 1987.
 - DAVINCI voting protocol: https://davinci.vote
 - Vocdoni: https://vocdoni.io
+
+## License
+
+AGPL-3.0, see [LICENSE](LICENSE).
