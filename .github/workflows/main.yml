@@ -150,7 +150,15 @@ jobs:
       # Some self-hosted runners export no HOME (z5 runs as root under
       # systemd); go, foundryup and docker all need one.
       - name: Give the run a home
-        run: mkdir -p "$RUNNER_TEMP/home" && echo "HOME=$RUNNER_TEMP/home" >> "$GITHUB_ENV"
+        run: |
+          # Go's module cache is read-only, so the runner's _temp cleanup leaves
+          # a partial cache behind that breaks the next job's build: start from
+          # an empty home and keep the cache writable.
+          chmod -R u+w "$RUNNER_TEMP/home" 2>/dev/null || true
+          rm -rf "$RUNNER_TEMP/home"
+          mkdir -p "$RUNNER_TEMP/home"
+          echo "HOME=$RUNNER_TEMP/home" >> "$GITHUB_ENV"
+          echo "GOFLAGS=-modcacherw" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
 
       - uses: actions/setup-go@v5
@@ -195,7 +203,15 @@ jobs:
       RUN_INTEGRATION_TESTS: "true"
     steps:
       - name: Give the run a home
-        run: mkdir -p "$RUNNER_TEMP/home" && echo "HOME=$RUNNER_TEMP/home" >> "$GITHUB_ENV"
+        run: |
+          # Go's module cache is read-only, so the runner's _temp cleanup leaves
+          # a partial cache behind that breaks the next job's build: start from
+          # an empty home and keep the cache writable.
+          chmod -R u+w "$RUNNER_TEMP/home" 2>/dev/null || true
+          rm -rf "$RUNNER_TEMP/home"
+          mkdir -p "$RUNNER_TEMP/home"
+          echo "HOME=$RUNNER_TEMP/home" >> "$GITHUB_ENV"
+          echo "GOFLAGS=-modcacherw" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
         with:
           submodules: recursive

@@ -53,9 +53,15 @@ jobs:
       # all need one. Keep it per run so nothing leaks between jobs.
       - name: Give the run a home
         run: |
+          # Go's module cache is read-only, so the runner's _temp cleanup leaves
+          # a partial cache behind that breaks the next job's build: start from
+          # an empty home and keep the cache writable.
+          chmod -R u+w "$RUNNER_TEMP/home" 2>/dev/null || true
+          rm -rf "$RUNNER_TEMP/home"
           mkdir -p "$RUNNER_TEMP/home/.docker"
           echo "HOME=$RUNNER_TEMP/home" >> "$GITHUB_ENV"
           echo "DOCKER_CONFIG=$RUNNER_TEMP/home/.docker" >> "$GITHUB_ENV"
+          echo "GOFLAGS=-modcacherw" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
         with:
           submodules: recursive
