@@ -72,3 +72,6 @@ services:
       interval: 2s
       timeout: 5s
       retries: 60
+      # The deployer compiles the contracts first, which takes minutes on a
+      # busy CI box.
+      start_period: 10m

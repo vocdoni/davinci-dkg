@@ -97,6 +97,9 @@ services:
       interval: 3s
       timeout: 5s
       retries: 30
+      # The deployer compiles the contracts first, which takes minutes on a
+      # busy CI box.
+      start_period: 10m
 
   # ── DKG nodes ──────────────────────────────────────────────────────────────
   # Scale with: docker compose up --scale dkg-node=N
