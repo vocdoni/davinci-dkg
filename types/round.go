@@ -34,15 +34,12 @@ func (p EpochPhase) String() string {
 	}
 }
 
-// EpochPolicy configures the thresholds and decryption-window settings for
-// one DKG epoch. Phase deadline blocks are derived on-chain from the
-// contract's immutable EPOCH_DURATION_BLOCKS plus the per-phase BPS
-// constants in `solidity/src/libraries/Sizes.sol`, so callers no longer
-// supply them: the policy struct here matches the new createEpoch ABI.
+// EpochPolicy configures one DKG epoch. The phase deadline blocks are derived
+// on chain at createEpoch from the manager's deadline offsets, so
+// callers only supply the four policy fields createEpoch takes.
 //
-// The deadline-block fields below remain on the struct because the on-chain
-// EpochPolicy struct still surfaces them (for downstream phase-check reads
-// — they are populated by createEpoch from the immutable offsets). Callers
+// The deadline-block fields mirror the on-chain EpochPolicy struct, which
+// createEpoch populates for phase checks. Callers
 // constructing a fresh policy for createEpoch may leave them zero; helpers
 // fill the per-phase blocks from the on-chain `getEpoch` view after
 // creation.
@@ -70,10 +67,7 @@ func (p EpochPolicy) Validate() error {
 	if p.LotteryAlphaBps < 10000 {
 		return fmt.Errorf("lottery alpha must be at least 1.0 (10000 bps)")
 	}
-	// Phase deadlines are derived on-chain — no client-side validation beyond
-	// the threshold/committee-size invariants above. (Pre-refactor versions of
-	// this struct also validated SeedDelay / CommitteeSelectionDeadlineBlock /
-	// KeyAssemblyDeadlineBlock / LiveNotBeforeBlock; those fields are
-	// now populated by the contract from EPOCH_DURATION_BLOCKS.)
+	// Phase deadlines are derived on chain, so there is nothing to validate
+	// about them here.
 	return nil
 }

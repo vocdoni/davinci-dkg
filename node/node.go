@@ -464,8 +464,7 @@ func (n *Node) EnsureRegistered(ctx context.Context) error {
 		return nil
 	}
 
-	// Build a Schnorr PoK over the operator's BJJ secret to satisfy the
-	// registry's verification requirement (paper §5.1.1).
+	// The registry requires a Schnorr proof of knowledge of the BJJ secret.
 	_, _, schnorrProof, err := schnorr.ProveOperatorRegister(n.bjjSecret, n.address)
 	if err != nil {
 		return fmt.Errorf("schnorr proof: %w", err)
@@ -785,7 +784,7 @@ func (n *Node) maybeScheduleAutoCreate(ctx context.Context, cfg *Config, tc *tic
 		// Not due by the cadence, but the newest epoch may be nearly claimed
 		// out (or aborted): the next epoch has to exist before the last key
 		// goes, and the contract allows createEpoch early in exactly those
-		// two cases (docs/pool-keys-v4.md §9). A dead one is aborted first.
+		// two cases. A dead one is aborted first.
 		slot, allowed, err := n.earlyCreateAllowed(ctx, tc, epochNonce)
 		if err != nil {
 			n.autoReadFailed(tc, "newest epoch", err)
@@ -1305,8 +1304,8 @@ func (n *Node) tick(ctx context.Context, cfg *Config, tc *tickCtx) error {
 // unfinished: past the window the scan steps back one nonce at a time while
 // getEpoch says CommitteeSelection or KeyAssembly and stops at the first
 // Live / Aborted (or otherwise closed) epoch, or at nonce 1, so an unfinished
-// qualifying epoch stays discoverable however many cadences have passed
-// (docs/pool-keys-v4.md §10). A read failure ends the walk for this tick.
+// qualifying epoch stays discoverable however many cadences have passed.
+// A read failure ends the walk for this tick.
 func (n *Node) epochsToVisit(ctx context.Context, chain epochReader, prefix uint32, epochNonce uint64) [][12]byte {
 	first := uint64(1)
 	if epochNonce >= epochLookback {

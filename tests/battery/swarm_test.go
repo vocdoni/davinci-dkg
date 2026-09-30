@@ -50,8 +50,7 @@ type swarmConfig struct {
 }
 
 // activationPlateau is how many blocks the ready-key count may stand still
-// before a wave settles for what the fleet activated: the nodes activate one
-// key per tick (a few blocks), so a longer stall means ActivateAhead is hit.
+// before a wave settles for fewer keys than it asked for.
 const activationPlateau = 15
 
 func loadSwarmConfig() swarmConfig {
@@ -99,12 +98,11 @@ func (c *ctTrack) label() string { return fmt.Sprintf("%s/ct%d(%s)", c.Organizer
 // application — automatic, locked-and-revealed after a delay, or
 // locked-and-withheld — and submitting M ciphertexts under it. Every
 // registration claims one of its epoch's MaxK pool keys, so the swarm runs
-// in waves: as many organizers as the newest Live epoch has keys left (and
-// the nodes have activated), the rest in the next epoch once the nodes
-// create it. Every unlocked application's ciphertexts must combine to their
-// plaintexts; the withheld ones must not combine at all. Per-ciphertext
-// latency, partial counts and gas are reported; an epoch boundary crossed
-// mid-run is reported, not fatal.
+// in waves: as many organizers as the newest Live epoch has keys left, the
+// rest in the next epoch once the nodes create it. Every unlocked
+// application's ciphertexts must combine to their plaintexts; the withheld
+// ones must not combine at all. Per-ciphertext latency, partial counts and
+// gas are reported; an epoch boundary crossed mid-run is reported, not fatal.
 func TestOrganizerSwarm(t *testing.T) {
 	f := requireFleet(t)
 	ctx, cancel := testContext(t)
@@ -150,10 +148,7 @@ func TestOrganizerSwarm(t *testing.T) {
 
 // swarmWave picks the epoch of the next wave and sizes it: the newest Live
 // epoch with enough service blocks left and at least one unclaimed pool
-// key, then as many organizers as that epoch has keys left — MaxK at most —
-// and the nodes activate within the budget. A fleet that activates fewer
-// keys ahead than that (DAVINCI_DKG_ACTIVATE_AHEAD below MaxK) gets a
-// smaller wave and a log line rather than a wave of PoolKeyNotActive reverts.
+// key, then as many organizers as that epoch has keys left, MaxK at most.
 func (f *Fleet) swarmWave(
 	ctx context.Context, t *testing.T, cfg swarmConfig, remaining int,
 ) ([12]byte, web3.EpochView, int, error) {

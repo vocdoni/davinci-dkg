@@ -98,10 +98,10 @@ func AssertPointOnCurve(api frontend.API, point twistededwards.Point) error {
 
 // ScalarMulVar multiplies a variable point by a full-width scalar with a
 // plain double-and-add over the scalar's 254 bits: no hints, no
-// decomposition trick, no commitments. gnark's hinted fake-GLV ScalarMul was
-// unsound on cofactor curves before v0.15.0 (ePrint 2026/1776) and its fixed
-// version commits, which changes the Solidity verifier and adds a pairing per
-// proof; this gadget is the boring alternative for every secret or
+// decomposition trick, no commitments. gnark's hinted fake-GLV ScalarMul is
+// unsound through v0.15.0 (fixed in v0.16.0; see also ePrint 2026/1776) and
+// its fixed version commits, which changes the Solidity verifier and adds a
+// pairing per proof; this gadget is the boring alternative for every secret or
 // prover-chosen scalar that multiplies a variable-base point. ToBinary pins
 // the canonical binary expansion, the unified twisted-Edwards formulas are
 // complete, so the result is exactly [s]·P for any scalar s < 2^254.

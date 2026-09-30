@@ -73,8 +73,7 @@ describe('protocol vectors mirror', () => {
     expect(f.domains.OrganizerRegisterV1.preimage).toBe('davinci-dkg:organizer-register:v1')
     expect(f.domains.ContributionTranscriptV2.preimage).toBe('davinci-dkg:contribution:v2')
     expect(f.domains.FinalizeTranscriptV2.preimage).toBe('davinci-dkg:finalize:v2')
-    // The per-ciphertext organizer share, the v1 contribution transcript and
-    // the per-key activation are gone with their domains.
+    // Retired domains are not emitted.
     expect(f.domains.OrganizerShareV1).toBeUndefined()
     expect(f.domains.ContributionTranscriptV1).toBeUndefined()
     expect(f.domains.PoolKeyTranscriptV1).toBeUndefined()

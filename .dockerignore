@@ -67,7 +67,10 @@ __pycache__/
 
 # ---- Documentation (not needed in runtime image) --------------------------
 BENCHMARKS.md
+CLAUDE.md
+CONTRIBUTING.md
 README.md
+docs/
 
 # ---- Editor and OS artifacts ---------------------------------------------
 .vscode/

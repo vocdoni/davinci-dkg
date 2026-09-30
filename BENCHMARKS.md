@@ -1,7 +1,8 @@
-# DAVINCI DKG — Benchmarks
+# Benchmarks
 
-Measurements of the current release: circuits at `MaxN = 32`, `MaxT = 32`, `MaxK = 16`
-(gnark v0.16.3, BN254 Groth16), contracts compiled with solc 0.8.28 via IR, node v0.7.
+Measured with the `circuits-v6` artifacts: circuits at `MaxN = 32`, `MaxT = 32`, `MaxK = 16`
+(gnark v0.16.3, BN254 Groth16), contracts compiled with solc 0.8.28 via IR; node figures from
+v0.7.
 Reproduce constraint counts with `go run ./cmd/circuit-profile <circuit>` (then
 `go tool pprof -sample_index=0 -top /tmp/<circuit>.pprof` for the per-gadget split), proving
 times and memory with the circuit tests under `/usr/bin/time -v`, gas from the integration
@@ -88,7 +89,7 @@ about 1.7 M gas at `t = 3`.
 
 ### Single-key baseline (`MaxK = 1`)
 
-The same circuits, contracts and test built with `MaxK = 1` / `MAX_K = 1` (worktree patch and raw
+The same circuits, contracts and test built with `MaxK = 1` / `MAX_K = 1` (patch and raw
 log: `docs/benchmarks/gas-k1-2026-09-09.patch`, `gas-k1-2026-09-09.txt`): the contribution circuit
 has 271,656 constraints and the finalize circuit 154,823; `submitContribution` costs 397,392 at
 `n = 4` and 529,452 at `n = 32`, `finalizeEpoch` 461,499 and 747,571, `createEpoch` and `claimSlot`

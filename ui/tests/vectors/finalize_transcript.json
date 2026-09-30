@@ -1,5 +1,5 @@
 {
-  "description": "Batched finalization transcript vectors (docs/pool-keys-v4.md §6–§9). transcript is the fixed L_F-word calldata finalizeEpoch streams (decimal field elements); dealers carry the accepted contributions' coefficients (key-major, t per key) and the commitmentsHash the contract stores; shareCommitments[j][i] is D_j,i for committee member i+1 (n per key here, identity (0,1) beyond in the transcript); shareRoots[j] is the keccak Merkle root of key j's leaves; challenge = keccak(eid12 ‖ domain ‖ anchor) mod p; transcriptCommitment = Σ ρ^(q+1)·w[q].",
+  "description": "Batched finalization transcript vectors (docs/pool-keys.md). transcript is the fixed L_F-word calldata finalizeEpoch streams (decimal field elements); dealers carry the accepted contributions' coefficients (key-major, t per key) and the commitmentsHash the contract stores; shareCommitments[j][i] is D_j,i for committee member i+1 (n per key here, identity (0,1) beyond in the transcript); shareRoots[j] is the keccak Merkle root of key j's leaves; challenge = keccak(eid12 ‖ domain ‖ anchor) mod p; transcriptCommitment = Σ ρ^(q+1)·w[q].",
   "domain": {
     "preimage": "davinci-dkg:finalize:v2",
     "keccak256": "0xe28959afa6ea38549c61aff75344fc2c9f148f1259fcef44fdd297a1d9a39d0f",

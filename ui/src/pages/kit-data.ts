@@ -1,7 +1,7 @@
-// Deterministic sample data for the /kit showcase. It is *not* the synthetic
-// fixture (that is stream B's `src/fixtures`): it exists only so the design
-// review has realistic shapes — 300 addresses, a 64 × 16 matrix, 30 epochs of
-// activity — without a chain or an indexer.
+// Deterministic sample data for the /kit showcase. It is not the synthetic
+// fixture in `src/fixtures`: it only gives the showcase realistic shapes
+// (300 addresses, a 64 × 16 matrix, 30 epochs of activity) without a chain or
+// an indexer.
 
 /** mulberry32: 32-bit PRNG, seeded, so the showcase renders identically twice. */
 function rng(seed: number): () => number {

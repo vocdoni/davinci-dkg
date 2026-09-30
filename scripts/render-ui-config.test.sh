@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Self-check for render-ui-config.sh: the environment wins, an existing
 # config is the default, and a partial override leaves every other key
-# alone (the failure mode that used to reset the manager address to a
-# stale literal).
+# alone instead of resetting it to a literal.
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)

@@ -138,7 +138,7 @@ jobs:
   # Go unit tests (no chain, no proofs — fast path). Runs on self-hosted
   # to match davinci-node's pattern: Go tests in this project exercise
   # Groth16 trusted-setup code paths whose performance on GitHub-hosted
-  # runners is 5–10× slower than on our dedicated boxes.
+  # runners is 5–10× slower than on the self-hosted ones.
   # ---------------------------------------------------------------------------
   job_go_unit_test:
     name: Go Unit Tests
@@ -147,8 +147,8 @@ jobs:
       LOG_LEVEL: debug
       RUN_INTEGRATION_TESTS: "false"
     steps:
-      # Some self-hosted runners export no HOME (z5 runs as root under
-      # systemd); go, foundryup and docker all need one.
+      # Some self-hosted runners export no HOME (a runner started as root
+      # by systemd); go, foundryup and docker all need one.
       - name: Give the run a home
         run: |
           # Go's module cache is read-only, so the runner's _temp cleanup leaves
@@ -182,8 +182,8 @@ jobs:
   # ---------------------------------------------------------------------------
   # Go integration tests (Anvil + Docker Compose deployer). Self-hosted:
   # the pre-step regenerates all four Groth16 circuits via a trusted setup
-  # (the 3.0M-constraint contribution circuit alone ≈ 10 min at MaxN=32),
-  # so a cold GitHub-hosted runner would easily triple the job duration.
+  # (the contribution circuit alone takes about 10 min), so a cold
+  # GitHub-hosted runner would easily triple the job duration.
   # ---------------------------------------------------------------------------
   job_go_integration_test:
     name: Go Integration Tests
@@ -243,9 +243,9 @@ jobs:
       # triple (Go pk ↔ pinned hashes ↔ Solidity verifier vk) all coming
       # from the same trusted setup run.
       #
-      # Cost: ~12 minutes per run (dominated by the contribution trusted
-      # setup, 3.0M constraints at MaxN=32). Caching is not worthwhile —
-      # Setup is non-deterministic so each run's output is fresh regardless.
+      # Cost: about 12 minutes per run, dominated by the contribution setup.
+      # Caching is not worthwhile: the setup is non-deterministic, so each
+      # run's output is fresh regardless.
       - name: Regenerate circuit artifacts and Solidity verifiers
         run: make circuits-compile circuits-update-hashes solidity-build
 

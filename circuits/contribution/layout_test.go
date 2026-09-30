@@ -56,8 +56,8 @@ func assertWordIs(c *qt.C, words []*big.Int, offset int, want *big.Int) {
 }
 
 // The compact transcript is exactly L_C = K·(2t+n) + 5n words in the region
-// order of docs/pool-keys-v4.md §3, every word canonical, and the offsets of
-// §5 land on the values a recipient or finalizer reads back.
+// order of docs/pool-keys.md, every word canonical, and the offsets land on
+// the values a recipient or finalizer reads back.
 func TestLayoutOffsetsAndLength(t *testing.T) {
 	c := qt.New(t)
 	modulus := ecc.BN254.ScalarField()
@@ -181,8 +181,8 @@ func TestLayoutDecodeRejectsMalformedTranscripts(t *testing.T) {
 
 // The circuit's gated fold over its fixed-size arrays equals the plain BRLC
 // over the compact transcript: the witness solves with the compact
-// commitment and challenge, and would not with the padded v3.1 commitment
-// (same words, exponent advanced through the inactive slots).
+// commitment and challenge, and would not with a padded commitment (same
+// words, exponent advanced through the inactive slots).
 func TestFoldMatchesCompactTranscript(t *testing.T) {
 	c := qt.New(t)
 	field := ecc.BN254.ScalarField()
@@ -238,7 +238,7 @@ func TestFoldMatchesCompactTranscript(t *testing.T) {
 	wrong.CommitteeSize = big.NewInt(4)
 	c.Assert(test.IsSolved(&ContributionCircuit{}, &wrong, field), qt.Not(qt.IsNil))
 
-	// The v4 bounds: t = 0 and contributorIndex = 0 are rejected in-circuit.
+	// t = 0 and contributorIndex = 0 are rejected in-circuit.
 	wrong = *witness
 	wrong.Threshold = big.NewInt(0)
 	c.Assert(test.IsSolved(&ContributionCircuit{}, &wrong, field), qt.Not(qt.IsNil))
@@ -275,7 +275,7 @@ func TestTranscriptAnchorAndChallenge(t *testing.T) {
 	c.Assert(scalars[7].Cmp(pi.TranscriptCommitment), qt.Equals, 0)
 }
 
-// Compile-only: logs the R1CS size of the v4 contribution circuit. Skipped
+// Compile-only: logs the R1CS size of the contribution circuit. Skipped
 // under -short; compiling the full-size circuit takes minutes.
 func TestCompileContributionConstraintCount(t *testing.T) {
 	if testing.Short() {

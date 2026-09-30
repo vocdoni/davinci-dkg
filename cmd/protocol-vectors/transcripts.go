@@ -14,7 +14,7 @@ import (
 	"github.com/vocdoni/davinci-dkg/types"
 )
 
-// Vectors for the two v4 transcripts (docs/pool-keys-v4.md §3–§7): the compact
+// Vectors for the two transcripts of docs/pool-keys.md: the compact
 // contribution layout and the batched finalization transcript, with every
 // intermediate value a Solidity or TypeScript implementation has to
 // reproduce — words, keccaks, Poseidon digests, anchors, challenges, BRLC
@@ -136,7 +136,7 @@ type contributionCompactVector struct {
 
 func buildContributionCompact() contributionCompactFile {
 	out := contributionCompactFile{
-		Description: "Compact contribution transcript vectors (docs/pool-keys-v4.md §3–§5). transcript is the exact " +
+		Description: "Compact contribution transcript vectors (docs/pool-keys.md). transcript is the exact " +
 			"L_C = maxK·(2t+n)+5n words submitContribution streams (decimal field elements, no padding); " +
 			"offsets are word offsets of each region; committeeSnapshotKeccak is keccak256 over words " +
 			"[2Kt, 2Kt+3n) (indexes then public keys), what DKGManager._snapshotCommittee must equal; " +
@@ -294,7 +294,7 @@ type finalizeVector struct {
 
 func buildFinalizeTranscript() finalizeFile {
 	out := finalizeFile{
-		Description: "Batched finalization transcript vectors (docs/pool-keys-v4.md §6–§9). transcript is the fixed " +
+		Description: "Batched finalization transcript vectors (docs/pool-keys.md). transcript is the fixed " +
 			"L_F-word calldata finalizeEpoch streams (decimal field elements); dealers carry the accepted " +
 			"contributions' coefficients (key-major, t per key) and the commitmentsHash the contract stores; " +
 			"shareCommitments[j][i] is D_j,i for committee member i+1 (n per key here, identity (0,1) beyond in " +

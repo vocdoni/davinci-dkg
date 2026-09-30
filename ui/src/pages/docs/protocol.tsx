@@ -225,7 +225,7 @@ PK_aid = P_j + PK_org   // organizer-locked`}</Code>
           The pool is what replaces a proof of knowledge of the encryption randomness. A ciphertext copied out of one
           application into another is decrypted under a different <C>P_j</C> and yields nothing useful — so{' '}
           <C>submitCiphertext</C> needs no proof, which is in turn what makes homomorphic aggregation possible: whoever
-          submits an aggregated tally cannot know its randomness. The organizer key no longer carries that burden, which
+          submits an aggregated tally cannot know its randomness. The organizer key does not carry that burden, which
           is why it may be absent or revealed.
         </P>
       </Section>

@@ -116,7 +116,7 @@ func TestEpochsToVisitCoversTheLookbackMinusTerminal(t *testing.T) {
 // Past the fixed window the scan keeps stepping back while the chain still
 // reports unfinished epochs and stops at the first closed one (or nonce 1),
 // so an epoch that qualified but was never finalized stays discoverable
-// however many cadences have passed (docs/pool-keys-v4.md §10); a Live epoch
+// however many cadences have passed; a Live epoch
 // right outside the window ends the walk at once.
 func TestEpochsToVisitWalksPastTheWindowWhileEpochsAreUnfinished(t *testing.T) {
 	c := qt.New(t)

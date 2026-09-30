@@ -668,14 +668,14 @@ func (f *Fleet) liveCandidate(
 var (
 	// errPoolShort: the epoch cannot serve that many more applications.
 	errPoolShort = errors.New("not enough unclaimed pool keys")
-	// errPoolSlow is kept for callers that still distinguish it; with batched
-	// finalization every key of a Live epoch is ready, so it is never returned.
+	// errPoolSlow: fewer keys became claimable in time than requested. Every
+	// key of a Live epoch is claimable, so waitPoolKeys does not return it.
 	errPoolSlow = errors.New("pool keys not ready in time")
 )
 
-// activationWait is the block budget a caller grants a pool to become ready.
-// Every key of a Live epoch is stored by finalizeEpoch, so the wait is over
-// as soon as the epoch is Live; the knob is kept for the scenario configs.
+// activationWait is the block budget a caller grants a pool to become ready
+// (BATTERY_ACTIVATION_WAIT_BLOCKS). Every key of a Live epoch is stored by
+// finalizeEpoch, so the wait is over as soon as the epoch is Live.
 func activationWait() uint64 { return envUint64("BATTERY_ACTIVATION_WAIT_BLOCKS", 90) }
 
 // poolStatus reads an epoch's pool cursor: the key the next registration

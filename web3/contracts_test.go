@@ -133,8 +133,6 @@ func TestGetNodeAndEpochViews(t *testing.T) {
 	c.Assert(epoch.Policy.Threshold, qt.Equals, uint16(2))
 	c.Assert(epoch.Status, qt.Equals, uint8(3))
 	c.Assert(epoch.ContributionCount, qt.Equals, uint16(2))
-	// The five hash fields are no longer in storage — consumers read them from
-	// the EpochFinalized event instead.
 
 	selected, err := contracts.SelectedParticipants(context.Background(), epochID)
 	c.Assert(err, qt.IsNil)

@@ -13,8 +13,7 @@ import (
 // commitment vector, one per recipient row over that row's MaxK masked shares,
 // then one sponge over the digests. A flat absorption would blow past the
 // sponge's 256-input cap at MaxK·MaxN inputs. docs/pool-keys.md pins the
-// formulas (unchanged by v4, which only compacts the calldata transcript);
-// the finalize circuit recomputes CommitmentKeyDigest and CommitmentsHash to
+// formulas; the finalize circuit recomputes CommitmentKeyDigest and CommitmentsHash to
 // reproduce a dealer's on-chain commitments hash, so both sides must read them
 // from here. Digests always absorb the padded vectors: inactive scalars are
 // zero and inactive points are the identity (0, 1).

@@ -1,582 +1,195 @@
 # DAVINCI DKG
 
-**Non-interactive distributed key generation on EVM chains.**
+Non-interactive distributed key generation for EVM chains. A rotating committee of operators
+generates threshold ElGamal keys, applications encrypt under them, and the committee decrypts on
+chain when the application allows it. It is the key layer of [DAVINCI](https://davinci.vote) and
+works for any contract that needs a public key whose secret nobody holds.
 
-Reference implementation of a threshold-key layer for smart contracts: a rotating committee of
-operators jointly generates `t`-of-`n` public keys with one transaction each, applications encrypt
-under those keys, and the committee decrypts on demand, every step verified on chain with a Groth16
-proof. There are no interactive complaint rounds and no dispute phase: a contribution, a
-finalization, a partial decryption and a combine are each one proof-carrying call, and a call that
-verifies is final. Built as the key layer of the [DAVINCI](https://davinci.vote) voting system; the
-protocol is generic and any application that needs a collective key on an EVM chain can use it.
+[![Build and Test](https://github.com/vocdoni/davinci-dkg/actions/workflows/main.yml/badge.svg)](https://github.com/vocdoni/davinci-dkg/actions/workflows/main.yml)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](LICENSE)
 
-The repository holds the Go node and circuits, the Solidity contracts, a TypeScript SDK and a web
-explorer. The node runs on Gnosis Chain by default, on the deployment DAVINCI uses; an older public
-testnet runs on Sepolia (see [Deployments](#deployments)).
+## Overview
 
----
+Operators run `davinci-dkg-node` and register in an on-chain registry. For every epoch a public
+lottery draws a committee of `n` of them. Each member submits one contribution that deals 16
+independent pool keys, and one finalization proof stores all 16 public keys on chain; from then
+on any `t` members can decrypt under any of them. Every protocol step (contribution,
+finalization, partial decryption, combine) is a single transaction checked on chain by a Groth16
+proof, so there are no complaint rounds and no dispute phase.
 
-## Contents
-
-- [What you get](#what-you-get)
-- [Protocol model](#protocol-model)
-  - [Epoch lifecycle](#epoch-lifecycle)
-  - [Committee selection](#committee-selection)
-  - [Per-application keys](#per-application-keys)
-  - [Threshold decryption](#threshold-decryption)
-- [Proofs](#proofs)
-- [On-chain surface](#on-chain-surface)
-- [Running a node](#running-a-node)
-- [Application CLI](#application-cli)
-- [TypeScript SDK](#typescript-sdk)
-- [Encrypting and decrypting](#encrypting-and-decrypting)
-- [Deployments](#deployments)
-- [Build from source](#build-from-source)
-- [Repository layout](#repository-layout)
-- [References](#references)
-
----
-
-## What you get
-
-| Component          | Path                     | Purpose                                                                 |
-|--------------------|--------------------------|-------------------------------------------------------------------------|
-| `davinci-dkg-node` | `cmd/davinci-dkg-node`   | Operator daemon: registers, claims committee slots, deals, finalizes, decrypts |
-| `dkgapp`           | `cmd/dkgapp`             | Organizer CLI: register an application, encrypt, reveal, read plaintexts |
-| Solidity contracts | `solidity/src`           | `DKGRegistry`, `DKGManager`, `DKGAppManager` and the four Groth16 verifiers |
-| Circuits           | `circuits/`              | Groth16 over BN254: Contribution, Finalize, PartialDecrypt, DecryptCombine |
-| TypeScript SDK     | `sdk/`                   | `@vocdoni/davinci-dkg-sdk`: read client, writer, ElGamal encryption      |
-| Explorer           | `ui/`                    | React SPA with a playground; image `ghcr.io/vocdoni/davinci-dkg-ui`      |
-
-Cryptography: BabyJubJub over the BN254 scalar field for keys, shares and ciphertexts; Poseidon for
-in-circuit hashing; keccak256 for the on-chain Fiat–Shamir challenges; ElGamal for share and
-ciphertext encryption; Groth16 for every proof.
-
----
-
-## Protocol model
-
-### Epoch lifecycle
-
-An **epoch** is one DKG run. Its `n` committee members jointly deal `MAX_K` (16) independent
-**pool keys** `P_0 … P_15`, and any `t` of the members can decrypt under any of them. Every
-application later claims one pool key for itself, so a committee's partial decryptions are scoped to
-one application. Epochs are created at a fixed cadence of `EPOCH_DURATION_BLOCKS` blocks, a
-`DKGManager` immutable.
+Applications register against a live epoch and each claims one pool key. An application is
+either **organizer-locked**, where its key also includes an organizer key and nothing decrypts
+until the organizer publishes that secret, or **automatic**, where the committee decrypts as soon
+as the decryption window opens. Whoever the application's policy admits submits ElGamal
+ciphertexts; committee nodes post partial decryptions, one of them combines them, and the
+plaintext is stored on chain for everyone.
 
 ```
-   startBlock                                                                 endBlock
-   │                                                                          │
-   │ ─── Preparation (small, fixed) ────► ◄────── Service (the rest) ────────│
-   │                                                                          │
-   │ CommitteeSelection │ KeyAssembly │ gap │            Live                 │
-   ▼                                                                          ▼
-   ├────────────────────┼─────────────┼─────┼─────────────────────────────────┤
-   │  claimSlot         │submitContrib│ ... │ registerApplication /           │
-   │  (lottery)         │  (Groth16,  │     │ submitCiphertext /              │
-   │                    │  deals 16   │     │ submitPartialDecryption /       │
-   │                    │  pool keys) │     │ revealOrganizerSecret /         │
-   │                    │             │     │ combineDecryption               │
-   └────────────────────┴─────────────┴─────┴─────────────────────────────────┘
-                                       ▲
-                    finalizeEpoch: one proof stores all 16 keys and share roots, sets Live
-
-       ◄──────────────── EPOCH_DURATION_BLOCKS ─────────────────────────►
+createEpoch ─► claimSlot (lottery) ─► submitContribution ─► finalizeEpoch ─► Live
+registerApplication ─► submitCiphertext ─► [revealOrganizerSecret] ─► t × submitPartialDecryption ─► combineDecryption
 ```
 
-**Preparation** assembles the committee and deals the pool, in three contiguous block windows:
+| Component | Path | Purpose |
+|---|---|---|
+| `davinci-dkg-node` | `cmd/davinci-dkg-node`, `node/` | Operator daemon: registers, joins committees, deals, finalizes, decrypts |
+| `dkgapp` | `cmd/dkgapp` | Command line client for applications: register, encrypt, reveal, read plaintexts |
+| Contracts | `solidity/` | `DKGRegistry`, `DKGManager`, `DKGAppManager` and four Groth16 verifiers |
+| Circuits | `circuits/` | Groth16 circuits over BN254 (gnark) |
+| TypeScript SDK | `sdk/` | `@vocdoni/davinci-dkg-sdk`: read and write the contracts, encrypt in the browser |
+| Explorer | `ui/` | Web explorer and playground for any deployment |
 
-- `CommitteeSelection`: the lottery (`claimSlot`) picks `n` operators.
-- `KeyAssembly`: each member submits one Feldman VSS contribution dealing all `MAX_K` polynomials
-  at once, a compact `K·(2t+n) + 5n`-word transcript with a single Groth16 proof.
-- A short finalize gap, after which `finalizeEpoch` may run.
+In DAVINCI the [ProcessRegistry](https://github.com/vocdoni/davinci-contracts) registers one DKG
+application per voting process, voters encrypt their ballots under its key, the
+[sequencer](https://github.com/vocdoni/davinci-sequencer) aggregates them, and the committee
+decrypts the final tally. The protocol is described in [docs/protocol.md](docs/protocol.md).
 
-**Service** is the rest of the epoch. `finalizeEpoch` is permissionless and proof-carrying: one
-Groth16 proof over the whole pool reproduces every aggregate key `P_j` and the Merkle root of the
-whole committee's share commitments for it, stores all `MAX_K` keys and roots atomically and sets
-the epoch `Live`. From then on applications claim keys, submit ciphertexts and get them decrypted;
-the epoch stays `Live` until the end of the cadence while the next epoch bootstraps.
+## Quick start
 
-The window lengths are absolute block counts, not fractions of the epoch: the lottery is one
-keccak per claimer and the contribution is one transaction per member, so a fixed budget is the
-right shape, and a multi-day epoch keeps the same short preparation. The four constants are
-constructor immutables (`EPOCH_DURATION_BLOCKS`, `COMMITTEE_SELECTION_BLOCKS`,
-`KEY_ASSEMBLY_BLOCKS`, `FINALIZE_GAP_BLOCKS`, settable at deploy time).
-
-`createEpoch` is permissionless but cadence-gated: it reverts before `nextEpochStartBlock()`,
-except when the newest epoch is `Live` with at most one unclaimed key (`poolNext >= MAX_K − 1`)
-or `Aborted`, so a busy deployment never runs dry and a dead one need not wait out its cadence.
-Every node races to fire it with a random jitter; the first call lands and the rest revert
-cheaply. Whoever creates the epoch chooses `(t, n, minValidContributions, α)` within the
-deployment's floors (`MIN_THRESHOLD`, `MIN_COMMITTEE_SIZE`, `MAX_LOTTERY_ALPHA_BPS`, and
-`t ≤ MAX_T`); nodes derive them from the registry: three quarters of the active operators, capped
-at 32, with a majority threshold. The contract requires `minValidContributions ≥ threshold`,
-because the accepted dealers together know the key and there must be at least `t` of them.
-
-Two limits follow from the fixed pool. An epoch serves at most `MAX_K` applications; once its keys
-are claimed, `registerApplication` reverts `PoolExhausted` until the next epoch is `Live`, which
-takes one preparation window plus one finalization. And since registration is permissionless,
-anyone registering fifteen applications forces the next epoch to open early and every member to
-contribute again; the cost is bounded (fifteen registrations against one extra epoch) but it is an
-amplification, and a registration fee or allow-list is a deployment's own policy decision.
-
-`EpochPhase` values: `None`, `CommitteeSelection`, `KeyAssembly`, `Live`, `Aborted` (`Completed`
-is reserved).
-
-### Committee selection
-
-Each epoch draws a fresh committee from the registry by a trustless lottery:
-
-- `n = committeeSize`, `α = lotteryAlphaBps / 10 000` (oversubscription), `R =
-  registry.activeCount()` snapshotted at `createEpoch`;
-- `seed = blockhash(startBlock + SEED_DELAY_BLOCKS)`, resolved by the first `claimSlot`;
-- a node is eligible iff `keccak256(seed ‖ msg.sender) < α · n · 2²⁵⁶ / R`.
-
-Eligible nodes race first-come-first-served until `n` slots are filled, which snapshots the
-committee (positions `1..n`, each member's BabyJubJub key) and moves the epoch to `KeyAssembly`.
-Anyone can replay the keccak; there is no coordinator. Only operators registered before
-`createEpoch` may claim, so fresh identities cannot be ground against a revealed seed. A committee
-that does not fill within the window makes the epoch dead: anyone may `abortEpoch` it once the
-deadline has passed, and nodes running with `--auto-create-epochs` (the default) abort a dead
-newest epoch themselves and then create the next one, waiting longer each time the epochs right
-before it were aborted too. The same holds for a key assembly that closes with fewer than
-`minValidContributions`. An epoch that can still be finalized cannot be aborted.
-
-### Per-application keys
-
-A `Live` epoch hosts many independent encryption contexts, one per **application**, keyed by a
-32-byte `aid` chosen by whoever registers it. `aid` enters every decryption proof as a BN254
-scalar-field public input, so it must be non-zero and below the field modulus (clear the top three
-bits of a random or hashed id).
-
-Registration is open to anyone. The known limitation: anyone can register an `aid` first or claim
-an epoch's pool keys, so an integrator that needs a specific `aid` checks that its registration
-succeeded.
-
-`registerApplication` claims the next unclaimed pool key `P_j` for the application and fixes one of
-two **modes** for its life:
-
-- **Organizer-locked** (default). The registration publishes `PK_org = sk_org · G` with a Schnorr
-  proof of possession (domain `davinci-dkg:organizer-register:v1`, verified on chain) and the
-  organizer keeps `sk_org`. The application key is `PK_aid = P_j + PK_org`: the committee alone
-  only ever recovers shares of `P_j`'s secret, and the organizer calls `revealOrganizerSecret`
-  once, for the whole application, or never.
-- **Automatic**. There is no organizer key: `PK_aid = P_j`, `organizerPK` is stored as the identity
-  and `organizerSecret = 0`. Decryption needs nobody but the committee and happens as soon as `t`
-  partials land inside the decryption window. Use it for ciphertexts that are meant to be opened,
-  such as a tally, not for anything that must stay private.
-
-Because every application has its own pool key, a ciphertext copied from one application into
-another decrypts under an unrelated secret and yields garbage: there is no cross-application
-decryption oracle, and `submitCiphertext` needs no proof of knowledge of the encryption
-randomness, which is what keeps homomorphic aggregation possible (the submitter of an aggregated
-tally cannot know its randomness).
-
-Submission is gated by the application's policy: `openSubmission` lets anyone submit; otherwise
-`submitters` is an exclusive allow-list of up to 32 addresses; with neither, only the registrant
-may submit. `maxCiphertexts` caps the count and `decryptNotBefore` / `decryptNotAfter` (unix
-seconds, `0` = unbounded) bound the decryption window. Contradictory policies revert
-`InvalidPolicy()`. The committee only answers ciphertexts actually submitted under an application
-by an authorised submitter, so an unsubmitted ballot stays private in both modes.
-
-For an organizer-locked application:
-
-- **Losing `sk_org` makes the application permanently undecryptable.** It is not derivable from
-  anything on chain; back it up at registration.
-- **The organizer's silence keeps the application closed.** Until `revealOrganizerSecret`, the
-  contract refuses every partial and every combine, so even `t` colluding members cannot open a
-  ciphertext on chain, and the organizer sees results no earlier than anyone else.
-- **The reveal is a one-time, whole-application act.** Once `sk_org` is public, every past and
-  future ciphertext of the application decrypts as soon as `t` partials and the window are there.
-- **Never reuse an organizer secret across applications.** Revealing it for one exposes the other;
-  `dkgapp register` draws a fresh one.
-
-For an automatic application nothing is withheld and nobody is accountable, by design and for that
-application only: pool keys are independent per application and per epoch, and the combine proof
-still attests the interpolation.
-
-### Threshold decryption
-
-An ElGamal ciphertext `(C₁, C₂)` published under `PK_aid` through `submitCiphertext` is decrypted
-as follows.
-
-1. Each committee member `i` publishes `δ_i = e_{j,i} · C₁`, `e_{j,i}` being its share of `P_j`,
-   with a Groth16 proof of the Chaum–Pedersen relation (`D_i = d_i·G`, `δ_i = d_i·C₁`) and a
-   `MERKLE_DEPTH`-long Merkle path proving `D_i` against the share-commitment root `finalizeEpoch`
-   stored for that key. The tree covers the whole committee: a member that claimed a slot but did
-   not contribute still received a share from every accepted dealer and may post partials, so
-   decryption survives `n − t` absent members.
-2. Decryption must be **open**: `decryptNotBefore ≤ now ≤ decryptNotAfter`, checked on partials
-   and combines (`DecryptionNotOpen()` / `DecryptionClosed()`). Submission is gated separately by
-   the block window, the submitter policy and `decryptNotAfter`, so a ciphertext may be submitted
-   before decryption opens.
-3. An organizer-locked application additionally needs `revealOrganizerSecret`, once; the contract
-   checks `sk_org · G == PK_org` and accepts the call a single time. Until then both partials and
-   combines revert `OrganizerSecretNotRevealed()`.
-4. Once `t` partials are on chain, anyone calls `combineDecryption` with a Groth16 proof that
-   `Σ λ_k · δ_k` Lagrange-interpolates the qualifying set correctly, that the caller knows the
-   secret behind the application's `PK_org` (zero for automatic), and that
-   `m · G + Σ λ_k · δ_k + sk_org · C₁ = C₂`.
-5. The plaintext `m` is stored on chain and read through `getPlaintext`.
-
-What the window guarantees, stated honestly: it bounds what the contract accepts and what honest
-nodes post. It does not bind `t` colluding members, who hold shares and can compute partials off
-chain whenever they like; for an automatic application that is the whole confidentiality
-assumption, for a locked one they still lack `sk_org`. Gating the partials as well as the combine
-ensures there are no on-chain partials from before the window or the reveal to collect later.
-
-The combine recovers `m` by baby-step giant-step: the node caps plaintexts at 2⁵⁰ with a 256 MB
-table, the SDK at 2³² with about 16 MB so it runs in a browser. A plaintext above the cap is
-unrecoverable.
-
----
-
-## Proofs
-
-Four Groth16 circuits over BN254 (gnark), each bound to its calldata by a Fiat–Shamir challenge the
-contract derives from keccak256 over the calldata **and** the circuit's own Poseidon digests, and
-checked inside the circuit through a random linear combination of every transcript word (BRLC).
-No transcript word can differ between what the contract read and what the prover proved.
-
-| Circuit | Proves | Constraints | Public inputs |
-|---|---|---:|---:|
-| Contribution | `MAX_K` polynomials of degree `< t`: the constant term's commitment `C_{j,0} = a·G`, every other commitment in the prime subgroup (a cofactor preimage `8·Q = C`), every recipient's share `s·G = Σ (i)^m C_{j,m}` with `s < r`, and the hashed-ElGamal encryption of each share under the recipient's key with one ECDH secret per recipient | 1,689,543 | 8 |
-| Finalize | for up to 32 accepted dealers, that their commitments hash to the stored contribution digests, the aggregate keys `P_j = Σ C_{j,0}` and the share commitment `D_{j,i}` of every committee position for every key | 2,228,434 | 7 |
-| PartialDecrypt | the Chaum–Pedersen relation of one partial against a committed share | 26,179 | 15 |
-| DecryptCombine | the Lagrange interpolation over the qualifying set, knowledge of the organizer secret and the ElGamal decryption equation | 255,072 | 9 |
-
-Shares are masked in the BN254 scalar field, `masked = s + H(seed_i, j) mod p` with
-`seed_i = H(domain, eid, indexes, S_i)` over the ECDH secret `S_i`, a one-time pad the recipient
-removes and range-checks. The compiled circuits, proving keys and verifying keys are pinned by
-SHA-256 in `config/circuit_artifacts.go` and published as a GitHub release; a node downloads them
-on first start and stream-verifies every file against those hashes, at startup and again whenever
-a proving key is loaded for a proof. Nothing is compiled at runtime. The normative encodings live
-in [`docs/pool-keys.md`](docs/pool-keys.md); measurements in [`BENCHMARKS.md`](BENCHMARKS.md); application patterns in [`docs/use-cases.md`](docs/use-cases.md).
-
----
-
-## On-chain surface
-
-Three contracts, deployed `DKGRegistry → DKGManager → DKGAppManager` and wired with
-`DKGRegistry.setManager` and `DKGManager.setAppManager`. The split exists only for EIP-170;
-`DKGManager` and `DKGAppManager` share one logical storage.
-
-| Contract        | Owns |
-|-----------------|------|
-| `DKGRegistry`   | Operator identities (BabyJubJub public keys, checked on curve and in the prime subgroup), liveness (`heartbeat`, `reactivate`, `reap`) |
-| `DKGManager`    | Epoch lifecycle (`createEpoch`, `claimSlot`, `submitContribution`, `finalizeEpoch`, `abortEpoch`), pool-key views (`getPoolKey`, `getPoolStatus`, `getPoolShareRoot`, `getAppPoolIndex`), ciphertexts, partial and combined decryption |
-| `DKGAppManager` | `registerApplication` (mode, submission policy, decryption window), `revealOrganizerSecret`, and the `requireCanSubmitCiphertext` / `requireDecryptionOpen` views the manager consults |
-
-`solidity/src/interfaces/*.sol` are the integration contract: full signatures and event schemas.
-`submitContribution` and `finalizeEpoch` are direct-call gated (`msg.sender == tx.origin`), since
-the node and the finalizer recover contributions from transaction calldata.
-
-| Constant                     | Where                                | Default                 | Notes |
-|------------------------------|--------------------------------------|-------------------------|-------|
-| `EPOCH_DURATION_BLOCKS`      | `DKGManager` constructor (immutable) | `100`                   | Cadence anchor |
-| `COMMITTEE_SELECTION_BLOCKS` | `DKGManager` constructor (immutable) | `25`                    | Lottery window |
-| `KEY_ASSEMBLY_BLOCKS`        | `DKGManager` constructor (immutable) | `25`                    | Contribution window |
-| `FINALIZE_GAP_BLOCKS`        | `DKGManager` constructor (immutable) | `5`                     | Cooldown before `finalizeEpoch` |
-| `MIN_THRESHOLD`, `MIN_COMMITTEE_SIZE`, `MAX_LOTTERY_ALPHA_BPS` | `DKGManager` constructor | deploy-time | Policy floors for `createEpoch` |
-| `MAX_N`                      | `solidity/src/libraries/Sizes.sol`   | `32`                    | Committee cap; mirrors `circuits/common.MaxN`, a power of two |
-| `MAX_T`                      | `Sizes.sol`                          | `32`                    | Threshold cap; mirrors `circuits/common.MaxT` |
-| `MAX_K`                      | `Sizes.sol`                          | `16`                    | Pool keys per epoch; mirrors `circuits/common.MaxK` |
-| `MERKLE_DEPTH`               | `Sizes.sol`                          | `5` (= log2 `MAX_N`)    | Share-commitment tree depth |
-| `SEED_DELAY_BLOCKS`          | `Sizes.sol`                          | `1`                     | Lottery seed block offset |
-| `INACTIVITY_WINDOW`          | `DKGRegistry` constructor            | `50 400` blocks (~7 d at 12 s) | Heartbeat window before `reap` |
-| `MAX_SUBMITTERS`             | `DKGAppManager`                      | `32`                    | Allow-list cap |
-
-### `getApplicationKey`
-
-```solidity
-function getApplicationKey(bytes12 epochId, bytes32 aid)
-    external view returns (uint256 x, uint256 y);
-```
-
-Returns the application's public key in the DKG's reduced TE form: `P_j` for automatic
-applications and `P_j + PK_org` for organizer-locked ones. Reverts `InvalidApplication`
-for an unregistered `(epochId, aid)`. The key does not change after `revealOrganizerSecret`.
-
-This view lets integrators derive the encryption key on-chain without off-chain computation.
-
----
-
-## Running a node
-
-Run a node and you are eligible to be drawn into every epoch created after you register. With no
-network settings the node joins the Gnosis Chain deployment, the one DAVINCI uses, and anyone may
-join it.
-
-You need an EVM key with a little xDAI, Gnosis Chain's native currency, for gas (on the Sepolia
-testnet a node spent about 0.02 ETH a day under public load), Docker, and a machine with at least 2
-cores and **4 GB of RAM, 8 GB to be comfortable**. Every node deals shares, takes its turn at the
-finalization proof and decrypts. Proving keys are loaded for a proof and released afterwards: a node
-sits at 0.2–0.7 GB at rest, peaks at about 2.9 GB during its contribution proof, and starts in under
-0.2 GB. `GOMEMLIMIT` (a Go runtime setting, e.g. `GOMEMLIMIT=2500MiB`) trades some CPU for a tighter
-peak. More cores shorten the proofs (0.9 s for a contribution on 32 threads).
+Run a node on the Gnosis Chain deployment. You need Docker and an EVM account with a little xDAI
+for gas.
 
 ```bash
 git clone https://github.com/vocdoni/davinci-dkg.git
 cd davinci-dkg
-cp .env.example .env && $EDITOR .env
+cp .env.example .env        # set DAVINCI_DKG_PRIVKEY=0x...
 docker compose --profile node up -d
 docker compose --profile node logs -f node
 ```
 
-One entry in `.env` is enough: your operator key in `DAVINCI_DKG_PRIVKEY`. The Gnosis `DKGManager`
-address and three public RPC endpoints are built into the binary, and the node reads the registry,
-the app manager and the verifiers from the manager. A long-lived node should set its own endpoints
-in `DAVINCI_DKG_WEB3_RPC`, at least two and comma-separated: the node rotates off rate-limited or
-unreachable endpoints, so a single endpoint has no fallback.
+On first start the node derives its BabyJubJub key from the operator key and registers it (one
+transaction), downloads the pinned circuit artifacts (about 1 GB, verified against hashes built
+into the binary) and then takes part in every epoch it is drawn into. The compose profile also
+starts Watchtower, which keeps the node on the latest stable release.
 
-To run elsewhere:
+## Usage
 
-- `--network sepolia` (`DAVINCI_DKG_NETWORK=sepolia`) selects the older Sepolia testnet. It has no
-  endpoints built in, so set `--web3.rpc` too.
-- `--manager <address>` with `--web3.rpc <endpoints>` (`DAVINCI_DKG_MANAGER`,
-  `DAVINCI_DKG_WEB3_RPC`) runs any other deployment, overriding the preset's manager.
+### Running a node
 
-The node checks that the RPC endpoints serve the network's chain (100 for Gnosis, 11155111 for
-Sepolia) and refuses to start on any other. `--manager` skips the check, since a custom deployment
-can live on any chain.
+A node needs 2 cores and 4 GB of RAM (8 GB recommended), about 1.5 GB of disk for the artifacts,
+and an operator key funded for gas. Every setting is a flag or a `DAVINCI_DKG_*` environment
+variable (dots and dashes become underscores); `davinci-dkg-node --help` lists them all.
 
-The node's state, a cache of contribution calldata and the list of tainted applications, lives under
-`<datadir>/<chainid>-<manager>`, one directory per deployment. A node moved to another deployment
-starts from an empty directory and finds its old state again when moved back. A node upgraded from a
-release that kept this state directly in the data directory moves its entries for the current
-deployment there once, on first start.
+| Variable | Flag | Default | Description |
+|---|---|---|---|
+| `DAVINCI_DKG_PRIVKEY` | `--privkey` | | Operator key (hex) that signs every transaction. Required |
+| `DAVINCI_DKG_WEB3_RPC` | `--web3.rpc` | the network's public endpoints | Comma-separated JSON-RPC endpoints. Set at least two: the node rotates off rate-limited ones |
+| `DAVINCI_DKG_NETWORK` | `--network` | `gnosis` | Built-in deployment: `gnosis` or `sepolia` (no public endpoints built in) |
+| `DAVINCI_DKG_MANAGER` | `--manager` | | `DKGManager` address of any other deployment; overrides the network |
+| `DAVINCI_DKG_DATADIR` | `--datadir` | `~/.davinci-dkg` | Node state, one subdirectory per deployment |
+| `DAVINCI_DKG_ARTIFACTS_DIR` | | `~/.davinci/artifacts` | Circuit artifact cache |
+| `DAVINCI_DKG_AUTO_CREATE_EPOCHS` | `--auto-create-epochs` | `true` | Create the next epoch when it is due and abort dead ones |
+| `DAVINCI_DKG_LOG_LEVEL` | `--log.level` | `info` | `debug`, `info`, `warn` or `error` |
 
-The compose file runs the `latest` image under Watchtower, and `latest` moves on stable releases
-only (`vX.Y.Z`, never a release candidate). When a release moves the Gnosis preset to a new
-deployment, Watchtower pulls the new image and a node on the preset (no network settings, or
-`--network gnosis`) follows the new manager, starting from a fresh state directory; a node started
-with `--manager` stays where it is. Pin `DAVINCI_DKG_TAG` to a version, or drop the watchtower
-service, to upgrade by hand.
+The node checks that the endpoints serve the network's chain and refuses to start otherwise
+(`--manager` skips the check). It serves no HTTP; watch it through its logs or the explorer.
+Prebuilt binaries for Linux are attached to each [release](https://github.com/vocdoni/davinci-dkg/releases),
+and `go build ./cmd/davinci-dkg-node` builds one from source. Resource figures, upgrades, the data
+directory and hosting on Railway are covered in [docs/node.md](docs/node.md).
 
-On first start the node:
+### Using the DKG from an application
 
-1. derives its BabyJubJub key from the operator key and registers it in `DKGRegistry` (one
-   transaction, skipped if already registered and active);
-2. downloads the pinned circuit artifacts from the
-   [`circuits-v6`](https://github.com/vocdoni/davinci-dkg/releases/tag/circuits-v6) release
-   (about 1.1 GB: the contribution proving key is 243 MB, the finalization proving key 436 MB) and
-   stream-verifies every file against the hashes built into the binary;
-3. prints a startup banner with the chain head, registry statistics and its own registry row,
-   then polls `DKGManager` and reacts to every phase it is eligible for.
+Each application is identified by a 32-byte `aid` that must be non-zero and below the BN254
+scalar field. Registration is open to anyone, so pick a random id and check that the
+registration succeeded. An organizer-locked application prints an organizer secret at
+registration: **store it**. It is not derivable from anything on chain, and without it the
+application can never be decrypted.
 
-Once per epoch the node claims a slot if the lottery admits it and submits its contribution during
-key assembly. When the epoch qualifies it takes its turn in a seed-derived stagger: one node
-reconstructs the accepted contributions from calldata, proves the finalization and submits
-`finalizeEpoch`; the others see the epoch go `Live` and stop. For every ciphertext of the epochs it
-belongs to, it posts its partial in seed-derived waves of `t` members, so an honest ciphertext
-costs `t` partials rather than `n`, and combines when its turn comes. Partials and combines are sent
-without waiting for receipts, so one tick serves every pending ciphertext, and the node makes
-about five RPC calls per tick.
-
-The node keeps itself active in the registry. Left off for more than the inactivity window, it can
-be marked inactive by anyone; starting it again reactivates it. It serves no HTTP; pair it with the
-explorer image to host a UI of your own. Every flag has a `DAVINCI_DKG_…` environment equivalent
-(`davinci-dkg-node --help`). To run nodes on Railway through its API see
-[`railway-deploy.md`](railway-deploy.md).
-
----
-
-## Application CLI
-
-`cmd/dkgapp` is the organizer-side companion: register an application, encrypt and submit a
-ciphertext, reveal the organizer secret, read the plaintext.
+`dkgapp` covers the whole flow from the command line:
 
 ```bash
-export DAVINCI_DKG_NETWORK=gnosis DAVINCI_DKG_PRIVKEY=0x...   # public Gnosis endpoints unless DAVINCI_DKG_WEB3_RPC is set
-go run ./cmd/dkgapp epoch                                    # newest epoch and its pool status
-go run ./cmd/dkgapp register  -aid 0x0a…                     # organizer-locked; generates and prints the organizer secret
-go run ./cmd/dkgapp register  -aid 0x0b… -org-secret …       # or bring your own
-go run ./cmd/dkgapp register  -aid 0x0c… -mode automatic     # no organizer key; committee-only decryption
-go run ./cmd/dkgapp register  -aid 0x0d… -submitters 0xA…,0xB… -max 10 -decrypt-from 24h -decrypt-until 48h
-go run ./cmd/dkgapp encrypt   -aid 0x0a… -m 42               # submits; prints the assigned index
-go run ./cmd/dkgapp reveal    -aid 0x0a… -org-secret …       # opens the whole application, once
-go run ./cmd/dkgapp plaintext -aid 0x0c… -index 1 -wait 5m    # automatic: no reveal step
+go build -o dkgapp ./cmd/dkgapp
+export DAVINCI_DKG_NETWORK=gnosis DAVINCI_DKG_PRIVKEY=0x...
+AID=0x$(openssl rand -hex 31)
+
+./dkgapp epoch                                                  # newest epoch and its key pool
+./dkgapp register  -aid $AID                                    # prints the epoch id and the organizer secret
+./dkgapp encrypt   -epoch <epoch> -aid $AID -m 42               # prints the ciphertext index
+./dkgapp reveal    -epoch <epoch> -aid $AID -org-secret <secret>   # opens the application, once
+./dkgapp plaintext -epoch <epoch> -aid $AID -index 1 -wait 10m
 ```
 
-`register` takes `-mode locked|automatic` (default `locked`), the submission policy (`-submitters
-0xA,0xB` as an exclusive allow-list of up to 32, or `-open`; with neither only the registrant may
-submit), `-max N`, and `-decrypt-from` / `-decrypt-until` as RFC 3339 timestamps or Go durations
-relative to now. `reveal` publishes `sk_org` once for the whole application and is not reversible.
-Store the organizer secret of a locked application: without it every ciphertext of that
-application is permanently undecryptable. Application ids must be non-zero and below the BN254
-scalar field; `-epoch` defaults to the newest epoch.
+`register -mode automatic` creates an application without an organizer key, which the committee
+decrypts without a `reveal`. `register` also takes `-submitters 0xA,0xB` (an exclusive allow-list
+of up to 32 addresses) or `-open` (anyone may submit); with neither only the registrant submits.
+`-max` caps the number of ciphertexts and `-decrypt-from` / `-decrypt-until` bound the decryption
+window (RFC 3339 or a duration from now, such as `24h`). Plaintexts are small integers: the
+committee recovers values below 2⁵⁰.
 
----
-
-## TypeScript SDK
-
-```bash
-pnpm add @vocdoni/davinci-dkg-sdk
-```
+The same flow in TypeScript, with the [SDK](sdk/README.md):
 
 ```ts
-import { DKGClient, DKGWriter, buildElGamal, randomAid, randomOrganizerSecret } from '@vocdoni/davinci-dkg-sdk';
+import { createPublicClient, createWalletClient, http } from 'viem';
+import { gnosis } from 'viem/chains';
+import { privateKeyToAccount } from 'viem/accounts';
+import { AppMode, DKGWriter, getNetwork, randomAid, waitForCombinedDecryption } from '@vocdoni/davinci-dkg-sdk';
 
-const client = new DKGClient({ publicClient, managerAddress });
-const epoch  = await client.getEpoch(epochId);
-const pool   = await client.getPoolStatus(epochId);       // next unclaimed key index
+const net = getNetwork('gnosis');
+const publicClient = createPublicClient({ chain: gnosis, transport: http(net.rpcUrls[0]) });
+const walletClient = createWalletClient({
+  chain: gnosis, transport: http(net.rpcUrls[0]), account: privateKeyToAccount('0x...'),
+});
+const dkg = new DKGWriter({ publicClient, walletClient, managerAddress: net.managerAddress });
 
-// Register an organizer-locked application; keep skOrg, it is the other half of the key.
-const aid    = randomAid();                                // non-zero, below the scalar field
-const skOrg  = randomOrganizerSecret();
-const writer = new DKGWriter({ publicClient, walletClient, managerAddress });
-await writer.registerApplication(epochId, aid, policy, skOrg);
+const epochId = '0x...';   // a Live epoch with a free pool key, see `dkgapp epoch`
+const aid = randomAid();
+await dkg.waitForTransaction(await dkg.registerApplication(epochId, aid, { mode: AppMode.Automatic }));
 
-// PK_aid = P_j (+ PK_org for a locked application); j is the pool key claimed at registration
-const pkAid  = await client.getApplicationKey(epochId, aid);
-
-const eg     = await buildElGamal();
-const ct     = eg.encrypt(42n, pkAid);
-const { hash, ciphertextIndex } = await writer.submitCiphertext(epochId, aid, ct);
-
-await writer.revealOrganizerSecret(epochId, aid, skOrg);   // once, for the whole application
-await writer.waitForCombinedDecryption(epochId, aid, ciphertextIndex);
-const m = await client.getPlaintext(epochId, aid, ciphertextIndex);
+const { ciphertextIndex } = await dkg.encryptAndSubmit(epochId, aid, 42n);
+await waitForCombinedDecryption(dkg, epochId, aid, ciphertextIndex, { timeoutMs: 600_000 });
+console.log(await dkg.getPlaintext(epochId, aid, ciphertextIndex)); // 42n
 ```
 
-The SDK also decodes contribution and finalization transcripts, recomputes their Poseidon digests
-and Merkle roots, and asserts the shared protocol constants against `tests/vectors/*.json`.
-Full reference: `sdk/README.md`.
+A contract reads the key with `DKGAppManager.getApplicationKey(epochId, aid)` and submits with
+`DKGManager.submitCiphertext(epochId, aid, c1x, c1y, c2x, c2y)`; see
+[solidity/README.md](solidity/README.md). `submitCiphertext` takes no proof, so an
+application whose participants could gain by copying or shifting someone else's ciphertext must
+bind ciphertexts to their authors itself. [docs/use-cases.md](docs/use-cases.md) walks through
+auctions, scheduled disclosure, lotteries and private aggregation.
 
----
+### Running the explorer
 
-## Encrypting and decrypting
+The explorer in `ui/` is a static web app that reads a deployment straight from a JSON-RPC
+endpoint, with no backend. `make ui-dev` serves it for the Gnosis deployment on
+`http://localhost:5174`; [ui/README.md](ui/README.md) covers configuration and hosting.
 
-The protocol stays threshold-secure as long as fewer than `t` committee members collude. The honest
-path:
+### Deployments
 
-1. Register the application, or use one already registered, and read its key `PK_aid`.
-2. ElGamal-encrypt the plaintext scalar `m` under `PK_aid` (below the BSGS cap: 2⁵⁰ on the
-   committee, 2³² in the SDK).
-3. `DKGManager.submitCiphertext(epochId, aid, c1x, c1y, c2x, c2y)`: plain calldata, no proof. The
-   contract assigns the next index and emits `CiphertextSubmitted`. It checks the points are
-   canonical, on the curve and not the identity, and deliberately skips the prime-subgroup check
-   (about 0.17 M gas for `C₁`): committee nodes perform it off chain before computing any
-   partial, and that check is load-bearing, since a cofactor `C₁` would leak a member's share
-   modulo the cofactor.
-4. Every committee node watches `CiphertextSubmitted`, and once the window is open and, for a
-   locked application, the organizer has revealed, posts its partial with the Merkle path against
-   the key's share-commitment root. Until then the slot is parked at no cost.
-5. For a locked application the organizer calls `revealOrganizerSecret` once, whenever the
-   application as a whole should become decryptable.
-6. Once `t` partials are on chain, a node whose turn comes in the seed-derived rotation calls
-   `combineDecryption`; the plaintext is readable through `getPlaintext`. A restarted node re-scans
-   the last `--decrypt-lookback-blocks` (default 50,400: about seven days at 12 s blocks, three on
-   Gnosis) for ciphertexts still awaiting decryption; a slot past its window is dropped; and a
-   ciphertext whose plaintext is out of range taints its (application, submitter) pair for the
-   epoch, so one bad submitter cannot silence an application for its honest submitters.
+| Network | Chain id | `DKGManager` | Circuits |
+|---|---|---|---|
+| Gnosis Chain (default) | 100 | `0x9999F38Ff8Bf959E98Ddd5D4551f82775219c01B` | [`circuits-v6`](https://github.com/vocdoni/davinci-dkg/releases/tag/circuits-v6) |
+| Sepolia (testnet) | 11155111 | `0xc73b7a868eca6ac7e3e647e2665aa16a793cf551` | [`circuits-v6`](https://github.com/vocdoni/davinci-dkg/releases/tag/circuits-v6) |
 
----
+Both are built into the node, `dkgapp` and the SDK. The other contracts are resolved from the
+manager on chain; their addresses, the epoch parameters and how to deploy your own are in
+[docs/deployments.md](docs/deployments.md).
 
-## Deployments
+## Documentation
 
-### Gnosis Chain (default)
+- [docs/protocol.md](docs/protocol.md): epochs, committee selection, application keys, threshold
+  decryption, proofs and contracts.
+- [docs/node.md](docs/node.md): operating a node: configuration, resources, upgrades, Railway.
+- [docs/deployments.md](docs/deployments.md): contract addresses and deploying the contracts.
+- [docs/use-cases.md](docs/use-cases.md): application patterns beyond voting.
+- [docs/pool-keys.md](docs/pool-keys.md): normative transcript encodings and proof statements.
+- [BENCHMARKS.md](BENCHMARKS.md): constraints, proving times, memory, gas and RPC load.
+- [sdk/README.md](sdk/README.md), [ui/README.md](ui/README.md),
+  [solidity/README.md](solidity/README.md): the SDK, the explorer and the contracts.
 
-Chain id 100, deployed on 2026-09-28 with the
-[`circuits-v6`](https://github.com/vocdoni/davinci-dkg/releases/tag/circuits-v6) artifacts. It is
-the node's default network (`--network gnosis`) and the SDK's `NODE_DEFAULT_NETWORK`. Every contract
-is source-verified on [Gnosisscan](https://gnosisscan.io).
+## Development
 
-| Contract | Address | Block |
-|---|---|---|
-| DKGManager | `0x9999F38Ff8Bf959E98Ddd5D4551f82775219c01B` | 48483860 |
-| DKGAppManager | `0xd4d8f9708c380d81aec294b199081c5d2c782087` | 48483862 |
-| DKGRegistry | `0x45ab8b64633076ddc020b12d1f1325fa55f629c5` | 48483859 |
-| ContributionVerifier | `0x6d198bc613205957444b53a09bb22ed7bc650912` | 48483855 |
-| FinalizeVerifier | `0xc354ea7f3ef6db4ca0b89a1a5a6395c2d6126b38` | 48483856 |
-| PartialDecryptVerifier | `0x0f19886ee73fd74e3f88ce3a061490facd7561db` | 48483857 |
-| DecryptCombineVerifier | `0x2980e664edef91f554cc75b15cb8eeea61586644` | 48483858 |
-
-Epochs last 17,280 blocks (about 24 h at 5 s blocks) with short preparation windows for a small
-committee: committee selection 8 blocks, key assembly 12, finalize gap 1, so an epoch is Live about
-two minutes after `createEpoch`. Policy floors are `MIN_THRESHOLD=2`, `MIN_COMMITTEE_SIZE=3` and
-`MAX_LOTTERY_ALPHA_BPS=20000`. A committee of three nodes runs it; its first epoch,
-`aab5fe7d0000000000000001`, is Live. The DAVINCI ProcessRegistry on the same chain,
-`0x48a5091B64434a6690AeA32455712Bd2b7EE3E77`, registers one DKG application per voting process
-through its DavinciDKGAdapter, `0xd79B9B55830Bf6C277850c56B29Fe9b75cF2543b`.
-
-### Sepolia (older testnet)
-
-The public testnet the project ran first, still built into the node and the SDK
-(`--network sepolia`, which needs `--web3.rpc`).
-
-| Network | DKGManager | Details |
-|---------|------------|---------|
-| Sepolia | `0xc73b7a868eca6ac7e3e647e2665aa16a793cf551` | Registry `0x6c4b8da67746677c3b0cb3122663186eea504737`, app manager `0x7d5c48696b8c29638cc7819403d5989d9b5b8a94`; verifiers contribution `0x40954188b8b63c0829c34e8d9b9835416bf51f6e`, finalize `0xa96519f22018ad8a9d91f8ec75431c2108d54ff3`, partial `0xf61356cb3cfdfca7cfe0a1dfc13eed9cad7d5a33`, combine `0xeef22b5b2174ce3d7c9d09b45892429216ecaefb`; deployed at block 11,668,198 with the [`circuits-v6`](https://github.com/vocdoni/davinci-dkg/releases/tag/circuits-v6) artifacts. Epochs last 7,200 blocks (about 24 h); committee selection 100 blocks, key assembly 150, finalize gap 10; floors `MIN_THRESHOLD=2`, `MIN_COMMITTEE_SIZE=3`, `MAX_LOTTERY_ALPHA_BPS=20000`, `MAX_T=32`; inactivity window 50,400 blocks. |
-
-Only the manager address needs configuring; the registry and the app manager are resolved from it
-on chain. The public explorer is at [dkg.davinci.vote](https://dkg.davinci.vote).
-
----
-
-## Build from source
-
-Requires Go 1.25+, Foundry, pnpm 10 and Docker (for the integration tests).
+Requires Go 1.25+, Foundry, Node.js 20 with pnpm 10, and Docker for the integration tests.
 
 ```bash
-make build                                   # cmd/... binaries
-make test                                    # Go unit tests (circuit tests cache artifacts under ~/.davinci/artifacts)
-cd solidity && forge build && forge test     # contracts
-cd sdk && pnpm install && pnpm build && pnpm test
-RUN_INTEGRATION_TESTS=true go test ./tests/... -timeout 2h -failfast -count=1   # Anvil in Docker
+make build                                            # Go binaries
+go test ./node/... ./crypto/... ./web3/...            # fast unit tests
+(cd solidity && forge build && forge test)            # contracts
+(cd sdk && pnpm install && pnpm build && pnpm test)   # SDK
+make testnet-up                                       # local Anvil chain with three nodes
 ```
 
-`make circuits` recompiles the four circuits, runs the Groth16 setup, rewrites the Solidity
-verifying keys, pins the artifact hashes and regenerates the Go bindings; `make vectors`
-regenerates the cross-implementation fixtures. The Groth16 setup is randomized, so a fresh setup
-never matches the pinned hashes or the committed verifiers until all three are regenerated together.
-Changing `MaxN`, `MaxT` or `MaxK` is an edit to `circuits/common/sizes.go` and
-`solidity/src/libraries/Sizes.sol` followed by `make circuits`; `MaxN` must be a power of two. The
-circuits require gnark ≥ 0.16.2 (older releases have an unsound scalar-multiplication gadget).
-
-A self-contained multi-node testnet (Anvil, deployer, N nodes) lives in `testnet/`:
-
-```bash
-make testnet-up                                  # 3 nodes
-make testnet-up DKG_NODE_COUNT=8 DKG_THRESHOLD=5 # custom sizing
-DKG_THRESHOLD=16 DKG_COMMITTEE_SIZE=24 DKG_MIN_VALID_CONTRIBUTIONS=20 \
-  testnet/remote-nodes.sh up user@other-host 16 16    # 16 more nodes on another host
-```
-
-Phase windows and the epoch policy the nodes propose are compose variables; point the explorer at
-it with `make ui-dev RPC_URL=http://127.0.0.1:8545 MANAGER_ADDRESS=<from
-http://127.0.0.1:8888/addresses.env> CHAIN_ID=1337 CHAIN_NAME=anvil DEPLOY_BLOCK=0` (a variable
-left out keeps the committed Gnosis value). `tests/battery/` drives a running fleet through load,
-concurrency and adversarial scenarios and writes a per-transaction report.
-
----
-
-## Repository layout
-
-| Path | Contents |
-|---|---|
-| `node/` | The daemon: epoch participation, finalization stagger, decryption scanner, RPC pool |
-| `finalizer/` | Reconstructs accepted contributions from calldata and proves `finalizeEpoch` |
-| `circuits/` | The four gnark circuits, shared gadgets (`common/`), pinned artifact loader |
-| `crypto/` | Off-circuit primitives: Feldman, Shamir, Schnorr, ElGamal, share encryption, group |
-| `web3/` | Typed wrappers over the generated bindings, RPC pool, transaction manager |
-| `solidity/` | Contracts, interfaces, verifiers, Foundry tests, deploy script, Go bindings |
-| `sdk/`, `ui/` | TypeScript SDK and explorer |
-| `cmd/` | `davinci-dkg-node`, `dkgapp`, `circuit-compile`, `circuit-profile`, `protocol-vectors` |
-| `tests/` | Chain-backed integration tests, fixtures, the battery |
-| `docs/pool-keys.md` | Normative encodings and proof statements |
-| `docs/use-cases.md` | Applications beyond voting: auctions, batch clearing, scheduled disclosure, lotteries, private aggregation |
-| `BENCHMARKS.md` | Constraints, proving times, memory, gas, RPC load |
-
----
-
-## References
-
-- Groth16: J. Groth, *On the Size of Pairing-based Non-interactive Arguments*, EUROCRYPT 2016.
-- Feldman VSS: P. Feldman, *A Practical Scheme for Non-interactive Verifiable Secret Sharing*, FOCS 1987.
-- DAVINCI voting protocol: https://davinci.vote
-- Vocdoni: https://vocdoni.io
+[CONTRIBUTING.md](CONTRIBUTING.md) covers the full test suites, the circuit pipeline and the
+parts that must stay in sync across Go, Solidity and TypeScript.
 
 ## License
 
-AGPL-3.0, see [LICENSE](LICENSE).
+[GNU Affero General Public License v3.0](LICENSE).

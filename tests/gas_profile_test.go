@@ -73,8 +73,8 @@ func TestGasProfiles(t *testing.T) {
 	// BENCHMARKS.md — don't compare them directly.
 	c.Assert(profile.claimSlot < 250_000, qt.IsTrue)
 	c.Assert(profile.submitContribution < 3_000_000, qt.IsTrue)
-	// finalizeEpoch now verifies the batched proof and stores 16 keys and 16
-	// roots (docs/pool-keys-v4.md §13 estimates 2.1–2.8 M).
+	// finalizeEpoch verifies the batched proof and stores 16 keys and 16
+	// roots (2.2–2.8 M in BENCHMARKS.md).
 	c.Assert(profile.finalizeEpoch < 4_000_000, qt.IsTrue)
 	c.Assert(profile.registerLocked < 700_000, qt.IsTrue)
 	c.Assert(profile.registerAutomatic < 400_000, qt.IsTrue)

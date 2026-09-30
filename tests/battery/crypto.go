@@ -179,8 +179,7 @@ func decryptShareFrom(
 		return nil, err
 	}
 	// The compact transcript's offsets are functions of the epoch's (t, n),
-	// which come from the epoch policy, never from the calldata
-	// (docs/pool-keys-v4.md §3, §5).
+	// which come from the epoch policy, never from the calldata.
 	e, err := f.epoch(ctx, epochID)
 	if err != nil {
 		return nil, err

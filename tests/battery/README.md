@@ -1,120 +1,97 @@
-# Battery: load, concurrency and adversarial tests against a live fleet
+# Battery
 
-`tests/battery` drives a **running** davinci-dkg testnet (Anvil + real
-`davinci-dkg-node` daemons) from the outside. It never starts Docker: it
-connects through the harness' external mode, funds its own throw-away
-accounts with `anvil_setBalance`, and measures what the fleet does.
+Load, concurrency and adversarial tests against a running testnet: Anvil plus real
+`davinci-dkg-node` daemons. The battery never starts Docker itself. It connects to the chain,
+funds throw-away accounts with `anvil_setBalance` and measures what the fleet does. Every test
+skips unless `DAVINCI_DKG_BATTERY=1`, so `make test` and the integration suite are unaffected.
 
-Every test skips unless `DAVINCI_DKG_BATTERY=1`, so `make test` and the
-regular integration suite are unaffected.
+CI runs the swarm and the reveal adversary against a four-node testnet on pushes to `main`, on
+pull requests and nightly (`.github/workflows/battery.yml`).
 
 ## Running
 
-CI runs the swarm and the reveal adversary against a 4-node testnet on pushes
-to `main`, on pull requests and nightly (`.github/workflows/battery.yml`).
-Locally, `make battery` runs `$(BATTERY_RUN)` against whatever
-`DAVINCI_DKG_TEST_RPC_URL` points at.
-
 ```bash
-make battery-testnet-up DKG_NODE_COUNT=32 ...    # testnet-up plus the battery override, see below
+make battery-testnet-up DKG_NODE_COUNT=8 DKG_THRESHOLD=5
+curl -fsS http://127.0.0.1:8888/addresses.env > /tmp/testnet-addresses.env
 export DAVINCI_DKG_BATTERY=1
 export DAVINCI_DKG_TEST_RPC_URL=http://127.0.0.1:8545
-export DAVINCI_DKG_TEST_ADDRESSES=/tmp/testnet-addresses.env   # REGISTRY=…, MANAGER=…
-export DAVINCI_ARTIFACTS_DIR=$HOME/.davinci-dkg-artifacts        # same dir the nodes mount
-go test ./tests/battery -run TestFleetStatus -v                  # read-only smoke test
+export DAVINCI_DKG_TEST_ADDRESSES=/tmp/testnet-addresses.env   # REGISTRY=..., MANAGER=...
+export DAVINCI_ARTIFACTS_DIR=$HOME/.davinci/artifacts           # the directory the nodes mount
+go test ./tests/battery -run TestFleetStatus -v                 # read-only smoke test
 go test ./tests/battery -run TestOrganizerSwarm -v -timeout 40m
 go test ./tests/battery -run 'TestRevealAdversary|TestCrossApplicationAdversary' -v -timeout 40m
 go test ./tests/battery -run TestCommitteeAdversary -v -timeout 60m
 ```
 
-`make battery-testnet-up` layers [`compose.battery.yml`](compose.battery.yml)
-over the testnet stack. Every epoch deals `MAX_K = 16` pool keys; the single
-proof-carrying `finalizeEpoch` stores all of them atomically, so every key of a
-`Live` epoch is usable at once — there is no activation step (the v3.1
-`DAVINCI_DKG_ACTIVATE_AHEAD` override, which kept two keys activated ahead of
-the claim cursor and stalled the swarm's registration burst on the activation
-rotation, is gone; v3.1, superseded).
+`make battery` runs `BATTERY_RUN` (default `TestOrganizerSwarm|TestRevealAdversary`) against
+`DAVINCI_DKG_TEST_RPC_URL`. The battery waits up to `BATTERY_CONNECT_TIMEOUT` for the RPC and the
+addresses file, so it can start while the deployment is still coming up.
 
-The battery polls the RPC and the addresses file for up to
-`BATTERY_CONNECT_TIMEOUT` (default 10m) before giving up, so it can be
-started while the deployment is still coming up.
-
-Accounts: Anvil's default accounts 0–31 belong to the deployer and the
-nodes (their tx managers allocate nonces locally, so sharing a key would
-corrupt a node). The battery only ever uses fresh random keys.
+Anvil's default accounts 0–31 belong to the deployer and the nodes, whose transaction managers
+allocate nonces locally; sharing one of those keys would stall a node. The battery only uses
+fresh random keys.
 
 ## Report
 
-Every observation — each transaction with its gas and inclusion latency,
-each expected revert with the decoded custom-error name, each measurement —
-is appended to `DAVINCI_DKG_BATTERY_REPORT` (default
-`/tmp/battery-report.json`) as it happens; `TestMain` writes a Markdown
-summary next to it (`/tmp/battery-report.md`) with per-scenario tables and a
-gas digest per transaction kind. `t.Logf` mirrors every row, so `-v` output
-is readable on its own.
+Every observation (each transaction with its gas and inclusion latency, each expected revert with
+its decoded error, each measurement) is appended to `DAVINCI_DKG_BATTERY_REPORT` (default
+`/tmp/battery-report.json`) as it happens, and `TestMain` writes a Markdown summary next to it
+with per-scenario tables and gas per transaction kind. With `-v` every row is also logged.
 
 ## Scenarios
 
 | Test | What it does |
 |---|---|
-| `TestFleetStatus` | Prints immutables, registry size and the newest epochs; checks the torsion-point construction. |
-| `TestOrganizerSwarm` | `BATTERY_ORGANIZERS` (6) organizers × `BATTERY_CIPHERTEXTS` (6) ciphertexts, concurrently, in waves of at most `MAX_K` per Live epoch: a wave takes as many organizers as the newest Live epoch has pool keys left, the rest run in the next epoch (the nodes create it early once the pool drains) while the first wave is still being judged. Each organizer registers an automatic application, a locked one revealed after `BATTERY_REVEAL_DELAY_BLOCKS` (6), or a locked one whose secret is withheld (every 4th). Asserts plaintexts, that withheld applications are not combined after `BATTERY_WITHHELD_WAIT_BLOCKS` (40), reports per-ciphertext latency, partial count (expected `t`, never more than `n`), gas and throughput. |
-| `TestRevealAdversary` | A wrong / zero organizer secret, the sealed window before the right one lands, a stranger relaying the reveal (it is permissionless), a second reveal, a ciphertext submitted after the reveal, and a reveal aimed at an automatic application. |
-| `TestCrossApplicationAdversary` | Two applications of one epoch hold different committee keys; A's ciphertext copied into B must never combine and must never yield A's plaintext. |
-| `TestCiphertextAdversary` | Policy reverts (submitter, aid, cap, window), malformed points, then three poisons the contract accepts by design: cofactor-subgroup C1 (nodes must publish no partial), undecryptable C2 (every combiner burns a BSGS to 2^50), and a ciphertext copied from another application. Each poison is bracketed by honest ciphertexts in one shared, never-poisoned neighbour application whose latency is compared with the one before the poison; the scenario claims six of its epoch's sixteen pool keys; an undecryptable ciphertext taints its own application for the epoch (the nodes stop serving it after the first failed search), which is reported for the same-application probe rather than judged. |
-| `TestCommitteeAdversary` | A fresh operator joins the next epoch's real lottery, then: duplicate / late-registered / unregistered claims, non-member and malformed contributions, a genuine contribution the real nodes finalize with, duplicate contribution, early finalize, abort of a healthy epoch, out-of-policy `createEpoch` at the cadence boundary; once Live, a genuine partial decryption (share recovered from the other members' calldata, Merkle path rebuilt from the batched finalization's share-commitment root, `d_i·G` checked against the finalization's published share commitment), its duplicate, a broken proof, a broken Merkle path and a combine after the nodes'. |
+| `TestFleetStatus` | Prints the contract parameters, registry size and newest epochs. |
+| `TestOrganizerSwarm` | `BATTERY_ORGANIZERS` organizers × `BATTERY_CIPHERTEXTS` ciphertexts, concurrently, in waves that fit the free pool keys of the newest `Live` epoch; the rest wait for the next epoch. Organizers register automatic applications, locked ones revealed after a delay, or locked ones whose secret is withheld (every fourth). Checks plaintexts, that withheld applications are never combined, that no ciphertext gets more than `n` partials, and reports latency, partial count, gas and throughput. |
+| `TestRevealAdversary` | Wrong and zero organizer secrets, the sealed window before the right reveal, a stranger relaying the reveal, a second reveal, a ciphertext submitted after the reveal, a reveal aimed at an automatic application. |
+| `TestCrossApplicationAdversary` | Two applications of one epoch; a ciphertext copied from one into the other must never combine to the original plaintext. |
+| `TestCiphertextAdversary` | Policy reverts (submitter, aid, cap, window) and malformed points, then three ciphertexts the contract accepts by design: a small-subgroup `C1` (nodes must publish no partial), an undecryptable `C2`, and a copy from another application. Each is bracketed by honest ciphertexts in a neighbour application whose latency is compared before and after. |
+| `TestCommitteeAdversary` | A fresh operator joins the next epoch's lottery, then tries duplicate, late and unregistered claims, non-member and malformed contributions, a duplicate contribution, early finalization, aborting a healthy epoch and out-of-policy `createEpoch`; once `Live`, a genuine partial decryption, its duplicate, a broken proof, a broken Merkle path and a late combine. |
 
-`TestCommitteeAdversary` needs an epoch boundary
-(with `EPOCH_DURATION_BLOCKS=300` at 2 s blocks, up to 10 minutes of waiting
-plus ~2 minutes of Preparation). The `createEpoch` policy probes race the
-nodes' own `createEpoch` at the boundary; if a node lands first they revert
-with `InvalidPhase` (cadence gate) instead of `InvalidPolicy` and the row
-says so.
+`TestCommitteeAdversary` needs an epoch boundary: with `EPOCH_DURATION_BLOCKS=300` at 2 s blocks
+that is up to ten minutes of waiting plus the preparation window. Its `createEpoch` probes race
+the nodes at the boundary; when a node lands first they revert `InvalidPhase` instead of
+`InvalidPolicy`, and the report says so.
 
-## Knobs
+## Settings
 
-| Env | Default | Meaning |
+| Variable | Default | Meaning |
 |---|---|---|
-| `BATTERY_ORGANIZERS` / `BATTERY_CIPHERTEXTS` | 6 / 6 | swarm size (six organizers plus the reveal adversary's two applications fill one epoch's pool of `MAX_K = 16` keys) |
-| `BATTERY_ACTIVATION_WAIT_BLOCKS` | 90 | budget a registration waits for its key to be usable; a no-op in v4 — every key of a `Live` epoch is stored by the batched `finalizeEpoch`, so the wait is satisfied immediately (kept for scenario configs) |
-| `BATTERY_REVEAL_DELAY_BLOCKS` | 6 | delay of the "delayed" reveal mode |
-| `BATTERY_WITHHELD_WAIT_BLOCKS` | 40 | blocks a withheld application is watched before asserting "not combined" |
-| `BATTERY_NO_COMBINE_WAIT_BLOCKS` | 40 | same, for a locked application before its reveal |
-| `BATTERY_COMBINE_WAIT_BLOCKS` | 240 | maximum wait for an expected combine (generous on purpose, see [`chaos.md`](chaos.md)) |
-| `BATTERY_POISON_OBSERVE_BLOCKS` | 45 | blocks between the "early" and "late" status of a poisoned slot |
-| `BATTERY_MIN_SERVICE_BLOCKS` | 90 | minimum blocks before the cadence boundary for a Live epoch to be picked |
-| `BATTERY_TX_TIMEOUT` | 3m | receipt wait per transaction |
-| `BATTERY_CONNECT_TIMEOUT` | 10m | RPC / addresses-file wait |
-| `BATTERY_LOG_LEVEL` | warn | level of the library logger (`log` package) |
+| `BATTERY_ORGANIZERS` / `BATTERY_CIPHERTEXTS` | 6 / 6 | Swarm size |
+| `BATTERY_REVEAL_DELAY_BLOCKS` | 6 | Delay before a delayed reveal |
+| `BATTERY_WITHHELD_WAIT_BLOCKS` | 40 | Blocks a withheld application is watched before asserting it was not combined |
+| `BATTERY_NO_COMBINE_WAIT_BLOCKS` | 40 | The same, for a locked application before its reveal |
+| `BATTERY_COMBINE_WAIT_BLOCKS` | 240 | Maximum wait for an expected combine |
+| `BATTERY_POISON_OBSERVE_BLOCKS` | 45 | Blocks between the early and late status of an adversarial ciphertext |
+| `BATTERY_MIN_SERVICE_BLOCKS` | 90 | Minimum blocks left before the cadence boundary for a `Live` epoch to be used |
+| `BATTERY_TX_TIMEOUT` | 3m | Receipt wait per transaction |
+| `BATTERY_CONNECT_TIMEOUT` | 10m | Wait for the RPC and the addresses file |
+| `BATTERY_LOG_LEVEL` | warn | Library log level |
 
-## Notes on encodings and reuse
+Proofs come from `tests/helpers/proofs.go`, which uses deterministic share-encryption nonces: fine
+on a throw-away testnet, never for a real operator. Ciphertexts of a withheld application stay
+pending in every node forever (capped at 1024 per node), so a fleet used for many runs
+accumulates them.
 
-- Every scenario asks `waitLiveEpoch` for the number of pool keys it will
-  claim, so it never hits `PoolExhausted` half-way; an epoch with too few
-  unclaimed keys is waited out until the nodes create the next one. A
-  registration finds its key ready the moment the epoch is `Live` — the
-  batched `finalizeEpoch` stored the whole pool, so there is nothing left to
-  activate (the v3.1 wait-for-activation behaviour is gone; v3.1, superseded).
-- Ciphertexts are produced with `crypto/elgamal` under
-  `PK_aid = P_j (+ PK_org)` exactly like `cmd/dkgapp encrypt`, with `P_j` the
-  pool key the registration claimed; registration with
-  `crypto/schnorr.ProveOrganizerRegister`. Points are the reduced
-  twisted-Edwards affine coordinates the contracts and `tests/helpers` use.
-- Proofs come from `tests/helpers/proofs.go` (`BuildContributionSubmission`,
-  `BuildPartialDecryptionSubmissionFromBase`,
-  `BuildDecryptCombineOutputFromCiphertext`). `BuildContributionSubmission`
-  uses deterministic share-encryption nonces — fine on a throw-away testnet,
-  never for a real operator.
-- The adversarial member recovers its private share `d_i = Σ_c f_{c,j}(i)` of
-  the application's pool key `j` from the other members' `submitContribution`
-  calldata with the same transcript layout and
-  `shareenc.DecryptShareRoundHash` the node uses, and checks `d_i·G` against
-  the share commitment the key's batched `finalizeEpoch` published
-  (`poolShareRoots[eid][j]`)
-  before proving anything. The Merkle path `submitPartialDecryption` takes is
-  rebuilt from that same finalization transcript.
-- Ciphertexts of an application whose secret is withheld stay pending in every node's scanner forever (the
-  set is capped at 1024 per node). That is by design; a long-running fleet
-  used for many battery runs accumulates them.
+## Disrupting the fleet
 
-To disrupt the fleet by hand while the swarm runs, see [`chaos.md`](chaos.md).
+The swarm reports what happened rather than failing hard, so it can run while you break things
+from another terminal. Each ciphertext gets its own report row, every wait is bounded in blocks
+and generous, and a slowdown shows up as higher `latencyBlocks` until a bound is exceeded.
+
+- **Restart a node** (`docker restart testnet-dkg-node-<k>`) while ciphertexts are served. Its
+  partials come from the next wave, a few blocks later; on boot it rescans
+  `--decrypt-lookback-blocks` and must not submit twice (an `AlreadyPartiallyDecrypted` revert in
+  its log is harmless). Restarting the node holding combine slot 0 (named in earlier rows'
+  `combiner=`) moves the combine to the next node in the rotation.
+- **Pause the chain** (`docker pause testnet-anvil-1`, then `docker unpause`) for 30 to 60
+  seconds. Nodes log RPC errors and back off; keep the pause under `BATTERY_TX_TIMEOUT` or receipt
+  waits expire and rows fail.
+- **Stop up to `n − t` committee members** for good. Later waves fill in and combines still land;
+  from `n − t + 1` stopped nodes on, rows report `not combined within N blocks`.
+- **Cross an epoch boundary** by starting the swarm late in an epoch. The `Live` epoch keeps
+  serving while the nodes prepare the next one, so combines slow down; the summary counts
+  `combinedAfterEpochBoundary`.
+
+Restarting the deployer breaks the run, since it rewrites the addresses file.

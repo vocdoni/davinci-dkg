@@ -102,7 +102,7 @@ describe('vectors / protocol.json', () => {
     expect(DomainDecryptCombineTranscriptV1).toBe(f.domains.DecryptCombineTranscriptV1.keccak256);
     expect(f.domains.ContributionTranscriptV2.preimage).toBe('davinci-dkg:contribution:v2');
     expect(f.domains.FinalizeTranscriptV2.preimage).toBe('davinci-dkg:finalize:v2');
-    // The v1 contribution domain and the per-key activation domain are gone.
+    // The retired contribution:v1 and poolkey:v1 domains are not emitted.
     expect(f.domains.ContributionTranscriptV1).toBeUndefined();
     expect(f.domains.PoolKeyTranscriptV1).toBeUndefined();
   });
@@ -252,7 +252,7 @@ describe('vectors / dleq.json', () => {
   });
 });
 
-// ─── contribution_compact.json (docs/pool-keys-v4.md §3–§5) ────────────────
+// ─── contribution_compact.json (docs/pool-keys.md) ─────────────────────────
 
 interface ContributionCompactFile {
   domain: { preimage: string; keccak256: string; bn254Reduced: string };
@@ -435,7 +435,7 @@ describe('vectors / contribution_compact.json', () => {
   });
 });
 
-// ─── finalize_transcript.json (docs/pool-keys-v4.md §6–§9) ─────────────────
+// ─── finalize_transcript.json (docs/pool-keys.md) ──────────────────────────
 
 interface PointJSON {
   x: string;

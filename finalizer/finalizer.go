@@ -1,5 +1,5 @@
 // Package finalizer turns an epoch's accepted contributions into usable keys
-// with one on-chain operation (docs/pool-keys-v4.md §11): it reads every
+// with one on-chain operation (docs/pool-keys.md, "Finalization proof"): it reads every
 // accepted contribution record at one block, recovers each dealer's compact
 // calldata, rebuilds all MaxK pool keys and every committee member's share
 // commitments, proves the batched finalization circuit and submits
@@ -752,7 +752,7 @@ var (
 // transaction sender chose to put there, so the selector is checked against
 // the ABI and the dynamic offsets are decoded by the ABI unpacker, which
 // bounds-checks them without overflow. Any malformed input yields an error,
-// never a panic. The transcript is compact (docs/pool-keys-v4.md §3): its
+// never a panic. The transcript is compact (docs/pool-keys.md): its
 // length is a function of the epoch's (t, n), which the caller takes from
 // authoritative epoch state and passes as `layout`, never from the calldata.
 func ContributionTranscript(data []byte, layout contribution.Layout) ([]byte, error) {
@@ -781,7 +781,7 @@ func DecodeContribution(data []byte, layout contribution.Layout) (*contribution.
 //	    bytes transcript, bytes proof, bytes input)
 //
 // Same hostile-calldata contract as ContributionTranscript. The transcript
-// has the fixed layout of docs/pool-keys-v4.md §7.
+// has the fixed layout of docs/pool-keys.md.
 func FinalizeTranscript(data []byte) ([]byte, error) {
 	return bytesArg(data, finalizeEpochMethod, "transcript", finalize.TranscriptWords*32)
 }

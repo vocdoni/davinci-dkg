@@ -45,13 +45,11 @@ export type NodeStatusValue = (typeof NodeStatus)[keyof typeof NodeStatus];
 // ── Contract types ────────────────────────────────────────────────────────────
 
 /**
- * Per-epoch DKG policy. Phase deadline blocks are derived ON-CHAIN at
- * `createEpoch` time from the contract's immutable `EPOCH_DURATION_BLOCKS`
- * plus the per-phase BPS constants (registration / contribution /
- * finalize gap). Callers no longer supply them: `writer.createEpoch` only
- * takes the policy fields below. The on-chain Epoch struct continues to
- * surface the resolved deadline blocks (populated by createEpoch from the
- * derived offsets) for downstream phase-check reads.
+ * Per-epoch DKG policy. The phase deadline blocks are derived on chain at
+ * `createEpoch` from the manager's deadline offsets, which its constructor
+ * builds from the deployment's window lengths; `writer.createEpoch` only
+ * takes the four policy fields, and `getEpoch` returns the resolved
+ * deadlines.
  */
 export interface EpochPolicy {
   threshold: number;
@@ -71,10 +69,9 @@ export interface EpochPolicy {
 }
 
 /**
- * The caller-supplied part of an epoch policy — exactly the four arguments
- * of `DKGManager.createEpoch`. Phase deadlines are derived on-chain, and the
- * former per-epoch `DecryptionPolicy` no longer exists: ciphertext submission
- * is gated per application (`AppPolicy`) instead.
+ * The caller-supplied part of an epoch policy: exactly the four arguments of
+ * `DKGManager.createEpoch`. Phase deadlines are derived on chain, and
+ * submission and decryption are gated per application (`AppPolicy`).
  */
 export type CreateEpochParams = Pick<
   EpochPolicy,
@@ -146,7 +143,7 @@ export interface NodeKey {
   registeredAtBlock: bigint;
 }
 
-// ── Application (P8/P9) ──────────────────────────────────────────────────────
+// ── Application ──────────────────────────────────────────────────────────────
 
 /**
  * Who (if anyone) holds an organizer key on top of the application's pool

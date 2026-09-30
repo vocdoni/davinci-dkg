@@ -7,8 +7,7 @@
 #
 # Chain config is baked in at build time: the committed
 # ui/public/config.json unless a build arg overrides a key. Hosts that
-# want a different deployment build a different image — there is no
-# runtime config templating any more.
+# want a different deployment build a different image.
 
 # ---------------------------------------------------------------------------
 # SDK build stage — TypeScript library that the UI links to via link:../sdk

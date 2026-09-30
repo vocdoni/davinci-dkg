@@ -14,7 +14,7 @@
 #           with or without operating a node.
 #   - test  Runs unit and integration tests inside a container (no GPU).
 #
-# For the multi-node local testnet (Anvil + deployer + N nodes + UI), see
+# For the multi-node local testnet (Anvil + deployer + N nodes), see
 # testnet/docker-compose.yml instead of this file.
 # ---------------------------------------------------------------------------
 
@@ -77,13 +77,8 @@ services:
   #   docker compose --profile node --profile ui up       → node + UI
   #
   # The UI is fully decoupled from the node — it talks to the chain
-  # directly via RPC.
-  #
-  # Why bind-mount instead of an own image: the new ui/Dockerfile is a
-  # build-only target (no runtime), designed for static-site hosts like
-  # DigitalOcean App Platform that build from source per deployment. For
-  # local serving we just point a stock nginx at the dist; one less
-  # custom image to maintain.
+  # directly via RPC. ui/Dockerfile is a build-only image for static-site
+  # hosts, so local serving points a stock nginx at the dist instead.
   # ──────────────────────────────────────────────────────────────────────────
 
   ui:

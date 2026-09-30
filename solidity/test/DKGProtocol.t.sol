@@ -10,12 +10,6 @@ import {DKGProtocol} from "../src/libraries/DKGProtocol.sol";
 ///         strings below are copied verbatim from `tests/vectors/protocol.json`;
 ///         updating the vector is the canonical way to evolve the protocol —
 ///         all three layers (Solidity, Go, TS) MUST agree on every value.
-///
-///         v4 note: the contribution domain moved to `:v2` (compact
-///         transcript) and the poolkey domain was replaced by
-///         `finalize:v2`. The v2 hashes below were computed with
-///         `cast keccak` and will be cross-checked against the regenerated
-///         `protocol.json` once the circuit-side vectors land.
 contract DKGProtocolTest is Test {
     function test_DomainOperatorRegisterV1_MatchesGoVector() public pure {
         assertEq(

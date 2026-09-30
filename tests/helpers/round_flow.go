@@ -235,8 +235,8 @@ type CombinePayload struct {
 // issues the on-chain combine — the same code path production node operators
 // take.
 //
-// There is no organizer share any more, and the contract refuses every
-// partial of an organizer-locked application until `revealOrganizerSecret`
+// The contract refuses every partial of an organizer-locked application
+// until `revealOrganizerSecret`
 // (`OrganizerSecretNotRevealed`). The reveal is therefore a precondition of
 // this helper: when the application is still sealed, `organizerSecret` is
 // published first, before any partial is built; when it was already

@@ -20,11 +20,6 @@ var (
 	FinalizeProvingKeyHash      = "b359f97f8fef92093004dd4bf279d126e86b7c8d54b4b34fb6c714357abce759"
 	FinalizeVerificationKeyHash = "8002a4eea9c83ef6e93bb3d7e0a0b93a8ae95681eea1f9a39efeabe617b20054"
 
-	// Hashes regenerated in P6 after the P5 circuit changes (added Aid,
-	// CtIdx, Role public inputs to partialdecrypt; added Aid, CtIdx, Mode,
-	// S, DeltaOrg + mode-aware T branch to decryptcombine). These pk/vk
-	// hashes correspond to a DEV trusted setup; the production ceremony
-	// in S2 will regenerate fresh keys and bump these again.
 	PartialDecryptCircuitHash         = "532b6c2746e51a7b334bcdbc066a83e54c9ea3b81b46b64a4582540c1263c586"
 	PartialDecryptProvingKeyHash      = "d80bfa3d4d43e86204180d8884a3b1bc5c60b5f5832974f3867d11eafb22f865"
 	PartialDecryptVerificationKeyHash = "fffa38ca38523a5165d94d57cd9189f4701da852e74a9476b51eab20a395c649"

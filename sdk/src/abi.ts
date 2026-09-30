@@ -86,7 +86,6 @@ export const dkgManagerAbi = [
     inputs: [{ name: 'epochId', type: 'bytes12' }],
     outputs: [],
   },
-  // `extendRegistration` was removed in the auto-cadence refactor.
   {
     type: 'function',
     name: 'submitContribution',

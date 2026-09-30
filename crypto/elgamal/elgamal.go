@@ -16,9 +16,8 @@ import (
 // There is deliberately no proof of knowledge of r: the submitter of an
 // aggregated tally does not know the randomness of the aggregate, so a PoK
 // would be incompatible with homomorphic aggregation. Cross-application
-// replay is instead prevented by the per-application organizer key — a
-// ciphertext copied into another application decrypts to sk_ep·C1, which is
-// useless without that application's sk_org·C1.
+// replay is prevented by the per-application pool key instead: a ciphertext
+// copied into another application decrypts under an unrelated secret.
 func Encrypt(pk types.CurvePoint, m *big.Int) (c1, c2 types.CurvePoint, err error) {
 	r, err := rand.Int(rand.Reader, group.ScalarField())
 	if err != nil {
@@ -27,10 +26,11 @@ func Encrypt(pk types.CurvePoint, m *big.Int) (c1, c2 types.CurvePoint, err erro
 	return encryptWithRandomness(pk, m, r)
 }
 
-// ApplicationKey derives the application encryption key from the epoch key
-// and the application's organizer key: PK_aid = PK_ep + PK_org. Decryption
-// therefore needs both the committee threshold (for sk_ep·C1) and the
-// organizer's share (sk_org·C1).
+// ApplicationKey derives the application encryption key from the pool key the
+// application claimed and its organizer key: PK_aid = P_j + PK_org (for an
+// automatic application PK_org is the identity, so PK_aid = P_j). Decryption
+// needs the committee threshold (for the pool secret times C1) and, for an
+// organizer-locked application, sk_org.
 func ApplicationKey(pkEp, pkOrg types.CurvePoint) (types.CurvePoint, error) {
 	base, err := group.Decode(pkEp)
 	if err != nil {

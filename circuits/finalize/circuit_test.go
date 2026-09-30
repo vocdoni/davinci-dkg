@@ -141,7 +141,7 @@ func TestBuildWitness(t *testing.T) {
 	c.Assert(pi.PoolKeys[0].X.Cmp(pi.PoolKeys[MaxKeys-1].X), qt.Not(qt.Equals), 0)
 }
 
-// The transcript is L_F words in the §7 order; the digest is the three-level
+// The transcript is L_F words in the documented order; the digest is the three-level
 // Poseidon over exactly those words; the anchor folds the digest in before
 // the calldata keccak; the public inputs are the 7 contract words.
 func TestTranscriptLayoutAndDigest(t *testing.T) {
@@ -463,8 +463,8 @@ func TestCompileFinalizeConstraintCount(t *testing.T) {
 		MaxParticipants, MaxKeys, ccs.GetNbConstraints(), ccs.GetNbPublicVariables()-1, time.Since(started))
 }
 
-// Release gate, not a unit test: passes only once `make circuits` re-pinned
-// the v4 artifacts in config/circuit_artifacts.go.
+// Release gate, not a unit test: passes only once `make circuits` has pinned
+// the compiled circuit's artifacts in config/circuit_artifacts.go.
 func TestFinalizeArtifactsMatchCompiledCircuit(t *testing.T) {
 	if testing.Short() {
 		t.Skip("artifact pin check skipped under -short")

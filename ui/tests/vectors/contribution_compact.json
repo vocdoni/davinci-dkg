@@ -1,5 +1,5 @@
 {
-  "description": "Compact contribution transcript vectors (docs/pool-keys-v4.md §3–§5). transcript is the exact L_C = maxK·(2t+n)+5n words submitContribution streams (decimal field elements, no padding); offsets are word offsets of each region; committeeSnapshotKeccak is keccak256 over words [2Kt, 2Kt+3n) (indexes then public keys), what DKGManager._snapshotCommittee must equal; challenge = keccak(eid12 ‖ domain ‖ anchor) mod p; transcriptCommitment = Σ ρ^(q+1)·w[q].",
+  "description": "Compact contribution transcript vectors (docs/pool-keys.md). transcript is the exact L_C = maxK·(2t+n)+5n words submitContribution streams (decimal field elements, no padding); offsets are word offsets of each region; committeeSnapshotKeccak is keccak256 over words [2Kt, 2Kt+3n) (indexes then public keys), what DKGManager._snapshotCommittee must equal; challenge = keccak(eid12 ‖ domain ‖ anchor) mod p; transcriptCommitment = Σ ρ^(q+1)·w[q].",
   "domain": {
     "preimage": "davinci-dkg:contribution:v2",
     "keccak256": "0x4b37311b22cd0f09ae11d49f42ab65dce8fccf2600e6e2e7d41f51dc3d44b752",

@@ -29,8 +29,8 @@ const (
 	// BRLC transcript domains: the Fiat–Shamir domain every proof-carrying
 	// call binds into its challenge (`keccak(eid ‖ domain ‖ anchor) mod p`,
 	// see BRLC.sol). One per circuit whose transcript the contract streams:
-	// the compact contribution (v2, docs/pool-keys-v4.md §3), the batched
-	// finalization (v2, §7) and decrypt-combine (unchanged).
+	// the compact contribution, the batched finalization and the
+	// decrypt-combine (docs/pool-keys.md).
 	DomainContributionTranscriptV2Str   = "davinci-dkg:contribution:v2"
 	DomainFinalizeTranscriptV2Str       = "davinci-dkg:finalize:v2"
 	DomainDecryptCombineTranscriptV1Str = "davinci-dkg:decrypt-combine:v1"

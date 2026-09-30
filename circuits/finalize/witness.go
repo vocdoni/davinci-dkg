@@ -11,11 +11,11 @@ import (
 )
 
 // TranscriptDomain is the BRLC Fiat–Shamir domain of the finalization
-// transcript (docs/pool-keys-v4.md §2).
+// transcript.
 var TranscriptDomain = protocol.DomainFinalizeTranscriptV2
 
-// Transcript word offsets (docs/pool-keys-v4.md §7). The layout is fixed, so
-// these are plain functions of the circuit bounds.
+// Transcript word offsets. The layout is fixed, so these are plain functions
+// of the circuit bounds.
 
 // IndexesStart is the first participant-index word.
 const IndexesStart = 0
@@ -214,8 +214,8 @@ func BuildWitness(a Assignment) (*FinalizeCircuit, *PublicInputs, error) {
 	return witness, publicInputs, nil
 }
 
-// DigestParts are the three Poseidon levels of the transcript digest T
-// (docs/pool-keys-v4.md §7), exposed so cross-implementation vectors can pin
+// DigestParts are the three Poseidon levels of the transcript digest T,
+// exposed so cross-implementation vectors can pin
 // every intermediate value and not only the result.
 type DigestParts struct {
 	// Rows is R = H(0, I[0…N−1], h[0…N−1]).

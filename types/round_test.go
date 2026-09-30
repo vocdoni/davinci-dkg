@@ -53,12 +53,6 @@ func TestEpochPolicyValidate(t *testing.T) {
 		c.Assert(err.Error(), qt.Contains, "threshold")
 	})
 
-	// The "rejects non monotonic block windows" test was removed when phase
-	// deadlines moved from caller-supplied to contract-derived (from
-	// EPOCH_DURATION_BLOCKS). The Go-side policy struct no longer validates
-	// deadline ordering; the on-chain constructor enforces it via the
-	// derived per-phase offsets.
-
 	c.Run("rejects lottery alpha below 1.0", func(c *qt.C) {
 		policy := EpochPolicy{
 			Threshold:             3,

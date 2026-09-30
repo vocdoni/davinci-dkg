@@ -4,16 +4,16 @@
  * `theme.css` is imported verbatim as the `@theme` and `variables.css` gives
  * the same values as plain custom properties for hand-written CSS (chart
  * gradients, RainbowKit overrides). Everything below is an *extension* of that
- * package — surface levels and text greys named in `design/preview.html` but
- * missing from theme.css, the two semantic colours the explorer spec allows
- * (one warning amber, one danger red), and the chart companion hues.
+ * package: surface levels and text greys missing from theme.css, the only two
+ * semantic colours besides emerald (one warning amber, one danger red), and
+ * the chart companion hues.
  */
 @import 'tailwindcss';
 @import '../../design/theme.css';
 @import '../../design/variables.css';
 
 @theme {
-  /* ── Surface levels (design/preview.html § Depth & Surfaces) ─────────── */
+  /* ── Surface levels ─────────────────────────────────────────────────── */
   --color-obsidian: #050507; /* level 0 — page canvas */
   --color-carbon: #101010; /* level 1 — cards, panels */
   --color-onyx: #1a1a1a; /* level 2 — hover, active, table stripes */
@@ -33,7 +33,7 @@
   --color-emerald-particle: #22c55e;
   --color-volt-glow: rgba(0, 217, 146, 0.15);
 
-  /* ── The only two semantic colours beyond emerald (spec § 5) ─────────── */
+  /* ── The only two semantic colours beyond emerald ───────────────────── */
   --color-amber: #e3b341;
   --color-red: #f85149;
 

@@ -12,9 +12,9 @@
 //	                                         the three BRLC transcript domains) + field constants
 //	tests/vectors/schnorr.json               operator + organizer Schnorr proofs
 //	tests/vectors/dleq.json                  committee partial-decryption DLEQ challenges + responses
-//	tests/vectors/contribution_compact.json  compact contribution transcripts (v4 §3): words, offsets,
+//	tests/vectors/contribution_compact.json  compact contribution transcripts: words, offsets,
 //	                                         digests, anchor, challenge, BRLC commitment
-//	tests/vectors/finalize_transcript.json   batched finalization transcripts (v4 §7): words, Poseidon
+//	tests/vectors/finalize_transcript.json   batched finalization transcripts: words, Poseidon
 //	                                         digest levels, anchor, challenge, BRLC, Merkle roots
 //
 // Determinism: every vector uses fixed inputs and either deterministic
@@ -86,9 +86,7 @@ func buildProtocol() protocolFile {
 			"OrganizerRegisterV1": domainRow(protocol.DomainOrganizerRegisterV1Str, protocol.DomainOrganizerRegisterV1),
 			// BRLC transcript domains: submitContribution, finalizeEpoch and
 			// combineDecryption each derive their Fiat-Shamir challenge under
-			// one of these. v4 (docs/pool-keys-v4.md §2) bumps the compact
-			// contribution to v2 and replaces davinci-dkg:poolkey:v1 with the
-			// batched finalization domain.
+			// one of these.
 			"ContributionTranscriptV2": domainRow(
 				protocol.DomainContributionTranscriptV2Str, protocol.DomainContributionTranscriptV2,
 			),

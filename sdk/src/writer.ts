@@ -116,12 +116,6 @@ export class DKGWriter extends DKGClient {
     return this.walletClient.writeContract(request);
   }
 
-  // `extendRegistration` was removed in SDK 0.2.0 alongside the Solidity
-  // auto-cadence refactor. With `EPOCH_DURATION_BLOCKS` driving the
-  // schedule, a stalled registration just gets aborted (`abortEpoch`) and
-  // the next scheduled epoch picks up automatically.
-
-
   /**
    * Submit a contribution (ZK proof + encrypted shares) for a epoch.
    * Only callable by selected participants.
@@ -342,7 +336,7 @@ export class DKGWriter extends DKGClient {
     return this.walletClient.writeContract(request);
   }
 
-  // ── Application lifecycle (P8/P9) ──────────────────────────────────────────
+  // ── Application lifecycle ──────────────────────────────────────────────────
 
   /**
    * Register an application against `(epochId, aid)`.
@@ -498,8 +492,8 @@ export class DKGWriter extends DKGClient {
 
   /**
    * Update an existing registered key. Requires a fresh Schnorr PoK over
-   * the new key (P4 — `updateKey` and `registerKey` enforce the same check
-   * to prevent silent key replacement without proof of knowledge).
+   * the new key: `updateKey` and `registerKey` enforce the same check, so a
+   * key cannot be replaced without proof of knowledge.
    */
   async updateKey(privateKey: bigint, nonce?: bigint): Promise<Hash> {
     const operator = this._writerAccount;

@@ -12,7 +12,7 @@ import (
 )
 
 // TranscriptDomain is the BRLC Fiat–Shamir domain of the compact contribution
-// transcript (docs/pool-keys-v4.md §2).
+// transcript.
 var TranscriptDomain = protocol.DomainContributionTranscriptV2
 
 // PublicInputs is the native representation of the public contribution inputs

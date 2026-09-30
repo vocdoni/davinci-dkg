@@ -16,7 +16,8 @@ synthetic fixture ─┘   (src/indexer)  (src/indexer/types.ts)   (src/data)
 
 ```tsx
 import { createPublicClient, http } from 'viem'
-import { DataSourceProvider, createDataSource } from '~/data'
+import { DataSourceProvider } from '~data/context'
+import { createDataSource } from '~data/create'
 
 const client = useMemo(
   () => createPublicClient({ transport: http(config.rpcUrl) }),
@@ -33,11 +34,11 @@ const source = useMemo(
 </DataSourceProvider>
 ```
 
-`config` is the shell's `RuntimeConfig` as-is: `chainId`, `managerAddress`,
-`deployBlock`, `chainName`, `explorerUrl` and `demo`. `registryAddress` /
-`appManagerAddress` are optional — the indexer reads them off the manager.
-`demo` (from `?demo=1`) swaps in the synthetic fixture and makes zero RPC
-calls; passing `demo` explicitly to `createDataSource` overrides the config.
+`config` is the shell's `RuntimeConfig` as-is: `rpcUrl`, `chainId`,
+`managerAddress`, `deployBlock`, `chainName`, `explorerUrl` and `demo`. The
+registry and app manager addresses are read from the manager. `demo` (from
+`?demo=1`) swaps in the synthetic fixture and makes no RPC calls; passing
+`demo` explicitly to `createDataSource` overrides the config.
 
 The provider starts the source on mount and stops it on unmount. Mount it
 **once**, above the router.
@@ -62,9 +63,9 @@ The provider starts the source on mount and stops it on unmount. Mount it
 | `useTxMeta(hashes)` | `void` | Ask for `from`/`gasUsed` of rows the page shows |
 | `useSnapshot()` / `useStore()` | raw snapshot / store | Escape hatch; prefer the above |
 
-All of them are safe to call with `undefined` and return `null` / `[]` while
-the first scan is still running — render a skeleton off
-`useIndexer().scanning`, not off empty data.
+All of them accept `undefined` and return `null` or `[]` while the first scan
+is still running: render a skeleton from `useIndexer().scanning`, not from
+empty data.
 
 ```tsx
 function EpochPage() {
@@ -78,22 +79,21 @@ function EpochPage() {
 }
 ```
 
-## Conventions worth knowing
+## Conventions
 
 - **Blocks are `number`s** everywhere in the store; curve coordinates,
   plaintexts and the lottery threshold τ stay `bigint`.
 - **Slots are 0-based, participant indices are 1-based.** `SlotClaimed.slot`
   counts from 0; `contributorIndex` and `participantIndex` count from 1
   (`epochParticipants[i - 1]`; a partial's Merkle leaf is `index - 1`). Selectors
-  expose both (`CommitteeRow.slot` / `.participantIndex`) and the partial
-  matrix is addressed by **slot**. `ciphertextIndex` is 1-based too.
+  expose both (`CommitteeRow.slot`, `CommitteeRow.participantIndex`) and the
+  partial matrix is addressed by slot. `ciphertextIndex` is 1-based too.
 - **τ as a fraction**: `epochDetail(...).lottery.thresholdFraction` is
   `τ / 2²⁵⁶`, i.e. the share of the hash space that wins a slot;
   `registrySnapshot` is `R` recovered from τ, and `admissibleProbability` is
   `min(1, α·n/R)`.
 - **Participation is `contributions / claims`**, and `null` when the operator
-  never claimed — render `formatParticipation(row.participation)` to get the
-  `—`.
+  never claimed; `formatParticipation(row.participation)` renders it.
 - **Waves**: a partial's `wave` is
   `floor((partialBlock − ciphertextBlock) / staggerBlocks)`, with
   `staggerBlocks = 3` (the node's per-slot decryption delay). Wave 0 is the
@@ -102,18 +102,15 @@ function EpochPage() {
   `finalizer` / `combined.by` come from the transaction sender and are `null`
   until the indexer has fetched that receipt. It fetches them automatically
   (25 per poll); `useTxMeta` moves a row to the front of that queue.
-- **Selectors are memoised on store identity** — calling `useEpochs()` in ten
+- **Selectors are memoised on store identity**: calling `useEpochs()` in ten
   components costs one computation per publish.
 
 ## Demo mode
 
-`createDemoDataSource()` serves `src/fixtures/synthetic.ts`: 300 operators,
-8 epochs of 64 members (t = 33, m_min = 40), one aborted, one in KeyAssembly,
-the whole pool of 16 keys stored at finalization, 2 applications × 8 ciphertexts
-(one organizer-locked, one automatic), partials in waves, one organizer secret
-still kept, gas figures from `BENCHMARKS.md`. Its head block
-advances every 12 s. Pass options through `createDataSource({ demoOptions })`
-to shrink it (tests use 24 operators / 4 epochs / committee 6).
+`createDemoDataSource()` serves `src/fixtures/synthetic.ts` (see
+[EXPLORER.md](../../EXPLORER.md#demo-mode)); its head block advances every
+12 s. Pass options through `createDataSource({ demoOptions })` to shrink it;
+the tests use 24 operators, 4 epochs and a committee of 6.
 
 ## Cache
 

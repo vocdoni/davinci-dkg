@@ -8,8 +8,8 @@ import (
 	qt "github.com/frankban/quicktest"
 )
 
-// The decoder never checked the curve equation, so IsOnCurve used to accept
-// any canonical pair. It must evaluate the equation itself.
+// The decoder does not check the curve equation, so IsOnCurve must evaluate
+// it itself rather than accept any canonical pair.
 func TestIsOnCurveChecksTheEquation(t *testing.T) {
 	c := qt.New(t)
 	params := edbn254.GetEdwardsCurve()

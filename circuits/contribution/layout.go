@@ -10,7 +10,7 @@ import (
 )
 
 // Layout is the compact contribution transcript of one epoch policy
-// (docs/pool-keys-v4.md §3, §5). The transcript carries no padding: its
+// (docs/pool-keys.md, "Contribution proof"). The transcript carries no padding: its
 // length L_C = MaxK·(2t+n) + 5n and every offset are functions of the
 // threshold t and the committee size n, which the contract binds to the
 // epoch before it streams the words, and which recipients and finalizers

@@ -23,8 +23,8 @@ export interface RuntimeConfig extends RuntimeConfigFile {
   /**
    * True when the app must run entirely off the synthetic fixture with no RPC
    * at all. Set by `?demo=1` in the URL or `VITE_DEMO=1` at build time; the
-   * data layer (stream B) reads it from `useRuntimeConfig()` and swaps the
-   * indexer for the fixture store.
+   * data layer reads it from `useRuntimeConfig()` and swaps the indexer for
+   * the fixture store.
    */
   demo: boolean
 }

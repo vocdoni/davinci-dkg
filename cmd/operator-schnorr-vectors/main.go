@@ -14,15 +14,11 @@
 //
 //	pubKey = privKey · G              (BabyJubJub generator)
 //	A      = w · G                    (w is a deterministic test nonce)
-//	c      = Poseidon( domain_field
-//	                 , uint(address)
-//	                 , pubX, pubY, A_x )    [T6, 5 inputs]
-//	         then    Poseidon(c_inner, A_y) [T3, 2 inputs]
+//	c      = keccak256(domain ‖ address ‖ pubX ‖ pubY ‖ A_x ‖ A_y) mod L
 //	z      = (w + c · privKey) mod L
 //
-// `domain_field` is `keccak256("davinci-dkg:operator-register:v1") % Q`
-// (BN254 scalar field prime), matching `_operatorSchnorrChallenge` in
-// `solidity/src/DKGRegistry.sol`.
+// `domain` is `keccak256("davinci-dkg:operator-register:v1")`, matching
+// `_operatorSchnorrChallenge` in `solidity/src/DKGRegistry.sol`.
 package main
 
 import (

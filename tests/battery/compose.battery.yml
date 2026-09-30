@@ -7,11 +7,5 @@
 #
 services:
   dkg-node:
-    # Every epoch deals MAX_K = 16 pool keys; with batched finalization a
-    # single proof-carrying `finalizeEpoch` stores all of them at once, so
-    # every key of a Live epoch is claimable immediately — there is no
-    # activation step any more (the v3.1 `DAVINCI_DKG_ACTIVATE_AHEAD`
-    # override is gone).
-    # (v3.1, superseded: nodes kept only two keys activated ahead of the
-    # claim cursor, and the swarm's burst of registrations would have
-    # stalled on the activation rotation.)
+    # No overrides are needed today: every pool key of a Live epoch is
+    # claimable as soon as finalizeEpoch lands.

@@ -7,8 +7,8 @@
 // verifier expects; the `Proof` struct here is the bundle the witness
 // builder hands to the prover.
 //
-// There is no organizer-share DLEQ any more: the combine circuit proves
-// knowledge of sk_org directly (see docs/pool-keys.md, "Combine").
+// The organizer needs no DLEQ: the combine circuit proves knowledge of sk_org
+// directly (see docs/pool-keys.md, "Combine").
 package dleq
 
 import (

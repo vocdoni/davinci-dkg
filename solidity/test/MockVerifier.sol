@@ -4,11 +4,11 @@ pragma solidity 0.8.28;
 import {IZKVerifier} from "../src/interfaces/IZKVerifier.sol";
 
 /// @title  MockVerifier
-/// @notice Stand-in for a Groth16 verifier wrapper while the real v4 proofs
-///         do not exist yet: `verifyProof` accepts everything by default and
-///         reverts `ProofRejected` once toggled off, so tests can exercise
-///         both the happy path and the last-word verifier gate. Injected
-///         through the DKGManager constructor in the test helpers.
+/// @notice Stand-in for a Groth16 verifier wrapper: `verifyProof` accepts
+///         everything by default and reverts `ProofRejected` once toggled
+///         off, so tests can exercise both the happy path and the verifier
+///         gate. Injected through the DKGManager constructor in the test
+///         helpers.
 contract MockVerifier is IZKVerifier {
     error ProofRejected();
 

@@ -187,16 +187,16 @@ func TestContributionArtifactsMatchCompiledCircuit(t *testing.T) {
 
 // TestContributionCircuitSolvingLargeCoefficients verifies that the contribution
 // circuit is satisfiable when coefficients are near the BabyJubJub subgroup order
-// (r_bjj). Previously, EvaluatePolynomialNative used the BN254 scalar field as
-// the modulus; polynomial evaluations at x ≥ 2 could produce shares ≥ r_bjj,
-// breaking the AddModSubgroupOrder constraint (carry must be in {0,1}).
+// (r_bjj). EvaluatePolynomialNative must reduce modulo r_bjj, not the BN254
+// scalar field: an evaluation at x ≥ 2 could otherwise produce a share ≥ r_bjj
+// and break the AddModSubgroupOrder constraint (carry must be in {0,1}).
 //
 // Uses n=4, t=3 so the test is fast even at MaxN=32.
 func TestContributionCircuitSolvingLargeCoefficients(t *testing.T) {
 	const n, threshold = 4, 3
 	c := qt.New(t)
 
-	// Coefficients near r_bjj — these would have caused share overflow under the old code.
+	// Coefficients near r_bjj overflow a share reduced in the wrong field.
 	rbjj := group.ScalarField()
 	bigCoeff := new(big.Int).Sub(rbjj, big.NewInt(1)) // r_bjj - 1
 

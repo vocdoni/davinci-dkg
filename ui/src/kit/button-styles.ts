@@ -13,7 +13,7 @@ const VARIANTS: Record<ButtonVariant, string> = {
   secondary: 'bg-transparent text-ghost border border-charcoal hover:border-warm-gray hover:bg-onyx',
   // Borderless; toolbars, table row actions, icon buttons.
   subtle: 'bg-transparent text-pewter border border-transparent hover:text-ghost hover:bg-onyx',
-  // The one destructive treatment. Used sparingly (spec §5).
+  // The one destructive treatment. Used sparingly.
   danger: 'bg-transparent text-red border border-red/40 hover:bg-red/10 hover:border-red',
 }
 

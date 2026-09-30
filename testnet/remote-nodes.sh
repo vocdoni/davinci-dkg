@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run part of the dkg-node fleet on another host against the local testnet.
 #
-#   testnet/remote-nodes.sh up   HOST COUNT OFFSET   # e.g. up p4u@10.200.0.25 16 16
+#   testnet/remote-nodes.sh up   HOST COUNT OFFSET   # e.g. up user@10.0.0.2 16 16
 #   testnet/remote-nodes.sh down HOST
 #   testnet/remote-nodes.sh logs HOST
 #

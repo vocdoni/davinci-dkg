@@ -102,10 +102,8 @@ export const DEFAULT_FIXTURE: Required<
 }
 
 /**
- * Gas figures measured on the Sepolia deployment (see ../BENCHMARKS.md). The
- * v4 proof-carrying `finalizeEpoch` (one verifier, 16 Merkle trees, 48
- * key/root writes — docs/pool-keys-v4.md §13) and `revealOrganizerSecret`
- * are estimates until the v4 deployment is re-measured.
+ * Illustrative gas figures for the synthetic network; the measured values are
+ * in BENCHMARKS.md.
  */
 export const GAS = {
   registerKey: 322_112,

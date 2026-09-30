@@ -25,12 +25,11 @@ echo "Building contracts..."
 forge build --quiet
 
 echo "Deploying contracts..."
-# The v4 suite deploys 4 Groth16 verifier wrappers (each ~5-7 KB, well under
-# EIP-170's 24,576-byte ceiling) plus DKGRegistry, DKGManager, DKGAppManager
-# (the earlier Poseidon precompile-style contracts are gone). The
-# Anvil in testnet/docker-compose.yml still passes `--disable-code-size-limit`
-# for headroom; the matching `--code-size-limit 200000` here keeps the forge
-# broadcast simulation from refusing on the heaviest wrapper.
+# Deploys the four Groth16 verifier wrappers (each 5-7 KB, under EIP-170's
+# 24,576-byte ceiling) plus DKGRegistry, DKGManager and DKGAppManager. The
+# Anvil in testnet/docker-compose.yml passes `--disable-code-size-limit` for
+# headroom; the matching `--code-size-limit 200000` here keeps the forge
+# broadcast simulation from refusing the heaviest wrapper.
 forge script script/DeployAll.s.sol:DeployAllScript \
   --chain "$CHAIN_ID" \
   --rpc-url "$RPC_URL" \

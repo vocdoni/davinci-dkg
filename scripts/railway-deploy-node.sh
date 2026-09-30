@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Deploy one davinci-dkg node as a Railway service (public GHCR image, one
-# volume, always-restart) through Railway's GraphQL API. See railway-deploy.md.
+# volume, always-restart) through Railway's GraphQL API. See docs/node.md.
 #
 #   RAILWAY_TOKEN_FILE=railway-api-key \
 #   RAILWAY_PROJECT_ID=<uuid> RAILWAY_ENVIRONMENT_ID=<uuid> \
-#   NODE_NAME=dkg-node9 NODE_KEY_FILE=~/davinci-dkg-keys/node9.json \
+#   NODE_NAME=dkg-node1 NODE_KEY_FILE=~/keys/node1.json \
 #   scripts/railway-deploy-node.sh
 #
 # With NETWORK and RPC unset the node runs on its default network, Gnosis
@@ -12,9 +12,9 @@
 # Sepolia testnet needs both, e.g. NETWORK=sepolia
 # RPC=https://ethereum-sepolia-rpc.publicnode.com,https://1rpc.io/sepolia.
 #
-# NODE_KEY_FILE holds `[{"address": "0x…", "private_key": "0x…"}]` (the fleet
-# format). The key travels only inside the request body read from a 0600
-# temp file; it is never an argument and never printed.
+# NODE_KEY_FILE holds `[{"address": "0x…", "private_key": "0x…"}]`. The key
+# travels only inside the request body read from a 0600 temp file; it is
+# never an argument and never printed.
 set -euo pipefail
 
 : "${RAILWAY_TOKEN_FILE:=railway-api-key}"

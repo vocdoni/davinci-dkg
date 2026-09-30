@@ -32,8 +32,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 OUTPUT="${1:-/tmp/dkg-benchmark.jsonl}"
 TESTNET_DIR="${REPO_ROOT}/testnet"
-# The battery's compose override is now a no-op (v4: batched finalization,
-# no activation step; the v3.1 DAVINCI_DKG_ACTIVATE_AHEAD=8 env is gone).
+# The battery's compose override, layered over the testnet stack.
 COMPOSE=(docker compose -f docker-compose.yml -f ../tests/battery/compose.battery.yml)
 
 # Participant counts to benchmark.

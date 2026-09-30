@@ -15,7 +15,7 @@ export const MAX_K = 16;
 /** `log2(MAX_N)`: depth of the share-commitment Merkle tree of one pool key. */
 export const MERKLE_DEPTH = 5;
 
-// ─── Compact contribution transcript (docs/pool-keys-v4.md §3, §5) ───────────
+// ─── Compact contribution transcript (docs/pool-keys.md) ─────────────────────
 //
 // `L_C = MaxK·(2t+n) + 5n` words, no padding, regions in this order:
 //
@@ -120,7 +120,7 @@ export class ContributionLayout {
   }
 }
 
-// ─── Finalization transcript (docs/pool-keys-v4.md §7) ───────────────────────
+// ─── Finalization transcript (docs/pool-keys.md) ────────────────────────────
 //
 // Fixed `L_F = 2·MaxN + MaxK·(2 + 2·MaxN)` words (1,120 at the current bounds):
 //
@@ -162,7 +162,7 @@ export function finalizeShareCommitmentOffset(key: number, member: number): numb
   return finalizeKeyOffset(key) + 2 + 2 * member;
 }
 
-// ─── Decrypt-combine transcript (unchanged by v4) ────────────────────────────
+// ─── Decrypt-combine transcript ──────────────────────────────────────────────
 
 /** `6 + 3·MaxN`: ciphertext, `PK_org`, participant indexes, partial decryptions. */
 export const COMBINE_TRANSCRIPT_WORDS = 6 + 3 * MAX_N;

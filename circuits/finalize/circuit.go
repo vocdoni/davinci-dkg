@@ -1,8 +1,7 @@
-// Package finalize holds the batched finalization circuit (docs/pool-keys-v4.md
-// §6, §7): one proof, verified by `finalizeEpoch`, that derives every pool key
-// of an epoch and every committee member's share commitment for each key from
-// the accepted contributions. It replaces the proof-less finalize plus the
-// per-key `circuits/poolkey` activation of v3.1, so `Live` means every key and
+// Package finalize holds the batched finalization circuit (docs/pool-keys.md,
+// "Finalization proof"): one proof, verified by `finalizeEpoch`, that derives
+// every pool key of an epoch and every committee member's share commitment for
+// each key from the accepted contributions, so `Live` means every key and
 // every share-commitment root is stored and usable.
 package finalize
 
@@ -23,7 +22,7 @@ const (
 )
 
 // TranscriptWords is the fixed word count L_F of the finalization calldata
-// transcript, 2·MaxN + MaxK·(2 + 2·MaxN) (docs/pool-keys-v4.md §7):
+// transcript, 2·MaxN + MaxK·(2 + 2·MaxN):
 //
 //	[0, N)                    participant indexes I[d]      (0 for rows d ≥ a)
 //	[N, 2N)                   contribution hashes h[d]      (0 for rows d ≥ a)
@@ -37,8 +36,8 @@ const KeyWords = 2 + 2*MaxParticipants
 // PublicInputWords is the number of public inputs the verifier reads.
 const PublicInputWords = 7
 
-// Digest tags (§7): domain-separate the three Poseidon levels of the
-// transcript digest.
+// Digest tags domain-separate the three Poseidon levels of the transcript
+// digest.
 const (
 	digestTagRows  = 0
 	digestTagKey   = 1
@@ -63,7 +62,7 @@ type FinalizeCircuit struct {
 	Threshold     frontend.Variable `gnark:",public"`
 	CommitteeSize frontend.Variable `gnark:",public"`
 	AcceptedCount frontend.Variable `gnark:",public"`
-	// TranscriptDigest = T of §7: H(2, eid, t, n, a, K, L_F, R, B_0…B_(K−1))
+	// TranscriptDigest = T = H(2, eid, t, n, a, K, L_F, R, B_0…B_(K−1))
 	// with R the digest of the dealer rows and B_j the digest of key j's
 	// transcript block, all over the exact masked words the BRLC commits to.
 	TranscriptDigest     frontend.Variable `gnark:",public"`

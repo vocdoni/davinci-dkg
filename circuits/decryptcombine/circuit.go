@@ -28,8 +28,8 @@ var generator = func() twistededwards.Point {
 //
 //	C_2 = m·G + Σ λ_k · δ_{x_k} + Δ_org
 //
-// Δ_org is not calldata any more: the organizer secret is a private witness
-// and the circuit proves knowledge of it —
+// Δ_org is not calldata: the organizer secret is a private witness and the
+// circuit proves knowledge of it —
 //
 //	PK_org == sk_org·G   and   Δ_org == sk_org·C_1
 //

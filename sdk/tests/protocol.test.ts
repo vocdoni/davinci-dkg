@@ -33,7 +33,7 @@ describe('protocol constants', () => {
     );
   });
 
-  it('the v4 BRLC domains are the v2 strings, not the v1 / poolkey ones', () => {
+  it('the BRLC domains are the v2 strings, not the retired v1 / poolkey ones', () => {
     expect(DomainContributionTranscriptV2Str).toBe('davinci-dkg:contribution:v2');
     expect(DomainFinalizeTranscriptV2Str).toBe('davinci-dkg:finalize:v2');
     expect(DomainDecryptCombineTranscriptV1Str).toBe('davinci-dkg:decrypt-combine:v1');
@@ -43,7 +43,7 @@ describe('protocol constants', () => {
     expect(DomainFinalizeTranscriptV2).toBe(
       '0xe28959afa6ea38549c61aff75344fc2c9f148f1259fcef44fdd297a1d9a39d0f',
     );
-    // A v3.1 contribution or activation transcript must not verify under v4.
+    // A transcript bound to a retired domain must not verify.
     expect(DomainContributionTranscriptV2).not.toBe(keccak256(toHex('davinci-dkg:contribution:v1')));
     expect(DomainFinalizeTranscriptV2).not.toBe(keccak256(toHex('davinci-dkg:poolkey:v1')));
   });

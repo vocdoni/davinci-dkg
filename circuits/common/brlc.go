@@ -102,8 +102,8 @@ func DeriveChallengeNative(roundHash *big.Int, domain [32]byte, anchor *big.Int)
 	return challenge, nil
 }
 
-// GatedFold is the compact-transcript variant of BRLC (docs/pool-keys-v4.md
-// §4). The circuit still traverses its fixed-size witness arrays in region
+// GatedFold is the compact-transcript variant of BRLC (docs/pool-keys.md,
+// "Contribution proof"). The circuit still traverses its fixed-size witness arrays in region
 // order, but every candidate word carries a gate b ∈ {0, 1} derived from the
 // public counts; an inactive word neither contributes to the commitment nor
 // advances the exponent, so the fold equals BRLC over exactly the words the

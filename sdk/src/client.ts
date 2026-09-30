@@ -498,8 +498,8 @@ export class DKGClient {
 
   /**
    * The pool's claim cursor: `nextIndex` is the key the next registration
-   * claims (`MAX_K` once the pool is spent). There is no activation state any
-   * more — a Live epoch has every key.
+   * claims (`MAX_K` once the pool is spent). Every key of a Live epoch is
+   * usable.
    */
   async getPoolStatus(epochId: `0x${string}`): Promise<PoolStatus> {
     const nextIndex = await this._manager.read.getPoolStatus([epochId as any]);

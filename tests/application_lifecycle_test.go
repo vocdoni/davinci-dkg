@@ -277,8 +277,8 @@ func TestRevealOrganizerSecret(t *testing.T) {
 }
 
 // TestSubmitCiphertextRequiresRegisteredApplication asserts the contract
-// refuses a ciphertext for an aid nobody registered — there is no epoch-key
-// path any more.
+// refuses a ciphertext for an aid nobody registered: there is no epoch-key
+// path.
 func TestSubmitCiphertextRequiresRegisteredApplication(t *testing.T) {
 	if !helpers.IsIntegrationEnabled() {
 		t.Skip("integration tests disabled")

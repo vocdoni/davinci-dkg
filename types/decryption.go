@@ -6,9 +6,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 )
 
-// Role tags partial decryptions with their producer per paper §6.3 line 1161.
-// Mirrors `solidity/src/libraries/DKGTypes.sol::Role` and
-// `internal/protocol/protocol.go::Role`.
+// Role tags a partial decryption with its producer.
 type Role uint8
 
 const (
@@ -18,14 +16,10 @@ const (
 )
 
 // PartialDecryption is one participant's decryption share plus proof material.
-//
-// `AID` and `Role` are P9 additions for per-application decryption (paper §4.4
-// lines 695–704, paper §6.3 line 1161). They default to zero / RoleCommittee
-// for backward-compatible callers that operate at the per-epoch level only.
 type PartialDecryption struct {
 	EpochID          string
-	AID              [32]byte // application identifier (zeros for legacy per-epoch path)
-	Role             Role     // 1 = COMMITTEE (default), 2 = ORGANIZER
+	AID              [32]byte // application identifier
+	Role             Role     // 1 = committee, 2 = organizer
 	Participant      common.Address
 	ParticipantIndex uint16
 	CiphertextIndex  uint16

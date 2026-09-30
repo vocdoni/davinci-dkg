@@ -40,10 +40,10 @@ type Config struct {
 	DecryptLookbackBlocks uint64 `mapstructure:"decrypt-lookback-blocks"`
 
 	// EpochPolicy is the per-epoch policy this node proposes when it wins
-	// the auto-create race. All fields are optional: missing fields fall
-	// back to safe defaults (committee of 4, threshold 3, α=1.5, no
-	// decryption-policy gating). Only consulted when AutoCreateEpochs is
-	// true.
+	// the auto-create race. With the default committee size of 0 the policy
+	// is derived from the registry (adaptivePolicy): three quarters of the
+	// active operators capped at MaxN, a majority threshold, and α=1.5.
+	// Only consulted when AutoCreateEpochs is true.
 	EpochPolicy EpochPolicyConfig `mapstructure:"epoch-policy"`
 }
 

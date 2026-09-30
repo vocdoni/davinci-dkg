@@ -32,11 +32,9 @@ x-node-env: &node-env
   DAVINCI_DKG_WEB3_RPC: "http://anvil:8545"
   DAVINCI_DKG_LOG_LEVEL: "debug"
   DAVINCI_DKG_ARTIFACTS_DIR: /artifacts
-  # The /shared bind mount is only used to coordinate atomic key-index
-  # allocation between node replicas via mkdir-lock (see entrypoint-node.sh).
-  # Ciphertext distribution is now on-chain via CiphertextSubmitted events.
-  # Registry and Manager addresses are read from /addresses/addresses.env
-  # via the entrypoint script.
+  # The /shared volume coordinates key-index allocation between node
+  # replicas with a mkdir lock (see entrypoint-node.sh). The contract
+  # addresses are read from /addresses/addresses.env by the entrypoint.
 
 services:
   # ── Chain ──────────────────────────────────────────────────────────────────
@@ -58,9 +56,7 @@ services:
       - "cancun"
       - --disable-code-size-limit
       # Keep the per-block gas ceiling high so the heaviest deployments
-      # (the Groth16 verifier wrappers) fit comfortably. (The earlier PoseidonT
-      # precompile-style contracts no longer exist — v4 ships 4 Groth16
-      # verifiers + DKGRegistry + DKGManager + DKGAppManager.)
+      # (the Groth16 verifier wrappers) fit comfortably.
       - --gas-limit
       - "100000000"
     ports:
@@ -126,27 +122,16 @@ services:
       - shared:/shared
       - ../testnet:/testnet:ro   # entrypoint scripts
 
-  # The testnet does NOT bundle a UI service any more. The new ui/
-  # Dockerfile bakes chain config at build time, but the deployer's
-  # addresses are only known at runtime — reconciling those needs a
-  # runtime templating layer that's specific to this scenario.
-  #
-  # To browse the local chain instead, in another terminal run:
+  # There is no UI service: the contract addresses are only known once the
+  # deployer has run. To browse the local chain, run in another terminal:
   #
   #   make ui-dev \
   #     RPC_URL=http://127.0.0.1:8545 \
-  #     MANAGER_ADDRESS=$(grep MANAGER testnet/addresses.env | cut -d= -f2) \
+  #     MANAGER_ADDRESS=$(curl -s http://127.0.0.1:8888/addresses.env | grep '^MANAGER=' | cut -d= -f2) \
   #     CHAIN_ID=1337 CHAIN_NAME=anvil-testnet DEPLOY_BLOCK=0
   #
-  # (After `make testnet-up` has produced testnet/addresses.env via the
-  # deployer.) Vite's dev server on :5174 serves the UI against your
-  # locally-running Anvil.
-
-  # The standalone scenario orchestrator (dkg-runner) was removed: each
-  # davinci-dkg-node now auto-creates new epochs by default
-  # (--auto-create-epochs=true) on the contract's cadence schedule. To
-  # drive a one-shot end-to-end run, just bring the node fleet up with
-  # `make testnet-up` and watch progress via `make testnet-logs`.
+  # The nodes create epochs on their own (--auto-create-epochs); follow them
+  # with `make testnet-logs`.
 
 volumes:
   addresses: {}

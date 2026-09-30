@@ -88,8 +88,7 @@ type fixtureResult struct {
 	// caller asked for; every key of a Live epoch is claimable.
 	Shares  []string `json:"shares"`
 	PoolKey point    `json:"poolKey"`
-	// ActivatedKeys is len(Shares): the keys the output describes. The name
-	// predates batched finalization, when keys were proven one at a time.
+	// ActivatedKeys is len(Shares): the keys the output describes.
 	ActivatedKeys int `json:"activatedKeys"`
 }
 

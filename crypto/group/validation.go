@@ -45,9 +45,9 @@ var bigOne = big.NewInt(1)
 
 // IsOnCurve reports whether (x, y) satisfies the BabyJubJub curve equation
 // in the twisted-Edwards form gnark-crypto uses: a·x² + y² = 1 + d·x²·y²
-// (mod Q). It evaluates the equation itself: Decode/SetPoint only copy the
-// coordinates and never checked it, so an off-curve pair such as (0, 0)
-// used to pass.
+// (mod Q). It evaluates the equation itself because Decode/SetPoint only copy
+// the coordinates, so relying on them would accept an off-curve pair such as
+// (0, 0).
 func IsOnCurve(x, y *big.Int) bool {
 	if !IsCanonical(x, y) {
 		return false

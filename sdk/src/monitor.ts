@@ -225,12 +225,11 @@ export function watchCiphertextSubmitted(
  * One-shot snapshot of a ciphertext's decryption pipeline.
  *
  * A ciphertext is combinable once the committee has posted `threshold`
- * partial decryptions and the decryption window is open
- * (`requireDecryptionOpen`) — there is no separate organizer-share gate in
- * either mode: an `OrganizerLocked` application's combine proof consumes the
- * organizer secret directly (see `revealOrganizerSecret`), and an `Automatic`
- * one uses the identity secret. This snapshot doesn't count partials (no
- * cheap on-chain counter exists); use `getPartialDecryptionEvents` for that.
+ * partial decryptions and `requireDecryptionOpen` passes: the decryption
+ * window is open and, for an `OrganizerLocked` application, the organizer
+ * secret has been revealed. This snapshot reports whether the ciphertext
+ * exists and whether it was combined; it does not count partials (no cheap
+ * on-chain counter exists), use `getPartialDecryptionEvents` for that.
  */
 export async function decryptionProgress(
   client: DKGClient,

@@ -17,10 +17,8 @@ import {BabyJubJub} from "../src/libraries/BabyJubJub.sol";
 ///
 ///         The vectors in the "extended-coordinate edge cases" section were
 ///         generated with the same gnark-crypto curve (`GetEdwardsCurve()`,
-///         v0.19.x) and cross-checked against the previous affine
-///         implementation of this library before the switch to
-///         inversion-free extended coordinates, so they pin both the
-///         gnark encoding and the pre-existing on-chain behaviour.
+///         v0.19.x) and cross-checked against an affine implementation, so
+///         they pin both the gnark encoding and the affine results.
 contract BabyJubJubTest is Test {
     /// @dev DSTest-compatible log event (decoded by forge by signature).
     event log_named_uint(string key, uint256 val);

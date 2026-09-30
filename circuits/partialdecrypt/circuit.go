@@ -13,8 +13,8 @@ import (
 // The Fiat-Shamir challenge transcript binds
 // (eid, aid, ctIdx, i, D_i, C_1, δ_i, A_i, B_i), so a proof cannot be
 // replayed across epochs, applications, ciphertexts or participants. The
-// organizer share is a different object entirely — a keccak Chaum-Pedersen
-// proof verified inside the combine circuit, not here.
+// organizer's part of the decryption is proven inside the combine circuit,
+// not here.
 type PartialDecryptCircuit struct {
 	RoundHash        frontend.Variable    `gnark:",public"` // semantically: eid
 	Aid              frontend.Variable    `gnark:",public"` // application identifier

@@ -1,12 +1,8 @@
-# UI cross-impl vectors
+# Explorer copy of the cross-implementation vectors
 
-Byte-for-byte copies of `tests/vectors/*.json`, which `cmd/protocol-vectors`
-generates from the Go side (`make vectors`). They are mirrored here so the UI
-test suite can pin the protocol constants it renders and the encodings the SDK
-performs in the browser, without reaching outside the `ui/` package at runtime.
+Identical copies of `tests/vectors/*.json`, kept inside `ui/` so the explorer's tests can pin the
+protocol constants and the SDK's encodings without reading outside the package.
+`src/lib/protocol-vectors.test.ts` checks both that the SDK reproduces every value and that these
+files match `tests/vectors/`.
 
-`src/lib/protocol-vectors.test.ts` asserts both that the SDK reproduces every
-value and that this copy is identical to `tests/vectors/`, so a stale mirror
-fails the UI suite rather than silently drifting.
-
-Regenerate with `make vectors`, then copy the files here. Do not edit by hand.
+`make vectors` regenerates the originals and refreshes this copy. Do not edit these files.

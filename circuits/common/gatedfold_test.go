@@ -89,8 +89,7 @@ func TestFoldReferenceSkipsInactiveWords(t *testing.T) {
 
 		if count > 0 && count < gatedFoldSlots {
 			// The padded fold (inactive words zeroed, exponent still
-			// advancing) is a different commitment: that is the v3.1 layout
-			// the compact transcript no longer streams.
+			// advancing) is a different commitment.
 			padded := make([]*big.Int, len(words))
 			for q := range words {
 				padded[q] = big.NewInt(0)

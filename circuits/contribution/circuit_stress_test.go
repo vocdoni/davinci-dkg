@@ -1,8 +1,8 @@
 package contribution
 
-// circuit_stress_test.go – exhaustive prove+verify stress test for the
-// contribution circuit.  Reproduces the non-deterministic "pairing doesn't
-// match" error observed during the MaxN=32 gas benchmark.
+// circuit_stress_test.go – repeated prove+verify stress test for the
+// contribution circuit, to catch non-deterministic "pairing doesn't match"
+// failures.
 //
 // Run (no integration infra needed):
 //

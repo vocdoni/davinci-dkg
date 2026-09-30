@@ -61,9 +61,9 @@ func (c *ContributionCircuit) Define(api frontend.API) error {
 	// PrefixMask returns all-active when count > size, so
 	// without these the statement could prove a partial set while
 	// claiming a larger one.
-	// 1 ≤ t ≤ n ≤ MaxN and 1 ≤ contributorIndex ≤ n (docs/pool-keys.md
-	// §3). The compact transcript length is a function of t and n, so the
-	// zero cases are excluded here and not left to the contract alone.
+	// 1 ≤ t ≤ n ≤ MaxN and 1 ≤ contributorIndex ≤ n. The compact transcript
+	// length is a function of t and n, so the zero cases are excluded here
+	// and not left to the contract alone.
 	api.AssertIsDifferent(c.Threshold, 0)
 	api.AssertIsLessOrEqual(c.Threshold, MaxCoefficients)
 	api.AssertIsLessOrEqual(c.CommitteeSize, MaxRecipients)
@@ -199,9 +199,9 @@ func (c *ContributionCircuit) Define(api frontend.API) error {
 	}
 	api.AssertIsEqual(c.ShareHash, shareHash)
 
-	// Compact BRLC (docs/pool-keys.md §4): the same fixed-size region order
-	// as before, but every word is gated by the public counts — a
-	// commitment coordinate by [m < t], everything else by [i < n] — so an
+	// Compact BRLC: the fixed-size arrays are walked in region order, but
+	// every word is gated by the public counts — a commitment coordinate by
+	// [m < t], everything else by [i < n] — so an
 	// inactive slot neither contributes nor advances the exponent. The fold
 	// therefore equals the contract's canonical BRLC over the L_C calldata
 	// words, which carry no padding, and the word count pins the gates to

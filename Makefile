@@ -9,7 +9,6 @@
 DKG_NODE_COUNT        ?= 3
 DKG_THRESHOLD         ?= 2
 BATTERY_RUN           ?= TestOrganizerSwarm|TestRevealAdversary
-DKG_DISCLOSURE_ALLOWED ?= false
 
 # Circuit artifact cache directory (mirrors DAVINCI_DKG_ARTIFACTS_DIR default)
 ARTIFACTS_DIR ?= $(HOME)/.davinci/artifacts
@@ -61,16 +60,11 @@ help: ## Show this help message
 	@echo "                  DKG_THRESHOLD      (default 2)"
 	@echo "                  Note: committee size is capped by the circuit"
 	@echo "                  bound MaxN (see circuits/common/sizes.go, currently 32)."
-	@echo "  testnet-run     Run the full DKG scenario (create round → encrypt → decrypt)"
-	@echo "                  DKG_NODE_COUNT         (default 3)"
-	@echo "                  DKG_THRESHOLD          (default 2)"
-	@echo "                  DKG_DISCLOSURE_ALLOWED (default false) enables the"
-	@echo "                                         reveal-share disclosure phase"
+	@echo "  testnet-run     Deprecated: the nodes create epochs themselves;"
+	@echo "                  follow them with testnet-logs"
 	@echo "  testnet-logs    Tail logs of the dkg-node containers"
 	@echo "  testnet-down    Stop the testnet and wipe Docker volumes"
-	@echo "  battery-testnet-up  Start the testnet tuned for tests/battery: batched"
-	@echo "                  finalization — one proof-carrying finalizeEpoch stores"
-	@echo "                  all MAX_K pool keys at once, so no activation step"
+	@echo "  battery-testnet-up  Start the testnet with the tests/battery compose override"
 	@echo "  battery         Run the battery against a running testnet (BATTERY_RUN)"
 	@echo ""
 	@echo "UI Commands:"
@@ -93,8 +87,8 @@ help: ## Show this help message
 	@echo "                   RPC_URL is set on the command line."
 	@echo ""
 	@echo "Development Commands:"
-	@echo "  build            Build all Go binaries (node, runner, circuit compiler)"
-	@echo "  test             Run fast Go unit tests (no chain, no Docker)"
+	@echo "  build            Build all Go binaries (node, dkgapp and the tooling)"
+	@echo "  test             Run the Go unit tests, circuits included (no chain, no Docker)"
 	@echo "  test-integration Run heavy chain-backed integration tests via Docker"
 	@echo ""
 
@@ -133,7 +127,7 @@ vectors: ## Regenerate cross-impl test vectors under tests/vectors/ (mirrored in
 	@go run ./cmd/protocol-vectors -dir tests/vectors
 	@cp tests/vectors/*.json ui/tests/vectors/
 
-vectors-check: ## Regenerate vectors and fail if anything changed (CI guard)
+vectors-check: ## Regenerate vectors and fail if anything changed
 	@go run ./cmd/protocol-vectors -dir tests/vectors
 	@cp tests/vectors/*.json ui/tests/vectors/
 	@git diff --exit-code -- tests/vectors/ ui/tests/vectors/ \
@@ -186,10 +180,8 @@ testnet-run: ## (Deprecated alias) Wait for the running dkg-node fleet to auto-c
 	@echo "Bring the fleet up with 'make testnet-up' and tail logs with"
 	@echo "'make testnet-logs' to watch the schedule."
 
-# tests/battery/compose.battery.yml is an empty override in v4: with
-# batched finalization (one proof-carrying finalizeEpoch stores all
-# MAX_K = 16 keys at once) every key of a Live epoch is usable at once —
-# the v3.1 DAVINCI_DKG_ACTIVATE_AHEAD=8 node env is gone (v3.1, superseded).
+# tests/battery/compose.battery.yml is the place for battery-specific node
+# settings; it currently overrides nothing.
 BATTERY_COMPOSE := -f docker-compose.yml -f ../tests/battery/compose.battery.yml
 
 battery-testnet-up: ## Start the testnet tuned for the battery (see tests/battery/README.md)
@@ -266,10 +258,10 @@ build: ## Build all Go binaries
 	@echo "Building binaries..."
 	go build ./cmd/...
 
-test: ## Run fast unit tests
+test: ## Run the Go unit tests, circuits included
 	@echo "Running unit tests..."
-	@# -timeout is per package: circuits/contribution (5.9M constraints, ~10 min
-	@# Groth16 setup, v4) needs about 20 min on its own.
+	@# -timeout is per package: circuits/contribution (about 10 min of Groth16
+	@# setup) needs about 20 min on its own.
 	go test -v $$(go list ./... | grep -v github.com/vocdoni/davinci-dkg/tests) -timeout=120m -failfast
 
 test-integration: ## Run heavy integration tests

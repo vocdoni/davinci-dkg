@@ -8,7 +8,7 @@
 //
 // Every word is a 32-byte big-endian integer strictly below the BN254 scalar
 // field modulus. Decoders reject — never reduce — a non-canonical word, so a
-// transcript has exactly one encoding (docs/pool-keys-v4.md §2).
+// transcript has exactly one encoding.
 
 import { decodeFunctionData, keccak256, type Hex } from 'viem';
 import {
@@ -283,7 +283,7 @@ export function encodeContributionTranscript(
  * digest `H(eid, contributorIndex, threshold, keyDigest_0 … keyDigest_15)`
  * with `keyDigest_j = H(A[j][0].x, A[j][0].y, …)` over the commitment vector
  * padded to `MaxN` coefficients with the identity `(0, 1)`. Digests absorb
- * the padded vectors even though the calldata is compact (§4).
+ * the padded vectors even though the calldata is compact.
  */
 export function contributionCommitmentsHash(
   epochId: Hex,
@@ -448,7 +448,7 @@ export function encodeFinalizeTranscript(transcript: FinalizeTranscript): bigint
   return words;
 }
 
-/** The three Poseidon levels of the finalization digest (docs/pool-keys-v4.md §7). */
+/** The three Poseidon levels of the finalization digest (docs/pool-keys.md). */
 export interface FinalizeDigestParts {
   /** `R = H(0, I[0..N), h[0..N))`. */
   rows: bigint;

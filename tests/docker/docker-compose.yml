@@ -35,9 +35,8 @@ services:
       - --hardfork
       - "cancun"
       - --disable-code-size-limit
-      # Raise the per-block gas ceiling so the giant PoseidonT3/T5/T6
-      # deployments fit. Default 30M is below what the full P0 deploy
-      # needs (the precompile-style poseidon contracts are huge).
+      # Keep the per-block gas ceiling high so the heaviest deployments
+      # (the Groth16 verifier wrappers) fit comfortably.
       - --gas-limit
       - "100000000"
     ports:

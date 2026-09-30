@@ -28,8 +28,8 @@ const (
 // for compilation, and whether its runtime stays resident. Only the two small
 // decryption circuits do: the contribution and finalize proving keys (243 MB
 // and 436 MB on disk, a few GB decoded) are loaded for one proof and dropped
-// right after, so a node at rest holds a few hundred MB instead of the 5 GB
-// of keys v0.5 kept resident.
+// right after, so a node at rest holds a few hundred MB instead of about 5 GB
+// of keys.
 var circuitSpecs = [...]struct {
 	name      string
 	artifacts *circuits.CircuitArtifacts

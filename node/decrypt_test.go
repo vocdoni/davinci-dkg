@@ -184,8 +184,8 @@ func bindTestChain(t *testing.T, n *Node, chain interface {
 	n.manager, n.appManager, n.logs = m, am, chain
 }
 
-// Partial decryptions are no longer read with a log query per slot per tick:
-// the scan records every PartialDecryptionSubmitted of a tracked slot as it
+// Partial decryptions are not read with a log query per slot per tick: the
+// scan records every PartialDecryptionSubmitted of a tracked slot as it
 // passes, in chain order, and acceptedPartials answers from that record —
 // the first t distinct participants, exactly as the event log would give
 // them, with the block the last of them landed in. Partials of slots the
@@ -477,8 +477,8 @@ func TestRevealRescansApplicationsWithoutParkedSlots(t *testing.T) {
 // One eth_getLogs per range covers every event kind the node acts on:
 // CiphertextSubmitted, OrganizerSecretRevealed, PartialDecryptionSubmitted
 // and DecryptionCombined, over the manager and the app manager together,
-// dispatched by topic 0 to the abigen parsers. Each kind must land where its
-// dedicated filter used to put it: a new slot in pending, a reveal waking
+// dispatched by topic 0 to the abigen parsers. Each kind must land in its
+// place: a new slot in pending, a reveal waking
 // the parked slots of its application (and refreshing its cached view), a
 // partial in the slot's record (this node's own marking the partial done),
 // a combine retiring the slot.

@@ -14,13 +14,12 @@ import (
 	"github.com/vocdoni/davinci-dkg/web3"
 )
 
-// A poll cycle used to read the chain head in every subsystem (liveness,
-// auto-create, each lifecycle step, the ciphertext scan, the service loop)
-// and re-read records that cannot change (a Live epoch, an application's
-// policy, its pool key) for every slot on every tick. Against a public RPC
-// endpoint that is what exhausted the quota, so the tick now reads the head
-// once, shares it, skips the chain reads altogether when no block arrived
-// since the last complete tick and keeps every immutable record in memory.
+// Each tick reads the chain head once and shares it with every subsystem
+// (liveness, auto-create, each lifecycle step, the ciphertext scan, the
+// service loop), skips the chain reads altogether when no block arrived since
+// the last complete tick, and keeps records that cannot change (a Live epoch,
+// an application's policy, its pool key) in memory. Reading them per slot per
+// tick exhausts a public RPC endpoint's quota.
 // This file holds the per-tick context, the immutable-record caches and the
 // per-method RPC accounting the node logs.
 

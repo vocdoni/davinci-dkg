@@ -3,8 +3,8 @@
 // The shell's global search box routes by shape; this shows what the *store*
 // actually knows, so an epoch id pasted into the operators filter (or an
 // address pasted into the applications filter) is one click from its page
-// instead of a dead end. Shared by both stream D list pages; it lives in a
-// page folder because that is what this stream owns.
+// instead of a dead end. Shared by the operators and applications list
+// pages.
 
 import { Link } from 'react-router-dom'
 import { useStoreSearch } from '~data/hooks'

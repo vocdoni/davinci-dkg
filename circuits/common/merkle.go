@@ -12,7 +12,7 @@ import (
 const _ = uint(1<<MerkleDepth-MaxN) + uint(MaxN-1<<MerkleDepth)
 
 // The keccak Merkle tree over one pool key's per-member share commitments:
-// activatePoolKey stores its root and submitPartialDecryption proves the
+// finalizeEpoch stores its root and submitPartialDecryption proves the
 // member's leaf against it. Keccak (not Poseidon) because only the contract
 // ever recomputes a path. See docs/pool-keys.md.
 //
@@ -61,7 +61,7 @@ func MerkleNode(left, right [32]byte) [32]byte {
 // ShareCommitmentLeaves lays out one pool key's share commitments as the MaxN
 // tree leaves: leaf[p-1] = ShareCommitmentLeaf(D_p) for every listed
 // participant p, EmptyLeaf for every other slot. Callers pass the whole
-// committee (indexes 1..committeeSize), because the activation transcript
+// committee (indexes 1..committeeSize), because the finalization transcript
 // carries a D_p for every member, contributing or not.
 func ShareCommitmentLeaves(
 	participantIndexes []uint16,
