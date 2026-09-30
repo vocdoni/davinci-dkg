@@ -118,15 +118,20 @@ type Node struct {
 	taintFile   string        // where taintedApps is persisted ("" disables)
 	stateDir    string        // <datadir>/<chainid>-<manager>, "" without a datadir
 
-	// auto-create-epoch state. autoCreateNextStart is the
-	// nextEpochStartBlock() value the most recent attempt was scheduled
-	// against; we skip re-scheduling for the same threshold so a single
-	// jitter-delayed goroutine fires per cadence window.
-	autoCreateNextStart uint64
-	// autoCreateEarlyPool is the (epoch, poolNext) observation the most
-	// recent early attempt was fired against, so one attempt is made per
-	// registration that drains the pool (or per aborted epoch).
-	autoCreateEarlyPool poolSlot
+	// auto-create-epoch state (see maybeScheduleAutoCreate). autoGate spaces
+	// the createEpoch and abortEpoch attempts. autoBusy is set while one
+	// runs, so a retry never overlaps the attempt it repeats. autoTxNonce is
+	// the nonce, plus one, of the transaction the latest attempt signed (zero
+	// for none): a retry waits while the txmanager still has it in flight.
+	// autoPolicyRefused remembers that createEpoch reverted InvalidPolicy, so
+	// the misconfiguration is reported once rather than on every retry, and
+	// autoWarnedAt rate-limits the warning for a chain read the step could
+	// not make.
+	autoGate          autoGate
+	autoBusy          atomic.Bool
+	autoTxNonce       atomic.Uint64
+	autoPolicyRefused atomic.Bool
+	autoWarnedAt      uint64
 	// nextStart caches nextEpochStartBlock() for the epoch nonce it was read
 	// at: the contract derives it from the newest epoch's start block, which
 	// only moves when a new epoch is created (nextStartNonce == 0 means
@@ -671,48 +676,135 @@ func (n *Node) poll(ctx context.Context, cfg *Config) {
 	}
 }
 
+// autoRetryBlocks is how long the chain has to answer an auto-create or
+// abort attempt before the node makes it again. Each attempt is a single
+// transaction that an RPC fault (a rate-limited public endpoint) can lose,
+// and every other node may have lost theirs the same way, so an attempt
+// whose trigger still holds this many blocks later is repeated.
+const autoRetryBlocks = 20
+
+// autoAction is what an auto attempt does.
+type autoAction uint8
+
+const (
+	autoCadence autoAction = iota + 1 // createEpoch at the cadence
+	autoEarly                         // createEpoch behind a spent or Aborted newest epoch
+	autoAbort                         // abortEpoch on a dead newest epoch
+)
+
+// autoTrigger is the chain observation an attempt is made against: the
+// cadence threshold, the early-creation slot (epoch and pool cursor, or
+// abortedEpochSlot) or the dead epoch.
+type autoTrigger struct {
+	action autoAction
+	slot   poolSlot
+	next   uint64
+}
+
+// autoGate spaces the auto attempts: one per trigger, repeated
+// autoRetryBlocks later while the chain still shows the same trigger and the
+// previous attempt's transaction is no longer in flight. A new trigger goes
+// at once.
+type autoGate struct {
+	last autoTrigger
+	at   uint64
+}
+
+// due reports whether an attempt against t is made at head, and records it
+// if so. inFlight says the previous attempt's transaction is still pending
+// in the txmanager, which rebroadcasts and fee-bumps it by itself; a retry
+// then would only queue a duplicate at the next nonce.
+func (g *autoGate) due(t autoTrigger, head uint64, inFlight bool) bool {
+	if g.last == t && (head < g.at+autoRetryBlocks || inFlight) {
+		return false
+	}
+	g.last, g.at = t, head
+	return true
+}
+
+// autoTxInFlight reports whether the transaction the latest auto attempt
+// signed is still tracked by the txmanager as pending.
+func (n *Node) autoTxInFlight() bool {
+	nonce := n.autoTxNonce.Load()
+	return nonce != 0 && n.txm.Pending(nonce-1)
+}
+
+// autoTransactOpts is NewTransactOpts for an auto attempt: it records the
+// nonce of whatever the attempt signs, sent or not, for autoTxInFlight.
+func (n *Node) autoTransactOpts(ctx context.Context) (*bind.TransactOpts, error) {
+	auth, err := n.txm.NewTransactOpts(ctx)
+	if err != nil {
+		return nil, err
+	}
+	sign := auth.Signer
+	auth.Signer = func(addr common.Address, tx *ethtypes.Transaction) (*ethtypes.Transaction, error) {
+		signed, err := sign(addr, tx)
+		if err == nil {
+			n.autoTxNonce.Store(signed.Nonce() + 1)
+		}
+		return signed, err
+	}
+	return auth, nil
+}
+
+// autoReadFailed reports a chain read the auto-create step could not make,
+// at most once every autoRetryBlocks blocks: a flaky endpoint can fail some
+// read on every tick, and each skipped tick is retried by the next.
+func (n *Node) autoReadFailed(tc *tickCtx, what string, err error) {
+	if n.autoWarnedAt != 0 && tc.head < n.autoWarnedAt+autoRetryBlocks {
+		return
+	}
+	n.autoWarnedAt = tc.head
+	log.Warnw("auto-create: chain read failed, skipping the step this tick",
+		"read", what, "head", tc.head, "err", err)
+}
+
 // maybeScheduleAutoCreate races other nodes to fire `createEpoch` once the
-// contract's `nextEpochStartBlock()` cadence threshold has been reached.
-// Each candidate sleeps a uniform-random delay in [0, AutoCreateJitter)
-// before firing, so the population spreads out and most loser txs revert
-// cheaply at the contract's `block.number < nextEpochStartBlock()` guard.
-//
-// Idempotent within a cadence window: we cache the nextEpochStartBlock()
-// value the most-recent attempt was scheduled against, and skip
-// re-scheduling for the same threshold.
+// contract's `nextEpochStartBlock()` cadence threshold has been reached, or
+// before it when the newest epoch is spent or Aborted; a dead newest epoch is
+// aborted first (maybeAbortDeadEpoch). Each candidate sleeps a
+// uniform-random delay in [0, AutoCreateJitter) before firing, so the
+// population spreads out and most loser txs revert cheaply at the contract's
+// `block.number < nextEpochStartBlock()` guard. autoGate makes one attempt
+// per trigger and repeats it only while the trigger holds (see due).
 //
 // nextEpochStartBlock() is the newest epoch's start block plus the immutable
 // epoch duration, so it is read once per epoch nonce, not once per tick.
 func (n *Node) maybeScheduleAutoCreate(ctx context.Context, cfg *Config, tc *tickCtx, epochNonce uint64) {
+	if n.autoBusy.Load() {
+		return // the previous attempt is still running
+	}
 	next, err := n.nextEpochStart(ctx, epochNonce)
 	if err != nil {
-		log.Warnw("auto-create: read nextEpochStartBlock failed", "err", err)
+		n.autoReadFailed(tc, "nextEpochStartBlock", err)
 		return
 	}
 	currentBlock := tc.head
-	early := false
+	trigger := autoTrigger{action: autoCadence, next: next}
 	if currentBlock < next {
 		// Not due by the cadence, but the newest epoch may be nearly claimed
-		// out (or dead): the next epoch has to exist before the last key
+		// out (or aborted): the next epoch has to exist before the last key
 		// goes, and the contract allows createEpoch early in exactly those
-		// two cases (docs/pool-keys-v4.md §9).
-		slot, allowed := n.earlyCreateAllowed(ctx, tc, epochNonce)
-		if !allowed || n.autoCreateEarlyPool == slot {
+		// two cases (docs/pool-keys-v4.md §9). A dead one is aborted first.
+		slot, allowed, err := n.earlyCreateAllowed(ctx, tc, epochNonce)
+		if err != nil {
+			n.autoReadFailed(tc, "newest epoch", err)
 			return
 		}
-		n.autoCreateEarlyPool = slot
-		early = true
-	} else {
-		if n.autoCreateNextStart == next {
-			return // already scheduled / fired for this window
+		if !allowed {
+			n.maybeAbortDeadEpoch(ctx, cfg, tc, epochNonce)
+			return
 		}
-		n.autoCreateNextStart = next
+		trigger = autoTrigger{action: autoEarly, slot: slot}
 	}
+	if !n.autoGate.due(trigger, currentBlock, n.autoTxInFlight()) {
+		return
+	}
+	early := trigger.action == autoEarly
+	n.autoTxNonce.Store(0)
+	n.autoBusy.Store(true)
 
-	jitter := time.Duration(0)
-	if cfg.AutoCreateJitter > 0 {
-		jitter = time.Duration(mrand.Int63n(int64(cfg.AutoCreateJitter)))
-	}
+	jitter := autoJitter(cfg)
 	log.Infow(
 		"auto-create: scheduling createEpoch attempt",
 		"nextStart", next,
@@ -721,6 +813,7 @@ func (n *Node) maybeScheduleAutoCreate(ctx context.Context, cfg *Config, tc *tic
 		"jitter", jitter,
 	)
 	go func() {
+		defer n.autoBusy.Store(false)
 		select {
 		case <-ctx.Done():
 			return
@@ -738,17 +831,284 @@ func (n *Node) maybeScheduleAutoCreate(ctx context.Context, cfg *Config, tc *tic
 			return
 		}
 		if err := n.fireCreateEpoch(ctx, cfg); err != nil {
-			if early {
+			reason := decodeContractError(err)
+			switch {
+			case strings.Contains(reason, "InvalidPolicy"):
+				// A setting, not a race: it fails the same way on every
+				// retry until the policy or the registry changes.
+				if !n.autoPolicyRefused.Swap(true) {
+					log.Errorw(err, "auto-create: createEpoch refused with InvalidPolicy: the epoch policy is "+
+						"outside the deployment's bounds or no operator is active; retrying quietly",
+						"retryAfterBlocks", autoRetryBlocks)
+					return
+				}
+				log.Debugw("auto-create: createEpoch still refused with InvalidPolicy", "err", reason)
+			case early:
 				// The pool-drain trigger races the cadence: a revert here
-				// just means "not yet", and the cadence path will retry.
-				log.Debugw("auto-create: early attempt refused", "err", decodeContractError(err))
-				return
+				// just means "not yet", and the attempt is retried.
+				log.Debugw("auto-create: early attempt refused", "err", reason)
+			default:
+				log.Warnw("auto-create: createEpoch failed (likely lost race)", "err", err)
 			}
-			log.Warnw("auto-create: createEpoch failed (likely lost race)", "err", err)
 			return
 		}
+		n.autoPolicyRefused.Store(false)
 		log.Infow("auto-create: createEpoch landed", "nextStart", next)
 	}()
+}
+
+// autoJitter draws the random delay an auto-create or abort attempt sleeps
+// before firing.
+func autoJitter(cfg *Config) time.Duration {
+	if cfg.AutoCreateJitter <= 0 {
+		return 0
+	}
+	return time.Duration(mrand.Int63n(int64(cfg.AutoCreateJitter)))
+}
+
+// epochDead mirrors the condition under which DKGManager.abortEpoch accepts
+// an epoch, evaluated at block head: a CommitteeSelection epoch whose
+// selection deadline has passed without a full committee (the claim that
+// fills it moves the epoch to KeyAssembly, so the count only restates the
+// status), or a KeyAssembly epoch whose assembly deadline has passed with
+// fewer than minValidContributions, which finalizeEpoch needs and no longer
+// can get. Anything else can still progress. Both deadlines are inclusive on
+// chain (claims and contributions land while block.number <= deadline), and
+// an abort is mined after head, so a dead answer here holds there too.
+func epochDead(e epochView, head uint64) bool {
+	switch e.Status {
+	case epochCommitteeSelection:
+		return head > e.Policy.CommitteeSelectionDeadlineBlock && e.ClaimedCount < e.Policy.CommitteeSize
+	case epochKeyAssembly:
+		return head > e.Policy.KeyAssemblyDeadlineBlock && e.ContributionCount < e.Policy.MinValidContributions
+	default:
+		return false
+	}
+}
+
+// abortReady reports whether this node aborts the newest epoch at head: it
+// is dead and past the deadline that killed it by the backoff its streak of
+// Aborted predecessors earned (abortBackoff).
+func abortReady(e epochView, head uint64, streak uint) bool {
+	if !epochDead(e, head) {
+		return false
+	}
+	deadline := e.Policy.CommitteeSelectionDeadlineBlock
+	if e.Status == epochKeyAssembly {
+		deadline = e.Policy.KeyAssemblyDeadlineBlock
+	}
+	return head > deadline+abortBackoff(streak)
+}
+
+// maybeAbortDeadEpoch aborts the newest epoch once it is dead (epochDead).
+// Before the cadence createEpoch only goes through behind a spent or Aborted
+// newest epoch, so a committee that never filled, or a key assembly that fell
+// short, would otherwise hold the next epoch back for up to a whole
+// EPOCH_DURATION_BLOCKS; once the abort lands, the early-create path creates
+// the next epoch on the following tick. The attempt races the other nodes
+// like createEpoch does (jitter, re-check, simulate, send).
+//
+// A replacement that dies again (more registered operators offline than the
+// committee can spare) waits longer each time (abortBackoff), so a fleet that
+// cannot fill a committee does not create and abort an epoch every few
+// blocks; the cadence takes over once the wait outgrows it. Only the newest
+// epoch is aborted: an older dead epoch blocks nothing, since createEpoch
+// only looks at the newest, and aborting it would cost every racing node gas
+// for no change in what the network can do.
+func (n *Node) maybeAbortDeadEpoch(ctx context.Context, cfg *Config, tc *tickCtx, nonce uint64) {
+	if nonce == 0 {
+		return
+	}
+	prefix, err := n.epochPrefixValue(ctx)
+	if err != nil {
+		n.autoReadFailed(tc, "epoch prefix", err)
+		return
+	}
+	epochID := web3.EpochID(prefix, nonce)
+	epoch, err := n.epoch(ctx, tc, n.contracts, epochID)
+	if err != nil {
+		n.autoReadFailed(tc, "newest epoch", err)
+		return
+	}
+	if !epochDead(epoch, tc.head) {
+		return
+	}
+	streak, err := n.abortStreak(ctx, tc, n.contracts, prefix, nonce)
+	if err != nil {
+		n.autoReadFailed(tc, "aborted streak", err)
+		return
+	}
+	if !abortReady(epoch, tc.head, streak) {
+		return
+	}
+	trigger := autoTrigger{action: autoAbort, slot: poolSlot{epoch: epochID}}
+	if !n.autoGate.due(trigger, tc.head, n.autoTxInFlight()) {
+		return
+	}
+	n.autoTxNonce.Store(0)
+	n.autoBusy.Store(true)
+
+	why := "committee not filled by the selection deadline"
+	if epoch.Status == epochKeyAssembly {
+		why = "too few contributions by the key-assembly deadline"
+	}
+	backoff := abortBackoff(streak)
+	jitter := autoJitter(cfg)
+	log.Infow(
+		"auto-create: newest epoch is dead, scheduling abortEpoch",
+		"epoch", roundHex(epochID),
+		"why", why,
+		"head", tc.head,
+		"claimed", epoch.ClaimedCount,
+		"committeeSize", epoch.Policy.CommitteeSize,
+		"selectionDeadline", epoch.Policy.CommitteeSelectionDeadlineBlock,
+		"contributions", epoch.ContributionCount,
+		"minValidContributions", epoch.Policy.MinValidContributions,
+		"assemblyDeadline", epoch.Policy.KeyAssemblyDeadlineBlock,
+		"abortedBefore", streak,
+		"backoffBlocks", backoff,
+		"jitter", jitter,
+	)
+	go func() {
+		defer n.autoBusy.Store(false)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(jitter):
+		}
+		outcome, err := n.fireAbortEpoch(ctx, epochID)
+		switch {
+		case err != nil:
+			log.Warnw("auto-create: abortEpoch failed", "epoch", roundHex(epochID),
+				"retryAfterBlocks", autoRetryBlocks, "err", err)
+		case outcome == abortSent:
+			log.Infow("auto-create: dead epoch aborted, the next epoch may start now", "epoch", roundHex(epochID))
+		case outcome == abortLost:
+			log.Infow("auto-create: dead epoch already aborted by another node, nothing sent", "epoch", roundHex(epochID))
+		default:
+			log.Infow("auto-create: abortEpoch refused (InvalidPhase) on the endpoint's view, nothing sent; "+
+				"the epoch is re-checked on later ticks", "epoch", roundHex(epochID), "retryAfterBlocks", autoRetryBlocks)
+		}
+	}()
+}
+
+// maxAbortStreak caps the walk back over Aborted epochs; the backoff it
+// yields is far past any cadence already.
+const maxAbortStreak = 16
+
+// abortStreak counts the Aborted epochs right before the newest one (nonce),
+// up to maxAbortStreak: how many replacements in a row have died already.
+// Aborted records never change, so the walk is read once and then served
+// from the epoch cache. A failed read is returned rather than taken as the
+// end of the streak, which would shorten the backoff.
+func (n *Node) abortStreak(ctx context.Context, tc *tickCtx, chain epochReader, prefix uint32, nonce uint64) (uint, error) {
+	var streak uint
+	for k := nonce - 1; k >= 1 && streak < maxAbortStreak; k-- {
+		e, err := n.epoch(ctx, tc, chain, web3.EpochID(prefix, k))
+		if err != nil {
+			return 0, err
+		}
+		if e.Status != epochAborted {
+			break
+		}
+		streak++
+	}
+	return streak, nil
+}
+
+// abortBackoff is how many blocks past its deadline a dead newest epoch is
+// left before this node aborts it: none after a healthy epoch, then
+// autoRetryBlocks, doubling with every Aborted epoch right before it.
+func abortBackoff(streak uint) uint64 {
+	if streak == 0 {
+		return 0
+	}
+	return autoRetryBlocks << (streak - 1)
+}
+
+// abortOutcome is how an abort attempt ended when it did not fail.
+type abortOutcome uint8
+
+const (
+	abortSent    abortOutcome = iota + 1 // this node's transaction aborted the epoch
+	abortLost                            // the epoch was already Aborted
+	abortRefused                         // InvalidPhase on the endpoint's view, epoch not Aborted
+	abortFailed                          // anything else: retried autoRetryBlocks later
+)
+
+// abortOutcomeOf classifies a refused or failed abortEpoch from its decoded
+// reason and the epoch's status read afterwards. InvalidPhase with the epoch
+// still open means the endpoint does not see it dead (a lagging head); the
+// tick's predicate decides whether to try again.
+func abortOutcomeOf(reason string, status uint8) abortOutcome {
+	switch {
+	case status == epochAborted:
+		return abortLost
+	case strings.Contains(reason, "InvalidPhase"):
+		return abortRefused
+	default:
+		return abortFailed
+	}
+}
+
+// fireAbortEpoch sends abortEpoch for epochID unless the race is already
+// decided. The record is read again (another node's abort may have landed
+// during the jitter) and the call is simulated first, so a refusal costs one
+// eth_call rather than the fee, nonce and gas reads of a transaction. A nil
+// error comes with abortSent, abortLost or abortRefused.
+func (n *Node) fireAbortEpoch(ctx context.Context, epochID [12]byte) (abortOutcome, error) {
+	epoch, err := n.contracts.GetEpoch(ctx, epochID)
+	if err != nil {
+		return abortFailed, fmt.Errorf("get epoch: %w", err)
+	}
+	if epoch.Status == epochAborted {
+		return abortLost, nil
+	}
+	settle := func(err error) (abortOutcome, error) {
+		reason := decodeContractError(err)
+		status := epoch.Status
+		if cur, rerr := n.contracts.GetEpoch(ctx, epochID); rerr == nil {
+			status = cur.Status
+		}
+		if outcome := abortOutcomeOf(reason, status); outcome != abortFailed {
+			return outcome, nil
+		}
+		return abortFailed, fmt.Errorf("abort epoch: %s", reason)
+	}
+	if err := n.simulateAbortEpoch(ctx, epochID); err != nil {
+		return settle(err)
+	}
+	auth, err := n.autoTransactOpts(ctx)
+	if err != nil {
+		return abortFailed, fmt.Errorf("tx opts: %w", err)
+	}
+	tx, err := n.manager.AbortEpoch(auth, epochID)
+	if err != nil {
+		return settle(err)
+	}
+	n.txm.RecordPending(tx)
+	if err := n.txm.WaitTxByHash(tx.Hash(), 30*time.Second); err != nil {
+		return settle(err) // a mined revert or a timeout: Aborted by now means another abort won
+	}
+	return abortSent, nil
+}
+
+// simulateAbortEpoch runs abortEpoch as an eth_call from this node's address.
+func (n *Node) simulateAbortEpoch(ctx context.Context, epochID [12]byte) error {
+	parsed, err := gtypes.DKGManagerMetaData.GetAbi()
+	if err != nil {
+		return fmt.Errorf("manager abi: %w", err)
+	}
+	data, err := parsed.Pack("abortEpoch", epochID)
+	if err != nil {
+		return fmt.Errorf("pack abortEpoch: %w", err)
+	}
+	_, err = n.contracts.Client().CallContract(ctx, ethereum.CallMsg{
+		From: n.address,
+		To:   &n.managerAddr,
+		Data: data,
+	}, nil)
+	return err
 }
 
 // fireCreateEpoch sends the createEpoch transaction with the policy
@@ -823,36 +1183,37 @@ func (n *Node) nextEpochStart(ctx context.Context, epochNonce uint64) (uint64, e
 // early trigger fires once per drain, not once per tick. The newest epoch's
 // record comes from the tick's reads (or the immutable cache once closed);
 // the only read of its own is the pool cursor of a Live newest epoch, which
-// a registration can move at any time.
-func (n *Node) earlyCreateAllowed(ctx context.Context, tc *tickCtx, nonce uint64) (poolSlot, bool) {
+// a registration can move at any time. A failed read is returned so the
+// caller does not take it for "not allowed".
+func (n *Node) earlyCreateAllowed(ctx context.Context, tc *tickCtx, nonce uint64) (poolSlot, bool, error) {
 	if nonce == 0 {
-		return poolSlot{}, false
+		return poolSlot{}, false, nil
 	}
 	prefix, err := n.epochPrefixValue(ctx)
 	if err != nil {
-		return poolSlot{}, false
+		return poolSlot{}, false, err
 	}
 	epochID := web3.EpochID(prefix, nonce)
 	epoch, err := n.epoch(ctx, tc, n.contracts, epochID)
 	if err != nil {
-		return poolSlot{}, false
+		return poolSlot{}, false, err
 	}
 	switch epoch.Status {
 	case epochAborted:
-		return poolSlot{epoch: epochID, key: abortedEpochSlot}, true
+		return poolSlot{epoch: epochID, key: abortedEpochSlot}, true, nil
 	case epochLive:
 		next, err := n.manager.GetPoolStatus(&bind.CallOpts{Context: ctx}, epochID)
 		if err != nil {
-			return poolSlot{}, false
+			return poolSlot{}, false, fmt.Errorf("pool status: %w", err)
 		}
-		return poolSlot{epoch: epochID, key: next}, int(next) >= ccommon.MaxK-1
+		return poolSlot{epoch: epochID, key: next}, int(next) >= ccommon.MaxK-1, nil
 	default:
-		return poolSlot{}, false
+		return poolSlot{}, false, nil
 	}
 }
 
 func (n *Node) fireCreateEpoch(ctx context.Context, cfg *Config) error {
-	auth, err := n.txm.NewTransactOpts(ctx)
+	auth, err := n.autoTransactOpts(ctx)
 	if err != nil {
 		return fmt.Errorf("tx opts: %w", err)
 	}

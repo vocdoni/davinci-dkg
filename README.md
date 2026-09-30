@@ -137,8 +137,10 @@ committee (positions `1..n`, each member's BabyJubJub key) and moves the epoch t
 Anyone can replay the keccak; there is no coordinator. Only operators registered before
 `createEpoch` may claim, so fresh identities cannot be ground against a revealed seed. A committee
 that does not fill within the window makes the epoch dead: anyone may `abortEpoch` it once the
-deadline has passed, and the nodes create the next epoch immediately. An epoch that can still be
-finalized cannot be aborted.
+deadline has passed, and nodes running with `--auto-create-epochs` (the default) abort a dead
+newest epoch themselves and then create the next one, waiting longer each time the epochs right
+before it were aborted too. The same holds for a key assembly that closes with fewer than
+`minValidContributions`. An epoch that can still be finalized cannot be aborted.
 
 ### Per-application keys
 

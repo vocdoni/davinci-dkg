@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
+	ethtypes "github.com/ethereum/go-ethereum/core/types"
 	qt "github.com/frankban/quicktest"
 	"github.com/vocdoni/davinci-dkg/crypto/elgamal"
 	"github.com/vocdoni/davinci-dkg/node"
@@ -182,4 +184,103 @@ func waitCombined(ctx context.Context, c *qt.C, epochID [12]byte, aid [32]byte, 
 	got, err := services.Manager.GetPlaintext(services.CallOpts(ctx), epochID, aid, idx)
 	c.Assert(err, qt.IsNil)
 	c.Assert(got.String(), qt.Equals, want.String())
+}
+
+// TestNodeAbortsADeadEpochAndCreatesTheNext runs one real node with
+// auto-create on against an epoch whose committee can never fill: two seats
+// and one running operator. Before the cadence createEpoch only goes through
+// behind a spent or Aborted newest epoch, so once the selection deadline has
+// passed the node must abort the dead epoch itself and then create the next
+// one, long before the cadence.
+func TestNodeAbortsADeadEpochAndCreatesTheNext(t *testing.T) {
+	if !helpers.IsIntegrationEnabled() {
+		t.Skip("integration tests disabled")
+	}
+	c := qt.New(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	// Two seats keep every epoch in this test short of a committee, the ones
+	// the node creates included, so the node never has to deal a share.
+	cfg := &node.Config{
+		Web3:                  node.Web3Config{RPC: []string{services.RPCURL}, GasMultiplier: 1.2},
+		PrivKey:               helpers.DefaultAnvilPrivateKeys[3],
+		ManagerAddr:           services.Addresses.Manager.Hex(),
+		PollInterval:          time.Second,
+		AutoCreateEpochs:      true,
+		AutoCreateJitter:      time.Second,
+		DecryptLookbackBlocks: 5,
+		EpochPolicy: node.EpochPolicyConfig{
+			Threshold: 1, CommitteeSize: 2, MinValidContributions: 1, LotteryAlphaBps: helpers.DefaultLotteryAlphaBps,
+		},
+	}
+	n, err := node.New(cfg)
+	c.Assert(err, qt.IsNil)
+	c.Assert(n.EnsureRegistered(ctx), qt.IsNil)
+	operator, err := services.ActorFromPrivateKey(cfg.PrivKey)
+	c.Assert(err, qt.IsNil)
+	nodeAddr := operator.Address()
+
+	// The dead epoch is created at the cadence, before the node runs, so the
+	// node has no cadence-driven createEpoch of its own to fire.
+	dead, err := helpers.CreateEpoch(ctx, services, types.EpochPolicy{
+		Threshold: 1, CommitteeSize: 2, MinValidContributions: 1, LotteryAlphaBps: helpers.DefaultLotteryAlphaBps,
+	})
+	c.Assert(err, qt.IsNil)
+	epoch, err := services.Contracts.GetEpoch(ctx, dead)
+	c.Assert(err, qt.IsNil)
+	cadence, err := services.Manager.NextEpochStartBlock(services.CallOpts(ctx))
+	c.Assert(err, qt.IsNil)
+
+	nodeCtx, stop := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		n.Run(nodeCtx, cfg)
+		close(done)
+	}()
+	defer func() {
+		stop()
+		<-done
+		// Let a transaction sent just before the stop land here rather than
+		// in the next test.
+		_ = helpers.MineBlocks(ctx, services, 2)
+		_ = helpers.WaitUntilCondition(ctx, time.Second, func() bool {
+			client := services.Contracts.Pool().Current()
+			pending, perr := client.PendingNonceAt(ctx, nodeAddr)
+			mined, merr := client.NonceAt(ctx, nodeAddr, nil)
+			return perr == nil && merr == nil && pending == mined
+		})
+	}()
+
+	head, err := services.Contracts.Client().BlockNumber(ctx)
+	c.Assert(err, qt.IsNil)
+	if deadline := epoch.Policy.CommitteeSelectionDeadlineBlock; head <= deadline {
+		c.Assert(helpers.MineBlocks(ctx, services, deadline-head+1), qt.IsNil)
+	}
+
+	c.Assert(helpers.WaitUntilCondition(ctx, time.Second, func() bool {
+		e, err := services.Contracts.GetEpoch(ctx, dead)
+		return err == nil && e.Status == 4 // Aborted
+	}), qt.IsNil, qt.Commentf("the node never aborted the dead epoch"))
+	it, err := services.Manager.FilterEpochAborted(&bind.FilterOpts{Start: epoch.StartBlock, Context: ctx}, [][12]byte{dead})
+	c.Assert(err, qt.IsNil)
+	c.Assert(it.Next(), qt.IsTrue)
+	abortTx, _, err := services.Contracts.Client().TransactionByHash(ctx, it.Event.Raw.TxHash)
+	c.Assert(err, qt.IsNil)
+	sender, err := ethtypes.Sender(ethtypes.LatestSignerForChainID(abortTx.ChainId()), abortTx)
+	c.Assert(err, qt.IsNil)
+	c.Assert(sender, qt.Equals, nodeAddr)
+	c.Assert(it.Close(), qt.IsNil)
+
+	prefix, err := services.Manager.EPOCHPREFIX(services.CallOpts(ctx))
+	c.Assert(err, qt.IsNil)
+	next := web3.EpochID(prefix, epoch.Nonce+1)
+	var created web3.EpochView
+	c.Assert(helpers.WaitUntilCondition(ctx, time.Second, func() bool {
+		created, err = services.Contracts.GetEpoch(ctx, next)
+		return err == nil && created.Status != 0
+	}), qt.IsNil, qt.Commentf("the node never created the epoch after the aborted one"))
+	c.Assert(created.Organizer, qt.Equals, nodeAddr)
+	c.Assert(created.StartBlock < cadence, qt.IsTrue,
+		qt.Commentf("epoch %d started at %d, the cadence was %d", epoch.Nonce+1, created.StartBlock, cadence))
 }

@@ -290,6 +290,16 @@ func (m *Manager) RecordPending(tx *gethtypes.Transaction) {
 	m.track(tx)
 }
 
+// Pending reports whether the transaction signed at nonce is still in
+// flight: tracked (the original or a fee-bumped replacement), not yet seen
+// confirmed and not given up on after MaxRetries.
+func (m *Manager) Pending(nonce uint64) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, ok := m.pending[nonce]
+	return ok
+}
+
 // WaitTxByHash blocks until the transaction is confirmed or the timeout expires.
 // It returns an error if the transaction reverts or the context/timeout fires.
 // Transient receipt errors are retried until the timeout.

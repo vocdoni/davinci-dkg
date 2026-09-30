@@ -85,7 +85,8 @@ contributions, proves the batched finalization and submits `finalizeEpoch`;
 the first proof to land makes the epoch `Live` with every key and share root
 stored, and the rest see `AlreadyLive` and stop. Nodes create the next
 epoch early when the newest epoch has at most one unclaimed key
-(`poolNext >= MAX_K - 1`) or is `Aborted`, bypassing the normal cadence.
+(`poolNext >= MAX_K - 1`) or is `Aborted`, bypassing the normal cadence, and
+abort a newest epoch that can no longer progress so that rule applies.
 
 Two consequences of a fixed pool are accepted for now:
 

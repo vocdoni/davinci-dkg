@@ -166,7 +166,16 @@ Anything that touches encodings, hashes or constants has to be changed in all of
   persistent fault must not cost one per tick). A qualifying epoch that was never finalized stays
   discoverable across cadence changes and restarts. It also creates the next epoch early — bypassing
   the normal cadence gate — when the newest epoch has at most one unclaimed key
-  (`poolNext >= MAX_K - 1`, i.e. `poolNext >= 15`) or is `Aborted`.
+  (`poolNext >= MAX_K - 1`, i.e. `poolNext >= 15`) or is `Aborted`, and aborts a dead newest
+  epoch first (`epochDead` mirrors `abortEpoch`: selection deadline passed with the committee
+  short, or assembly deadline passed below `minValidContributions`), so a committee that never
+  fills does not stall key generation until the cadence. Each Aborted epoch right before the dead
+  one doubles the wait past its deadline (`abortBackoff`, from `autoRetryBlocks`), so a fleet that
+  cannot fill committees churns a handful of epochs per cadence, not one every few blocks. Every
+  auto-create/abort attempt is jittered, re-checked (the abort is also simulated) before sending,
+  runs one at a time (`autoBusy`) and is repeated `autoRetryBlocks` later if the chain still shows
+  its trigger and the txmanager no longer tracks its transaction (`autoGate.due`, `Manager.Pending`).
+  Older dead epochs are left alone: `createEpoch` only looks at the newest.
   `decrypt.go` scans `CiphertextSubmitted` events for every aid and checks the prime-subgroup
   membership of C1/C2 before computing a partial — the contract deliberately skips that check (about
   0.17 M gas for `C1`; skipped to keep submission cheap, not because it is prohibitive), so this one is

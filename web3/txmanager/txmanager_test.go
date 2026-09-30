@@ -306,7 +306,25 @@ func TestRetryStuckDropsATxTheMempoolKeepsRefusing(t *testing.T) {
 	c.Assert(m.retryStuck(context.Background()), qt.IsNil)
 	_, has5 := m.pending[5]
 	c.Assert(has5, qt.IsFalse)
+	c.Assert(m.Pending(5), qt.IsFalse, qt.Commentf("a dropped transaction is no longer in flight"))
 	c.Assert(f.calls["eth_sendRawTransaction"], qt.Equals, m.config.MaxRetries)
+}
+
+// Pending follows a nonce from signing until the chain has consumed it,
+// fee bumps included (the entry is keyed by nonce, not by hash).
+func TestPendingTracksANonceUntilConfirmed(t *testing.T) {
+	c := qt.New(t)
+	m := newTestManager(t, newFakeRPC(t))
+	c.Assert(m.Pending(5), qt.IsFalse)
+	m.RecordPending(signedTx(t, m, 5))
+	c.Assert(m.Pending(5), qt.IsTrue)
+	c.Assert(m.Pending(6), qt.IsFalse)
+	bumped, err := m.bumpedCopy(m.pending[5].signed)
+	c.Assert(err, qt.IsNil)
+	m.RecordPending(bumped)
+	c.Assert(m.Pending(5), qt.IsTrue)
+	m.reconcile(6)
+	c.Assert(m.Pending(5), qt.IsFalse)
 }
 
 // A transaction that has sat in the mempool for MaxPendingTime is replaced

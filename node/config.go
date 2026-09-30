@@ -24,10 +24,13 @@ type Config struct {
 	PollInterval time.Duration `mapstructure:"poll-interval"`
 
 	// AutoCreateEpochs makes this node race other nodes to fire `createEpoch`
-	// once `nextEpochStartBlock()` is reached. Each candidate sleeps a random
-	// jitter (0..AutoCreateJitter) before firing, so the population spreads
-	// out and most calls succeed cheaply with one revert per loser. Default
-	// true; disable for nodes that should only participate, not propose.
+	// once `nextEpochStartBlock()` is reached, or early when the newest epoch
+	// is spent or Aborted, and to fire `abortEpoch` on a newest epoch that
+	// can no longer progress so the next one can start. Each candidate sleeps
+	// a random jitter (0..AutoCreateJitter) before firing, so the population
+	// spreads out and most calls succeed cheaply with one revert per loser.
+	// Default true; disable for nodes that should only participate, not
+	// propose.
 	AutoCreateEpochs bool          `mapstructure:"auto-create-epochs"`
 	AutoCreateJitter time.Duration `mapstructure:"auto-create-jitter"`
 
@@ -159,8 +162,10 @@ func loadConfigFromArgs(args []string) (*Config, error) {
 	fs.String("manager", cfg.ManagerAddr,
 		"DKGManager address of a custom deployment; overrides the preset's manager and its chain id check")
 	fs.Duration("poll-interval", cfg.PollInterval, "chain polling interval")
-	fs.Bool("auto-create-epochs", cfg.AutoCreateEpochs, "race other nodes to fire createEpoch once nextEpochStartBlock() is reached (default true; disable to participate only)")
-	fs.Duration("auto-create-jitter", cfg.AutoCreateJitter, "max random delay before firing the auto-create transaction (spreads contention)")
+	fs.Bool("auto-create-epochs", cfg.AutoCreateEpochs,
+		"race other nodes to fire createEpoch once nextEpochStartBlock() is reached, or early behind a spent or aborted epoch, "+
+			"and to abort a dead newest epoch (default true; disable to participate only)")
+	fs.Duration("auto-create-jitter", cfg.AutoCreateJitter, "max random delay before firing an auto-create or abort transaction (spreads contention)")
 	fs.Uint64("decrypt-lookback-blocks", cfg.DecryptLookbackBlocks, "on startup, scan this many blocks behind head for ciphertexts still awaiting decryption")
 	fs.Uint16("epoch-policy.threshold", cfg.EpochPolicy.Threshold, "Shamir threshold t when this node proposes an epoch")
 	fs.Uint16("epoch-policy.committee-size", cfg.EpochPolicy.CommitteeSize, "committee size n when this node proposes an epoch (0 = derive from the registry)")

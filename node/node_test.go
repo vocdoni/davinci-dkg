@@ -189,6 +189,180 @@ func TestFinalizeRaceLostOnlyOnAlreadyLiveOrPhaseChange(t *testing.T) {
 	c.Assert(finalizeRaceLost("dial tcp: connection refused", epochKeyAssembly), qt.IsFalse)
 }
 
+// epochDead is abortEpoch's condition: past the selection deadline without a
+// full committee, or past the assembly deadline short of
+// minValidContributions. Both deadlines are inclusive on chain, and every
+// other state can still progress and must never be aborted.
+func TestEpochDeadMirrorsAbortEpoch(t *testing.T) {
+	c := qt.New(t)
+	const sel, asm = uint64(108), uint64(116)
+	epoch := func(status uint8, claimed, contributions uint16) epochView {
+		return epochView{
+			Status: status, ClaimedCount: claimed, ContributionCount: contributions,
+			Policy: web3.EpochPolicy{
+				CommitteeSize: 4, MinValidContributions: 3,
+				CommitteeSelectionDeadlineBlock: sel, KeyAssemblyDeadlineBlock: asm,
+			},
+		}
+	}
+	for _, tc := range []struct {
+		name string
+		e    epochView
+		head uint64
+		dead bool
+	}{
+		{"selection before the deadline", epoch(epochCommitteeSelection, 0, 0), sel - 1, false},
+		{"selection at the deadline, a claim still lands", epoch(epochCommitteeSelection, 3, 0), sel, false},
+		{"selection one block past, committee short", epoch(epochCommitteeSelection, 3, 0), sel + 1, true},
+		{"selection one block past, nobody claimed", epoch(epochCommitteeSelection, 0, 0), sel + 1, true},
+		{"selection long past both deadlines", epoch(epochCommitteeSelection, 1, 0), asm + 1000, true},
+		{"selection with a full count (inconsistent record)", epoch(epochCommitteeSelection, 4, 0), sel + 1, false},
+		{"assembly before the deadline", epoch(epochKeyAssembly, 4, 0), asm - 1, false},
+		{"assembly past the selection deadline only", epoch(epochKeyAssembly, 4, 0), sel + 1, false},
+		{"assembly at the deadline, a contribution still lands", epoch(epochKeyAssembly, 4, 2), asm, false},
+		{"assembly one block past, one short", epoch(epochKeyAssembly, 4, 2), asm + 1, true},
+		{"assembly one block past, none", epoch(epochKeyAssembly, 4, 0), asm + 1, true},
+		{"assembly with enough contributions can still finalize", epoch(epochKeyAssembly, 4, 3), asm + 1000, false},
+		{"assembly with more than enough", epoch(epochKeyAssembly, 4, 4), asm + 1, false},
+		{"live", epoch(epochLive, 4, 3), asm + 1000, false},
+		{"aborted", epoch(epochAborted, 0, 0), asm + 1000, false},
+		{"completed", epoch(epochCompleted, 4, 4), asm + 1000, false},
+		{"none", epoch(0, 0, 0), asm + 1000, false},
+	} {
+		c.Run(tc.name, func(c *qt.C) {
+			c.Assert(epochDead(tc.e, tc.head), qt.Equals, tc.dead)
+		})
+	}
+}
+
+// A failed abort is classified from the epoch's status read afterwards and
+// the decoded reason: Aborted means another abort won, InvalidPhase with the
+// epoch still open means the endpoint does not see it dead yet, and anything
+// else (an RPC fault, a funding error, a mined revert with the epoch still
+// open) is a failure the gate retries.
+func TestAbortOutcomeOfClassifiesRefusals(t *testing.T) {
+	c := qt.New(t)
+	c.Assert(abortOutcomeOf("transaction 0xabc reverted (status 0)", epochAborted), qt.Equals, abortLost)
+	c.Assert(abortOutcomeOf("dial tcp: connection refused", epochAborted), qt.Equals, abortLost)
+	c.Assert(abortOutcomeOf("execution reverted: InvalidPhase", epochAborted), qt.Equals, abortLost)
+	c.Assert(abortOutcomeOf("execution reverted: InvalidPhase", epochCommitteeSelection), qt.Equals, abortRefused)
+	c.Assert(abortOutcomeOf("execution reverted: InvalidPhase", epochKeyAssembly), qt.Equals, abortRefused)
+
+	c.Assert(abortOutcomeOf("transaction 0xabc reverted (status 0)", epochCommitteeSelection), qt.Equals, abortFailed)
+	c.Assert(abortOutcomeOf("gas required exceeds allowance (0)", epochKeyAssembly), qt.Equals, abortFailed)
+	c.Assert(abortOutcomeOf("timeout waiting for transaction 0xabc", epochCommitteeSelection), qt.Equals, abortFailed)
+	c.Assert(abortOutcomeOf("execution reverted", epochKeyAssembly), qt.Equals, abortFailed)
+}
+
+// A dead newest epoch after a healthy one is aborted as soon as it is dead;
+// each Aborted epoch right before it doubles the wait, so a fleet that
+// cannot fill a committee backs off towards the cadence instead of churning
+// an epoch every few blocks. The streak walk stops at the first epoch that
+// is not Aborted and at nonce 1, reads each Aborted record once, and reports
+// a failed read instead of cutting the streak (and the backoff) short.
+func TestAbortBackoffGrowsWithTheAbortedStreak(t *testing.T) {
+	c := qt.New(t)
+	c.Assert(abortBackoff(0), qt.Equals, uint64(0))
+	c.Assert(abortBackoff(1), qt.Equals, uint64(autoRetryBlocks))
+	c.Assert(abortBackoff(2), qt.Equals, uint64(2*autoRetryBlocks))
+	c.Assert(abortBackoff(5), qt.Equals, uint64(16*autoRetryBlocks))
+	c.Assert(abortBackoff(maxAbortStreak), qt.Equals, uint64(655_360), qt.Commentf("weeks of blocks: past any cadence"))
+
+	ctx := context.Background()
+	const prefix = uint32(0xdead)
+	id := func(nonce uint64) [12]byte { return web3.EpochID(prefix, nonce) }
+	chain := &countingEpochReader{status: map[[12]byte]uint8{
+		id(1): epochAborted, id(2): epochLive, id(3): epochAborted, id(4): epochAborted, id(5): epochCommitteeSelection,
+		id(8): epochAborted, id(9): epochCommitteeSelection, // 7 is missing: its read fails
+	}}
+	n := newTestNode()
+	tick := &tickCtx{epochs: map[[12]byte]epochView{}}
+	streak := func(nonce uint64) uint {
+		got, err := n.abortStreak(ctx, tick, chain, prefix, nonce)
+		c.Assert(err, qt.IsNil)
+		return got
+	}
+	c.Assert(streak(5), qt.Equals, uint(2), qt.Commentf("4 and 3, then Live 2 ends it"))
+	c.Assert(streak(3), qt.Equals, uint(0), qt.Commentf("2 is Live"))
+	c.Assert(streak(2), qt.Equals, uint(1), qt.Commentf("the walk ends at nonce 1"))
+	c.Assert(streak(1), qt.Equals, uint(0))
+	_, err := n.abortStreak(ctx, tick, chain, prefix, 9)
+	c.Assert(err, qt.IsNotNil, qt.Commentf("8 is Aborted, 7 cannot be read"))
+
+	calls := chain.calls
+	tick = &tickCtx{epochs: map[[12]byte]epochView{}}
+	c.Assert(streak(5), qt.Equals, uint(2))
+	c.Assert(chain.calls, qt.Equals, calls, qt.Commentf("closed epochs come from the cache on later ticks"))
+}
+
+// abortReady is epochDead plus the backoff, counted from the deadline that
+// killed the epoch: the selection deadline in CommitteeSelection, the
+// assembly deadline in KeyAssembly. The node aborts one block after
+// deadline+backoff, never at it.
+func TestAbortReadyWaitsOutTheBackoff(t *testing.T) {
+	c := qt.New(t)
+	const sel, asm = uint64(100), uint64(125)
+	policy := web3.EpochPolicy{
+		CommitteeSize: 2, MinValidContributions: 2,
+		CommitteeSelectionDeadlineBlock: sel, KeyAssemblyDeadlineBlock: asm,
+	}
+	selecting := epochView{Status: epochCommitteeSelection, ClaimedCount: 1, Policy: policy}
+	assembling := epochView{Status: epochKeyAssembly, ClaimedCount: 2, ContributionCount: 1, Policy: policy}
+	finalizable := epochView{Status: epochKeyAssembly, ClaimedCount: 2, ContributionCount: 2, Policy: policy}
+
+	c.Assert(abortReady(selecting, sel, 0), qt.IsFalse)
+	c.Assert(abortReady(selecting, sel+1, 0), qt.IsTrue, qt.Commentf("no streak: as soon as it is dead"))
+	c.Assert(abortReady(selecting, sel+abortBackoff(2), 2), qt.IsFalse)
+	c.Assert(abortReady(selecting, sel+abortBackoff(2)+1, 2), qt.IsTrue)
+
+	c.Assert(abortReady(assembling, asm, 0), qt.IsFalse)
+	c.Assert(abortReady(assembling, asm+1, 0), qt.IsTrue)
+	c.Assert(abortReady(assembling, sel+abortBackoff(1)+1, 1), qt.IsFalse,
+		qt.Commentf("KeyAssembly counts from the assembly deadline"))
+	c.Assert(abortReady(assembling, asm+abortBackoff(1), 1), qt.IsFalse)
+	c.Assert(abortReady(assembling, asm+abortBackoff(1)+1, 1), qt.IsTrue)
+
+	c.Assert(abortReady(finalizable, asm+1_000_000, 0), qt.IsFalse, qt.Commentf("it can still be finalized"))
+	c.Assert(abortReady(epochView{Status: epochLive, Policy: policy}, asm+1_000_000, 0), qt.IsFalse)
+}
+
+// The gate makes one attempt per trigger: the same trigger again only
+// autoRetryBlocks after the last attempt and only once that attempt's
+// transaction has left the txmanager, while a new trigger goes at once.
+func TestAutoGateSpacesAttemptsPerTrigger(t *testing.T) {
+	c := qt.New(t)
+	id := func(nonce uint64) [12]byte { return web3.EpochID(0xdead, nonce) }
+	dead := autoTrigger{action: autoAbort, slot: poolSlot{epoch: id(4)}}
+	const h = uint64(1_000)
+	var g autoGate
+
+	c.Assert(g.due(dead, h, false), qt.IsTrue, qt.Commentf("first attempt"))
+	c.Assert(g.due(dead, h, false), qt.IsFalse, qt.Commentf("same head"))
+	c.Assert(g.due(dead, h+1, false), qt.IsFalse, qt.Commentf("the attempt is recorded"))
+	c.Assert(g.due(dead, h+autoRetryBlocks-1, false), qt.IsFalse)
+	c.Assert(g.due(dead, h+autoRetryBlocks, true), qt.IsFalse, qt.Commentf("its transaction is still pending"))
+	c.Assert(g.due(dead, h+autoRetryBlocks, false), qt.IsTrue, qt.Commentf("retry, exactly autoRetryBlocks later"))
+	c.Assert(g.due(dead, h+autoRetryBlocks+1, false), qt.IsFalse, qt.Commentf("the retry is recorded too"))
+	c.Assert(g.due(dead, h+2*autoRetryBlocks+5, true), qt.IsFalse)
+	c.Assert(g.due(dead, h+2*autoRetryBlocks+5, false), qt.IsTrue, qt.Commentf("once the transaction is gone"))
+
+	// The abort landed: the Aborted epoch is a new (early-create) trigger,
+	// due at once even with the abort's transaction not yet pruned.
+	aborted := autoTrigger{action: autoEarly, slot: poolSlot{epoch: id(4), key: abortedEpochSlot}}
+	c.Assert(g.due(aborted, h+2*autoRetryBlocks+6, true), qt.IsTrue)
+	c.Assert(g.due(aborted, h+2*autoRetryBlocks+7, false), qt.IsFalse)
+
+	// A registration moving the pool cursor, or a new cadence threshold, is
+	// a new trigger as well.
+	drained := autoTrigger{action: autoEarly, slot: poolSlot{epoch: id(5), key: 15}}
+	c.Assert(g.due(drained, h+2*autoRetryBlocks+8, false), qt.IsTrue)
+	c.Assert(g.due(autoTrigger{action: autoEarly, slot: poolSlot{epoch: id(5), key: 16}}, h+2*autoRetryBlocks+8, false), qt.IsTrue)
+	cadence := autoTrigger{action: autoCadence, next: 2_000}
+	c.Assert(g.due(cadence, 2_000, false), qt.IsTrue)
+	c.Assert(g.due(cadence, 2_001, false), qt.IsFalse)
+	c.Assert(g.due(autoTrigger{action: autoCadence, next: 2_100}, 2_100, false), qt.IsTrue)
+}
+
 // The tx manager reports a mined-but-reverted transaction as
 // "reverted (status 0)"; that is as final as an eth_call revert.
 func TestIsPermanentRevertRecognisesMinedReverts(t *testing.T) {
