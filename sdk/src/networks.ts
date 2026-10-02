@@ -24,6 +24,7 @@ export const KNOWN_NETWORKS: Readonly<Record<string, NetworkDeployment>> = {
       'https://gnosis-rpc.publicnode.com',
       'https://gnosis-rpc.blockreq.com/v1/rpc/public',
       'https://rpc.gnosischain.com',
+      'https://gnosis.drpc.org',
     ],
   },
   sepolia: {
