@@ -3,13 +3,24 @@ package config
 import "fmt"
 
 const (
-	// DefaultArtifactsBaseURL is where nodes fetch the pinned circuit artifacts:
-	// the assets of a GitHub release of this repository, named `<sha256>.<ccs|pk|vk>`
-	// (see `make circuits-release`). DefaultArtifactsRelease is that release's tag.
-	DefaultArtifactsBaseURL = "https://github.com/vocdoni/davinci-dkg/releases/download"
-	// DefaultArtifactsRelease is the default remote artifact release channel.
+	// DefaultArtifactsRelease is the circuit artifact release the pinned
+	// hashes below belong to: a GitHub release of this repository whose
+	// assets are named `<sha256>.<ccs|pk|vk>` (see `make circuits-release`),
+	// mirrored file for file on the CDN.
 	DefaultArtifactsRelease = "circuits-v6"
+	// ArtifactsCDNBaseURL serves `<release>/<sha256>.<ext>` from the DAVINCI
+	// assets CDN. It is the first source nodes try.
+	ArtifactsCDNBaseURL = "https://davinci-assets.fra1.cdn.digitaloceanspaces.com/dkg"
+	// ArtifactsGitHubBaseURL serves the same files as GitHub release assets,
+	// the fallback when the CDN fails.
+	ArtifactsGitHubBaseURL = "https://github.com/vocdoni/davinci-dkg/releases/download"
 )
+
+// DefaultArtifactsMirrors are the base URLs a missing artifact is downloaded
+// from, in order. Every copy is stream-verified against its pinned SHA-256
+// before it is cached, so a mirror can make a download fail but never feed a
+// node a different file.
+var DefaultArtifactsMirrors = []string{ArtifactsCDNBaseURL, ArtifactsGitHubBaseURL}
 
 var (
 	ContributionCircuitHash         = "aec533457d3d4ca89b05c7a53791e66b310a6431382e170887f040ad49011059"
@@ -28,26 +39,32 @@ var (
 	DecryptCombineProvingKeyHash      = "0a82f57b9a605ea4fb7f72d305887e7b441e405ef42893eb16c0dfa462d93785"
 	DecryptCombineVerificationKeyHash = "befaa56b10e1fe2d076cf948ecb3fdc8f1d0fa0dece4498a4af9b281b2bc5c68"
 
-	ContributionCircuitURL         = artifactURL(ContributionCircuitHash, "ccs")
-	ContributionProvingKeyURL      = artifactURL(ContributionProvingKeyHash, "pk")
-	ContributionVerificationKeyURL = artifactURL(ContributionVerificationKeyHash, "vk")
+	ContributionCircuitURLs         = artifactURLs(ContributionCircuitHash, "ccs")
+	ContributionProvingKeyURLs      = artifactURLs(ContributionProvingKeyHash, "pk")
+	ContributionVerificationKeyURLs = artifactURLs(ContributionVerificationKeyHash, "vk")
 
-	FinalizeCircuitURL         = artifactURL(FinalizeCircuitHash, "ccs")
-	FinalizeProvingKeyURL      = artifactURL(FinalizeProvingKeyHash, "pk")
-	FinalizeVerificationKeyURL = artifactURL(FinalizeVerificationKeyHash, "vk")
+	FinalizeCircuitURLs         = artifactURLs(FinalizeCircuitHash, "ccs")
+	FinalizeProvingKeyURLs      = artifactURLs(FinalizeProvingKeyHash, "pk")
+	FinalizeVerificationKeyURLs = artifactURLs(FinalizeVerificationKeyHash, "vk")
 
-	PartialDecryptCircuitURL         = artifactURL(PartialDecryptCircuitHash, "ccs")
-	PartialDecryptProvingKeyURL      = artifactURL(PartialDecryptProvingKeyHash, "pk")
-	PartialDecryptVerificationKeyURL = artifactURL(PartialDecryptVerificationKeyHash, "vk")
+	PartialDecryptCircuitURLs         = artifactURLs(PartialDecryptCircuitHash, "ccs")
+	PartialDecryptProvingKeyURLs      = artifactURLs(PartialDecryptProvingKeyHash, "pk")
+	PartialDecryptVerificationKeyURLs = artifactURLs(PartialDecryptVerificationKeyHash, "vk")
 
-	DecryptCombineCircuitURL         = artifactURL(DecryptCombineCircuitHash, "ccs")
-	DecryptCombineProvingKeyURL      = artifactURL(DecryptCombineProvingKeyHash, "pk")
-	DecryptCombineVerificationKeyURL = artifactURL(DecryptCombineVerificationKeyHash, "vk")
+	DecryptCombineCircuitURLs         = artifactURLs(DecryptCombineCircuitHash, "ccs")
+	DecryptCombineProvingKeyURLs      = artifactURLs(DecryptCombineProvingKeyHash, "pk")
+	DecryptCombineVerificationKeyURLs = artifactURLs(DecryptCombineVerificationKeyHash, "vk")
 )
 
-func artifactURL(hash, ext string) string {
+// artifactURLs lists where the artifact with the given hash and extension is
+// published, one URL per mirror in DefaultArtifactsMirrors order.
+func artifactURLs(hash, ext string) []string {
 	if hash == "" {
-		return ""
+		return nil
 	}
-	return fmt.Sprintf("%s/%s/%s.%s", DefaultArtifactsBaseURL, DefaultArtifactsRelease, hash, ext)
+	urls := make([]string, 0, len(DefaultArtifactsMirrors))
+	for _, base := range DefaultArtifactsMirrors {
+		urls = append(urls, fmt.Sprintf("%s/%s/%s.%s", base, DefaultArtifactsRelease, hash, ext))
+	}
+	return urls
 }

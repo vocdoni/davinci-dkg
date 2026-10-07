@@ -17,16 +17,16 @@ var Artifacts = circuits.NewCircuitArtifacts(
 	[]backend.ProverOption{solidity.WithProverTargetSolidityVerifier(backend.GROTH16)},
 	[]backend.VerifierOption{solidity.WithVerifierTargetSolidityVerifier(backend.GROTH16)},
 	&circuits.Artifact{
-		RemoteURL: config.ContributionCircuitURL,
-		Hash:      mustArtifactHash(config.ContributionCircuitHash),
+		RemoteURLs: config.ContributionCircuitURLs,
+		Hash:       mustArtifactHash(config.ContributionCircuitHash),
 	},
 	&circuits.Artifact{
-		RemoteURL: config.ContributionProvingKeyURL,
-		Hash:      mustArtifactHash(config.ContributionProvingKeyHash),
+		RemoteURLs: config.ContributionProvingKeyURLs,
+		Hash:       mustArtifactHash(config.ContributionProvingKeyHash),
 	},
 	&circuits.Artifact{
-		RemoteURL: config.ContributionVerificationKeyURL,
-		Hash:      mustArtifactHash(config.ContributionVerificationKeyHash),
+		RemoteURLs: config.ContributionVerificationKeyURLs,
+		Hash:       mustArtifactHash(config.ContributionVerificationKeyHash),
 	},
 )
 

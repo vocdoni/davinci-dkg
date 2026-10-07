@@ -123,7 +123,8 @@ make circuits    # compile, set up, rewrite the verifiers, pin the hashes, rebui
 A circuit change needs a new artifact release: the `Publish Circuits` workflow (label a pull
 request `trigger-upload-circuits`) compiles the circuits, pins the hashes and stages the files for
 a `circuits-vN` GitHub release; bump `DefaultArtifactsRelease` in `config/circuit_artifacts.go` to
-match. `go run ./cmd/circuit-profile <circuit>` shows where the constraints go.
+match, and upload the same files to the CDN under `dkg/circuits-vN/` (bucket `davinci-assets`,
+fra1, public-read), which nodes try before the GitHub release. `go run ./cmd/circuit-profile <circuit>` shows where the constraints go.
 
 gnark releases through v0.15.0 have an unsound variable-base twisted-Edwards scalar
 multiplication that a prover can satisfy for any output point (fixed in v0.16.0). The project

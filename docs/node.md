@@ -90,9 +90,11 @@ On first start it:
 
 1. derives its BabyJubJub key from the operator key and registers it in `DKGRegistry` (skipped
    when already registered and active);
-2. downloads the pinned circuit artifacts from the GitHub release named in
-   `config/circuit_artifacts.go` (about 1 GB) and verifies every file against the hashes built
-   into the binary;
+2. downloads the pinned circuit artifacts of the release named in `config/circuit_artifacts.go`
+   (about 1 GB) from the DAVINCI assets CDN
+   (`https://davinci-assets.fra1.cdn.digitaloceanspaces.com/dkg/<release>/`), falling back to the
+   GitHub release of the same name, and verifies every file against the hashes built into the
+   binary while it streams in (a mirror serving anything else is skipped);
 3. logs a startup banner with the chain head, the registry statistics and its own registry row,
    then polls the manager.
 

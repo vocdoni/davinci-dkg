@@ -48,11 +48,21 @@ func init() {
 	}
 }
 
-// Artifact describes a cached/downloadable circuit artifact by hash and source URL.
+// Artifact describes a cached/downloadable circuit artifact by hash and the
+// URLs it is published at, tried in order (CDN first, GitHub release last).
 type Artifact struct {
-	RemoteURL string
-	Hash      []byte
+	RemoteURLs []string
+	Hash       []byte
 }
+
+// downloadClient gives up on a mirror that does not start answering, so the
+// next one gets its turn; the transfer itself is bounded by the caller's
+// context only (a proving key is hundreds of megabytes).
+var downloadClient = func() *http.Client {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.ResponseHeaderTimeout = 60 * time.Second
+	return &http.Client{Transport: t}
+}()
 
 func (a *Artifact) cachePath() (string, error) {
 	if a == nil {
@@ -201,20 +211,41 @@ func (a *Artifact) ensureDownloaded(ctx context.Context) error {
 	}
 }
 
+// downloadToCache fetches the artifact from the first mirror that serves the
+// pinned content. A mirror that fails, answers with an error status or serves
+// bytes that do not hash to the pin is skipped; nothing unverified is ever
+// installed in the cache.
 func (a *Artifact) downloadToCache(ctx context.Context) error {
 	path, err := a.cachePath()
 	if err != nil {
 		return err
 	}
-	if a.RemoteURL == "" {
+	if len(a.RemoteURLs) == 0 {
 		return fmt.Errorf("artifact remote url not provided for hash %s", hex.EncodeToString(a.Hash))
 	}
+	var errs []error
+	for _, url := range a.RemoteURLs {
+		err := a.downloadFrom(ctx, url, path)
+		if err == nil {
+			return nil
+		}
+		if ctx.Err() != nil {
+			return errors.Join(append(errs, err)...)
+		}
+		log.Warnw("artifact mirror failed, trying the next one", "url", url, "error", err)
+		errs = append(errs, err)
+	}
+	return fmt.Errorf("download artifact %s: %w", hex.EncodeToString(a.Hash), errors.Join(errs...))
+}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, a.RemoteURL, nil)
+// downloadFrom streams url into a temporary file next to path, hashing as it
+// goes, and renames it into place only when the hash matches the pin.
+func (a *Artifact) downloadFrom(ctx context.Context, url, path string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return fmt.Errorf("create file request: %w", err)
 	}
-	res, err := http.DefaultClient.Do(req)
+	res, err := downloadClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("http request failed: %w", err)
 	}
@@ -224,7 +255,7 @@ func (a *Artifact) downloadToCache(ctx context.Context) error {
 		}
 	}()
 	if res.StatusCode != http.StatusOK {
-		return fmt.Errorf("unexpected http status %s for %s", res.Status, a.RemoteURL)
+		return fmt.Errorf("unexpected http status %s for %s", res.Status, url)
 	}
 
 	dir := filepath.Dir(path)
@@ -249,11 +280,11 @@ func (a *Artifact) downloadToCache(ctx context.Context) error {
 	hasher := sha256.New()
 	size, err := io.Copy(io.MultiWriter(tmpFile, hasher), res.Body)
 	if err != nil {
-		return fmt.Errorf("read downloaded content: %w", err)
+		return fmt.Errorf("read downloaded content from %s: %w", url, err)
 	}
 	sum := hasher.Sum(nil)
 	if !bytes.Equal(sum, a.Hash) {
-		return fmt.Errorf("hash mismatch for downloaded artifact: expected %s, got %s",
+		return fmt.Errorf("%w: downloaded from %s: expected %s, got %s", ErrArtifactHashMismatch, url,
 			hex.EncodeToString(a.Hash), hex.EncodeToString(sum))
 	}
 	if err := tmpFile.Close(); err != nil {
@@ -264,7 +295,7 @@ func (a *Artifact) downloadToCache(ctx context.Context) error {
 		return fmt.Errorf("install cached artifact %s: %w", path, err)
 	}
 	tmpPath = ""
-	log.Debugw("artifact downloaded and cached", "path", path, "size_bytes", size)
+	log.Debugw("artifact downloaded and cached", "path", path, "url", url, "size_bytes", size)
 	return nil
 }
 

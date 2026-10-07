@@ -16,11 +16,11 @@ var Artifacts = circuits.NewCircuitArtifacts(
 	ecc.BN254,
 	[]backend.ProverOption{solidity.WithProverTargetSolidityVerifier(backend.GROTH16)},
 	[]backend.VerifierOption{solidity.WithVerifierTargetSolidityVerifier(backend.GROTH16)},
-	&circuits.Artifact{RemoteURL: config.FinalizeCircuitURL, Hash: mustArtifactHash(config.FinalizeCircuitHash)},
-	&circuits.Artifact{RemoteURL: config.FinalizeProvingKeyURL, Hash: mustArtifactHash(config.FinalizeProvingKeyHash)},
+	&circuits.Artifact{RemoteURLs: config.FinalizeCircuitURLs, Hash: mustArtifactHash(config.FinalizeCircuitHash)},
+	&circuits.Artifact{RemoteURLs: config.FinalizeProvingKeyURLs, Hash: mustArtifactHash(config.FinalizeProvingKeyHash)},
 	&circuits.Artifact{
-		RemoteURL: config.FinalizeVerificationKeyURL,
-		Hash:      mustArtifactHash(config.FinalizeVerificationKeyHash),
+		RemoteURLs: config.FinalizeVerificationKeyURLs,
+		Hash:       mustArtifactHash(config.FinalizeVerificationKeyHash),
 	},
 )
 

@@ -28,16 +28,16 @@ var Artifacts = circuits.NewCircuitArtifacts(
 	[]backend.ProverOption{solidity.WithProverTargetSolidityVerifier(backend.GROTH16)},
 	[]backend.VerifierOption{solidity.WithVerifierTargetSolidityVerifier(backend.GROTH16)},
 	&circuits.Artifact{
-		RemoteURL: config.DecryptCombineCircuitURL,
-		Hash:      mustArtifactHash(config.DecryptCombineCircuitHash),
+		RemoteURLs: config.DecryptCombineCircuitURLs,
+		Hash:       mustArtifactHash(config.DecryptCombineCircuitHash),
 	},
 	&circuits.Artifact{
-		RemoteURL: config.DecryptCombineProvingKeyURL,
-		Hash:      mustArtifactHash(config.DecryptCombineProvingKeyHash),
+		RemoteURLs: config.DecryptCombineProvingKeyURLs,
+		Hash:       mustArtifactHash(config.DecryptCombineProvingKeyHash),
 	},
 	&circuits.Artifact{
-		RemoteURL: config.DecryptCombineVerificationKeyURL,
-		Hash:      mustArtifactHash(config.DecryptCombineVerificationKeyHash),
+		RemoteURLs: config.DecryptCombineVerificationKeyURLs,
+		Hash:       mustArtifactHash(config.DecryptCombineVerificationKeyHash),
 	},
 )
 

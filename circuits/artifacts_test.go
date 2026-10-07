@@ -6,6 +6,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -193,4 +195,57 @@ func TestLoadOrSetupForCircuitFallsBackToSetupWithoutConfiguredArtifacts(t *test
 	qt.Assert(t, err, qt.IsNil)
 	qt.Assert(t, runtime, qt.Not(qt.IsNil))
 	qt.Assert(t, runtime.VerifyingKey(), qt.Not(qt.IsNil))
+}
+
+// TestDownloadTriesMirrorsInOrder pins the mirror contract: a mirror that is
+// down, answers 404 or serves the wrong bytes is skipped, the first one that
+// serves the pinned content wins, and nothing unverified reaches the cache.
+func TestDownloadTriesMirrorsInOrder(t *testing.T) {
+	oldBaseDir := BaseDir
+	BaseDir = t.TempDir()
+	defer func() { BaseDir = oldBaseDir }()
+
+	content := []byte("the pinned artifact")
+	sum := sha256.Sum256(content)
+	var hits []string
+	serve := func(name string, status int, body []byte) *httptest.Server {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			hits = append(hits, name)
+			w.WriteHeader(status)
+			_, _ = w.Write(body)
+		}))
+		t.Cleanup(srv.Close)
+		return srv
+	}
+	down := serve("down", http.StatusOK, nil)
+	down.Close() // connection refused
+	missing := serve("missing", http.StatusNotFound, nil)
+	tampered := serve("tampered", http.StatusOK, []byte("a different file"))
+	good := serve("good", http.StatusOK, content)
+	unused := serve("unused", http.StatusOK, content)
+
+	a := &Artifact{
+		Hash:       sum[:],
+		RemoteURLs: []string{down.URL, missing.URL, tampered.URL, good.URL, unused.URL},
+	}
+	path, err := a.ensure(context.Background())
+	qt.Assert(t, err, qt.IsNil)
+	got, err := os.ReadFile(path)
+	qt.Assert(t, err, qt.IsNil)
+	qt.Assert(t, got, qt.DeepEquals, content)
+	qt.Assert(t, hits, qt.DeepEquals, []string{"missing", "tampered", "good"})
+
+	// Every mirror failing is an error naming each failure, and leaves no
+	// file behind.
+	bad := &Artifact{Hash: []byte{7, 7, 7}, RemoteURLs: []string{missing.URL, tampered.URL}}
+	_, err = bad.ensure(context.Background())
+	qt.Assert(t, err, qt.ErrorIs, ErrArtifactHashMismatch)
+	qt.Assert(t, err, qt.ErrorMatches, "(?s).*404.*hash mismatch.*")
+	badPath, err := bad.cachePath()
+	qt.Assert(t, err, qt.IsNil)
+	_, err = os.Stat(badPath)
+	qt.Assert(t, os.IsNotExist(err), qt.IsTrue)
+	entries, err := os.ReadDir(BaseDir)
+	qt.Assert(t, err, qt.IsNil)
+	qt.Assert(t, len(entries), qt.Equals, 1) // only the good artifact
 }

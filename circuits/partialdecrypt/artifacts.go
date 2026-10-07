@@ -17,16 +17,16 @@ var Artifacts = circuits.NewCircuitArtifacts(
 	[]backend.ProverOption{solidity.WithProverTargetSolidityVerifier(backend.GROTH16)},
 	[]backend.VerifierOption{solidity.WithVerifierTargetSolidityVerifier(backend.GROTH16)},
 	&circuits.Artifact{
-		RemoteURL: config.PartialDecryptCircuitURL,
-		Hash:      mustArtifactHash(config.PartialDecryptCircuitHash),
+		RemoteURLs: config.PartialDecryptCircuitURLs,
+		Hash:       mustArtifactHash(config.PartialDecryptCircuitHash),
 	},
 	&circuits.Artifact{
-		RemoteURL: config.PartialDecryptProvingKeyURL,
-		Hash:      mustArtifactHash(config.PartialDecryptProvingKeyHash),
+		RemoteURLs: config.PartialDecryptProvingKeyURLs,
+		Hash:       mustArtifactHash(config.PartialDecryptProvingKeyHash),
 	},
 	&circuits.Artifact{
-		RemoteURL: config.PartialDecryptVerificationKeyURL,
-		Hash:      mustArtifactHash(config.PartialDecryptVerificationKeyHash),
+		RemoteURLs: config.PartialDecryptVerificationKeyURLs,
+		Hash:       mustArtifactHash(config.PartialDecryptVerificationKeyHash),
 	},
 )
 
