@@ -71,3 +71,65 @@ The window defaults suit a local chain; size them for the target chain's block t
 verifiers embed the verifying keys of the circuits in `config/circuit_artifacts.go`, so nodes
 running a release built from the same commit can serve the deployment. Point them at it with
 `--manager <DKGManager> --web3.rpc <endpoints>`.
+
+## Moving the Gnosis deployment
+
+A change to the contracts' rules (such as the application-id namespace of
+[#14](https://github.com/vocdoni/davinci-dkg/issues/14)) needs a fresh deployment. The old one keeps
+its applications and plaintexts on chain, but its nodes leave it once the preset moves.
+
+1. **Deploy** from a clean checkout of the release commit, with Foundry on `PATH`. Do not run
+   `make circuits` first: the committed verifiers must stay those of the pinned `circuits-v6`
+   artifacts. Write the settings to a `0600` `solidity/.env` and delete it afterwards. These are the
+   current Gnosis parameters:
+
+   ```bash
+   RPC_URL=https://rpc.gnosischain.com
+   CHAIN_ID=100
+   PRIVATE_KEY=<deployer key>
+   MIN_THRESHOLD=2
+   MIN_COMMITTEE_SIZE=3
+   MAX_LOTTERY_ALPHA_BPS=20000
+   EPOCH_DURATION_BLOCKS=17280
+   COMMITTEE_SELECTION_BLOCKS=8
+   KEY_ASSEMBLY_BLOCKS=12
+   FINALIZE_GAP_BLOCKS=1
+   INACTIVITY_WINDOW=50400
+   ETHERSCAN_API_KEY=<Etherscan v2 key, for Gnosisscan verification>
+   ```
+
+   ```bash
+   make solidity-deploy && rm solidity/.env
+   ```
+
+   `rpc.gnosischain.com` is the endpoint that accepts the deployment; publicnode and drpc cap
+   `eth_getLogs` ranges, which the explorer needs later, not the deployment.
+2. **Check it.** `solidity/.last_deployed_addresses.env` lists the seven addresses. Read the
+   manager's deployment block and the parameters back:
+
+   ```bash
+   . solidity/.last_deployed_addresses.env
+   jq -r --arg m "${MANAGER,,}" '.receipts[] | select((.contractAddress // "" | ascii_downcase) == $m)
+     | .blockNumber' solidity/broadcast/DeployAll.s.sol/100/run-latest.json | xargs cast to-dec
+   for f in "REGISTRY()(address)" "appManager()(address)" "EPOCH_DURATION_BLOCKS()(uint256)" \
+     "MIN_THRESHOLD()(uint16)" "MIN_COMMITTEE_SIZE()(uint16)" "MAX_LOTTERY_ALPHA_BPS()(uint16)"; do
+     cast call "$MANAGER" "$f" --rpc-url https://rpc.gnosischain.com; done
+   cast call "$REGISTRY" "INACTIVITY_WINDOW()(uint64)" --rpc-url https://rpc.gnosischain.com
+   ```
+
+3. **Move the preset.** `scripts/move-gnosis-preset.sh solidity/.last_deployed_addresses.env
+   <deploy block>` rewrites every place that names the Gnosis deployment: `config/networks.go`,
+   `sdk/src/networks.ts`, `ui/public/config.json`, the fallbacks in `scripts/render-ui-config.sh`,
+   `ui/.do/davinci-dkg-ui.yaml`, this file, the README and their tests. Review the diff, run the
+   checks it prints, list the old manager under a "Retired" note here, and commit.
+4. **Release** a stable `vX.Y.Z`. `latest` moves, so compose nodes under Watchtower switch to the
+   new manager on their own, register in its registry at start (`EnsureRegistered`) and start
+   from an empty `<datadir>/100-<manager>`. Railway has no Watchtower: roll every service with
+   `scripts/railway-roll-node.sh <service id> ghcr.io/vocdoni/davinci-dkg:vX.Y.Z`. The explorer
+   redeploys from `main` on DigitalOcean App Platform.
+5. **Verify.** Every node logs `self: registry row` and `node running` against the new manager
+   (`scripts/railway-node-status.sh <service id>`). `cast call $REGISTRY "activeCount()(uint64)"`
+   reaches the fleet size. The first epoch goes `Live` about two minutes after a node creates it.
+   It needs `MIN_COMMITTEE_SIZE` (3) active operators, all claiming within the 8-block selection
+   window, and at least `minValidContributions` contributions. Then register an automatic
+   application and decrypt a value end to end with `dkgapp`.
