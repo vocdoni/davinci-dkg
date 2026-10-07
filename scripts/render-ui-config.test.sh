@@ -17,8 +17,8 @@ want() { [ "$(get "$1")" = "$2" ] || { echo "FAIL: $1 = $(get "$1"), want $2"; e
 bash "$here/render-ui-config.sh" "$out" >/dev/null
 want chainName gnosis
 want chainId 100
-want managerAddress 0x9999F38Ff8Bf959E98Ddd5D4551f82775219c01B
-want deployBlock 48483860
+want managerAddress 0xC6Fb38c42ed3FB35D363a702218746d5C7Da36BF
+want deployBlock 48632905
 diff -q "$here/../ui/public/config.json" "$out" >/dev/null || { echo "FAIL: snapshot differs from ui/public/config.json"; exit 1; }
 
 # The environment wins over both the file and the snapshot.

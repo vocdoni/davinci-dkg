@@ -6,27 +6,35 @@ read from it on chain.
 
 ## Gnosis Chain
 
-Chain id 100. The default network of the node. Deployed at block 48,483,860 with the
+Chain id 100. The default network of the node. Deployed at block 48,632,905 with the
 [`circuits-v6`](https://github.com/vocdoni/davinci-dkg/releases/tag/circuits-v6) artifacts; every
-contract is source-verified on [Gnosisscan](https://gnosisscan.io).
+contract is source-verified on [Gnosisscan](https://gnosisscan.io) and Sourcify. It replaced the
+first Gnosis deployment on 2026-10-07 to ship the application-id namespace of
+[#14](https://github.com/vocdoni/davinci-dkg/issues/14).
 
 | Contract | Address |
 |---|---|
-| DKGManager | `0x9999F38Ff8Bf959E98Ddd5D4551f82775219c01B` |
-| DKGAppManager | `0xd4d8f9708c380d81aec294b199081c5d2c782087` |
-| DKGRegistry | `0x45ab8b64633076ddc020b12d1f1325fa55f629c5` |
-| ContributionVerifier | `0x6d198bc613205957444b53a09bb22ed7bc650912` |
-| FinalizeVerifier | `0xc354ea7f3ef6db4ca0b89a1a5a6395c2d6126b38` |
-| PartialDecryptVerifier | `0x0f19886ee73fd74e3f88ce3a061490facd7561db` |
-| DecryptCombineVerifier | `0x2980e664edef91f554cc75b15cb8eeea61586644` |
+| DKGManager | `0xC6Fb38c42ed3FB35D363a702218746d5C7Da36BF` |
+| DKGAppManager | `0x81bac6b9aae85311741204c22cbaab96f03b567a` |
+| DKGRegistry | `0x393049828bc565152c223730ce67574f15a7a16a` |
+| ContributionVerifier | `0x67b7c4daa3db8b84e817d1a3d57cb8c40f59935f` |
+| FinalizeVerifier | `0x682ffa2a6e049e0dc889ceb7038fffc3bbf36d7d` |
+| PartialDecryptVerifier | `0x7ee28e810086590192e93e6046d90fe4e97f0f60` |
+| DecryptCombineVerifier | `0x1fd445c2e5700a0791ca70ac1bc3447b32acc56e` |
 
 | Parameter | Value |
 |---|---|
 | `EPOCH_DURATION_BLOCKS` | 17,280 (about 24 h at 5 s blocks) |
-| `COMMITTEE_SELECTION_BLOCKS` / `KEY_ASSEMBLY_BLOCKS` / `FINALIZE_GAP_BLOCKS` | 8 / 12 / 1 |
+| `COMMITTEE_SELECTION_BLOCKS` / `KEY_ASSEMBLY_BLOCKS` / `FINALIZE_GAP_BLOCKS` | 36 / 12 / 1 |
 | `MIN_THRESHOLD` / `MIN_COMMITTEE_SIZE` / `MAX_LOTTERY_ALPHA_BPS` | 2 / 3 / 20000 |
 
-With these windows an epoch is `Live` about two minutes after `createEpoch`.
+With these windows an epoch is `Live` about four minutes after `createEpoch`. The selection
+window was 8 blocks on the first deployment, and 9 of its first 20 epochs aborted because the
+committee did not fill in time.
+
+**Retired:** DKGManager `0x9999F38Ff8Bf959E98Ddd5D4551f82775219c01B` (block 48,483,860, registry
+`0x45ab8b64633076ddc020b12d1f1325fa55f629c5`, app manager `0xd4d8f9708c380d81aec294b199081c5d2c782087`).
+Its applications and plaintexts stay on chain, but no node serves it since v0.10.0.
 
 ## Sepolia
 
@@ -91,7 +99,7 @@ its applications and plaintexts on chain, but its nodes leave it once the preset
    MIN_COMMITTEE_SIZE=3
    MAX_LOTTERY_ALPHA_BPS=20000
    EPOCH_DURATION_BLOCKS=17280
-   COMMITTEE_SELECTION_BLOCKS=8
+   COMMITTEE_SELECTION_BLOCKS=36
    KEY_ASSEMBLY_BLOCKS=12
    FINALIZE_GAP_BLOCKS=1
    INACTIVITY_WINDOW=50400
@@ -129,7 +137,7 @@ its applications and plaintexts on chain, but its nodes leave it once the preset
    redeploys from `main` on DigitalOcean App Platform.
 5. **Verify.** Every node logs `self: registry row` and `node running` against the new manager
    (`scripts/railway-node-status.sh <service id>`). `cast call $REGISTRY "activeCount()(uint64)"`
-   reaches the fleet size. The first epoch goes `Live` about two minutes after a node creates it.
-   It needs `MIN_COMMITTEE_SIZE` (3) active operators, all claiming within the 8-block selection
+   reaches the fleet size. The first epoch goes `Live` about four minutes after a node creates it.
+   It needs `MIN_COMMITTEE_SIZE` (3) active operators, all claiming within the 36-block selection
    window, and at least `minValidContributions` contributions. Then register an automatic
    application and decrypt a value end to end with `dkgapp`.

@@ -8,10 +8,10 @@ describe('network presets', () => {
     expect(NODE_DEFAULT_NETWORK).toBe('gnosis');
     const gnosis = getNetwork(NODE_DEFAULT_NETWORK);
     expect(gnosis.chainId).toBe(100);
-    expect(gnosis.managerAddress).toBe('0x9999F38Ff8Bf959E98Ddd5D4551f82775219c01B');
-    expect(gnosis.startBlock).toBe(48_483_860n);
+    expect(gnosis.managerAddress).toBe('0xC6Fb38c42ed3FB35D363a702218746d5C7Da36BF');
+    expect(gnosis.startBlock).toBe(48_632_905n);
     expect(gnosis.rpcUrls.length).toBeGreaterThan(1);
-    expect(findNetwork(100, '0x9999f38ff8bf959e98ddd5d4551f82775219c01b')).toBe('gnosis');
+    expect(findNetwork(100, '0xc6fb38c42ed3fb35d363a702218746d5c7da36bf')).toBe('gnosis');
   });
 
   it('resolves names and aliases case-insensitively', () => {

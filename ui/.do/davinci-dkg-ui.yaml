@@ -57,7 +57,7 @@ static_sites:
         value: https://gnosis-rpc.publicnode.com
       - key: MANAGER_ADDRESS
         scope: BUILD_TIME
-        value: "0x9999F38Ff8Bf959E98Ddd5D4551f82775219c01B"
+        value: "0xC6Fb38c42ed3FB35D363a702218746d5C7Da36BF"
       - key: CHAIN_ID
         scope: BUILD_TIME
         value: "100"
@@ -72,7 +72,7 @@ static_sites:
       # which makes those scans fall back to a recent-block window.
       - key: DEPLOY_BLOCK
         scope: BUILD_TIME
-        value: "48483860"
+        value: "48632905"
       # Optional — leave unset to let the SDK auto-derive from DKGManager.
       # - key: REGISTRY_ADDRESS
       #   scope: BUILD_TIME
@@ -80,7 +80,7 @@ static_sites:
       # Optional — sets the lower bound for getLogs scans.
       # - key: START_BLOCK
       #   scope: BUILD_TIME
-      #   value: "48483860"
+      #   value: "48632905"
 
       # ── Vite build envs ─────────────────────────────────────────────────
       - key: VITE_BUILD_VERSION

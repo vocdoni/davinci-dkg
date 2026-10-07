@@ -18,8 +18,8 @@ export interface NetworkDeployment {
 export const KNOWN_NETWORKS: Readonly<Record<string, NetworkDeployment>> = {
   gnosis: {
     chainId: 100,
-    managerAddress: '0x9999F38Ff8Bf959E98Ddd5D4551f82775219c01B',
-    startBlock: 48_483_860n,
+    managerAddress: '0xC6Fb38c42ed3FB35D363a702218746d5C7Da36BF',
+    startBlock: 48_632_905n,
     rpcUrls: [
       'https://gnosis-rpc.publicnode.com',
       'https://gnosis-rpc.blockreq.com/v1/rpc/public',

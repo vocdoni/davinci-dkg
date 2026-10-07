@@ -12,9 +12,9 @@ import (
 
 func TestDeploymentDir(t *testing.T) {
 	c := qt.New(t)
-	manager := common.HexToAddress("0x9999F38Ff8Bf959E98Ddd5D4551f82775219c01B")
+	manager := common.HexToAddress("0xC6Fb38c42ed3FB35D363a702218746d5C7Da36BF")
 	c.Assert(deploymentDir("/data", 100, manager), qt.Equals,
-		filepath.Join("/data", "100-0x9999f38ff8bf959e98ddd5d4551f82775219c01b"))
+		filepath.Join("/data", "100-0xc6fb38c42ed3fb35d363a702218746d5c7da36bf"))
 	c.Assert(deploymentDir("", 100, manager), qt.Equals, "")
 }
 

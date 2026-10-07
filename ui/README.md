@@ -43,7 +43,7 @@ variables; a variable left out keeps the value already in the file.
 | `MANAGER_ADDRESS` | `managerAddress` | Gnosis `DKGManager` |
 | `CHAIN_ID` | `chainId` | `100` |
 | `CHAIN_NAME` | `chainName` | `gnosis` |
-| `DEPLOY_BLOCK` | `deployBlock` | `48483860` |
+| `DEPLOY_BLOCK` | `deployBlock` | `48632905` |
 | `EXPLORER_URL` | `explorerUrl` | `https://gnosisscan.io` |
 
 `DEPLOY_BLOCK` is where the historical scan starts. Set it to the manager's deployment block;

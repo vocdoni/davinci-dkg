@@ -18,8 +18,8 @@ func TestDefaultNetworkIsGnosis(t *testing.T) {
 	c.Assert(err, qt.IsNil)
 	c.Assert(name, qt.Equals, "gnosis")
 	c.Assert(dep.ChainID, qt.Equals, uint64(100))
-	c.Assert(dep.Manager, qt.Equals, common.HexToAddress("0x9999F38Ff8Bf959E98Ddd5D4551f82775219c01B"))
-	c.Assert(dep.StartBlock, qt.Equals, uint64(48_483_860))
+	c.Assert(dep.Manager, qt.Equals, common.HexToAddress("0xC6Fb38c42ed3FB35D363a702218746d5C7Da36BF"))
+	c.Assert(dep.StartBlock, qt.Equals, uint64(48_632_905))
 	c.Assert(len(dep.RPCs) > 1, qt.IsTrue)
 
 	sepolia, err := NetworkByName("SEP")

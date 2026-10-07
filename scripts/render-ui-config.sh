@@ -45,10 +45,10 @@ resolve() {
 }
 
 resolve RPC_URL rpcUrl https://gnosis-rpc.publicnode.com
-resolve MANAGER_ADDRESS managerAddress 0x9999F38Ff8Bf959E98Ddd5D4551f82775219c01B
+resolve MANAGER_ADDRESS managerAddress 0xC6Fb38c42ed3FB35D363a702218746d5C7Da36BF
 resolve CHAIN_ID chainId 100
 resolve CHAIN_NAME chainName gnosis
-resolve DEPLOY_BLOCK deployBlock 48483860
+resolve DEPLOY_BLOCK deployBlock 48632905
 resolve EXPLORER_URL explorerUrl https://gnosisscan.io
 resolve REGISTRY_ADDRESS registryAddress ""
 resolve START_BLOCK startBlock ""

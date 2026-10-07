@@ -1,8 +1,8 @@
 {
   "rpcUrl": "https://gnosis-rpc.publicnode.com",
-  "managerAddress": "0x9999F38Ff8Bf959E98Ddd5D4551f82775219c01B",
+  "managerAddress": "0xC6Fb38c42ed3FB35D363a702218746d5C7Da36BF",
   "chainId": 100,
   "chainName": "gnosis",
-  "deployBlock": 48483860,
+  "deployBlock": 48632905,
   "explorerUrl": "https://gnosisscan.io"
 }

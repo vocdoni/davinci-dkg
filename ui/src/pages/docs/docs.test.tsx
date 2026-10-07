@@ -17,9 +17,9 @@ const CONFIG = {
 const GNOSIS = {
   chainName: 'gnosis',
   chainId: 100,
-  managerAddress: '0x9999F38Ff8Bf959E98Ddd5D4551f82775219c01B' as `0x${string}`,
+  managerAddress: '0xC6Fb38c42ed3FB35D363a702218746d5C7Da36BF' as `0x${string}`,
   rpcUrl: 'https://gnosis-rpc.publicnode.com',
-  deployBlock: 48_483_860,
+  deployBlock: 48_632_905,
   explorerUrl: 'https://gnosisscan.io',
 }
 

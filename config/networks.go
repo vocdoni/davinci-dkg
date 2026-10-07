@@ -35,8 +35,8 @@ type NetworkDeployment struct {
 var KnownNetworks = map[string]NetworkDeployment{
 	"gnosis": {
 		ChainID:    100,
-		Manager:    common.HexToAddress("0x9999F38Ff8Bf959E98Ddd5D4551f82775219c01B"),
-		StartBlock: 48_483_860, // DKGManager deployment block on Gnosis Chain (2026-09-28)
+		Manager:    common.HexToAddress("0xC6Fb38c42ed3FB35D363a702218746d5C7Da36BF"),
+		StartBlock: 48_632_905, // DKGManager deployment block on Gnosis Chain (2026-10-07)
 		RPCs: []string{
 			"https://gnosis-rpc.publicnode.com",
 			"https://gnosis-rpc.blockreq.com/v1/rpc/public",

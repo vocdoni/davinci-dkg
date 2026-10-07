@@ -82,7 +82,7 @@ help: ## Show this help message
 	@echo "                     EXPLORER_URL     (default: https://gnosisscan.io)"
 	@echo "                     REGISTRY_ADDRESS (optional)"
 	@echo "                     START_BLOCK      (optional)"
-	@echo "                     DEPLOY_BLOCK     (default: 48483860, block DKGManager was deployed at)"
+	@echo "                     DEPLOY_BLOCK     (default: 48632905, block DKGManager was deployed at)"
 	@echo "                   ui-build / ui-dev call ui-config automatically when"
 	@echo "                   RPC_URL is set on the command line."
 	@echo ""
