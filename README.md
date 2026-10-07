@@ -89,7 +89,8 @@ directory and hosting on Railway are covered in [docs/node.md](docs/node.md).
 ### Using the DKG from an application
 
 Each application is identified by a 32-byte `aid = salt << 160 | registrant`: the low 160 bits
-are the address that registers it (the contract refuses an id in another account's namespace),
+are the address that registers it (the contract refuses an id in another account's namespace on
+Gnosis; the Sepolia deployment `0xc73b…` predates [#14](https://github.com/vocdoni/davinci-dkg/issues/14) and does not enforce this),
 and a salt below 2⁹² keeps it inside the BN254 scalar field. `dkgapp register` and the SDK's
 `randomAid(account)` build one for you. An organizer-locked application prints an organizer secret at
 registration: **store it**. It is not derivable from anything on chain, and without it the
@@ -99,9 +100,11 @@ application can never be decrypted.
 
 ```bash
 go build -o dkgapp ./cmd/dkgapp
-export DAVINCI_DKG_NETWORK=gnosis DAVINCI_DKG_PRIVKEY=0x...
+export DAVINCI_DKG_NETWORK=gnosis
 
-./dkgapp epoch                                                  # newest epoch and its key pool
+./dkgapp epoch                                                  # newest epoch and its key pool (read-only; no private key needed)
+
+export DAVINCI_DKG_PRIVKEY=0x...                                # required for write operations below
 ./dkgapp register                                               # prints the aid, the epoch id and the organizer secret
 AID=0x...                                                       # the aid it printed
 ./dkgapp encrypt   -epoch <epoch> -aid $AID -m 42               # prints the ciphertext index
@@ -158,7 +161,7 @@ endpoint, with no backend. `make ui-dev` serves it for the Gnosis deployment on
 | Network | Chain id | `DKGManager` | Circuits |
 |---|---|---|---|
 | Gnosis Chain (default) | 100 | `0xC6Fb38c42ed3FB35D363a702218746d5C7Da36BF` | [`circuits-v6`](https://github.com/vocdoni/davinci-dkg/releases/tag/circuits-v6) |
-| Sepolia (testnet) | 11155111 | `0xc73b7a868eca6ac7e3e647e2665aa16a793cf551` | [`circuits-v6`](https://github.com/vocdoni/davinci-dkg/releases/tag/circuits-v6) |
+| Sepolia (testnet, predates [#14](https://github.com/vocdoni/davinci-dkg/issues/14)) | 11155111 | `0xc73b7a868eca6ac7e3e647e2665aa16a793cf551` | [`circuits-v6`](https://github.com/vocdoni/davinci-dkg/releases/tag/circuits-v6) |
 
 Both are built into the node, `dkgapp` and the SDK. The other contracts are resolved from the
 manager on chain; their addresses, the epoch parameters and how to deploy your own are in

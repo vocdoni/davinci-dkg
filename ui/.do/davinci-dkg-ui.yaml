@@ -24,7 +24,7 @@ alerts:
 
 # Optional: add a custom domain.
 # domains:
-#   - domain: explorer.davinci.vote
+#   - domain: dkg.davinci.vote
 #     type: PRIMARY
 
 features:

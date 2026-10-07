@@ -39,7 +39,9 @@ Its applications and plaintexts stay on chain, but no node serves it since v0.10
 ## Sepolia
 
 Chain id 11155111, a testnet. It has no public RPC endpoints built in: pass `--web3.rpc`.
-Deployed at block 11,668,198 with the `circuits-v6` artifacts.
+Deployed at block 11,668,198 with the `circuits-v6` artifacts. **This deployment predates the
+application-id namespace fix of [#14](https://github.com/vocdoni/davinci-dkg/issues/14)**: the
+contract does not enforce that `aid`'s low 160 bits match the registrant's address.
 
 | Contract | Address |
 |---|---|
@@ -133,8 +135,10 @@ its applications and plaintexts on chain, but its nodes leave it once the preset
 4. **Release** a stable `vX.Y.Z`. `latest` moves, so compose nodes under Watchtower switch to the
    new manager on their own, register in its registry at start (`EnsureRegistered`) and start
    from an empty `<datadir>/100-<manager>`. Railway has no Watchtower: roll every service with
-   `scripts/railway-roll-node.sh <service id> ghcr.io/vocdoni/davinci-dkg:vX.Y.Z`. The explorer
-   redeploys from `main` on DigitalOcean App Platform.
+   `scripts/railway-roll-node.sh <service id> ghcr.io/vocdoni/davinci-dkg:vX.Y.Z`. For the
+   explorer on DigitalOcean App Platform: the app's build-time env (`MANAGER_ADDRESS`,
+   `DEPLOY_BLOCK`) overrides the repo file, so apply the values from `ui/.do/davinci-dkg-ui.yaml`
+   to the app's environment spec, trigger a redeploy, and purge the Cloudflare cache.
 5. **Verify.** Every node logs `self: registry row` and `node running` against the new manager
    (`scripts/railway-node-status.sh <service id>`). `cast call $REGISTRY "activeCount()(uint64)"`
    reaches the fleet size. The first epoch goes `Live` about four minutes after a node creates it.

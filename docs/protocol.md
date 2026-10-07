@@ -79,8 +79,10 @@ were aborted.
 A `Live` epoch hosts one encryption context per application, keyed by a 32-byte `aid` chosen by
 the registrant inside its own namespace: `aid = salt << 160 | registrant`. The contract reverts
 `InvalidApplication` unless the low 160 bits of `aid` are the caller, so nobody can register an
-id in another account's namespace, and an integrator whose ids are predictable (a hash of a
-process id, say) cannot be front-run into `ApplicationAlreadyExists`. `aid` is also a public
+id in another account's namespace (Gnosis deployment; the Sepolia deployment `0xc73b…` predates
+[#14](https://github.com/vocdoni/davinci-dkg/issues/14) and does not enforce this check), and an
+integrator whose ids are predictable (a hash of a process id, say) cannot be front-run into
+`ApplicationAlreadyExists`. `aid` is also a public
 input of the decryption proofs, so it must be non-zero and below the BN254 scalar field; a salt
 below `2^92` guarantees that. Registration itself is open to anyone, and ids are first come,
 first served per epoch within a namespace.
@@ -167,10 +169,11 @@ a canonical field element is rejected.
 | DecryptCombine | the Lagrange interpolation over the qualifying set, knowledge of the organizer secret and the decryption equation | 9 |
 
 Shares travel masked in the BN254 scalar field with a one-time pad derived from an ECDH secret
-between dealer and recipient. The compiled circuits and their keys are published as a GitHub
-release and pinned by SHA-256 in `config/circuit_artifacts.go`. A node downloads them on first
-start and verifies every file against those hashes, again whenever it loads a proving key, and
-never compiles a circuit at runtime.
+between dealer and recipient. The compiled circuits and their keys are published on the CDN
+(`https://davinci-assets.fra1.cdn.digitaloceanspaces.com/dkg/circuits-v6/`) with the GitHub
+release as fallback, and pinned by SHA-256 in `config/circuit_artifacts.go`. A node downloads
+them on first start and verifies every file against those hashes, again whenever it loads a
+proving key, and never compiles a circuit at runtime.
 
 ## Contracts
 
