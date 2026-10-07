@@ -67,6 +67,7 @@ jobs:
             tags="${tags}"$'\n'"ghcr.io/vocdoni/davinci-dkg:latest"
           fi
 
+          echo "primary=${primary}" >> "$GITHUB_OUTPUT"
           {
             echo 'list<<EOF'
             echo "${tags}"
@@ -81,3 +82,5 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           tags: ${{ steps.tags.outputs.list }}
+          build-args: |
+            VERSION=${{ steps.tags.outputs.primary }}
