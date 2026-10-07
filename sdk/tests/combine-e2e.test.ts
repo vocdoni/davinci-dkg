@@ -30,6 +30,7 @@ import {
   DKGWriter,
   applicationKey,
   encrypt,
+  randomAid,
   randomOrganizerSecret,
   type AppPolicyInput,
   type BabyJubPoint,
@@ -86,13 +87,6 @@ function lastJsonLine<T>(stdout: string): T | null {
 }
 
 
-function randomAid(): `0x${string}` {
-  const buf = new Uint8Array(32);
-  globalThis.crypto.getRandomValues(buf);
-  buf[0] &= 0x1f; // keep `aid` below the BN254 scalar field modulus
-  return ('0x' + Array.from(buf).map((b) => b.toString(16).padStart(2, '0')).join('')) as `0x${string}`;
-}
-
 describe('SDK combineDecryption end-to-end (writer drives the on-chain combine)', () => {
   let client:  DKGClient;
   let writer:  DKGWriter;
@@ -126,7 +120,7 @@ describe('SDK combineDecryption end-to-end (writer drives the on-chain combine)'
     //    the index. Then reveal sk_org once — the combine proof consumes the
     //    organizer secret, so the fixture needs it either way, but the
     //    reveal is the step a real organizer performs.
-    const aid = randomAid();
+    const aid = randomAid(writer.walletClient.account!.address);
     const skOrg = randomOrganizerSecret();
     // Organizer-locked, registrant-only: the defaults of every field.
     const policy: AppPolicyInput = { maxCiphertexts: 0 };

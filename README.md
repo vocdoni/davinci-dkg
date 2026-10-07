@@ -88,9 +88,10 @@ directory and hosting on Railway are covered in [docs/node.md](docs/node.md).
 
 ### Using the DKG from an application
 
-Each application is identified by a 32-byte `aid` that must be non-zero and below the BN254
-scalar field. Registration is open to anyone, so pick a random id and check that the
-registration succeeded. An organizer-locked application prints an organizer secret at
+Each application is identified by a 32-byte `aid = salt << 160 | registrant`: the low 160 bits
+are the address that registers it (the contract refuses an id in another account's namespace),
+and a salt below 2⁹² keeps it inside the BN254 scalar field. `dkgapp register` and the SDK's
+`randomAid(account)` build one for you. An organizer-locked application prints an organizer secret at
 registration: **store it**. It is not derivable from anything on chain, and without it the
 application can never be decrypted.
 
@@ -99,10 +100,10 @@ application can never be decrypted.
 ```bash
 go build -o dkgapp ./cmd/dkgapp
 export DAVINCI_DKG_NETWORK=gnosis DAVINCI_DKG_PRIVKEY=0x...
-AID=0x$(openssl rand -hex 31)
 
 ./dkgapp epoch                                                  # newest epoch and its key pool
-./dkgapp register  -aid $AID                                    # prints the epoch id and the organizer secret
+./dkgapp register                                               # prints the aid, the epoch id and the organizer secret
+AID=0x...                                                       # the aid it printed
 ./dkgapp encrypt   -epoch <epoch> -aid $AID -m 42               # prints the ciphertext index
 ./dkgapp reveal    -epoch <epoch> -aid $AID -org-secret <secret>   # opens the application, once
 ./dkgapp plaintext -epoch <epoch> -aid $AID -index 1 -wait 10m
@@ -131,7 +132,7 @@ const walletClient = createWalletClient({
 const dkg = new DKGWriter({ publicClient, walletClient, managerAddress: net.managerAddress });
 
 const epochId = '0x...';   // a Live epoch with a free pool key, see `dkgapp epoch`
-const aid = randomAid();
+const aid = randomAid(dkg.walletClient.account!.address);   // salt << 160 | your address
 await dkg.waitForTransaction(await dkg.registerApplication(epochId, aid, { mode: AppMode.Automatic }));
 
 const { ciphertextIndex } = await dkg.encryptAndSubmit(epochId, aid, 42n);

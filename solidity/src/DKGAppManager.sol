@@ -258,8 +258,17 @@ contract DKGAppManager is IDKGAppManager {
     /// @dev `aid` is bound into the partial-decrypt and combine proofs as a
     ///      BN254 scalar-field public input, so an id at or above the field
     ///      modulus can never be proven against: reject it up front.
-    function _requireValidAid(bytes32 aid) internal pure {
+    ///
+    ///      Its low 160 bits must also be the registrant, so an id reads
+    ///      `salt << 160 | msg.sender` (a salt below 2^92 keeps it under the
+    ///      field modulus). Ids are first come, first served per epoch; with
+    ///      the binding nobody can register an id in another account's
+    ///      namespace, so an integrator whose ids are predictable (derived
+    ///      from public data) cannot be front-run into
+    ///      `ApplicationAlreadyExists`.
+    function _requireValidAid(bytes32 aid) internal view {
         if (aid == bytes32(0) || uint256(aid) >= BabyJubJub.Q) revert InvalidApplication();
+        if (address(uint160(uint256(aid))) != msg.sender) revert InvalidApplication();
     }
 
     /// @dev Fiat-Shamir transcript for the organizer Schnorr proof:

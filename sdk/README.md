@@ -58,7 +58,7 @@ for (const { id, epoch } of await dkg.getRecentEpochs(8)) {
 }
 if (!epochId) throw new Error('no Live epoch with a free pool key');
 
-const aid = randomAid();
+const aid = randomAid(dkg.walletClient.account!.address);   // salt << 160 | your address
 await dkg.waitForTransaction(await dkg.registerApplication(epochId, aid, { mode: AppMode.Automatic }));
 
 const { ciphertextIndex } = await dkg.encryptAndSubmit(epochId, aid, 42n);
@@ -106,8 +106,15 @@ await dkg.revealOrganizerSecret(epochId, aid, skOrg);   // once: opens every cip
 **Losing `skOrg` before the reveal makes every ciphertext of the application permanently
 undecryptable.** The SDK only sends `PK_org` and a proof of possession at registration. The
 reveal is irreversible and application-wide, and an organizer secret must never be reused across
-applications. The `aid` must be non-zero and below the BN254 scalar field (`randomAid()` produces
-one); registration is open to anyone, so check that it succeeded.
+applications.
+
+An `aid` lives in its registrant's namespace: `aid = salt << 160 | registrant`, with a salt below
+`2^92` so the id stays inside the BN254 scalar field. The contract refuses any other id with
+`InvalidApplication()` (nobody can register an id meant for another account), and
+`registerApplication` throws before sending when `aid` is not the writer account's.
+`randomAid(account)` draws a random salt; `applicationId(account, salt)` builds a deterministic
+id, for an integrator that derives ids from its own data; `aidRegistrant(aid)` reads the owner
+back.
 
 ### Encrypting
 
@@ -187,7 +194,8 @@ contributions, finalizations and partial decryptions come from `davinci-dkg-node
 | `encrypt(m, pubKey)`, `encryptForApplication(m, poolKey, pkOrg?)`, `decrypt(ct, sk)` | ElGamal on BabyJubJub |
 | `buildElGamal()` | Key generation, encryption, point arithmetic and packing |
 | `applicationKey(poolKey, pkOrg?)` | `P_j + PK_org`, or `P_j` without an organizer key |
-| `randomAid()`, `randomOrganizerSecret()` | Fresh application id and organizer secret |
+| `randomAid(account)`, `applicationId(account, salt)`, `aidRegistrant(aid)` | Application ids in an account's namespace |
+| `randomOrganizerSecret()` | Fresh organizer secret |
 | `waitForEpochPhase`, `waitForDecryption`, `waitForCombinedDecryption`, `waitForPoolKey` | Polling helpers |
 | `watchNewEpochs`, `watchEpochLive`, `watchCiphertextSubmitted`, `watchDecryptionCombined` | Event subscriptions; each returns an unsubscribe function |
 | `decryptionProgress`, `networkSummary` | One-shot snapshots |

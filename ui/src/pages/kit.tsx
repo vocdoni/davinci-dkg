@@ -264,7 +264,7 @@ export function KitPage() {
 
       <Section title='Inputs'>
         <div className='grid max-w-3xl gap-4 md:grid-cols-2'>
-          <Input label='Application id' placeholder='0x…' mono hint='32 bytes, below the BN254 scalar field.' />
+          <Input label='Application id' placeholder='0x…' mono hint='32 bytes: a salt, then the registering address.' />
           <Input label='Ciphertext cap' type='number' defaultValue={8} hint='Maximum ciphertexts under this aid.' />
           <Input label='Organizer secret' placeholder='0x…' mono error='Not a valid scalar' />
           <Select

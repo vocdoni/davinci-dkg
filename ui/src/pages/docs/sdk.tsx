@@ -141,13 +141,15 @@ stop()`}</Code>
           claims the epoch&rsquo;s next unclaimed pool key (<C>PoolExhausted()</C> once all <C>MAX_K</C> are taken)
           and, in the default <Em>organizer-locked</Em> mode, binds an organizer key on top of it so the
           encryption key becomes <C>PK_aid = P_j + PK_org</C>. Only <C>PK_org</C> and the Schnorr proof of possession
-          go on chain — <C>sk_org</C> never leaves the process that drew it until you choose to reveal it. Every policy
+          go on chain — <C>sk_org</C> never leaves the process that drew it until you choose to reveal it. The{' '}
+          <C>aid</C> lives in the registering account&rsquo;s namespace, <C>salt &lt;&lt; 160 | address</C>: the
+          contract refuses an id whose low 160 bits are anyone else, so nobody can take an id meant for you. Every policy
           field is optional; the defaults are organizer-locked, registrant-only submission, no cap, no block window and
           no decryption window.
         </P>
         <Code caption='register.ts'>{`import { createWalletClient, http } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
-import { DKGWriter, randomOrganizerSecret } from '@vocdoni/davinci-dkg-sdk'
+import { DKGWriter, randomAid, randomOrganizerSecret } from '@vocdoni/davinci-dkg-sdk'
 
 const walletClient = createWalletClient({
   account: privateKeyToAccount('0x<your-private-key>'),
@@ -161,7 +163,7 @@ const writer = new DKGWriter({
 })
 
 const skOrg = randomOrganizerSecret()   // store this BEFORE you register
-const aid   = '0x…'                     // bytes32, non-zero, top three bits clear
+const aid   = randomAid(walletClient.account.address) // salt << 160 | your address
 
 await writer.registerApplication(epochId, aid, {
   mode:            AppMode.OrganizerLocked, // the default

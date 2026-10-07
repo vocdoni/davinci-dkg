@@ -278,8 +278,10 @@ event OrganizerSecretRevealed(eid, aid, sk)
 errors: PoolExhausted, InvalidOrganizerSecret, InvalidPolicy, DecryptionClosed, DecryptionNotOpen, OrganizerSecretNotRevealed, AlreadyRevealed
 ```
 
-Automatic registration ignores the key and Schnorr arguments and stores `(0, 1)`; locked
-registration verifies the Schnorr proof of possession (domain
+`aid` must be non-zero, below the BN254 scalar field and carry the registrant in its low 160
+bits (`aid = salt << 160 | msg.sender`, `salt < 2^92`), else registration reverts
+`InvalidApplication`. Automatic registration ignores the key and Schnorr arguments and stores
+`(0, 1)`; locked registration verifies the Schnorr proof of possession (domain
 `davinci-dkg:organizer-register:v1`). Registration calls `DKGManager.claimPoolKey(eid, aid)`,
 callable only by the app manager, which assigns the next unclaimed key, advances the cursor,
 records the index-plus-one marker and emits `PoolKeyClaimed`.

@@ -34,6 +34,7 @@ import {
   deserialiseCiphertext,
   encryptValue,
   organizerPublicKey,
+  aidBelongsTo,
   parsePlaintext,
   randomAid,
   randomOrganizerSecret,
@@ -222,10 +223,13 @@ export function usePlaygroundController(chain: PlaygroundChain, epochs: EpochOpt
   }, [chain.wallet.connected, chain.wallet.address, chain.wallet.label, chain.headBlock, state.connected])
 
   // ── identity: a fresh aid + secret, generated together ───────────────────
+  // The id lives in the connected account's namespace (the contract refuses
+  // any other), so there is nothing to roll before a wallet is connected.
+  const owner = chain.wallet.address
   const rollIdentity = useCallback(() => {
-    if (state.pinned) return
+    if (state.pinned || !owner) return
     if (epochId && state.aid) clearOrganizerSecret(epochId as Hex, state.aid as Hex)
-    const aid = randomAid()
+    const aid = randomAid(owner)
     const sk = randomOrganizerSecret()
     setSecret(sk)
     setSecretFresh(true)
@@ -235,7 +239,7 @@ export function usePlaygroundController(chain: PlaygroundChain, epochs: EpochOpt
     // automatic application never uses it, but keeping one per pair is what
     // lets a deep link resume either mode.
     if (epochId) saveOrganizerSecret(epochId as Hex, aid, sk)
-  }, [epochId, state.aid, state.pinned])
+  }, [epochId, owner, state.aid, state.pinned])
 
   // Generate the pair as soon as an epoch is known, so the register step has
   // something to show without the visitor pressing anything first.
@@ -244,12 +248,24 @@ export function usePlaygroundController(chain: PlaygroundChain, epochs: EpochOpt
     rollIdentity()
   }, [epochId, state.aid, state.pinned, state.connected, rollIdentity])
 
+  // A wallet switch before registration moves the pending id into the new
+  // account's namespace and keeps the organizer secret that goes with it.
+  useEffect(() => {
+    if (state.pinned || !state.aid || !owner || !epochId) return
+    if (aidBelongsTo(state.aid, owner)) return
+    const aid = randomAid(owner)
+    clearOrganizerSecret(epochId as Hex, state.aid as Hex)
+    dispatch({ type: 'set-aid', aid })
+    if (secret) saveOrganizerSecret(epochId as Hex, aid, secret)
+  }, [epochId, owner, secret, state.aid, state.pinned])
+
   const useSecretInput = useCallback(
     (input: string): string | null => {
       if (state.pinned) return 'The application is already registered'
       const parsed = parseOrganizerSecret(input)
       if (!parsed) return 'Not a scalar — expected a decimal or 0x-hex integer'
-      const aid = state.aid ?? randomAid()
+      const aid = state.aid ?? (owner ? randomAid(owner) : null)
+      if (!aid) return 'Connect a wallet first'
       setSecret(parsed)
       setSecretFresh(false)
       dispatch({ type: 'set-aid', aid })
@@ -257,7 +273,7 @@ export function usePlaygroundController(chain: PlaygroundChain, epochs: EpochOpt
       log({ step: 'register', tone: 'info', message: 'Using a pasted organizer secret' })
       return null
     },
-    [epochId, state.aid, state.pinned, log]
+    [epochId, owner, state.aid, state.pinned, log]
   )
 
   // ── writes ───────────────────────────────────────────────────────────────

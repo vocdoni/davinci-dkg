@@ -143,7 +143,8 @@ export {
 } from './flow.js';
 
 // ── Crypto ────────────────────────────────────────────────────────────────────
-export { buildElGamal, applicationKey, randomOrganizerSecret, randomAid } from './crypto/index.js';
+export { buildElGamal, applicationKey, randomOrganizerSecret } from './crypto/index.js';
+export { AID_SALT_BITS, applicationId, randomAid, aidRegistrant } from './aid.js';
 export type { ElGamal } from './crypto/index.js';
 export {
   fromRTEtoTE,

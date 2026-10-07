@@ -77,10 +77,13 @@ were aborted.
 ## Applications
 
 A `Live` epoch hosts one encryption context per application, keyed by a 32-byte `aid` chosen by
-the registrant. `aid` is a public input of the decryption proofs, so it must be non-zero and
-below the BN254 scalar field (clear the top three bits of a random id). Registration is open to
-anyone, so anyone can take an `aid` first; an integrator that needs a specific `aid` checks that
-its registration succeeded.
+the registrant inside its own namespace: `aid = salt << 160 | registrant`. The contract reverts
+`InvalidApplication` unless the low 160 bits of `aid` are the caller, so nobody can register an
+id in another account's namespace, and an integrator whose ids are predictable (a hash of a
+process id, say) cannot be front-run into `ApplicationAlreadyExists`. `aid` is also a public
+input of the decryption proofs, so it must be non-zero and below the BN254 scalar field; a salt
+below `2^92` guarantees that. Registration itself is open to anyone, and ids are first come,
+first served per epoch within a namespace.
 
 `registerApplication` claims the next unclaimed pool key `P_j` and fixes the application's mode:
 

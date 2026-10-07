@@ -52,9 +52,10 @@ number of ciphertexts can wait in an application; only decrypted ones cost the c
   could decrypt off chain at any time (for a locked application they would still need `sk_org`).
 - A locked application whose organizer loses `sk_org` is undecryptable forever; an organizer who
   reuses one secret across two applications opens both with one reveal.
-- It does not reserve application ids. Registration is open to anyone, so anyone can register an
-  `aid` first or claim an epoch's pool keys; an integrator that needs a specific `aid` checks that
-  its registration succeeded.
+- It does not reserve pool keys. Registration is open to anyone, so anyone can claim an epoch's
+  pool keys. Application ids are safe from squatting: an `aid` carries its registrant in its low
+  160 bits (`salt << 160 | registrant`), and the contract refuses an id in another account's
+  namespace.
 
 ## Sealed-bid auctions
 
@@ -220,7 +221,8 @@ for the reveal plus one decryption.
 
 1. Register the application with `dkgapp register` or the SDK (`registerApplication`), choosing
    mode, submitter policy, ciphertext cap and windows, and check that it succeeded: anyone may
-   register, so the `aid` or the epoch's last free key can already be taken.
+   register, so the epoch's last free key can already be taken. The `aid` is safe: it carries the
+   registering address in its low 160 bits (`salt << 160 | registrant`).
 2. If participants may gain by copying or shifting each other's inputs, put an application contract
    in front as the sole submitter and have it verify a proof of knowledge of `r` (or a commitment)
    before forwarding.

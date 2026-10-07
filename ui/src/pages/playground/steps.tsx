@@ -309,8 +309,9 @@ export function RegisterStep({ controller, chain }: StepProps) {
             ) : null}
           </div>
           <p className='mt-1.5 text-[11px] text-ash'>
-            32 random bytes with the top three bits cleared, so the id is a BN254 scalar — it is a public input of every
-            decryption proof and the contract rejects anything larger.
+            A random 92-bit salt followed by your address: the contract only lets the address in the low 160 bits
+            register an id, so nobody can take this one before you. It stays below the BN254 scalar field, as every
+            decryption proof needs.
           </p>
         </div>
 

@@ -106,7 +106,7 @@ func ciphertextPolicyReverts(ctx context.Context, t *testing.T, f *Fleet, epochI
 	_, _, err = f.submitCiphertext(ctx, stranger, epochID, appA.Aid, c1, c2)
 	expectRevert(t, "policy/not-authorized-submitter", err, "NotOwner")
 
-	unknown, err := randomAid()
+	unknown, err := randomAid(appA.Organizer.Address())
 	if err != nil {
 		t.Fatal(err)
 	}

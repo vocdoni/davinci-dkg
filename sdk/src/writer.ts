@@ -1,4 +1,5 @@
 import {
+  isAddressEqual,
   parseEventLogs,
   type WalletClient,
   type Address,
@@ -18,6 +19,7 @@ import { DKGClient } from './client.js';
 import { fromTEtoRTE } from './crypto/babyjub-form.js';
 import { buildElGamal } from './crypto/elgamal.js';
 import { proveOperator, proveOrganizer } from './schnorr.js';
+import { aidRegistrant } from './aid.js';
 
 /** Outcome of `DKGWriter.submitCiphertext` (the call waits for the receipt). */
 export interface SubmitCiphertextResult {
@@ -368,6 +370,11 @@ export class DKGWriter extends DKGClient {
    *   with a zero Schnorr proof, and the committee threshold alone gates
    *   decryption.
    *
+   * `aid` must lie in the writer account's namespace,
+   * `salt << 160 | account` (`randomAid(account)` or
+   * `applicationId(account, salt)`): the contract refuses any other id with
+   * `InvalidApplication()`, and this method throws before sending.
+   *
    * Every other policy field is optional (see `normalizeAppPolicy`): an empty
    * `submitters` list means "the registering address only", `openSubmission`
    * lets anyone submit, `decryptNotAfter` (unix seconds) closes decryption
@@ -382,6 +389,13 @@ export class DKGWriter extends DKGClient {
     skOrg?: bigint,
     nonce?: bigint,
   ): Promise<Hash> {
+    const owner = aidRegistrant(aid);
+    if (!isAddressEqual(owner, this._writerAccount)) {
+      throw new Error(
+        `registerApplication: aid ${aid} belongs to ${owner}, not to the writer account ${this._writerAccount}; ` +
+          'build it with randomAid(account) or applicationId(account, salt)',
+      );
+    }
     const full = normalizeAppPolicy(policy);
     if (full.mode === AppMode.Automatic) {
       if (skOrg != null) {

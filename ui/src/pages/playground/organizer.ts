@@ -18,12 +18,14 @@ import {
   applicationKey,
   encrypt,
   pointFromTEtoRTE,
+  aidRegistrant,
   proveOrganizer,
+  randomAid as sdkRandomAid,
   randomOrganizerSecret,
   type BabyJubPoint,
   type ElGamalCiphertext,
 } from '@vocdoni/davinci-dkg-sdk'
-import type { Hex } from 'viem'
+import { isAddressEqual, type Address, type Hex } from 'viem'
 import type { SerialCiphertext } from './machine'
 
 export { randomOrganizerSecret }
@@ -42,18 +44,19 @@ export function toPair(point: Point): BabyJubPoint {
 }
 
 /**
- * A fresh application id: 32 random bytes with the top three bits cleared, so
- * the value is a BN254 scalar. `aid` is a public input of every decryption
- * proof, and the contract rejects anything at or above the field modulus.
+ * A fresh application id in `registrant`'s namespace: `salt << 160 |
+ * registrant` with a random 92-bit salt. The contract only accepts an id
+ * whose low 160 bits are the registering address, so nobody can take an id
+ * meant for someone else; the salt keeps it a BN254 scalar, which `aid` must
+ * be as a public input of every decryption proof.
  */
-export function randomAid(): Hex {
-  const bytes = globalThis.crypto.getRandomValues(new Uint8Array(32))
-  bytes[0] &= 0x1f
-  // A zero aid is rejected on chain; the odds are nil but the check is free.
-  if (bytes.every((b) => b === 0)) bytes[31] = 1
-  let hex = '0x'
-  for (const b of bytes) hex += b.toString(16).padStart(2, '0')
-  return hex as Hex
+export function randomAid(registrant: Address): Hex {
+  return sdkRandomAid(registrant)
+}
+
+/** True when `registrant` is the one account that may register `aid`. */
+export function aidBelongsTo(aid: string, registrant: string): boolean {
+  return isAddressEqual(aidRegistrant(aid as Hex), registrant as Address)
 }
 
 /** True for a `0x`-prefixed 32-byte value below the BN254 scalar field. */

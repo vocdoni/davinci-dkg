@@ -29,7 +29,10 @@ uint256 m = manager.getPlaintext(epochId, aid, index);                         /
 ```
 
 The application itself is registered with `DKGAppManager.registerApplication`, and
-`DKGManager.appManager()` returns the app manager's address. Import the interfaces from
+`DKGManager.appManager()` returns the app manager's address. The id must be in the registering
+contract's own namespace, `aid = salt << 160 | uint160(address(this))` with `salt < 2**92`;
+any other id reverts `InvalidApplication()`. A contract that derives ids from its own data puts
+that value in the salt, for example `(uint256(keccak256(abi.encode(block.chainid, key))) >> 164)`. Import the interfaces from
 `src/interfaces/`.
 
 ## Usage

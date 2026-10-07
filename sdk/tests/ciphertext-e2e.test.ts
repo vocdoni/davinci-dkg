@@ -212,7 +212,7 @@ describe('SDK ciphertext end-to-end (encrypt → submit → combine → getPlain
     // 1. Register an organizer-locked application. sk_org never leaves this
     //    process; only PK_org and the proof of possession go on chain. It
     //    claims the next unclaimed key: 0 on a fresh epoch.
-    const aid = randomAid();
+    const aid = randomAid(writer.walletClient.account!.address);
     const skOrg = randomOrganizerSecret();
     // Organizer-locked, registrant-only: the defaults of every field.
     const policy: AppPolicyInput = { maxCiphertexts: 0 };
@@ -284,7 +284,7 @@ describe('SDK ciphertext end-to-end (encrypt → submit → combine → getPlain
 
     // No organizer key at all: the committee threshold alone opens the
     // ciphertext, and the application key is the bare pool key.
-    const aid = randomAid();
+    const aid = randomAid(writer.walletClient.account!.address);
     const regTx = await writer.registerApplication(fixture.epochId, aid, { mode: AppMode.Automatic });
     await writer.publicClient.waitForTransactionReceipt({ hash: regTx });
 

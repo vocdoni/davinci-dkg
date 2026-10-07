@@ -96,7 +96,7 @@ describe('SDK application lifecycle end-to-end (live chain)', () => {
     const { enabled } = useHarness();
     if (!enabled || !fixture) return;
 
-    const aid = randomAid();
+    const aid = randomAid(writer.walletClient.account!.address);
     const skOrg = randomOrganizerSecret();
     // Every field optional: the defaults are organizer-locked, registrant-only.
     const policy: AppPolicyInput = { maxCiphertexts: 0 };
@@ -129,7 +129,7 @@ describe('SDK application lifecycle end-to-end (live chain)', () => {
     const { enabled } = useHarness();
     if (!enabled || !fixture) return;
 
-    const aid = randomAid();
+    const aid = randomAid(writer.walletClient.account!.address);
     const submitter = writer.walletClient.account!.address;
     const deadline = BigInt(Math.floor(Date.now() / 1000) + 24 * 3600);
     // Automatic mode takes no organizer secret at all — pass none.
@@ -162,7 +162,7 @@ describe('SDK application lifecycle end-to-end (live chain)', () => {
     const { enabled } = useHarness();
     if (!enabled || !fixture) return;
 
-    const aid = randomAid();
+    const aid = randomAid(writer.walletClient.account!.address);
     const sk = 1234567890123456789n;
     const { pkOrgX, pkOrgY, proof } = proveOrganizer(sk, fixture.epochId, aid);
 
@@ -186,7 +186,7 @@ describe('SDK application lifecycle end-to-end (live chain)', () => {
     const { enabled } = useHarness();
     if (!enabled || !fixture) return;
 
-    const aid = randomAid();
+    const aid = randomAid(writer.walletClient.account!.address);
     const skOrg = randomOrganizerSecret();
     const policy: AppPolicyInput = { maxCiphertexts: 0 };
     const regTx = await writer.registerApplication(fixture.epochId, aid, policy, skOrg);
@@ -205,7 +205,7 @@ describe('SDK application lifecycle end-to-end (live chain)', () => {
     const { enabled } = useHarness();
     if (!enabled || !fixture) return;
 
-    const aid = randomAid();
+    const aid = randomAid(writer.walletClient.account!.address);
     const app = await client.getApplication(fixture.epochId, aid);
     expect(app.exists).toBe(false);
   });

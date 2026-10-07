@@ -276,6 +276,44 @@ func TestRevealOrganizerSecret(t *testing.T) {
 		qt.Commentf("automatic applications reject revealOrganizerSecret"))
 }
 
+// TestApplicationIDNamespace asserts the fix for issue #14 on chain: an id
+// carries its registrant in its low 160 bits, so a third party that predicts
+// another account's next id cannot register it first; the owner still can.
+func TestApplicationIDNamespace(t *testing.T) {
+	if !helpers.IsIntegrationEnabled() {
+		t.Skip("integration tests disabled")
+	}
+	c := qt.New(t)
+	ctx, cancel := context.WithTimeout(context.Background(), helpers.MaxTestTimeout(t))
+	defer cancel()
+
+	res := finalizedEpochForApps(ctx, c)
+	owner := selfActor()
+	attacker, err := services.Actor(1)
+	c.Assert(err, qt.IsNil)
+	automatic := golangtypes.DKGTypesAppPolicy{Mode: uint8(types.AppModeAutomatic)}
+
+	before, err := services.Manager.GetPoolStatus(services.CallOpts(ctx), res.EpochID)
+	c.Assert(err, qt.IsNil)
+	aid := randomAid(c)
+	c.Assert(types.ApplicationRegistrant(aid), qt.Equals, owner.Address())
+	for _, policy := range []golangtypes.DKGTypesAppPolicy{automatic, {}} {
+		err = helpers.RegisterApplication(
+			ctx, attacker, services.AppManager, res.EpochID, aid, randomOrganizerSecret(c), policy,
+		)
+		ok, got := helpers.RevertsWith(err, "InvalidApplication")
+		c.Assert(ok, qt.IsTrue, qt.Commentf("a foreign-namespace id must revert InvalidApplication, got %s", got))
+	}
+	after, err := services.Manager.GetPoolStatus(services.CallOpts(ctx), res.EpochID)
+	c.Assert(err, qt.IsNil)
+	c.Assert(after, qt.Equals, before, qt.Commentf("a refused registration must not claim a key"))
+
+	c.Assert(helpers.RegisterApplication(ctx, owner, services.AppManager, res.EpochID, aid, nil, automatic), qt.IsNil)
+	app, err := services.AppManager.GetApplication(services.CallOpts(ctx), res.EpochID, aid)
+	c.Assert(err, qt.IsNil)
+	c.Assert(app.Creator, qt.Equals, owner.Address())
+}
+
 // TestSubmitCiphertextRequiresRegisteredApplication asserts the contract
 // refuses a ciphertext for an aid nobody registered: there is no epoch-key
 // path.
@@ -320,13 +358,12 @@ func finalizedEpochForApps(ctx context.Context, c *qt.C) *helpers.FinalizedRound
 	return res
 }
 
-// randomAid returns a fresh application id below the BN254 scalar field
-// modulus (the contract rejects larger ids since proofs cannot bind them).
+// randomAid returns a fresh application id in the namespace of the harness'
+// own signer, which registers every application of this suite: the contract
+// only accepts `salt << 160 | msg.sender`.
 func randomAid(c *qt.C) [32]byte {
-	var aid [32]byte
-	_, err := rand.Read(aid[:])
+	aid, err := types.RandomApplicationID(services.TxManager.Address())
 	c.Assert(err, qt.IsNil)
-	aid[0] &= 0x1f
 	return aid
 }
 

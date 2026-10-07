@@ -32,7 +32,7 @@ type application struct {
 func (f *Fleet) registerApplication(
 	ctx context.Context, a *actor, epoch [12]byte, policy golangtypes.DKGTypesAppPolicy,
 ) (*application, txOutcome, error) {
-	aid, err := randomAid()
+	aid, err := randomAid(a.Address())
 	if err != nil {
 		return nil, txOutcome{}, err
 	}

@@ -24,14 +24,10 @@ import (
 // and then needs the matching secret to decrypt the shares sent to it.
 const nodeKeyDomain = "davinci-dkg/bjj-key/v1"
 
-// randomAid returns an application id below the BN254 scalar field.
-func randomAid() ([32]byte, error) {
-	var aid [32]byte
-	if _, err := rand.Read(aid[:]); err != nil {
-		return aid, err
-	}
-	aid[0] &= 0x1f
-	return aid, nil
+// randomAid returns a fresh application id in registrant's namespace, the
+// only shape the contract accepts from registrant.
+func randomAid(registrant common.Address) ([32]byte, error) {
+	return types.RandomApplicationID(registrant)
 }
 
 // randomScalar returns a uniform element of [1, q).

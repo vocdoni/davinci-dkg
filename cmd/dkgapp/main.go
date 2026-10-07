@@ -36,7 +36,7 @@ const usage = `usage: dkgapp [-rpc url[,url]] [-network name | -manager 0x..] [-
 
 commands:
   epoch      [-epoch id]                                   print an epoch and its key pool (default: latest)
-  register   [-epoch id] -aid hex32 [-mode locked|automatic] [-org-secret hex]
+  register   [-epoch id] [-aid hex32] [-mode locked|automatic] [-org-secret hex]
               [-submitters 0x..,0x..] [-open] [-max n]
               [-decrypt-from rfc3339|duration] [-decrypt-until rfc3339|duration]
                                                             claim one of the epoch's committee keys for the
@@ -46,7 +46,10 @@ commands:
                                                             published with a Schnorr proof of possession and
                                                             the secret is generated and printed when
                                                             -org-secret is omitted; in automatic mode there is
-                                                            no organizer key at all
+                                                            no organizer key at all. The application id is
+                                                            salt<<160 | your address (the contract refuses
+                                                            ids in another account's namespace); a random
+                                                            one is generated and printed when -aid is omitted
   encrypt     -epoch id -aid hex32 -m int                   encrypt m under PK_aid = P_j (+ PK_org when the
                                                             application is organizer-locked) and submit it;
                                                             the chain assigns the index
@@ -217,7 +220,9 @@ func (a *app) cmdRegister(args []string) error {
 	fs := flag.NewFlagSet("register", flag.ContinueOnError)
 	epochFlag := fs.String("epoch", "",
 		"epoch id (hex); default: the newest Live epoch with an unclaimed pool key")
-	aidFlag := fs.String("aid", "", "32-byte application id (hex), must be non-zero and below the BN254 scalar field")
+	aidFlag := fs.String("aid", "",
+		"32-byte application id (hex): salt<<160 | the registering address, salt below 2^92 "+
+			"(default: a fresh random id in your namespace)")
 	modeFlag := fs.String("mode", "locked", "'locked': PK_aid = P_j + PK_org and you reveal sk_org when decryption may start; "+
 		"'automatic': no organizer key, the committee decrypts as soon as the ciphertexts land")
 	orgSecret := fs.String("org-secret", "", "organizer secret scalar (hex); generated and printed when omitted (locked mode)")
@@ -279,10 +284,11 @@ func (a *app) cmdRegister(args []string) error {
 	if err != nil {
 		return err
 	}
-	aid, err := parseAid(*aidFlag)
+	aid, err := registrationAid(*aidFlag, a.txm.Address())
 	if err != nil {
 		return err
 	}
+	fmt.Printf("application id 0x%x\n", aid)
 
 	pkX, pkY := new(big.Int), new(big.Int)
 	ax, ay, z := new(big.Int), new(big.Int), new(big.Int)
@@ -596,6 +602,24 @@ func parseAid(s string) ([32]byte, error) {
 	v := new(big.Int).SetBytes(aid[:])
 	if v.Sign() == 0 || v.Cmp(group.BaseField()) >= 0 {
 		return aid, fmt.Errorf("aid must be non-zero and below the BN254 scalar field (clear its top three bits)")
+	}
+	return aid, nil
+}
+
+// registrationAid returns the id to register: the caller's, which must lie in
+// registrant's namespace (the contract reverts InvalidApplication otherwise),
+// or a fresh random one in it.
+func registrationAid(s string, registrant common.Address) ([32]byte, error) {
+	if s == "" {
+		return types.RandomApplicationID(registrant)
+	}
+	aid, err := parseAid(s)
+	if err != nil {
+		return aid, err
+	}
+	if owner := types.ApplicationRegistrant(aid); owner != registrant {
+		return aid, fmt.Errorf("aid belongs to %s, not to the registering address %s: "+
+			"an application id is salt<<160 | registrant (omit -aid for a random one)", owner.Hex(), registrant.Hex())
 	}
 	return aid, nil
 }

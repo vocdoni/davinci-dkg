@@ -173,9 +173,10 @@ export function DocsProtocolPage() {
       <Section id='applications' title='Applications, modes and windows'>
         <P>
           A Live epoch hosts up to <C>MaxK</C> independent encryption contexts — one per <Em>application</Em>, named
-          by a 32-byte <C>aid</C> chosen by whoever registers it. Because <C>aid</C> is a public input of every
-          decryption proof it must be non-zero and below the BN254 scalar modulus: clear the top three bits of a random
-          or hashed id.
+          by a 32-byte <C>aid</C> chosen by whoever registers it, inside its own namespace:{' '}
+          <C>aid = salt &lt;&lt; 160 | registrant</C>. The contract refuses an id whose low 160 bits are not the caller,
+          so nobody can register an id meant for another account. Because <C>aid</C> is also a public input of every
+          decryption proof it must be non-zero and below the BN254 scalar modulus, which a salt below 2^92 guarantees.
         </P>
         <P>
           There is exactly one registration path, and it is not optional. <C>registerApplication</C> claims the

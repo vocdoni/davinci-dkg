@@ -188,18 +188,6 @@ export function applicationKey(poolKey: BabyJubPoint, pkOrg?: BabyJubPoint): Bab
 }
 
 /**
- * A fresh application id: 32 random bytes with the top three bits cleared,
- * so the value is below the BN254 scalar field the contract requires
- * (`registerApplication` reverts with InvalidApplication otherwise).
- */
-export function randomAid(): `0x${string}` {
-  const bytes = new Uint8Array(32);
-  globalThis.crypto.getRandomValues(bytes);
-  bytes[0] &= 0x1f;
-  return ('0x' + Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')) as `0x${string}`;
-}
-
-/**
  * Draw a fresh organizer secret `sk_org` in `[1, l)`, `l` the BabyJubJub
  * subgroup order.
  *

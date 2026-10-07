@@ -56,6 +56,7 @@ export {
 } from './schnorr.js';
 export { DomainOrganizerRegisterV1 } from './protocol.js';
 export { buildEpochId, parseEpochId } from './utils.js';
+export { AID_SALT_BITS, applicationId, randomAid, aidRegistrant } from './aid.js';
 export {
   MAX_N,
   MAX_K,

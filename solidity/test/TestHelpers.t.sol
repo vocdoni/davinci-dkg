@@ -49,6 +49,18 @@ abstract contract TestHelpers is TestInputs {
     bytes32 internal constant DECRYPT_COMBINE_TRANSCRIPT_DOMAIN = keccak256("davinci-dkg:decrypt-combine:v1");
     bytes32 internal constant FINALIZE_TRANSCRIPT_DOMAIN = keccak256("davinci-dkg:finalize:v2");
 
+    /// @dev An application id in `registrant`'s namespace: `salt << 160 |
+    ///      registrant`, the only shape `registerApplication` accepts from
+    ///      `registrant`.
+    function aidOf(address registrant, uint256 salt) internal pure returns (bytes32) {
+        return bytes32((salt << 160) | uint256(uint160(registrant)));
+    }
+
+    /// @dev An application id the test contract itself may register.
+    function aidOf(uint256 salt) internal view returns (bytes32) {
+        return aidOf(address(this), salt);
+    }
+
     function testOrganizerPK() internal view returns (uint256 x, uint256 y) {
         return BabyJubJub.scalarMulBase(TEST_ORG_SK);
     }

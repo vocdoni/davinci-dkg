@@ -63,6 +63,10 @@ interface IDKGAppManager {
     /// @notice Register an application against a Live epoch and claim the
     ///         epoch's next activated pool key `P_j`.
     ///
+    ///         `aid` must be non-zero, below the BN254 scalar field and carry
+    ///         the caller in its low 160 bits (`salt << 160 | msg.sender`,
+    ///         salt below 2^92); anything else reverts `InvalidApplication`.
+    ///
     ///         In `OrganizerLocked` mode the caller proves knowledge of
     ///         `sk_org` with a Schnorr PoP over `DOMAIN_ORGANIZER_REGISTER_V1`
     ///         and the application key is `PK_aid = P_j + PK_org`.
