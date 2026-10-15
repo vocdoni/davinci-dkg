@@ -11,10 +11,13 @@
 # Mainnet, through the public endpoints built into the binary. The older
 # Sepolia testnet needs both, e.g. NETWORK=sepolia
 # RPC=https://ethereum-sepolia-rpc.publicnode.com,https://1rpc.io/sepolia.
+# RPC_FILE (its first line, a private endpoint) goes first, then PUBLIC_RPCS:
+#   RPC_FILE=~/optimism-rpcs.txt PUBLIC_RPCS=https://mainnet.optimism.io,https://optimism-rpc.publicnode.com
 #
-# NODE_KEY_FILE holds `[{"address": "0x…", "private_key": "0x…"}]`. The key
-# travels only inside the request body read from a 0600 temp file; it is
-# never an argument and never printed.
+# NODE_KEY_FILE holds `[{"address": "0x…", "private_key": "0x…"}]` or the
+# `{"data": [...]}` that `cast wallet new --json` prints. The key and the
+# private RPC travel only inside request bodies in 0600 temp files, and the
+# token through a curl config file: none is an argument or printed.
 set -euo pipefail
 
 : "${RAILWAY_TOKEN_FILE:=railway-api-key}"
@@ -25,12 +28,16 @@ set -euo pipefail
 : "${IMAGE:=ghcr.io/vocdoni/davinci-dkg:latest}"
 : "${NETWORK:=}"
 : "${RPC:=}"
+: "${RPC_FILE:=}"
+: "${PUBLIC_RPCS:=}"
 : "${POLL_INTERVAL:=30s}"
 : "${MOUNT_PATH:=/app/run}"
-API=https://backboard.railway.com/graphql/v2
+API=${RAILWAY_API:-https://backboard.railway.com/graphql/v2}
 
-tok=$(tr -d '[:space:]' < "$RAILWAY_TOKEN_FILE")
-vars=$(mktemp); chmod 600 "$vars"; trap 'rm -f "$vars"' EXIT
+vars=$(mktemp); chmod 600 "$vars"
+auth=$(mktemp); chmod 600 "$auth"
+trap 'rm -f "$vars" "$vars.body" "$auth"' EXIT
+printf 'header = "Authorization: Bearer %s"\n' "$(tr -d '[:space:]' < "$RAILWAY_TOKEN_FILE")" > "$auth"
 
 # gql QUERY [VARS_FILE]: post one GraphQL document, print the JSON response.
 gql() {
@@ -41,7 +48,7 @@ q, vf = sys.argv[1], sys.argv[2]
 v = json.load(open(vf)) if vf else {}
 print(json.dumps({"query": q, "variables": v}))
 PY
-	curl -sS --max-time 90 "$API" -H "Authorization: Bearer $tok" -H 'Content-Type: application/json' --data @"$vars.body"
+	curl -sS --max-time 90 "$API" -K "$auth" -H 'Content-Type: application/json' --data @"$vars.body"
 	rm -f "$vars.body"
 }
 # field RESPONSE PATH: extract a JSON path (dot separated) or fail loudly.
@@ -53,10 +60,19 @@ print(d)' "$1" "$2"
 }
 
 # 1. Service with its variables (deployed with them from the first start).
-python3 - "$NODE_KEY_FILE" "$RAILWAY_PROJECT_ID" "$RAILWAY_ENVIRONMENT_ID" "$NODE_NAME" "$IMAGE" "$NETWORK" "$RPC" "$POLL_INTERVAL" "$MOUNT_PATH" <<'PY' > "$vars"
-import sys, json
-keyfile, project, env, name, image, network, rpc, poll, mount = sys.argv[1:]
-k = json.load(open(keyfile)); k = k[0] if isinstance(k, list) else k
+# The RPC list reaches python through its environment, never its arguments.
+RW_RPC=$RPC RW_RPC_FILE=$RPC_FILE RW_PUBLIC_RPCS=$PUBLIC_RPCS \
+python3 - "$NODE_KEY_FILE" "$RAILWAY_PROJECT_ID" "$RAILWAY_ENVIRONMENT_ID" "$NODE_NAME" "$IMAGE" "$NETWORK" "$POLL_INTERVAL" "$MOUNT_PATH" <<'PY' > "$vars"
+import os, sys, json
+keyfile, project, env, name, image, network, poll, mount = sys.argv[1:]
+k = json.load(open(keyfile))
+k = k.get("data", k) if isinstance(k, dict) else k  # cast wallet new --json wraps the list
+k = k[0] if isinstance(k, list) else k
+rpc = os.environ.get("RW_RPC", "")
+if os.environ.get("RW_RPC_FILE"):
+    private = open(os.environ["RW_RPC_FILE"]).readline().strip()
+    public = [u.strip() for u in os.environ.get("RW_PUBLIC_RPCS", "").split(",") if u.strip()]
+    rpc = ",".join([private] + public)
 variables = {
     "DAVINCI_DKG_NETWORK": network,
     "DAVINCI_DKG_PRIVKEY": k["private_key"],
@@ -92,4 +108,4 @@ echo "restart policy: $(field "$resp" data.serviceInstanceUpdate)"
 printf '{"serviceId":"%s","environmentId":"%s"}\n' "$service" "$RAILWAY_ENVIRONMENT_ID" > "$vars"
 resp=$(gql 'mutation($serviceId: String!, $environmentId: String!) { serviceInstanceDeployV2(serviceId: $serviceId, environmentId: $environmentId) }' "$vars")
 echo "deploy: $(field "$resp" data.serviceInstanceDeployV2)"
-echo "operator: $(python3 -c 'import sys,json; k=json.load(open(sys.argv[1])); print((k[0] if isinstance(k,list) else k)["address"])' "$NODE_KEY_FILE")"
+echo "operator: $(python3 -c 'import sys,json; k=json.load(open(sys.argv[1])); k=k.get("data",k) if isinstance(k,dict) else k; print((k[0] if isinstance(k,list) else k)["address"])' "$NODE_KEY_FILE")"

@@ -148,7 +148,8 @@ than 1 GB.
 1. Create a workspace token and store it in a file outside the repository (`/railway-api-key`
    is git-ignored).
 2. Store the operator key as `[{"address": "0x...", "private_key": "0x..."}]` in a file with
-   mode `0600`, for example the output of `cast wallet new --json`, and fund the address.
+   mode `0600` (`umask 077; cast wallet new --json > node1.json` also works: the script reads
+   its `data` list), and fund the address.
 3. Create a project in the Railway dashboard, or through the API with `projectCreate`, and note
    the project id and its `production` environment id.
 4. Deploy each node as its own service. Do not use Railway replicas: they share variables, so
@@ -164,7 +165,9 @@ scripts/railway-node-status.sh <service id> 40
 The script creates the service with the node's variables, a volume mounted at `/app/run` for the
 artifacts and the state, and an always-restart policy, then deploys it. `IMAGE`, `NETWORK`, `RPC`,
 `POLL_INTERVAL` and `MOUNT_PATH` override its defaults; Sepolia needs `NETWORK=sepolia` and `RPC`.
-The key is sent only in the request body, never as an argument.
+On OP, `RPC_FILE` (a file whose first line is a private endpoint) goes first and `PUBLIC_RPCS`
+after it. The key and the RPC list are sent only in the request body, and the token through a
+curl config file, never as arguments (`scripts/railway-deploy-node.test.sh` checks the request).
 
 A healthy first start logs `circuit artifacts verified` for the four circuits, `self: registry row`
 once the registration is mined, and `node running`. A node that restarts every few seconds, or

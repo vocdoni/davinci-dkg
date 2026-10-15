@@ -8,10 +8,12 @@ set -euo pipefail
 : "${RAILWAY_ENVIRONMENT_ID:?}"
 service=${1:?service id}
 lines=${2:-40}
-tok=$(tr -d '[:space:]' < "$RAILWAY_TOKEN_FILE")
+auth=$(mktemp); chmod 600 "$auth"; trap 'rm -f "$auth"' EXIT
+# The token reaches curl through a 0600 config file, never its arguments.
+printf 'header = "Authorization: Bearer %s"\n' "$(tr -d '[:space:]' < "$RAILWAY_TOKEN_FILE")" > "$auth"
 gql() {
 	python3 -c 'import sys,json; print(json.dumps({"query": sys.argv[1], "variables": json.loads(sys.argv[2])}))' "$1" "$2" |
-		curl -sS --max-time 60 https://backboard.railway.com/graphql/v2 -H "Authorization: Bearer $tok" -H 'Content-Type: application/json' --data @-
+		curl -sS --max-time 60 "${RAILWAY_API:-https://backboard.railway.com/graphql/v2}" -K "$auth" -H 'Content-Type: application/json' --data @-
 }
 dep=$(gql 'query($in: DeploymentListInput!) { deployments(input: $in, first: 1) { edges { node { id status createdAt } } } }' \
 	"{\"in\":{\"projectId\":\"$RAILWAY_PROJECT_ID\",\"environmentId\":\"$RAILWAY_ENVIRONMENT_ID\",\"serviceId\":\"$service\"}}")
