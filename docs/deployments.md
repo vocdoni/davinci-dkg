@@ -71,7 +71,7 @@ long-lived node lists a private provider first in
 ## Gnosis Chain (retired)
 
 Chain id 100. The former default network of the node, no longer built in: run it with
-`--manager` and `--web3.rpc`, and the explorer still serves it until it moves to OP. Deployed at block 48,632,905 with the
+`--manager` and `--web3.rpc` (the explorer serves OP since 2026-10-15). Deployed at block 48,632,905 with the
 [`circuits-v6`](https://github.com/vocdoni/davinci-dkg/releases/tag/circuits-v6) artifacts; every
 contract is source-verified on [Gnosisscan](https://gnosisscan.io) and Sourcify. It replaced the
 first Gnosis deployment on 2026-10-07 to ship the application-id namespace of
@@ -198,10 +198,10 @@ steps took the preset from its placeholder to the first OP deployment.
    `sdk/src/networks.ts` (manager and start block), the OP Mainnet tables in this file and the
    README networks row. It edits nothing else; check with `bash scripts/move-optimism-preset.test.sh`.
    Review the diff, run the checks it prints, list a replaced manager under a "Retired" note here,
-   and commit. The explorer (`ui/public/config.json`, `scripts/render-ui-config.sh`,
-   `ui/.do/davinci-dkg-ui.yaml`) moves to OP separately, once the deployment is live: on DigitalOcean
-   App Platform set `CHAIN_ID=10`, `CHAIN_NAME=optimism`, `EXPLORER_URL=https://optimistic.etherscan.io`,
-   `RPC_URL=https://mainnet.optimism.io`, `MANAGER_ADDRESS` and `DEPLOY_BLOCK`.
+   and commit. The explorer's config (`ui/public/config.json`, the fallbacks in
+   `scripts/render-ui-config.sh` and its test, `ui/.do/davinci-dkg-ui.yaml`) moves in the same
+   release with `MANAGER_ADDRESS` and `DEPLOY_BLOCK`; its `RPC_URL` reaches every visitor's browser,
+   so it stays a public endpoint (`https://mainnet.optimism.io` serves its log scans).
 4. **Release** a stable `vX.Y.Z`. `latest` moves, so compose nodes under Watchtower switch to the
    new manager on their own, register in its registry at start (`EnsureRegistered`) and start
    from an empty `<datadir>/10-<manager>`. Railway has no Watchtower: roll every service with

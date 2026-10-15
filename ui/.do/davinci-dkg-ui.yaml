@@ -13,7 +13,9 @@
 #
 # Override RPC_URL / MANAGER_ADDRESS / CHAIN_ID / CHAIN_NAME below to
 # point the deployment at a different chain. The values here target the
-# Gnosis Chain deployment, the same as the committed ui/public/config.json.
+# OP Mainnet deployment, the same as the committed ui/public/config.json.
+# RPC_URL reaches every visitor's browser: keep it a public endpoint
+# (mainnet.optimism.io serves the explorer's log scans from DEPLOY_BLOCK).
 
 name: davinci-dkg-ui
 region: ams3
@@ -54,25 +56,25 @@ static_sites:
       #    writes ui/public/config.json before `pnpm build`) ──────────────
       - key: RPC_URL
         scope: BUILD_TIME
-        value: https://gnosis-rpc.publicnode.com
+        value: https://mainnet.optimism.io
       - key: MANAGER_ADDRESS
         scope: BUILD_TIME
-        value: "0xC6Fb38c42ed3FB35D363a702218746d5C7Da36BF"
+        value: "0x9E799A1D22710056E62c849e3FFE19Dd01db2D41"
       - key: CHAIN_ID
         scope: BUILD_TIME
-        value: "100"
+        value: "10"
       - key: CHAIN_NAME
         scope: BUILD_TIME
-        value: gnosis
+        value: optimism
       - key: EXPLORER_URL
         scope: BUILD_TIME
-        value: https://gnosisscan.io
+        value: https://optimistic.etherscan.io
       # Block the DKGManager was deployed at — the floor of every historical
       # getLogs scan (operator statistics, per-epoch activity). 0 = unknown,
       # which makes those scans fall back to a recent-block window.
       - key: DEPLOY_BLOCK
         scope: BUILD_TIME
-        value: "48632905"
+        value: "158245366"
       # Optional — leave unset to let the SDK auto-derive from DKGManager.
       # - key: REGISTRY_ADDRESS
       #   scope: BUILD_TIME
@@ -80,7 +82,7 @@ static_sites:
       # Optional — sets the lower bound for getLogs scans.
       # - key: START_BLOCK
       #   scope: BUILD_TIME
-      #   value: "48632905"
+      #   value: "158245366"
 
       # ── Vite build envs ─────────────────────────────────────────────────
       - key: VITE_BUILD_VERSION

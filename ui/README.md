@@ -26,7 +26,7 @@ From the repository root, with Node.js 20 and pnpm 10:
 make ui-dev          # builds the SDK, installs dependencies and serves on http://localhost:5174
 ```
 
-The committed `public/config.json` targets the Gnosis Chain deployment. Append `?demo=1` to any
+The committed `public/config.json` targets the OP Mainnet deployment. Append `?demo=1` to any
 URL to run from a synthetic network with no RPC at all.
 
 ## Usage
@@ -39,12 +39,12 @@ variables; a variable left out keeps the value already in the file.
 
 | Variable | `config.json` key | Default |
 |---|---|---|
-| `RPC_URL` | `rpcUrl` | `https://gnosis-rpc.publicnode.com` |
-| `MANAGER_ADDRESS` | `managerAddress` | Gnosis `DKGManager` |
-| `CHAIN_ID` | `chainId` | `100` |
-| `CHAIN_NAME` | `chainName` | `gnosis` |
-| `DEPLOY_BLOCK` | `deployBlock` | `48632905` |
-| `EXPLORER_URL` | `explorerUrl` | `https://gnosisscan.io` |
+| `RPC_URL` | `rpcUrl` | `https://mainnet.optimism.io` |
+| `MANAGER_ADDRESS` | `managerAddress` | OP Mainnet `DKGManager` |
+| `CHAIN_ID` | `chainId` | `10` |
+| `CHAIN_NAME` | `chainName` | `optimism` |
+| `DEPLOY_BLOCK` | `deployBlock` | `158245366` |
+| `EXPLORER_URL` | `explorerUrl` | `https://optimistic.etherscan.io` |
 
 `DEPLOY_BLOCK` is where the historical scan starts. Set it to the manager's deployment block;
 with `0` the explorer searches for that block with about 25 `eth_getCode` calls, which needs an
@@ -71,7 +71,7 @@ docker compose --profile ui up -d    # serves ui/dist with nginx on port 8082 (D
 
 `ui/Dockerfile` builds the same bundle into an image that only carries the files, at
 `/usr/share/nginx/html`; release builds are published as `ghcr.io/vocdoni/davinci-dkg-ui` with
-the Gnosis configuration. Build it from the repository root, overriding any configuration
+the OP Mainnet configuration. Build it from the repository root, overriding any configuration
 variable with `--build-arg`:
 
 ```bash

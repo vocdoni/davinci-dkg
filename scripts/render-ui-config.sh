@@ -10,7 +10,7 @@
 # we ship.
 #
 # Usage (here: point the explorer at the Sepolia testnet instead of the
-# default Gnosis Chain deployment):
+# default OP Mainnet deployment):
 #   RPC_URL=https://ethereum-sepolia-rpc.publicnode.com \
 #   MANAGER_ADDRESS=0xc73b7a868eca6ac7e3e647e2665aa16a793cf551 \
 #   CHAIN_ID=11155111 \
@@ -44,12 +44,12 @@ resolve() {
 	printf -v "$name" '%s' "$value"
 }
 
-resolve RPC_URL rpcUrl https://gnosis-rpc.publicnode.com
-resolve MANAGER_ADDRESS managerAddress 0xC6Fb38c42ed3FB35D363a702218746d5C7Da36BF
-resolve CHAIN_ID chainId 100
-resolve CHAIN_NAME chainName gnosis
-resolve DEPLOY_BLOCK deployBlock 48632905
-resolve EXPLORER_URL explorerUrl https://gnosisscan.io
+resolve RPC_URL rpcUrl https://mainnet.optimism.io
+resolve MANAGER_ADDRESS managerAddress 0x9E799A1D22710056E62c849e3FFE19Dd01db2D41
+resolve CHAIN_ID chainId 10
+resolve CHAIN_NAME chainName optimism
+resolve DEPLOY_BLOCK deployBlock 158245366
+resolve EXPLORER_URL explorerUrl https://optimistic.etherscan.io
 resolve REGISTRY_ADDRESS registryAddress ""
 resolve START_BLOCK startBlock ""
 

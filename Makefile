@@ -24,7 +24,7 @@ S3_BUCKET     ?= dev
 # RPC_URL and CHAIN_ID are read by both the solidity-deploy target and by
 # `make ui-dev` / `make ui-build` (which template ui/public/config.json so
 # the dev server / built bundle targets the chain you specify). When unset,
-# the UI keeps the defaults baked into ui/public/config.json (Gnosis Chain).
+# the UI keeps the defaults baked into ui/public/config.json (OP Mainnet).
 RPC_URL         ?=
 CHAIN_ID        ?=
 CHAIN_NAME      ?=
@@ -75,14 +75,14 @@ help: ## Show this help message
 	@echo "  ui-clean         Remove ui/dist and ui/node_modules"
 	@echo "  ui-config        Re-render ui/public/config.json from RPC_URL et al."
 	@echo "                   Optional vars (override which chain the UI targets):"
-	@echo "                     RPC_URL          (default: Gnosis Chain public RPC)"
-	@echo "                     MANAGER_ADDRESS  (default: Gnosis Chain DKGManager)"
-	@echo "                     CHAIN_ID         (default: 100)"
-	@echo "                     CHAIN_NAME       (default: gnosis)"
-	@echo "                     EXPLORER_URL     (default: https://gnosisscan.io)"
+	@echo "                     RPC_URL          (default: OP Mainnet public RPC)"
+	@echo "                     MANAGER_ADDRESS  (default: OP Mainnet DKGManager)"
+	@echo "                     CHAIN_ID         (default: 10)"
+	@echo "                     CHAIN_NAME       (default: optimism)"
+	@echo "                     EXPLORER_URL     (default: https://optimistic.etherscan.io)"
 	@echo "                     REGISTRY_ADDRESS (optional)"
 	@echo "                     START_BLOCK      (optional)"
-	@echo "                     DEPLOY_BLOCK     (default: 48632905, block DKGManager was deployed at)"
+	@echo "                     DEPLOY_BLOCK     (default: 158245366, block DKGManager was deployed at)"
 	@echo "                   ui-build / ui-dev call ui-config automatically when"
 	@echo "                   RPC_URL is set on the command line."
 	@echo ""
