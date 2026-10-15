@@ -17,7 +17,8 @@ import json, sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 state = {"image": "ghcr.io/vocdoni/davinci-dkg:v0.10.0",
          "vars": {"DAVINCI_DKG_PRIVKEY": "0xPRIVKEY-SECRET-789", "DAVINCI_DKG_WEB3_RPC": "https://old.example/OLD-SECRET",
-                  "DAVINCI_DKG_MANAGER": "0xC6Fb38c42ed3FB35D363a702218746d5C7Da36BF", "DAVINCI_DKG_POLL_INTERVAL": "30s"}}
+                  "DAVINCI_DKG_MANAGER": "0xC6Fb38c42ed3FB35D363a702218746d5C7Da36BF", "DAVINCI_DKG_POLL_INTERVAL": "30s",
+                  "DAVINCI_DKG_EPOCH_POLICY_COMMITTEE_SIZE": "3"}}
 log = open(sys.argv[2], "a")
 P, E, S = "142f30d5-0000-4000-8000-000000000001", "52016ac4-0000-4000-8000-000000000002", "1151656f-0000-4000-8000-000000000003"
 class H(BaseHTTPRequestHandler):
@@ -76,7 +77,8 @@ field() { jq -r "$2" <<<"$1"; }
 : >"$tmp/mutations"
 run --plan || { cat "$tmp/out"; fail "plan failed"; }
 [ ! -s "$tmp/mutations" ] || fail "--plan sent a mutation"
-grep -q "plan: delete DAVINCI_DKG_MANAGER" "$tmp/out" || fail "plan does not delete the manager override"
+grep -q "plan: delete DAVINCI_DKG_MANAGER DAVINCI_DKG_EPOCH_POLICY_COMMITTEE_SIZE" "$tmp/out" ||
+	fail "plan does not delete the manager and policy overrides"
 
 run --apply || { cat "$tmp/out"; fail "apply failed"; }
 s=$(state)
@@ -84,11 +86,12 @@ s=$(state)
 [ "$(field "$s" '.vars.DAVINCI_DKG_NETWORK')" = optimism ] || fail "network not set"
 [ "$(field "$s" '.vars.DAVINCI_DKG_WEB3_RPC')" = "https://private.example/KEY-SECRET-456,https://mainnet.optimism.io,https://optimism-rpc.publicnode.com" ] || fail "rpc list"
 [ "$(field "$s" '.vars | has("DAVINCI_DKG_MANAGER")')" = false ] || fail "manager override kept"
+[ "$(field "$s" '.vars | has("DAVINCI_DKG_EPOCH_POLICY_COMMITTEE_SIZE")')" = false ] || fail "fixed policy kept"
 [ "$(field "$s" '.vars.DAVINCI_DKG_PRIVKEY')" = 0xPRIVKEY-SECRET-789 ] || fail "operator key touched"
 [ "$(field "$s" '.vars.DAVINCI_DKG_POLL_INTERVAL')" = 30s ] || fail "other variable touched"
 order=$(jq -r .op "$tmp/mutations" | tr '\n' ' ')
 # The image goes first and the one deploy last, so no deployment runs a half-moved service.
-[ "$order" = "serviceInstanceUpdate variableCollectionUpsert variableDelete serviceInstanceDeployV2 " ] ||
+[ "$order" = "serviceInstanceUpdate variableCollectionUpsert variableDelete variableDelete serviceInstanceDeployV2 " ] ||
 	fail "mutation order: $order"
 [ "$(stat -c %a "$tmp"/state/*.json)" = 600 ] || fail "saved state is not 0600"
 
@@ -97,6 +100,7 @@ s=$(state)
 [ "$(field "$s" '.image')" = ghcr.io/vocdoni/davinci-dkg:v0.10.0 ] || fail "image not restored"
 [ "$(field "$s" '.vars.DAVINCI_DKG_WEB3_RPC')" = https://old.example/OLD-SECRET ] || fail "rpc not restored"
 [ "$(field "$s" '.vars.DAVINCI_DKG_MANAGER')" = 0xC6Fb38c42ed3FB35D363a702218746d5C7Da36BF ] || fail "manager not restored"
+[ "$(field "$s" '.vars.DAVINCI_DKG_EPOCH_POLICY_COMMITTEE_SIZE')" = 3 ] || fail "policy not restored"
 [ "$(field "$s" '.vars | has("DAVINCI_DKG_NETWORK")')" = false ] || fail "network not removed on rollback"
 
 # A second --apply (the natural retry after a partial failure) must not overwrite the saved
