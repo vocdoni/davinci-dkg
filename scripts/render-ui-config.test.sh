@@ -13,12 +13,14 @@ get() { sed -n "s/^[[:space:]]*\"$1\"[[:space:]]*:[[:space:]]*\"\{0,1\}\([^\",]*
 want() { [ "$(get "$1")" = "$2" ] || { echo "FAIL: $1 = $(get "$1"), want $2"; exit 1; }; }
 
 # No file, no environment: the built-in snapshot, which is the committed
-# Gnosis Chain config.
+# OP Mainnet config (a public RPC: the explorer runs in the browser).
 bash "$here/render-ui-config.sh" "$out" >/dev/null
-want chainName gnosis
-want chainId 100
-want managerAddress 0xC6Fb38c42ed3FB35D363a702218746d5C7Da36BF
-want deployBlock 48632905
+want chainName optimism
+want chainId 10
+want managerAddress 0x9E799A1D22710056E62c849e3FFE19Dd01db2D41
+want deployBlock 158245366
+want rpcUrl https://mainnet.optimism.io
+want explorerUrl https://optimistic.etherscan.io
 diff -q "$here/../ui/public/config.json" "$out" >/dev/null || { echo "FAIL: snapshot differs from ui/public/config.json"; exit 1; }
 
 # The environment wins over both the file and the snapshot.
