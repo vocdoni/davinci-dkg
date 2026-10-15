@@ -99,6 +99,26 @@ s=$(state)
 [ "$(field "$s" '.vars.DAVINCI_DKG_MANAGER')" = 0xC6Fb38c42ed3FB35D363a702218746d5C7Da36BF ] || fail "manager not restored"
 [ "$(field "$s" '.vars | has("DAVINCI_DKG_NETWORK")')" = false ] || fail "network not removed on rollback"
 
+# A second --apply (the natural retry after a partial failure) must not overwrite the saved
+# state with the already-moved one: it is refused before any mutation, and --rollback still
+# restores the original. A successful rollback sets the saved state aside, so a later
+# --apply can run again.
+rm -f "$tmp"/state/*.json
+run --apply || { cat "$tmp/out"; fail "apply (twice case) failed"; }
+: >"$tmp/mutations"
+if run --apply; then fail "a second --apply overwrote the saved state"; fi
+grep -q "saved state exists" "$tmp/out" || { cat "$tmp/out"; fail "no saved-state refusal message"; }
+[ ! -s "$tmp/mutations" ] || fail "the refused second --apply mutated"
+run --rollback || { cat "$tmp/out"; fail "rollback after a refused second apply failed"; }
+s=$(state)
+[ "$(field "$s" '.image')" = ghcr.io/vocdoni/davinci-dkg:v0.10.0 ] || fail "apply twice: image not restored"
+[ "$(field "$s" '.vars.DAVINCI_DKG_WEB3_RPC')" = https://old.example/OLD-SECRET ] || fail "apply twice: rpc not restored"
+[ "$(field "$s" '.vars | has("DAVINCI_DKG_NETWORK")')" = false ] || fail "apply twice: still on the new network"
+ls "$tmp"/state/*.json >/dev/null 2>&1 && fail "the rolled-back state is still in place"
+ls "$tmp"/state/*.rolled-back-* >/dev/null 2>&1 || fail "the rolled-back state was not kept aside"
+run --apply || { cat "$tmp/out"; fail "--apply after a rollback was refused"; }
+run --rollback || { cat "$tmp/out"; fail "second rollback failed"; }
+
 # Wrong prefix: refused before any mutation.
 : >"$tmp/mutations"
 if RAILWAY_API=http://127.0.0.1:$port RAILWAY_TOKEN_FILE=$tmp/token RAILWAY_PROJECT=davinci-dkg-gnosis \
