@@ -8,6 +8,7 @@ import (
 	"os"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi"
@@ -238,21 +239,51 @@ func TestAcceptedPartialsComeFromTheScanInChainOrder(t *testing.T) {
 
 func TestLaterWaveDueNeedsBothDelayAndStalledProgress(t *testing.T) {
 	const ct = 100
-	// Wave 1 may not fire before its own delay has passed…
-	if laterWaveDue(ct+staggerBlocks-1, ct, 0, 1) {
-		t.Fatal("wave 1 fired before ctBlock+staggerBlocks")
+	for _, stagger := range []uint64{defaultStaggerBlocks, 8} {
+		// Wave 1 may not fire before its own delay has passed…
+		if laterWaveDue(ct+stagger-1, ct, 0, 1, stagger) {
+			t.Fatalf("stagger %d: wave 1 fired before ctBlock+stagger", stagger)
+		}
+		// …nor while wave 0 keeps landing partials.
+		if laterWaveDue(ct+10+stagger, ct, ct+9+stagger, 1, stagger) {
+			t.Fatalf("stagger %d: wave 1 fired while earlier waves were still landing partials", stagger)
+		}
+		// It fires once both the delay and stagger blocks of silence have passed.
+		if !laterWaveDue(ct+10+stagger, ct, ct+10, 1, stagger) {
+			t.Fatalf("stagger %d: wave 1 did not fire after the delay and a stalled wave 0", stagger)
+		}
+		// Wave 2 waits twice as long from the ciphertext.
+		if laterWaveDue(ct+2*stagger-1, ct, 0, 2, stagger) {
+			t.Fatalf("stagger %d: wave 2 fired before ctBlock+2*stagger", stagger)
+		}
 	}
-	// …nor while wave 0 keeps landing partials.
-	if laterWaveDue(ct+10, ct, ct+9, 1) {
-		t.Fatal("wave 1 fired while earlier waves were still landing partials")
+}
+
+func TestStaggerBlocksFor(t *testing.T) {
+	for _, tc := range []struct {
+		blockTime time.Duration
+		want      uint64
+	}{
+		{0, 3}, {2 * time.Second, 8}, {5 * time.Second, 3}, {12 * time.Second, 3}, {time.Second, 15}, {3 * time.Second, 5},
+	} {
+		if got := staggerBlocksFor(tc.blockTime); got != tc.want {
+			t.Fatalf("staggerBlocksFor(%v) = %d, want %d", tc.blockTime, got, tc.want)
+		}
 	}
-	// It fires once both the delay and staggerBlocks of silence have passed.
-	if !laterWaveDue(ct+10, ct, ct+10-staggerBlocks, 1) {
-		t.Fatal("wave 1 did not fire after the delay and a stalled wave 0")
+}
+
+// Every stagger user reads the node's value; an unset one means the default.
+func TestNodeStaggerFeedsTheWaitBlocks(t *testing.T) {
+	n := &Node{}
+	if got := n.staggerWaitUntil(100, 2); got != 100+2*defaultStaggerBlocks {
+		t.Fatalf("unset stagger: got %d", got)
 	}
-	// Wave 2 waits twice as long from the ciphertext.
-	if laterWaveDue(ct+2*staggerBlocks-1, ct, 0, 2) {
-		t.Fatal("wave 2 fired before ctBlock+2*staggerBlocks")
+	n.stagger = staggerBlocksFor(2 * time.Second) // OP
+	if got := n.staggerWaitUntil(100, 0); got != 100 {
+		t.Fatalf("slot 0 must not wait: got %d", got)
+	}
+	if got := n.staggerWaitUntil(100, 3); got != 100+3*8 {
+		t.Fatalf("stagger 8, slot 3: got %d", got)
 	}
 }
 

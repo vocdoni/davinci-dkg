@@ -566,11 +566,11 @@ const inflightTimeout = 2 * time.Minute
 
 // laterWaveDue says whether a member of wave > 0 may post its partial: only
 // once its wave's delay since the ciphertext has passed *and* the earlier
-// waves have stopped landing partials for staggerBlocks. Under load the
+// waves have stopped landing partials for a stagger. Under load the
 // first wave keeps landing one partial per block for many blocks, and
 // counting from the ciphertext alone would make every later wave pile on.
-func laterWaveDue(head, ctBlock, lastPartialBlock, wave uint64) bool {
-	return head >= ctBlock+wave*staggerBlocks && head >= lastPartialBlock+staggerBlocks
+func laterWaveDue(head, ctBlock, lastPartialBlock, wave, stagger uint64) bool {
+	return head >= ctBlock+wave*stagger && head >= lastPartialBlock+stagger
 }
 
 // settleInflight looks at the receipt of the slot's in-flight tx. It returns
@@ -755,7 +755,7 @@ func (n *Node) serviceCiphertext(ctx context.Context, tc *tickCtx, key ctKey, ct
 	if !n.partialDone[key] {
 		// Only t partials are ever needed. The first t members of a
 		// seed-derived rotation respond at once; each later wave of t steps
-		// in staggerBlocks later and only if partials are still missing, so
+		// in a stagger later and only if partials are still missing, so
 		// an honest ciphertext costs t partials rather than n and a hostile
 		// submitter cannot make the whole committee spend. Waves count from
 		// the slot's anchor: the ciphertext block, or the block it was woken
@@ -763,7 +763,7 @@ func (n *Node) serviceCiphertext(ctx context.Context, tc *tickCtx, key ctKey, ct
 		threshold := uint64(epoch.Policy.Threshold)
 		wave := staggerSlot(epoch.Seed, uint64(key.idx), idx, uint16(len(selected))) / max(threshold, 1)
 		if wave > 0 {
-			if tc.head < ct.anchor()+wave*staggerBlocks {
+			if tc.head < n.staggerWaitUntil(ct.anchor(), wave) {
 				return false, nil
 			}
 			// With fewer than t partials the record holds all of them, so
@@ -771,7 +771,7 @@ func (n *Node) serviceCiphertext(ctx context.Context, tc *tickCtx, key ctKey, ct
 			idxs, _, lastBlock := n.acceptedPartials(key, epoch.Policy.Threshold)
 			if uint64(len(idxs)) >= threshold {
 				n.partialDone[key] = true
-			} else if !laterWaveDue(tc.head, ct.anchor(), lastBlock, wave) {
+			} else if !laterWaveDue(tc.head, ct.anchor(), lastBlock, wave, n.staggerOrDefault()) {
 				return false, nil
 			}
 		}
@@ -1124,7 +1124,7 @@ func (n *Node) tryCombine(
 		return false, nil
 	}
 	slot := staggerSlot(epoch.Seed, uint64(key.idx), myIdx, committeeSize)
-	if waitUntil := max(readyBlock, ct.wakeBlock) + slot*staggerBlocks; head < waitUntil {
+	if waitUntil := n.staggerWaitUntil(max(readyBlock, ct.wakeBlock), slot); head < waitUntil {
 		log.Debugw("combine: waiting for our slot", "ct", key.String(), "slot", slot, "head", head, "waitUntil", waitUntil)
 		return false, nil
 	}
