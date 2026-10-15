@@ -14,7 +14,8 @@
 # to a 0600 file under ~/.cache/railway-repoint/, sets the image, upserts DAVINCI_DKG_NETWORK and
 # DAVINCI_DKG_WEB3_RPC (the first line of RPC_FILE first, then PUBLIC_RPCS), deletes
 # DAVINCI_DKG_MANAGER and DAVINCI_DKG_DECRYPT_LOOKBACK_BLOCKS when present (either would override
-# the network's preset), and deploys. --rollback restores that saved state and deploys.
+# the network's preset), and deploys; it refuses to run while a saved state exists. --rollback
+# restores that saved state, deploys, and sets the file aside (*.rolled-back-<time>).
 #
 # RAILWAY_PROJECT and RAILWAY_ENVIRONMENT are names or full ids; EXPECT_PROJECT_PREFIX,
 # EXPECT_ENVIRONMENT_PREFIX and EXPECT_SERVICE_PREFIX (id prefixes from a deployment record) make
@@ -147,6 +148,8 @@ PY
 	done
 	vars "$tmp/v" service="$service" env="$env"
 	echo "rolled back: $(gql 'mutation($service: String!, $env: String!) { serviceInstanceDeployV2(serviceId: $service, environmentId: $env) }' "$tmp/v")"
+	# Set the restored state aside (kept, 0600) so a later --apply can save afresh.
+	mv "$saved" "$saved.rolled-back-$(date -u +%Y%m%dT%H%M%SZ)"
 	exit 0
 fi
 
@@ -161,7 +164,11 @@ echo "plan: DAVINCI_DKG_NETWORK -> $NETWORK"
 echo "plan: DAVINCI_DKG_WEB3_RPC -> <private RPC from $RPC_FILE>,$PUBLIC_RPCS"
 echo "plan: delete ${deletes[*]:-nothing}"
 echo "plan: keep the volume at $mount, the operator key and every other variable; deploy"
+[[ -e $saved ]] && echo "note: saved state $saved exists; --apply will refuse until --rollback sets it aside"
 [[ $mode == --apply ]] || { echo "(plan only: rerun with --apply)"; exit 0; }
+# A second --apply (a retry after a partial failure) would save the already-moved state over the
+# original one, and --rollback would then leave the service moved.
+[[ -e $saved ]] && { echo "saved state exists at $saved: --rollback, or move it aside first" >&2; exit 1; }
 
 # 2. Save what is replaced, for --rollback (0600, values never printed).
 mkdir -p "$STATE_DIR"
