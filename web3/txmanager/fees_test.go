@@ -1,0 +1,362 @@
+package txmanager
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"math/big"
+	"testing"
+	"time"
+
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
+	gethtypes "github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/ethclient"
+	qt "github.com/frankban/quicktest"
+)
+
+const (
+	opChain      = uint64(10)
+	gnosisChain  = uint64(100)
+	gwei         = int64(1_000_000_000)
+	opFallback   = int64(1_000_000)
+	opFeeCapWei  = int64(100_000_000)
+	unknownChain = testChainID
+)
+
+func newChainManager(t *testing.T, f *fakeRPC, chainID uint64) *Manager {
+	t.Helper()
+	client, err := ethclient.Dial(f.srv.URL)
+	qt.Assert(t, err, qt.IsNil)
+	t.Cleanup(client.Close)
+	m, err := New(func() *ethclient.Client { return client }, chainID, testKey)
+	qt.Assert(t, err, qt.IsNil)
+	return m
+}
+
+func headerJSON(baseFee *big.Int) any {
+	h := map[string]any{
+		"parentHash":       common.Hash{},
+		"sha3Uncles":       gethtypes.EmptyUncleHash,
+		"miner":            common.Address{},
+		"stateRoot":        common.Hash{},
+		"transactionsRoot": common.Hash{},
+		"receiptsRoot":     common.Hash{},
+		"logsBloom":        hexutil.Bytes(make([]byte, 256)),
+		"difficulty":       "0x0",
+		"number":           "0x1",
+		"gasLimit":         "0x1c9c380",
+		"gasUsed":          "0x0",
+		"timestamp":        "0x1",
+		"extraData":        "0x",
+	}
+	if baseFee != nil {
+		h["baseFeePerGas"] = hexutil.EncodeBig(baseFee)
+	}
+	return h
+}
+
+// serveFees makes the fake RPC answer the two fee reads; a nil tip fails
+// eth_maxPriorityFeePerGas.
+func serveFees(f *fakeRPC, tip, baseFee *big.Int) {
+	f.handle("eth_maxPriorityFeePerGas", func([]json.RawMessage) (any, error) {
+		if tip == nil {
+			return nil, fmt.Errorf("method not supported")
+		}
+		return hexutil.EncodeBig(tip), nil
+	})
+	f.handle("eth_getBlockByNumber", func([]json.RawMessage) (any, error) { return headerJSON(baseFee), nil })
+}
+
+func TestSuggestFeesOPFallbackTip(t *testing.T) {
+	c := qt.New(t)
+	f := newFakeRPC(t)
+	serveFees(f, nil, big.NewInt(5_000))
+	m := newChainManager(t, f, opChain)
+
+	tip, feeCap, err := m.suggestFees(context.Background())
+	c.Assert(err, qt.IsNil)
+	c.Assert(tip.Int64(), qt.Equals, opFallback)
+	c.Assert(feeCap.Int64(), qt.Equals, 2*5_000+opFallback)
+}
+
+func TestSuggestFeesOPNoBaseFee(t *testing.T) {
+	c := qt.New(t)
+	f := newFakeRPC(t)
+	serveFees(f, nil, nil)
+	m := newChainManager(t, f, opChain)
+
+	tip, feeCap, err := m.suggestFees(context.Background())
+	c.Assert(err, qt.IsNil)
+	// tip + 1 gwei would be 1.001 gwei; the cap wins.
+	c.Assert(feeCap.Int64(), qt.Equals, opFeeCapWei)
+	c.Assert(tip.Int64(), qt.Equals, opFallback)
+}
+
+func TestSuggestFeesOPClampsHugeValues(t *testing.T) {
+	c := qt.New(t)
+	f := newFakeRPC(t)
+	serveFees(f, big.NewInt(50*gwei), big.NewInt(100*gwei))
+	m := newChainManager(t, f, opChain)
+
+	tip, feeCap, err := m.suggestFees(context.Background())
+	c.Assert(err, qt.IsNil)
+	c.Assert(feeCap.Int64(), qt.Equals, opFeeCapWei)
+	c.Assert(tip.Cmp(feeCap) <= 0, qt.IsTrue, qt.Commentf("tip %v above feeCap %v", tip, feeCap))
+	c.Assert(tip.Int64(), qt.Equals, opFeeCapWei)
+}
+
+func TestSuggestFeesKeepsOPNormalValues(t *testing.T) {
+	c := qt.New(t)
+	f := newFakeRPC(t)
+	serveFees(f, big.NewInt(opFallback), big.NewInt(5_000))
+	m := newChainManager(t, f, opChain)
+
+	tip, feeCap, err := m.suggestFees(context.Background())
+	c.Assert(err, qt.IsNil)
+	c.Assert(tip.Int64(), qt.Equals, opFallback)
+	c.Assert(feeCap.Int64(), qt.Equals, 2*5_000+opFallback)
+}
+
+// Gnosis and unknown chains keep the generic behaviour: 1 gwei fallback,
+// no cap.
+func TestSuggestFeesUncappedChainsUnchanged(t *testing.T) {
+	for name, id := range map[string]uint64{"gnosis": gnosisChain, "unknown": unknownChain} {
+		t.Run(name, func(t *testing.T) {
+			c := qt.New(t)
+			f := newFakeRPC(t)
+			serveFees(f, nil, big.NewInt(7*gwei))
+			m := newChainManager(t, f, id)
+			tip, feeCap, err := m.suggestFees(context.Background())
+			c.Assert(err, qt.IsNil)
+			c.Assert(tip.Int64(), qt.Equals, gwei)
+			c.Assert(feeCap.Int64(), qt.Equals, 14*gwei+gwei)
+
+			serveFees(f, nil, nil)
+			tip, feeCap, err = m.suggestFees(context.Background())
+			c.Assert(err, qt.IsNil)
+			c.Assert(tip.Int64(), qt.Equals, gwei)
+			c.Assert(feeCap.Int64(), qt.Equals, 2*gwei)
+
+			serveFees(f, big.NewInt(500*gwei), big.NewInt(1000*gwei))
+			tip, feeCap, err = m.suggestFees(context.Background())
+			c.Assert(err, qt.IsNil)
+			c.Assert(tip.Int64(), qt.Equals, 500*gwei)
+			c.Assert(feeCap.Int64(), qt.Equals, 2500*gwei)
+		})
+	}
+}
+
+// When fee estimation fails outright a capped chain must not leave it to
+// bind (uncapped): the fallback is min(tip, cap) with feeCap = cap.
+func TestFallbackFeesUnderCap(t *testing.T) {
+	c := qt.New(t)
+	m := newChainManager(t, newFakeRPC(t), opChain)
+	tip, feeCap, ok := m.fallbackFees()
+	c.Assert(ok, qt.IsTrue)
+	c.Assert(tip.Int64(), qt.Equals, opFallback)
+	c.Assert(feeCap.Int64(), qt.Equals, opFeeCapWei)
+
+	m.config.Chain.FallbackTipCap = big.NewInt(gwei) // above the cap
+	tip, feeCap, ok = m.fallbackFees()
+	c.Assert(ok, qt.IsTrue)
+	c.Assert(tip.Int64(), qt.Equals, opFeeCapWei)
+	c.Assert(feeCap.Int64(), qt.Equals, opFeeCapWei)
+
+	_, _, ok = newChainManager(t, newFakeRPC(t), gnosisChain).fallbackFees()
+	c.Assert(ok, qt.IsFalse, qt.Commentf("uncapped chains keep bind's own estimate"))
+}
+
+func TestNewTransactOptsSetsCappedFees(t *testing.T) {
+	c := qt.New(t)
+	f := newFakeRPC(t)
+	serveFees(f, big.NewInt(50*gwei), big.NewInt(100*gwei))
+	m := newChainManager(t, f, opChain)
+	auth, err := m.NewTransactOpts(context.Background())
+	c.Assert(err, qt.IsNil)
+	c.Assert(auth.GasFeeCap.Int64(), qt.Equals, opFeeCapWei)
+	c.Assert(auth.GasTipCap.Cmp(auth.GasFeeCap) <= 0, qt.IsTrue)
+}
+
+func capTx(t *testing.T, m *Manager, tip, feeCap int64) *gethtypes.Transaction {
+	t.Helper()
+	to := common.HexToAddress("0xdead")
+	signed, err := gethtypes.SignTx(gethtypes.NewTx(&gethtypes.DynamicFeeTx{
+		ChainID: m.chainID, Nonce: 5, GasTipCap: big.NewInt(tip), GasFeeCap: big.NewInt(feeCap),
+		Gas: 21_000, To: &to,
+	}), gethtypes.LatestSignerForChainID(m.chainID), m.key)
+	qt.Assert(t, err, qt.IsNil)
+	return signed
+}
+
+func TestBumpedCopyStopsAtTheCap(t *testing.T) {
+	c := qt.New(t)
+	m := newChainManager(t, newFakeRPC(t), opChain)
+
+	// 50 % bumps compound until both values reach the cap, then stop.
+	tx := capTx(t, m, 1_000_000, 50_000_000)
+	var last *gethtypes.Transaction
+	for i := 0; i < 20; i++ {
+		next, err := m.bumpedCopy(tx)
+		c.Assert(err, qt.IsNil)
+		c.Assert(next.GasFeeCap().Int64() <= opFeeCapWei, qt.IsTrue)
+		c.Assert(next.GasTipCap().Cmp(next.GasFeeCap()) <= 0, qt.IsTrue)
+		if next.Hash() == tx.Hash() {
+			last = next
+			break
+		}
+		tx = next
+	}
+	c.Assert(last, qt.IsNotNil, qt.Commentf("bumps never reached a fixed point"))
+	c.Assert(last.GasFeeCap().Int64(), qt.Equals, opFeeCapWei)
+}
+
+func TestBumpedCopyPartialBumpClamps(t *testing.T) {
+	c := qt.New(t)
+	m := newChainManager(t, newFakeRPC(t), opChain)
+	tx := capTx(t, m, 1_000_000, 80_000_000)
+	next, err := m.bumpedCopy(tx)
+	c.Assert(err, qt.IsNil)
+	c.Assert(next.GasFeeCap().Int64(), qt.Equals, opFeeCapWei) // 120M clamped
+	c.Assert(next.GasTipCap().Int64(), qt.Equals, int64(1_500_000))
+	c.Assert(next.Hash() != tx.Hash(), qt.IsTrue)
+}
+
+func TestBumpedCopyUncappedChainsUnchanged(t *testing.T) {
+	for _, id := range []uint64{gnosisChain, unknownChain} {
+		c := qt.New(t)
+		m := newChainManager(t, newFakeRPC(t), id)
+		tx := capTx(t, m, 10*gwei, 1000*gwei)
+		for i := 0; i < 3; i++ {
+			next, err := m.bumpedCopy(tx)
+			c.Assert(err, qt.IsNil)
+			c.Assert(next.GasFeeCap().Cmp(new(big.Int).Div(new(big.Int).Mul(tx.GasFeeCap(), big.NewInt(150)), big.NewInt(100))), qt.Equals, 0)
+			c.Assert(next.GasTipCap().Cmp(new(big.Int).Div(new(big.Int).Mul(tx.GasTipCap(), big.NewInt(150)), big.NewInt(100))), qt.Equals, 0)
+			tx = next
+		}
+	}
+}
+
+// At the cap the stuck transaction is re-broadcast as is: same hash, the
+// attempt counted, the pending clock restarted, the warning logged once.
+func TestRetryStuckAtCapRebroadcastsOriginal(t *testing.T) {
+	c := qt.New(t)
+	f := newFakeRPC(t)
+	m := newChainManager(t, f, opChain)
+	tx := capTx(t, m, opFeeCapWei, opFeeCapWei)
+	m.RecordPending(tx)
+
+	f.handle("eth_getTransactionCount", func(params []json.RawMessage) (any, error) { return "0x5", nil })
+	var sent []common.Hash
+	f.handle("eth_sendRawTransaction", func(params []json.RawMessage) (any, error) {
+		var raw hexutil.Bytes
+		if err := json.Unmarshal(params[0], &raw); err != nil {
+			return nil, err
+		}
+		var d gethtypes.Transaction
+		if err := d.UnmarshalBinary(raw); err != nil {
+			return nil, err
+		}
+		sent = append(sent, d.Hash())
+		return d.Hash(), nil
+	})
+
+	for i := 1; i <= 2; i++ {
+		m.pending[5].submittedAt = time.Now().Add(-m.config.MaxPendingTime - time.Second)
+		// Present in the mempool so only the age path runs.
+		f.handle("eth_getTransactionCount", func(params []json.RawMessage) (any, error) {
+			var tag string
+			_ = json.Unmarshal(params[1], &tag)
+			if tag == "pending" {
+				return "0x6", nil
+			}
+			return "0x5", nil
+		})
+		c.Assert(m.retryStuck(context.Background()), qt.IsNil)
+		c.Assert(sent, qt.HasLen, i)
+		c.Assert(sent[i-1], qt.Equals, tx.Hash())
+		c.Assert(m.pending[5].hash, qt.Equals, tx.Hash())
+		c.Assert(m.pending[5].retries, qt.Equals, i)
+		c.Assert(time.Since(m.pending[5].submittedAt) < time.Minute, qt.IsTrue, qt.Commentf("clock restarts"))
+		c.Assert(m.pending[5].capLogged, qt.IsTrue)
+	}
+}
+
+// geth only accepts a same-nonce replacement with tip and feeCap both at
+// least 10% higher; a clamp that leaves less is treated as at the cap.
+func TestBumpedCopyNeedsTenPercentOverTheOriginal(t *testing.T) {
+	c := qt.New(t)
+	m := newChainManager(t, newFakeRPC(t), opChain)
+
+	// 95M -> 142.5M -> clamped 100M is +5.3%: geth would refuse it.
+	tx := capTx(t, m, 1_000_000, 95_000_000)
+	next, err := m.bumpedCopy(tx)
+	c.Assert(err, qt.IsNil)
+	c.Assert(next.Hash(), qt.Equals, tx.Hash())
+
+	// 90M -> 100M is +11.1%: accepted.
+	tx = capTx(t, m, 1_000_000, 90_000_000)
+	next, err = m.bumpedCopy(tx)
+	c.Assert(err, qt.IsNil)
+	c.Assert(next.Hash() != tx.Hash(), qt.IsTrue)
+	c.Assert(next.GasFeeCap().Int64(), qt.Equals, opFeeCapWei)
+
+	// Exactly +10% (feeCap 90.909091M -> ceil 100,000,001 would exceed;
+	// use a cap-aligned pair): tip 90M of cap 100M clamps feeCap to 100M and
+	// needs tip >= 99M, which the 50% bump of 90M (135M -> 100M) meets.
+	tx = capTx(t, m, 90_000_000, 90_000_000)
+	next, err = m.bumpedCopy(tx)
+	c.Assert(err, qt.IsNil)
+	c.Assert(next.Hash() != tx.Hash(), qt.IsTrue)
+
+	// Just under 10% on the fee cap: 91M * 1.1 = 100.1M > cap, so at cap.
+	tx = capTx(t, m, 1_000_000, 91_000_000)
+	next, err = m.bumpedCopy(tx)
+	c.Assert(err, qt.IsNil)
+	c.Assert(next.Hash(), qt.Equals, tx.Hash())
+
+	// Just at 10%: 90.909090M -> ceil(x*1.1) = 100,000,000 (x = 90,909,090 gives 99,999,999 -> ok).
+	tx = capTx(t, m, 1_000_000, 90_909_090)
+	next, err = m.bumpedCopy(tx)
+	c.Assert(err, qt.IsNil)
+	c.Assert(next.Hash() != tx.Hash(), qt.IsTrue)
+	tx = capTx(t, m, 1_000_000, 90_909_091) // ceil(100,000,000.1) = 100,000,001
+	next, err = m.bumpedCopy(tx)
+	c.Assert(err, qt.IsNil)
+	c.Assert(next.Hash(), qt.Equals, tx.Hash())
+}
+
+// A rebroadcast of a tx already in the pool errors ("already known"); the
+// at-cap entry must still wait MaxPendingTime before the next attempt.
+func TestRetryStuckAtCapAlreadyKnownKeepsTheCadence(t *testing.T) {
+	c := qt.New(t)
+	f := newFakeRPC(t)
+	m := newChainManager(t, f, opChain)
+	tx := capTx(t, m, opFeeCapWei, opFeeCapWei)
+	m.RecordPending(tx)
+	old := time.Now().Add(-m.config.MaxPendingTime - time.Second)
+	m.pending[5].submittedAt = old
+
+	f.handle("eth_getTransactionCount", func(params []json.RawMessage) (any, error) {
+		var tag string
+		_ = json.Unmarshal(params[1], &tag)
+		if tag == "pending" {
+			return "0x6", nil
+		}
+		return "0x5", nil
+	})
+	f.handle("eth_sendRawTransaction", func([]json.RawMessage) (any, error) {
+		return nil, fmt.Errorf("already known")
+	})
+
+	c.Assert(m.retryStuck(context.Background()), qt.IsNil)
+	c.Assert(f.calls["eth_sendRawTransaction"], qt.Equals, 1)
+	c.Assert(m.pending[5].retries, qt.Equals, 1)
+	c.Assert(m.pending[5].hash, qt.Equals, tx.Hash())
+	c.Assert(m.pending[5].submittedAt.After(old), qt.IsTrue)
+	c.Assert(m.pending[5].capLogged, qt.IsTrue)
+
+	c.Assert(m.retryStuck(context.Background()), qt.IsNil)
+	c.Assert(f.calls["eth_sendRawTransaction"], qt.Equals, 1, qt.Commentf("no resend right after"))
+	c.Assert(m.pending[5].retries, qt.Equals, 1)
+}

@@ -16,6 +16,9 @@ import (
 	gethtypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
+
+	"github.com/vocdoni/davinci-dkg/config"
+	"github.com/vocdoni/davinci-dkg/log"
 )
 
 const (
@@ -48,6 +51,8 @@ type Config struct {
 	// GasMultiplier inflates estimated gas limits (≥ 1). Explicit
 	// TransactOpts.GasLimit values are never touched.
 	GasMultiplier float64
+	// Chain is the per-chain fee profile (fallback tip, fee cap).
+	Chain config.Chain
 }
 
 // DefaultConfig returns a sensible default configuration.
@@ -69,6 +74,7 @@ type pendingTx struct {
 	signed      *gethtypes.Transaction
 	submittedAt time.Time
 	retries     int
+	capLogged   bool // the "fee cap reached" warning went out for this entry
 }
 
 // Manager handles nonce management, EIP-1559 gas estimation, and basic
@@ -110,12 +116,14 @@ func New(clientFn func() *ethclient.Client, chainID uint64, privateKey string) (
 	if !ok {
 		return nil, fmt.Errorf("invalid public key type")
 	}
+	cfg := DefaultConfig()
+	cfg.Chain = config.ChainByID(chainID)
 	return &Manager{
 		clientFn:      clientFn,
 		key:           key,
 		chainID:       new(big.Int).SetUint64(chainID),
 		from:          crypto.PubkeyToAddress(*publicKey),
-		config:        DefaultConfig(),
+		config:        cfg,
 		pending:       make(map[uint64]*pendingTx),
 		totalGasSpent: new(big.Int),
 	}, nil
@@ -200,8 +208,12 @@ func (m *Manager) NewTransactOpts(ctx context.Context) (*bind.TransactOpts, erro
 	}
 	auth.Context = ctx
 	// Fee estimation is best effort: on failure the bound method falls back
-	// to the node's suggested gas price.
+	// to the node's suggested gas price, unless the chain has a fee cap,
+	// which bind's own estimate would ignore.
 	if tipCap, feeCap, err := m.suggestFees(ctx); err == nil {
+		auth.GasTipCap = tipCap
+		auth.GasFeeCap = feeCap
+	} else if tipCap, feeCap, ok := m.fallbackFees(); ok {
 		auth.GasTipCap = tipCap
 		auth.GasFeeCap = feeCap
 	}
@@ -367,22 +379,73 @@ func (m *Manager) recordGasSpent(receipt *gethtypes.Receipt) {
 	m.mu.Unlock()
 }
 
+// fallbackTip is the priority fee used when the node cannot suggest one.
+func (m *Manager) fallbackTip() *big.Int {
+	if t := m.config.Chain.FallbackTipCap; t != nil {
+		return new(big.Int).Set(t)
+	}
+	return big.NewInt(1_000_000_000) // 1 gwei
+}
+
+// fallbackFees returns the fees to use when estimation failed outright;
+// ok is false on chains without a fee cap, where bind estimates them.
+func (m *Manager) fallbackFees() (tip, feeCap *big.Int, ok bool) {
+	limit := m.config.Chain.MaxFeePerGas
+	if limit == nil {
+		return nil, nil, false
+	}
+	return minBig(m.fallbackTip(), limit), new(big.Int).Set(limit), true
+}
+
+// minReplacement is the lowest fee geth's txpool accepts for a same-nonce
+// replacement: 10% above the original (its default PriceBump), and always
+// above it.
+func minReplacement(v *big.Int) *big.Int {
+	r := new(big.Int).Mul(v, big.NewInt(110))
+	r.Add(r, big.NewInt(99)).Div(r, big.NewInt(100)) // ceil
+	return maxBig(r, new(big.Int).Add(v, big.NewInt(1)))
+}
+
+func maxBig(a, b *big.Int) *big.Int {
+	if a.Cmp(b) < 0 {
+		return b
+	}
+	return a
+}
+
+func minBig(a, b *big.Int) *big.Int {
+	if b.Cmp(a) < 0 {
+		return new(big.Int).Set(b)
+	}
+	return new(big.Int).Set(a)
+}
+
+// clampFees applies the chain's fee cap, keeping tip <= feeCap.
+func (m *Manager) clampFees(tip, feeCap *big.Int) (*big.Int, *big.Int) {
+	if limit := m.config.Chain.MaxFeePerGas; limit != nil {
+		feeCap = minBig(feeCap, limit)
+	}
+	return minBig(tip, feeCap), feeCap
+}
+
 // suggestFees returns (gasTipCap, gasFeeCap) for an EIP-1559 transaction.
 func (m *Manager) suggestFees(ctx context.Context) (*big.Int, *big.Int, error) {
 	m.note("eth_maxPriorityFeePerGas")
 	tipCap, err := m.clientFn().SuggestGasTipCap(ctx)
 	if err != nil {
-		tipCap = big.NewInt(1_000_000_000) // 1 gwei fallback
+		tipCap = m.fallbackTip()
 	}
 	m.note("eth_getBlockByNumber")
 	header, err := m.clientFn().HeaderByNumber(ctx, nil)
 	if err != nil || header.BaseFee == nil {
 		// Legacy chain or no base fee available — just use a high gas price.
-		return tipCap, new(big.Int).Add(tipCap, big.NewInt(1_000_000_000)), nil
+		tip, feeCap := m.clampFees(tipCap, new(big.Int).Add(tipCap, big.NewInt(1_000_000_000)))
+		return tip, feeCap, nil
 	}
 	// feeCap = 2 * baseFee + tipCap (gives headroom for a few blocks of fee increase)
 	feeCap := new(big.Int).Add(new(big.Int).Mul(header.BaseFee, big.NewInt(2)), tipCap)
-	return tipCap, feeCap, nil
+	tip, feeCap := m.clampFees(tipCap, feeCap)
+	return tip, feeCap, nil
 }
 
 // retryStuck is one monitor pass. It snapshots the pending set under the
@@ -439,7 +502,26 @@ func (m *Manager) retryStuck(ctx context.Context) error {
 			if err != nil {
 				continue
 			}
+			atCap := bumped.Hash() == ptx.signed.Hash()
+			if atCap && !ptx.capLogged {
+				log.Warnw("tx fee cap reached; rebroadcasting without a bump",
+					"nonce", ptx.nonce, "tx", ptx.hash.Hex(), "maxFeePerGas", ptx.signed.GasFeeCap())
+			}
+			// At the cap this is a plain rebroadcast that still counts as an
+			// attempt and restarts the pending clock, so the usual MaxRetries
+			// bound and MaxPendingTime cadence hold.
 			m.resend(ctx, ptx, bumped, true)
+			if atCap {
+				// A rebroadcast of a tx the pool already holds errors
+				// ("already known") and resend then leaves the clock alone;
+				// restart it here so the cadence stays MaxPendingTime.
+				m.mu.Lock()
+				if cur, ok := m.pending[ptx.nonce]; ok && cur.hash == ptx.hash {
+					cur.capLogged = true
+					cur.submittedAt = time.Now()
+				}
+				m.mu.Unlock()
+			}
 		}
 	}
 	return nil
@@ -482,18 +564,26 @@ func withTimeout[T any](ctx context.Context, call func(context.Context) (T, erro
 	return call(cctx)
 }
 
-// bumpedCopy re-signs tx with fee caps increased by FeeIncreasePercent.
+// bumpedCopy re-signs tx with fee caps increased by FeeIncreasePercent,
+// clamped to the chain's fee cap. When the clamp leaves the tip or the fee
+// cap less than 10% above the original, geth would reject a replacement as
+// underpriced, so tx itself is returned to be rebroadcast as is.
 func (m *Manager) bumpedCopy(tx *gethtypes.Transaction) (*gethtypes.Transaction, error) {
 	pct := big.NewInt(int64(100 + m.config.FeeIncreasePercent))
 	bump := func(v *big.Int) *big.Int {
 		out := new(big.Int).Mul(v, pct)
 		return out.Div(out, big.NewInt(100))
 	}
+	tip, feeCap := m.clampFees(bump(tx.GasTipCap()), bump(tx.GasFeeCap()))
+	if m.config.Chain.MaxFeePerGas != nil &&
+		(tip.Cmp(minReplacement(tx.GasTipCap())) < 0 || feeCap.Cmp(minReplacement(tx.GasFeeCap())) < 0) {
+		return tx, nil
+	}
 	raw := gethtypes.NewTx(&gethtypes.DynamicFeeTx{
 		ChainID:    m.chainID,
 		Nonce:      tx.Nonce(),
-		GasTipCap:  bump(tx.GasTipCap()),
-		GasFeeCap:  bump(tx.GasFeeCap()),
+		GasTipCap:  tip,
+		GasFeeCap:  feeCap,
 		Gas:        tx.Gas(),
 		To:         tx.To(),
 		Value:      tx.Value(),
