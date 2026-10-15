@@ -267,7 +267,7 @@ func TestRetryStuckAtCapRebroadcastsOriginal(t *testing.T) {
 		f.handle("eth_getTransactionCount", func(params []json.RawMessage) (any, error) {
 			var tag string
 			_ = json.Unmarshal(params[1], &tag)
-			if tag == "pending" {
+			if tag == tagPending {
 				return "0x6", nil
 			}
 			return "0x5", nil
@@ -339,7 +339,7 @@ func TestRetryStuckAtCapAlreadyKnownKeepsTheCadence(t *testing.T) {
 	f.handle("eth_getTransactionCount", func(params []json.RawMessage) (any, error) {
 		var tag string
 		_ = json.Unmarshal(params[1], &tag)
-		if tag == "pending" {
+		if tag == tagPending {
 			return "0x6", nil
 		}
 		return "0x5", nil
