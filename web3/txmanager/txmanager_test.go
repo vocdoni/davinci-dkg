@@ -23,6 +23,7 @@ import (
 const (
 	testChainID = uint64(31337)
 	testKey     = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
+	tagPending  = "pending"
 )
 
 // fakeRPC is a JSON-RPC server with per-method handlers; unhandled methods
@@ -344,7 +345,7 @@ func TestRetryStuckBumpsFeesAndPrunesConfirmed(t *testing.T) {
 	f.handle("eth_getTransactionCount", func(params []json.RawMessage) (any, error) {
 		var tag string
 		_ = json.Unmarshal(params[1], &tag)
-		if tag == "pending" {
+		if tag == tagPending {
 			return "0x6", nil // 5 is in the mempool
 		}
 		return "0x5", nil // 4 is mined
