@@ -19,6 +19,7 @@
 # private RPC travel only inside request bodies in 0600 temp files, and the
 # token through a curl config file: none is an argument or printed.
 set -euo pipefail
+umask 077
 
 : "${RAILWAY_TOKEN_FILE:=railway-api-key}"
 : "${RAILWAY_PROJECT_ID:?project id (projectCreate output)}"
