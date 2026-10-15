@@ -22,6 +22,7 @@ import (
 	"github.com/vocdoni/davinci-dkg/circuits"
 	ccommon "github.com/vocdoni/davinci-dkg/circuits/common"
 	"github.com/vocdoni/davinci-dkg/circuits/contribution"
+	"github.com/vocdoni/davinci-dkg/config"
 	"github.com/vocdoni/davinci-dkg/crypto/feldman"
 	"github.com/vocdoni/davinci-dkg/crypto/group"
 	dkghash "github.com/vocdoni/davinci-dkg/crypto/hash"
@@ -66,6 +67,10 @@ type poolSlot struct {
 
 // Node participates in every DKG epoch it can find on chain.
 type Node struct {
+	// stagger is the rotation slot spacing in blocks (see staggerBlocksFor);
+	// 0 means defaultStaggerBlocks.
+	stagger uint64
+
 	address   common.Address
 	bjjSecret *big.Int
 
@@ -242,6 +247,7 @@ func New(cfg *Config) (*Node, error) {
 		finalizeRetry:  make(map[[12]byte]*serviceBackoff),
 		contribCache:   &contributionCache{dir: contributionCacheDir(stateDir)},
 		lookback:       cfg.DecryptLookbackBlocks,
+		stagger:        staggerBlocksFor(config.ChainByID(c.ChainID).BlockTime),
 		pending:        make(map[ctKey]*ciphertext),
 		parked:         make(map[ctKey]*parkedSlot),
 		partialDone:    make(map[ctKey]bool),
@@ -306,6 +312,7 @@ func (n *Node) LogStartupSnapshot(ctx context.Context, cfg *Config) {
 	log.Infow("config: chain connection",
 		"network", cfg.ResolvedNetworkName(),
 		"chainId", n.contracts.ChainID,
+		"staggerBlocks", n.staggerOrDefault(),
 		"rpcHost", rpcHost(cfg.Web3.RPC[0]),
 		"gasMultiplier", cfg.Web3.GasMultiplier)
 	log.Infow("config: contracts",
@@ -1725,10 +1732,39 @@ func (n *Node) doContribution(
 
 // ---- Auto-finalize (deterministic stagger across selected participants) ----
 
-// staggerBlocks is the per-slot delay between successive attempts in a
-// rotation. With STAGGER_BLOCKS=3, slot 0 attempts at liveNotBeforeBlock,
-// slot 1 at +3, slot 2 at +6, etc.
-const staggerBlocks = 3
+const (
+	// defaultStaggerBlocks is the per-slot delay, in blocks, when the chain's
+	// block time is unknown (and the floor on every chain).
+	defaultStaggerBlocks = 3
+	// staggerWallClock is the wall-clock spacing the stagger aims for: 3
+	// blocks on Gnosis (5 s), so 8 on OP (2 s).
+	staggerWallClock = 15 * time.Second
+)
+
+// staggerBlocksFor is the per-slot delay between successive attempts in a
+// rotation, in blocks: slot 0 attempts at liveNotBeforeBlock, slot 1 at
+// +stagger, slot 2 at +2*stagger, etc. It keeps staggerWallClock whatever the
+// block time.
+func staggerBlocksFor(blockTime time.Duration) uint64 {
+	if blockTime <= 0 {
+		return defaultStaggerBlocks
+	}
+	blocks := uint64((staggerWallClock + blockTime - 1) / blockTime)
+	return max(defaultStaggerBlocks, blocks)
+}
+
+// staggerWaitUntil is the block at which rotation slot `slot` may act, for a
+// rotation anchored at `base`. A Node built without a stagger uses the default.
+func (n *Node) staggerWaitUntil(base, slot uint64) uint64 {
+	return base + slot*n.staggerOrDefault()
+}
+
+func (n *Node) staggerOrDefault() uint64 {
+	if n.stagger == 0 {
+		return defaultStaggerBlocks
+	}
+	return n.stagger
+}
 
 // tryAutoFinalize is called by every selected participant after their
 // contribution lands. It computes the participant's slot in an epoch-specific
@@ -1774,7 +1810,7 @@ func (n *Node) tryAutoFinalize(
 		return nil
 	}
 	mySlot := staggerSlot(epoch.Seed, 0, myIdx, committeeSize)
-	waitUntil := epoch.Policy.LiveNotBeforeBlock + mySlot*staggerBlocks
+	waitUntil := n.staggerWaitUntil(epoch.Policy.LiveNotBeforeBlock, mySlot)
 	if head < waitUntil {
 		return nil // not our turn yet; another tick will retry
 	}
