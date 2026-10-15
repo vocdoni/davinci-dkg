@@ -495,9 +495,11 @@ func (m *Manager) retryStuck(ctx context.Context) error {
 				delete(m.pending, ptx.nonce)
 			}
 			m.mu.Unlock()
-		case ptx.nonce >= chainPending && age >= m.config.MonitorInterval:
-			m.resend(ctx, ptx, ptx.signed, false)
 		case age >= m.config.MaxPendingTime:
+			// Before the unknown-to-the-mempool case: OP has no public mempool,
+			// and a load-balanced RPC can answer the pending nonce with the
+			// confirmed one, so an old tx stuck under the base fee would
+			// otherwise be rebroadcast as is forever and never bumped.
 			bumped, err := m.bumpedCopy(ptx.signed)
 			if err != nil {
 				continue
@@ -522,6 +524,8 @@ func (m *Manager) retryStuck(ctx context.Context) error {
 				}
 				m.mu.Unlock()
 			}
+		case ptx.nonce >= chainPending && age >= m.config.MonitorInterval:
+			m.resend(ctx, ptx, ptx.signed, false)
 		}
 	}
 	return nil
@@ -542,11 +546,17 @@ func (m *Manager) resend(ctx context.Context, ptx pendingTx, tx *gethtypes.Trans
 	if !ok || cur.hash != ptx.hash {
 		return
 	}
-	// A refused broadcast counts as an attempt too: a transaction the
-	// mempool rejects for good (insufficient funds, underpriced) would
-	// otherwise be re-sent on every pass forever, and the pending set —
-	// fed a fresh nonce by every caller retry — would grow without bound.
-	cur.retries++
+	// A bump counts as an attempt (MaxRetries bounds the fee escalation), and
+	// so does a refused broadcast: a transaction the mempool rejects for good
+	// (insufficient funds, underpriced) would otherwise be re-sent on every
+	// pass forever, and the pending set — fed a fresh nonce by every caller
+	// retry — would grow without bound. A plain rebroadcast the network takes
+	// or already holds does not: on OP a load-balanced RPC can make a live tx
+	// look unknown on every pass, and counting those would drop it, freeing
+	// its nonce, long before it is old enough to bump.
+	if bumped || (err != nil && !alreadyKnown(err)) {
+		cur.retries++
+	}
 	if err != nil {
 		return // "already known" and friends: the original may still confirm
 	}
@@ -555,6 +565,14 @@ func (m *Manager) resend(ctx context.Context, ptx pendingTx, tx *gethtypes.Trans
 	if bumped {
 		cur.submittedAt = time.Now()
 	}
+}
+
+// alreadyKnown reports whether a send failed only because the pool already
+// holds the transaction (geth "already known", other clients' variants).
+func alreadyKnown(err error) bool {
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "already known") || strings.Contains(msg, "known transaction") ||
+		strings.Contains(msg, "alreadyknown")
 }
 
 // withTimeout runs one RPC call under rpcCallTimeout.
