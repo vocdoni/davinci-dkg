@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Move an existing Railway node service to another image and deploy it. Railway
-# runs no Watchtower: a release (new protocol, or a Gnosis preset pointing at a
+# runs no Watchtower: a release (new protocol, or a default preset pointing at a
 # new deployment) reaches a Railway node only through a new deployment. Pin the
 # release tag rather than `latest`, so the rollout is exactly that build.
 #

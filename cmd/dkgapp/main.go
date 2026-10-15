@@ -86,7 +86,7 @@ func run() error {
 	global := flag.NewFlagSet("dkgapp", flag.ContinueOnError)
 	rpc := global.String("rpc", envOr("DAVINCI_DKG_WEB3_RPC", ""),
 		"comma-separated JSON-RPC endpoints (default: the network's public ones)")
-	network := global.String("network", envOr("DAVINCI_DKG_NETWORK", ""), "well-known network preset (gnosis, sepolia)")
+	network := global.String("network", envOr("DAVINCI_DKG_NETWORK", ""), "well-known network preset ("+config.DefaultNetwork+", sepolia)")
 	managerAddr := global.String("manager", envOr("DAVINCI_DKG_MANAGER", ""), "DKGManager address (overrides -network)")
 	privkey := global.String("privkey", envOr("DAVINCI_DKG_PRIVKEY", ""), "hex private key used to sign transactions")
 	global.Usage = func() { fmt.Fprint(os.Stderr, usage) }
@@ -102,11 +102,14 @@ func run() error {
 	// A preset's chain is checked unless -manager names a custom deployment.
 	var chainID uint64
 	if *network != "" {
-		dep, err := config.NetworkByName(*network)
+		name, dep, err := config.ResolveNetwork(*network)
 		if err != nil {
 			return err
 		}
 		if *managerAddr == "" {
+			if !dep.Deployed() {
+				return fmt.Errorf("network %s has no DKGManager yet: pass -manager", name)
+			}
 			*managerAddr = dep.Manager.Hex()
 			chainID = dep.ChainID
 		}

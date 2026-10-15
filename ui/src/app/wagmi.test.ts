@@ -23,6 +23,13 @@ describe('chainFromConfig', () => {
     expect(blockTimeSeconds(100)).toBe(5)
   })
 
+  it('gives OP Mainnet its Ether currency and 2 s blocks', () => {
+    const chain = chainFromConfig({ ...GNOSIS, chainId: 10, chainName: 'optimism', explorerUrl: 'https://optimistic.etherscan.io' })
+    expect(chain.nativeCurrency.symbol).toBe('ETH')
+    expect(chain.testnet).toBe(false)
+    expect(blockTimeSeconds(10)).toBe(2)
+  })
+
   it('falls back to an Ether testnet with the default block time for other chains', () => {
     const chain = chainFromConfig({ ...GNOSIS, chainId: 11155111, chainName: 'sepolia', explorerUrl: undefined })
     expect(chain.nativeCurrency.symbol).toBe('ETH')

@@ -17,9 +17,10 @@ const SEPOLIA_CHAIN_ID = 11155111
 function networkEnv(config: RuntimeConfig, preset: string | undefined): string {
   if (preset === NODE_DEFAULT_NETWORK) {
     return `# Nothing else: with no network setting the node joins ${preset} through
-# the public RPC endpoints built into the binary. Your own endpoints,
-# comma-separated, take precedence:
-# DAVINCI_DKG_WEB3_RPC=https://<provider-1>,https://<provider-2>`
+# the public RPC endpoints built into the binary. Public endpoints are
+# rate-limited and some refuse old state, so list a private provider first and
+# the public ones after it as failover (the node rotates off refusing ones):
+# DAVINCI_DKG_WEB3_RPC=https://<your-provider>,${KNOWN_NETWORKS[preset].rpcUrls.join(',')}`
   }
   if (preset !== undefined) {
     const builtIn = KNOWN_NETWORKS[preset].rpcUrls.length > 0
@@ -89,8 +90,9 @@ export function DocsRunANodePage() {
               )}
             </>,
             <>
-              JSON-RPC endpoints. The node carries public Gnosis Chain endpoints, which are fine to try it out; a
-              long-lived node wants a dedicated provider or your own node, and any other network needs its own.
+              JSON-RPC endpoints. The node carries public endpoints for its built-in networks, which are fine to try it out; a
+              long-lived node wants a dedicated provider or your own node, and any other network needs its own. On OP
+              Mainnet, list a private provider first and the public endpoints after it as failover.
             </>,
           ]}
         />
@@ -134,7 +136,7 @@ docker compose --profile node logs -f node`}</Code>
         <Steps
           items={[
             <>
-              The node checks that its RPC endpoints serve the network&rsquo;s chain (chain id 100 for Gnosis) and
+              The node checks that its RPC endpoints serve the network&rsquo;s chain (chain id 10 for OP Mainnet) and
               refuses to start otherwise; <C>--manager</C> skips the check. It reads the registry, the app manager and
               the verifiers from <C>DKGManager</C>.
             </>,
@@ -272,7 +274,7 @@ docker compose --profile node --profile ui up -d
         />
         <Sub>Other networks</Sub>
         <P>
-          With no network settings the node runs on Gnosis Chain. <C>--network sepolia</C> (
+          With no network settings the node runs on OP Mainnet. <C>--network sepolia</C> (
           <C>DAVINCI_DKG_NETWORK=sepolia</C>) selects the older Sepolia testnet and needs <C>--web3.rpc</C>. Any other
           deployment runs with <C>--manager &lt;address&gt;</C> and <C>--web3.rpc &lt;endpoints&gt;</C>.
         </P>

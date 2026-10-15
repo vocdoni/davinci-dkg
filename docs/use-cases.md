@@ -30,7 +30,7 @@ shape every use case below:
   index or a 32-bit chunk, not a document. Anything larger is carried by a symmetric key encrypted
   as eight 32-bit chunks, eight ciphertexts.
 
-The costs (measured on Sepolia, the same gas on the default Gnosis Chain deployment; 16-key pool,
+The costs (measured on Sepolia, the same gas on the default OP Mainnet deployment; 16-key pool,
 `n = 32`, `t = 22`; see [BENCHMARKS.md](../BENCHMARKS.md)):
 registration 0.23 M gas (automatic) or 0.62 M (locked), one ciphertext 0.10 M paid by the
 submitter, one decryption `t × 0.40 M + 0.48 M` paid by the committee, one reveal 0.23 M. Any

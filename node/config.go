@@ -127,8 +127,8 @@ func defaultConfig() *Config {
 		PollInterval:     5 * time.Second,
 		AutoCreateEpochs: true,
 		AutoCreateJitter: 12 * time.Second,
-		// ~7 days at 12 s blocks, ~3 on Gnosis Chain (5 s); matches the
-		// registry's default INACTIVITY_WINDOW.
+		// ~7 days at 12 s blocks; a preset with 2 s blocks (OP) overrides it
+		// through NetworkDeployment.DecryptLookbackBlocks.
 		DecryptLookbackBlocks: 50_400,
 		// Committee size 0 means "derive from the registry" (see adaptivePolicy).
 		EpochPolicy: EpochPolicyConfig{
@@ -188,6 +188,13 @@ func loadConfigFromArgs(args []string) (*Config, error) {
 	if err := v.Unmarshal(cfg); err != nil {
 		return nil, fmt.Errorf("unmarshal config: %w", err)
 	}
+	// IsSet is false for an untouched flag default, so only an explicit flag or
+	// env value beats the preset's lookback.
+	if !v.IsSet("decrypt-lookback-blocks") {
+		if _, dep, ok := cfg.preset(); ok && dep.DecryptLookbackBlocks != 0 {
+			cfg.DecryptLookbackBlocks = dep.DecryptLookbackBlocks
+		}
+	}
 
 	return cfg, validateConfig(cfg)
 }
@@ -204,6 +211,9 @@ func validateConfig(cfg *Config) error {
 		if _, err := config.NetworkByName(cfg.Network); err != nil {
 			return err
 		}
+	}
+	if name, dep, ok := cfg.preset(); ok && cfg.ManagerAddr == "" && !dep.Deployed() {
+		return fmt.Errorf("network %s has no DKGManager yet: pass --manager", name)
 	}
 	if len(cfg.Web3.RPC) == 0 {
 		cfg.Web3.RPC = cfg.defaultRPCs()

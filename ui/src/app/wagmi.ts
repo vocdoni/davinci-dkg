@@ -1,6 +1,6 @@
 import { createConfig, http } from 'wagmi'
 import { defineChain, type Chain } from 'viem'
-import { gnosis } from 'viem/chains'
+import { gnosis, optimism } from 'viem/chains'
 import { connectorsForWallets } from '@rainbow-me/rainbowkit'
 import { injectedWallet, metaMaskWallet, walletConnectWallet } from '@rainbow-me/rainbowkit/wallets'
 import type { RuntimeConfig } from '~config/runtime-config'
@@ -12,7 +12,7 @@ const projectId = (import.meta.env.VITE_WALLETCONNECT_PROJECT_ID as string | und
 
 // Chains whose currency, block time or testnet flag differ from the default
 // (Ether, 12 s blocks, testnet unless mainnet).
-const KNOWN_CHAINS: readonly Chain[] = [gnosis]
+const KNOWN_CHAINS: readonly Chain[] = [gnosis, optimism]
 
 function knownChain(chainId: number): Chain | undefined {
   return KNOWN_CHAINS.find((chain) => chain.id === chainId)
@@ -20,7 +20,7 @@ function knownChain(chainId: number): Chain | undefined {
 
 /**
  * The chain is built from `/config.json` rather than picked from a hard-coded
- * list: the same bundle has to serve Gnosis Chain, Sepolia, a local Anvil
+ * list: the same bundle has to serve OP Mainnet, Gnosis Chain, Sepolia, a local Anvil
  * testnet and any future deployment without a rebuild. A known chain only
  * lends its native currency, block time and testnet flag.
  */

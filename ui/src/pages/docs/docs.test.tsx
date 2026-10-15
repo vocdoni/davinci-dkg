@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { screen, within } from '@testing-library/react'
+import { KNOWN_NETWORKS, NODE_DEFAULT_NETWORK } from '@vocdoni/davinci-dkg-sdk'
 import { renderWithProviders } from '../../test-utils'
 import { DocsProtocolPage } from './protocol'
 import { DocsRunANodePage } from './run-a-node'
@@ -14,6 +15,17 @@ const CONFIG = {
   explorerUrl: 'https://sepolia.etherscan.io',
 }
 
+// The built-in default network, whatever its manager currently is.
+const DEFAULT = {
+  chainName: NODE_DEFAULT_NETWORK,
+  chainId: KNOWN_NETWORKS[NODE_DEFAULT_NETWORK].chainId,
+  managerAddress: KNOWN_NETWORKS[NODE_DEFAULT_NETWORK].managerAddress,
+  rpcUrl: KNOWN_NETWORKS[NODE_DEFAULT_NETWORK].rpcUrls[0],
+  deployBlock: Number(KNOWN_NETWORKS[NODE_DEFAULT_NETWORK].startBlock),
+  explorerUrl: 'https://optimistic.etherscan.io',
+}
+
+// A deployment the binary does not know (the retired Gnosis one).
 const GNOSIS = {
   chainName: 'gnosis',
   chainId: 100,
@@ -84,15 +96,22 @@ describe('docs/run-a-node', () => {
     expect(screen.getByRole('heading', { name: 'Limits worth knowing', level: 2 })).toBeInTheDocument()
   })
 
-  it('needs no network settings on the default Gnosis deployment', () => {
-    renderWithProviders(<DocsRunANodePage />, { config: GNOSIS })
+  it('needs no network settings on the default deployment', () => {
+    renderWithProviders(<DocsRunANodePage />, { config: DEFAULT })
     const env = screen.getByText(/DAVINCI_DKG_PRIVKEY=/)
-    expect(env.textContent).toMatch(/with no network setting the node joins gnosis/)
+    expect(env.textContent).toMatch(new RegExp(`with no network setting the node joins ${NODE_DEFAULT_NETWORK}`))
     expect(env.textContent).toMatch(/^# DAVINCI_DKG_WEB3_RPC=/m)
     expect(env.textContent).not.toMatch(/^DAVINCI_DKG_WEB3_RPC=/m)
     expect(env.textContent).not.toMatch(/DAVINCI_DKG_(NETWORK|MANAGER)=/)
     expect(screen.getByText('none, the default network')).toBeInTheDocument()
-    expect(screen.getAllByText(/XDAI on gnosis/).length).toBeGreaterThan(0)
+    expect(screen.getAllByText(new RegExp(`ETH on ${NODE_DEFAULT_NETWORK}`)).length).toBeGreaterThan(0)
+  })
+
+  it('points a deployment the binary does not know at its manager', () => {
+    renderWithProviders(<DocsRunANodePage />, { config: GNOSIS })
+    const env = screen.getByText(/DAVINCI_DKG_PRIVKEY=/)
+    expect(env.textContent).toMatch(new RegExp(`^DAVINCI_DKG_MANAGER=${GNOSIS.managerAddress}$`, 'm'))
+    expect(env.textContent).not.toMatch(/DAVINCI_DKG_NETWORK=/)
   })
 
   it('selects the Sepolia preset by name', () => {

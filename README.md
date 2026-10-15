@@ -45,8 +45,8 @@ decrypts the final tally. The protocol is described in [docs/protocol.md](docs/p
 
 ## Quick start
 
-Run a node on the Gnosis Chain deployment. You need Docker and an EVM account with a little xDAI
-for gas.
+Run a node on OP Mainnet, the default network (see the deployments table below for its status).
+You need Docker and an EVM account with a little ETH for gas.
 
 ```bash
 git clone https://github.com/vocdoni/davinci-dkg.git
@@ -73,7 +73,7 @@ variable (dots and dashes become underscores); `davinci-dkg-node --help` lists t
 |---|---|---|---|
 | `DAVINCI_DKG_PRIVKEY` | `--privkey` | | Operator key (hex) that signs every transaction. Required |
 | `DAVINCI_DKG_WEB3_RPC` | `--web3.rpc` | the network's public endpoints | Comma-separated JSON-RPC endpoints. Set at least two: the node rotates off rate-limited ones |
-| `DAVINCI_DKG_NETWORK` | `--network` | `gnosis` | Built-in deployment: `gnosis` or `sepolia` (no public endpoints built in) |
+| `DAVINCI_DKG_NETWORK` | `--network` | `optimism` | Built-in deployment: `optimism` or `sepolia` (no public endpoints built in) |
 | `DAVINCI_DKG_MANAGER` | `--manager` | | `DKGManager` address of any other deployment; overrides the network |
 | `DAVINCI_DKG_DATADIR` | `--datadir` | `~/.davinci-dkg` | Node state, one subdirectory per deployment |
 | `DAVINCI_DKG_ARTIFACTS_DIR` | | `~/.davinci/artifacts` | Circuit artifact cache |
@@ -90,7 +90,7 @@ directory and hosting on Railway are covered in [docs/node.md](docs/node.md).
 
 Each application is identified by a 32-byte `aid = salt << 160 | registrant`: the low 160 bits
 are the address that registers it (the contract refuses an id in another account's namespace on
-Gnosis; the Sepolia deployment `0xc73b…` predates [#14](https://github.com/vocdoni/davinci-dkg/issues/14) and does not enforce this),
+OP Mainnet; the Sepolia deployment `0xc73b…` predates [#14](https://github.com/vocdoni/davinci-dkg/issues/14) and does not enforce this),
 and a salt below 2⁹² keeps it inside the BN254 scalar field. `dkgapp register` and the SDK's
 `randomAid(account)` build one for you. An organizer-locked application prints an organizer secret at
 registration: **store it**. It is not derivable from anything on chain, and without it the
@@ -100,7 +100,7 @@ application can never be decrypted.
 
 ```bash
 go build -o dkgapp ./cmd/dkgapp
-export DAVINCI_DKG_NETWORK=gnosis
+export DAVINCI_DKG_NETWORK=optimism
 
 ./dkgapp epoch                                                  # newest epoch and its key pool (read-only; no private key needed)
 
@@ -123,14 +123,14 @@ The same flow in TypeScript, with the [SDK](sdk/README.md):
 
 ```ts
 import { createPublicClient, createWalletClient, http } from 'viem';
-import { gnosis } from 'viem/chains';
+import { optimism } from 'viem/chains';
 import { privateKeyToAccount } from 'viem/accounts';
 import { AppMode, DKGWriter, getNetwork, randomAid, waitForCombinedDecryption } from '@vocdoni/davinci-dkg-sdk';
 
-const net = getNetwork('gnosis');
-const publicClient = createPublicClient({ chain: gnosis, transport: http(net.rpcUrls[0]) });
+const net = getNetwork('optimism');
+const publicClient = createPublicClient({ chain: optimism, transport: http(net.rpcUrls[0]) });
 const walletClient = createWalletClient({
-  chain: gnosis, transport: http(net.rpcUrls[0]), account: privateKeyToAccount('0x...'),
+  chain: optimism, transport: http(net.rpcUrls[0]), account: privateKeyToAccount('0x...'),
 });
 const dkg = new DKGWriter({ publicClient, walletClient, managerAddress: net.managerAddress });
 
@@ -160,10 +160,12 @@ endpoint, with no backend. `make ui-dev` serves it for the Gnosis deployment on
 
 | Network | Chain id | `DKGManager` | Circuits |
 |---|---|---|---|
-| Gnosis Chain (default) | 100 | `0xC6Fb38c42ed3FB35D363a702218746d5C7Da36BF` | [`circuits-v6`](https://github.com/vocdoni/davinci-dkg/releases/tag/circuits-v6) |
+| OP Mainnet (default, pending deployment) | 10 | `pending` | [`circuits-v6`](https://github.com/vocdoni/davinci-dkg/releases/tag/circuits-v6) |
+| Gnosis Chain (retired) | 100 | `0xC6Fb38c42ed3FB35D363a702218746d5C7Da36BF` | [`circuits-v6`](https://github.com/vocdoni/davinci-dkg/releases/tag/circuits-v6) |
 | Sepolia (testnet, predates [#14](https://github.com/vocdoni/davinci-dkg/issues/14)) | 11155111 | `0xc73b7a868eca6ac7e3e647e2665aa16a793cf551` | [`circuits-v6`](https://github.com/vocdoni/davinci-dkg/releases/tag/circuits-v6) |
 
-Both are built into the node, `dkgapp` and the SDK. The other contracts are resolved from the
+OP Mainnet and Sepolia are built into the node, `dkgapp` and the SDK (Gnosis Chain is history; run
+it with `--manager`). The other contracts are resolved from the
 manager on chain; their addresses, the epoch parameters and how to deploy your own are in
 [docs/deployments.md](docs/deployments.md).
 
