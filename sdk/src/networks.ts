@@ -18,9 +18,8 @@ export interface NetworkDeployment {
 export const KNOWN_NETWORKS: Readonly<Record<string, NetworkDeployment>> = {
   optimism: {
     chainId: 10,
-    // PLACEHOLDER until the OP Mainnet deployment: scripts/move-optimism-preset.sh fills managerAddress and startBlock.
-    managerAddress: '0x0000000000000000000000000000000000000000',
-    startBlock: 0n,
+    managerAddress: '0x9E799A1D22710056E62c849e3FFE19Dd01db2D41',
+    startBlock: 158_245_366n,
     rpcUrls: ['https://mainnet.optimism.io', 'https://optimism-rpc.publicnode.com'],
   },
   sepolia: {

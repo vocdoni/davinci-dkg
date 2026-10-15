@@ -43,10 +43,9 @@ func (d NetworkDeployment) Deployed() bool {
 // Add a new entry here after each production deployment.
 var KnownNetworks = map[string]NetworkDeployment{
 	"optimism": {
-		ChainID: 10,
-		// PLACEHOLDER until the OP Mainnet deployment: scripts/move-optimism-preset.sh fills Manager and StartBlock.
-		Manager:    common.Address{},
-		StartBlock: 0,
+		ChainID:    10,
+		Manager:    common.HexToAddress("0x9E799A1D22710056E62c849e3FFE19Dd01db2D41"),
+		StartBlock: 158_245_366, // DKGManager deployment block on OP Mainnet (2026-10-15)
 		// Public failover endpoints; operators put a private RPC first via --web3.rpc.
 		RPCs: []string{
 			"https://mainnet.optimism.io",
