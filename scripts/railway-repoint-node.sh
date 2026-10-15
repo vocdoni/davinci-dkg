@@ -15,7 +15,9 @@
 # DAVINCI_DKG_WEB3_RPC (the first line of RPC_FILE first, then PUBLIC_RPCS), deletes
 # DAVINCI_DKG_MANAGER and DAVINCI_DKG_DECRYPT_LOOKBACK_BLOCKS when present (either would override
 # the network's preset) and the DAVINCI_DKG_EPOCH_POLICY_* variables (a fixed committee would not
-# grow with the fleet; the adaptive policy sizes it from the registry), and deploys; it refuses to run while a saved state exists. --rollback
+# grow with the fleet; the adaptive policy sizes it from the registry), and deploys. A node left
+# with only part of the policy variables refuses to start: an --apply that stopped midway is
+# undone with --rollback; it refuses to run while a saved state exists. --rollback
 # restores that saved state, deploys, and sets the file aside (*.rolled-back-<time>).
 #
 # RAILWAY_PROJECT and RAILWAY_ENVIRONMENT are names or full ids; EXPECT_PROJECT_PREFIX,
@@ -36,9 +38,11 @@ case $mode in --plan | --apply | --rollback) ;; *) echo "mode must be --plan, --
 : "${PUBLIC_RPCS:=https://mainnet.optimism.io,https://optimism-rpc.publicnode.com}"
 : "${STATE_DIR:=$HOME/.cache/railway-repoint}"
 API=${RAILWAY_API:-https://backboard.railway.com/graphql/v2}
-OVERRIDES=(DAVINCI_DKG_MANAGER DAVINCI_DKG_DECRYPT_LOOKBACK_BLOCKS
-	DAVINCI_DKG_EPOCH_POLICY_COMMITTEE_SIZE DAVINCI_DKG_EPOCH_POLICY_THRESHOLD
-	DAVINCI_DKG_EPOCH_POLICY_MIN_VALID_CONTRIBUTIONS DAVINCI_DKG_EPOCH_POLICY_LOTTERY_ALPHA_BPS)
+# The committee size goes first: should a delete deploy on its own, every boot in between fails
+# the policy validation instead of creating an epoch with the old fixed policy.
+OVERRIDES=(DAVINCI_DKG_EPOCH_POLICY_COMMITTEE_SIZE DAVINCI_DKG_EPOCH_POLICY_THRESHOLD
+	DAVINCI_DKG_EPOCH_POLICY_MIN_VALID_CONTRIBUTIONS DAVINCI_DKG_EPOCH_POLICY_LOTTERY_ALPHA_BPS
+	DAVINCI_DKG_MANAGER DAVINCI_DKG_DECRYPT_LOOKBACK_BLOCKS)
 
 tmp=$(mktemp -d "${TMPDIR:-$HOME/.cache}/repoint.XXXXXX")
 chmod 700 "$tmp"

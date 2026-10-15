@@ -209,7 +209,8 @@ steps took the preset from its placeholder to the first OP deployment.
    changes network as well (as the Gnosis fleet did for OP) moves with
    `scripts/railway-repoint-node.sh <service name> --plan|--apply`, which also sets
    `DAVINCI_DKG_NETWORK` and the RPC list (a private endpoint first), drops variables that would
-   override the preset, keeps the volume and the key, and saves what it replaced for `--rollback`
+   override the preset and the fixed epoch policy (the adaptive one sizes committees from the
+   registry), keeps the volume and the key, and saves what it replaced for `--rollback`
    (self-test: `scripts/railway-repoint-node.test.sh`). For the
    explorer on DigitalOcean App Platform: the app's build-time env (`MANAGER_ADDRESS`,
    `DEPLOY_BLOCK`) overrides the repo file, so apply the values from `ui/.do/davinci-dkg-ui.yaml`

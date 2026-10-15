@@ -77,7 +77,7 @@ field() { jq -r "$2" <<<"$1"; }
 : >"$tmp/mutations"
 run --plan || { cat "$tmp/out"; fail "plan failed"; }
 [ ! -s "$tmp/mutations" ] || fail "--plan sent a mutation"
-grep -q "plan: delete DAVINCI_DKG_MANAGER DAVINCI_DKG_EPOCH_POLICY_COMMITTEE_SIZE" "$tmp/out" ||
+grep -q "plan: delete DAVINCI_DKG_EPOCH_POLICY_COMMITTEE_SIZE DAVINCI_DKG_MANAGER" "$tmp/out" ||
 	fail "plan does not delete the manager and policy overrides"
 
 run --apply || { cat "$tmp/out"; fail "apply failed"; }
