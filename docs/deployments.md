@@ -198,7 +198,12 @@ steps took the preset from its placeholder to the first OP deployment.
 4. **Release** a stable `vX.Y.Z`. `latest` moves, so compose nodes under Watchtower switch to the
    new manager on their own, register in its registry at start (`EnsureRegistered`) and start
    from an empty `<datadir>/10-<manager>`. Railway has no Watchtower: roll every service with
-   `scripts/railway-roll-node.sh <service id> ghcr.io/vocdoni/davinci-dkg:vX.Y.Z`. For the
+   `scripts/railway-roll-node.sh <service id> ghcr.io/vocdoni/davinci-dkg:vX.Y.Z`; a service that
+   changes network as well (as the Gnosis fleet did for OP) moves with
+   `scripts/railway-repoint-node.sh <service name> --plan|--apply`, which also sets
+   `DAVINCI_DKG_NETWORK` and the RPC list (a private endpoint first), drops variables that would
+   override the preset, keeps the volume and the key, and saves what it replaced for `--rollback`
+   (self-test: `scripts/railway-repoint-node.test.sh`). For the
    explorer on DigitalOcean App Platform: the app's build-time env (`MANAGER_ADDRESS`,
    `DEPLOY_BLOCK`) overrides the repo file, so apply the values from `ui/.do/davinci-dkg-ui.yaml`
    to the app's environment spec, trigger a redeploy, and purge the Cloudflare cache.
