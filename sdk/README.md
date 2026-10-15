@@ -29,22 +29,22 @@ cd davinci-dkg/sdk && pnpm install && pnpm build
 cd /path/to/your-app && pnpm add viem file:/path/to/davinci-dkg/sdk
 ```
 
-Register an automatic application on the Gnosis deployment, encrypt a value and wait for the
+Register an automatic application on OP Mainnet, encrypt a value and wait for the
 committee to decrypt it:
 
 ```ts
 import { createPublicClient, createWalletClient, http } from 'viem';
-import { gnosis } from 'viem/chains';
+import { optimism } from 'viem/chains';
 import { privateKeyToAccount } from 'viem/accounts';
 import {
   AppMode, DKGWriter, EpochPhase, MAX_K, getNetwork, randomAid, waitForCombinedDecryption,
 } from '@vocdoni/davinci-dkg-sdk';
 
-const net = getNetwork('gnosis');
+const net = getNetwork('optimism');
 const transport = http(net.rpcUrls[0]);
 const dkg = new DKGWriter({
-  publicClient: createPublicClient({ chain: gnosis, transport }),
-  walletClient: createWalletClient({ chain: gnosis, transport, account: privateKeyToAccount('0x...') }),
+  publicClient: createPublicClient({ chain: optimism, transport }),
+  walletClient: createWalletClient({ chain: optimism, transport, account: privateKeyToAccount('0x...') }),
   managerAddress: net.managerAddress,
 });
 
@@ -74,8 +74,9 @@ the manager on first use.
 ### Networks
 
 `KNOWN_NETWORKS` mirrors the node's presets: chain id, `DKGManager`, deployment block and public
-RPC endpoints. `getNetwork(name)` returns one (`gnosis`, `sepolia`), `NODE_DEFAULT_NETWORK` is the
-node's default (`gnosis`), and `findNetwork(chainId, manager)` goes the other way. Sepolia has no
+RPC endpoints. `getNetwork(name)` returns one (`optimism`, `sepolia`), `NODE_DEFAULT_NETWORK` is the
+node's default (`optimism`), and `findNetwork(chainId, manager)` goes the other way. `getNetwork`
+throws for a preset with no `DKGManager` yet (OP Mainnet until it is deployed). Sepolia has no
 public endpoints built in.
 
 ### Applications

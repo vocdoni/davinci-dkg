@@ -7,25 +7,28 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ethereum/go-ethereum/common"
 	qt "github.com/frankban/quicktest"
 )
 
-func TestDefaultNetworkIsGnosis(t *testing.T) {
+func TestDefaultNetworkIsOptimism(t *testing.T) {
 	c := qt.New(t)
 
 	name, dep, err := ResolveNetwork(DefaultNetwork)
 	c.Assert(err, qt.IsNil)
-	c.Assert(name, qt.Equals, "gnosis")
-	c.Assert(dep.ChainID, qt.Equals, uint64(100))
-	c.Assert(dep.Manager, qt.Equals, common.HexToAddress("0xC6Fb38c42ed3FB35D363a702218746d5C7Da36BF"))
-	c.Assert(dep.StartBlock, qt.Equals, uint64(48_632_905))
+	c.Assert(name, qt.Equals, "optimism")
+	c.Assert(dep.ChainID, qt.Equals, uint64(10))
 	c.Assert(len(dep.RPCs) > 1, qt.IsTrue)
+	c.Assert(dep.DecryptLookbackBlocks, qt.Equals, uint64(126_000))
+
+	_, err = NetworkByName("gnosis")
+	c.Assert(err, qt.ErrorMatches, `unknown network "gnosis".*`)
 
 	sepolia, err := NetworkByName("SEP")
 	c.Assert(err, qt.IsNil)
 	c.Assert(sepolia.ChainID, qt.Equals, uint64(11155111))
 	c.Assert(sepolia.RPCs, qt.HasLen, 0)
+	c.Assert(sepolia.Deployed(), qt.IsTrue)
+	c.Assert(NetworkDeployment{}.Deployed(), qt.IsFalse)
 }
 
 // sdk/src/networks.ts mirrors KnownNetworks: every preset's manager, start

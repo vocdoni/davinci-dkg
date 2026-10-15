@@ -2,8 +2,8 @@
 
 A node registers its operator in `DKGRegistry`, enters the lottery of every epoch created after
 its registration, and when drawn deals its contribution, takes its turn at finalization and
-decrypts the committee's ciphertexts. With no network settings it joins the Gnosis Chain
-deployment, which anyone may join.
+decrypts the committee's ciphertexts. With no network settings it joins the OP Mainnet
+deployment, which anyone may join (until the contracts are deployed, pass `--manager`).
 
 ## Requirements
 
@@ -12,11 +12,13 @@ deployment, which anyone may join.
   proves its contribution. More cores shorten the proofs. `GOMEMLIMIT` (for example
   `GOMEMLIMIT=2500MiB`) trades some CPU for a lower peak.
 - About 1.5 GB of disk for the circuit artifacts and the node state.
-- An operator key funded with the chain's native currency (xDAI on Gnosis Chain) for
+- An operator key funded with the chain's native currency (ETH on OP Mainnet) for
   registration, contributions, finalizations and decryptions. Gas per call is in
   [BENCHMARKS.md](../BENCHMARKS.md#gas).
-- At least two JSON-RPC endpoints for a long-lived node. The Gnosis preset has three public
-  endpoints built in; the node rotates off endpoints that are rate-limited or unreachable.
+- At least two JSON-RPC endpoints for a long-lived node. The OP preset has two public
+  endpoints built in, which are rate-limited (publicnode also refuses old state and log ranges):
+  list a private provider first and the public ones after it as failover. The node rotates off
+  endpoints that are rate-limited or unreachable.
 
 ## Installing
 
@@ -51,7 +53,7 @@ replaced by underscores (`--web3.rpc` is `DAVINCI_DKG_WEB3_RPC`). The compose fi
 | Flag | Default | Description |
 |---|---|---|
 | `--privkey` | | Operator key (hex). Without it the node starts idle |
-| `--network` | `gnosis` | Built-in deployment: `gnosis`, or `sepolia` (alias `sep`), which has no public endpoints built in |
+| `--network` | `optimism` | Built-in deployment: `optimism`, or `sepolia` (alias `sep`), which has no public endpoints built in |
 | `--manager` | | `DKGManager` of any other deployment. Overrides the network and skips the chain id check |
 | `--web3.rpc` | the network's public endpoints | Comma-separated JSON-RPC endpoints; `http://127.0.0.1:8545` with `--manager` |
 | `--web3.network` | `localhost` | Display name of a custom deployment in the logs |
@@ -60,7 +62,7 @@ replaced by underscores (`--web3.rpc` is `DAVINCI_DKG_WEB3_RPC`). The compose fi
 | `--poll-interval` | `5s` | How often the node polls the chain |
 | `--auto-create-epochs` | `true` | Create the next epoch when it is due and abort a dead newest epoch |
 | `--auto-create-jitter` | `12s` | Maximum random delay before an automatic create or abort |
-| `--decrypt-lookback-blocks` | `50400` | On start, how far back to scan for ciphertexts still awaiting decryption |
+| `--decrypt-lookback-blocks` | `50400`, `126000` on OP | On start, how far back to scan for ciphertexts still awaiting decryption; a built-in network sets its own default |
 | `--epoch-policy.committee-size` | `0` | Committee size when this node creates an epoch; `0` derives it from the registry |
 | `--epoch-policy.threshold` | `0` | Threshold for a fixed committee size |
 | `--epoch-policy.min-valid-contributions` | `0` | Minimum accepted contributions for a fixed committee size |
@@ -77,7 +79,8 @@ minimum valid contributions, all raised to the deployment's floors.
 
 ### Networks
 
-- **Default**: the Gnosis Chain deployment, its public endpoints and chain id 100.
+- **Default**: the OP Mainnet deployment, its public endpoints and chain id 10. While the preset
+  has no `DKGManager` yet the node refuses to start without `--manager`.
 - `--network sepolia`: the Sepolia testnet. Set `--web3.rpc` as well.
 - `--manager 0x... --web3.rpc ...`: any other deployment, on any chain.
 
@@ -122,7 +125,7 @@ starts from an empty directory and finds its old state again when moved back.
 ## Upgrades
 
 The compose file runs the `latest` image under Watchtower. `latest` moves on stable releases only
-(`vX.Y.Z`, never a release candidate). When a release moves the Gnosis preset to a new
+(`vX.Y.Z`, never a release candidate). When a release moves the default preset to a new
 deployment, a node without `--network` or `--manager` follows it on update and starts from a
 fresh state directory; a node started with `--manager` stays where it is. To upgrade by hand, pin
 `DAVINCI_DKG_TAG` to a version in `.env` or remove the `watchtower` service.

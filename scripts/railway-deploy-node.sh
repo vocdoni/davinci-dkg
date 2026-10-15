@@ -7,8 +7,8 @@
 #   NODE_NAME=dkg-node1 NODE_KEY_FILE=~/keys/node1.json \
 #   scripts/railway-deploy-node.sh
 #
-# With NETWORK and RPC unset the node runs on its default network, Gnosis
-# Chain, through the public endpoints built into the binary. The older
+# With NETWORK and RPC unset the node runs on its default network, OP
+# Mainnet, through the public endpoints built into the binary. The older
 # Sepolia testnet needs both, e.g. NETWORK=sepolia
 # RPC=https://ethereum-sepolia-rpc.publicnode.com,https://1rpc.io/sepolia.
 #

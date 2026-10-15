@@ -16,16 +16,12 @@ export interface NetworkDeployment {
 }
 
 export const KNOWN_NETWORKS: Readonly<Record<string, NetworkDeployment>> = {
-  gnosis: {
-    chainId: 100,
-    managerAddress: '0xC6Fb38c42ed3FB35D363a702218746d5C7Da36BF',
-    startBlock: 48_632_905n,
-    rpcUrls: [
-      'https://gnosis-rpc.publicnode.com',
-      'https://gnosis-rpc.blockreq.com/v1/rpc/public',
-      'https://rpc.gnosischain.com',
-      'https://gnosis.drpc.org',
-    ],
+  optimism: {
+    chainId: 10,
+    // PLACEHOLDER until the OP Mainnet deployment: scripts/move-optimism-preset.sh fills managerAddress and startBlock.
+    managerAddress: '0x0000000000000000000000000000000000000000',
+    startBlock: 0n,
+    rpcUrls: ['https://mainnet.optimism.io', 'https://optimism-rpc.publicnode.com'],
   },
   sepolia: {
     chainId: 11155111,
@@ -36,7 +32,7 @@ export const KNOWN_NETWORKS: Readonly<Record<string, NetworkDeployment>> = {
 };
 
 /** The network `davinci-dkg-node` joins when started without `--network` or `--manager`. */
-export const NODE_DEFAULT_NETWORK = 'gnosis';
+export const NODE_DEFAULT_NETWORK = 'optimism';
 
 const ALIASES: Readonly<Record<string, string>> = { sep: 'sepolia' };
 
@@ -48,13 +44,17 @@ export function canonicalNetworkName(name: string): string | undefined {
   return own(KNOWN_NETWORKS, canonical) ? canonical : undefined;
 }
 
-/** The deployment of a known network; throws on an unknown name. */
+/** The deployment of a known network; throws on an unknown name or a preset with no DKGManager yet. */
 export function getNetwork(name: string): NetworkDeployment {
   const canonical = canonicalNetworkName(name);
   if (canonical === undefined) {
     throw new Error(`unknown network "${name}"; supported: ${Object.keys(KNOWN_NETWORKS).join(', ')}`);
   }
-  return KNOWN_NETWORKS[canonical];
+  const dep = KNOWN_NETWORKS[canonical];
+  if (/^0x0{40}$/i.test(dep.managerAddress)) {
+    throw new Error(`network "${canonical}" has no DKGManager yet`);
+  }
+  return dep;
 }
 
 /** The known network a deployment belongs to (same chain and manager), or undefined. */

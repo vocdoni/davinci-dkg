@@ -9,7 +9,7 @@ import (
 
 // DefaultNetwork is the preset a node runs on when neither --network nor
 // --manager is given.
-const DefaultNetwork = "gnosis"
+const DefaultNetwork = "optimism"
 
 // NetworkDeployment is the canonical on-chain deployment for a well-known network.
 // Only the DKGManager address is stored here; all other contract addresses (registry,
@@ -28,20 +28,31 @@ type NetworkDeployment struct {
 	StartBlock uint64
 	// RPCs are public JSON-RPC endpoints, used when the operator sets none.
 	RPCs []string
+	// DecryptLookbackBlocks is how far behind the head a starting node scans
+	// for ciphertexts awaiting decryption; 0 means the node's default
+	// (50,400). On OP it matches the registry's INACTIVITY_WINDOW.
+	DecryptLookbackBlocks uint64
+}
+
+// Deployed reports whether the preset has a DKGManager yet.
+func (d NetworkDeployment) Deployed() bool {
+	return d.Manager != (common.Address{})
 }
 
 // KnownNetworks maps canonical lowercase network names to their deployments.
 // Add a new entry here after each production deployment.
 var KnownNetworks = map[string]NetworkDeployment{
-	"gnosis": {
-		ChainID:    100,
-		Manager:    common.HexToAddress("0xC6Fb38c42ed3FB35D363a702218746d5C7Da36BF"),
-		StartBlock: 48_632_905, // DKGManager deployment block on Gnosis Chain (2026-10-07)
+	"optimism": {
+		ChainID: 10,
+		// PLACEHOLDER until the OP Mainnet deployment: scripts/move-optimism-preset.sh fills Manager and StartBlock.
+		Manager:    common.Address{},
+		StartBlock: 0,
+		// Public failover endpoints; operators put a private RPC first via --web3.rpc.
 		RPCs: []string{
-			"https://gnosis-rpc.publicnode.com",
-			"https://gnosis-rpc.blockreq.com/v1/rpc/public",
-			"https://rpc.gnosischain.com",
+			"https://mainnet.optimism.io",
+			"https://optimism-rpc.publicnode.com",
 		},
+		DecryptLookbackBlocks: 126_000,
 	},
 	"sepolia": {
 		ChainID:    11155111,

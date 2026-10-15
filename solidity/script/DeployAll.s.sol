@@ -22,8 +22,9 @@ contract DeployAllScript is Script {
     /// (`Sizes.sol`). All values are in BLOCKS — scale per chain block time.
     /// At ~12s blocks: 100 / 25 / 25 / 5 ≈ 20 min epoch with 5/5/1 min
     /// preparation budget and ~9 min Service window. The Gnosis Chain
-    /// deployment (5 s blocks) runs 17280 / 36 / 12 / 1: a day-long epoch that
-    /// is Live about four minutes after `createEpoch`.
+    /// deployment (5 s blocks) ran 17280 / 36 / 12 / 1: a day-long epoch that
+    /// is Live about four minutes after `createEpoch`. OP Mainnet (2 s blocks) runs
+    /// 43200 / 90 / 30 / 1, the same wall-clock times.
     uint256 internal constant DEFAULT_EPOCH_DURATION_BLOCKS      = 100;
     uint256 internal constant DEFAULT_COMMITTEE_SELECTION_BLOCKS = 25;
     uint256 internal constant DEFAULT_KEY_ASSEMBLY_BLOCKS        = 25;

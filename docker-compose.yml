@@ -3,7 +3,7 @@
 #
 # Profiles:
 #   - node  Long-running DKG node + Watchtower auto-updater. With only
-#           DAVINCI_DKG_PRIVKEY in .env the node joins the Gnosis Chain
+#           DAVINCI_DKG_PRIVKEY in .env the node joins the OP Mainnet
 #           deployment through the built-in public RPC endpoints. The node
 #           binary does not serve any HTTP — all interaction with the
 #           chain goes through --web3.rpc. Use the `ui` profile (or the
@@ -49,7 +49,7 @@ services:
   # ──────────────────────────────────────────────────────────────────────────
   # Auto-updater — watches the image the `node` service is pinned to and
   # recreates the container when a new version is published (`latest`
-  # moves on stable releases only). A release that moves the Gnosis preset
+  # moves on stable releases only). A release that moves the default preset
   # to a new deployment reaches a node with no network settings this way:
   # it follows the new manager and starts from a fresh state directory.
   # Remove this service (or pin DAVINCI_DKG_TAG to an immutable tag) if you

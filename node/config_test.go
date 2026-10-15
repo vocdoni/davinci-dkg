@@ -4,10 +4,24 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ethereum/go-ethereum/common"
+
 	qt "github.com/frankban/quicktest"
 	ccommon "github.com/vocdoni/davinci-dkg/circuits/common"
 	"github.com/vocdoni/davinci-dkg/config"
 )
+
+// deployDefaultPreset installs a fake manager on the default preset (the real
+// one is a placeholder until the deployment) and restores it afterwards.
+func deployDefaultPreset(t *testing.T) config.NetworkDeployment {
+	t.Helper()
+	orig := config.KnownNetworks[config.DefaultNetwork]
+	dep := orig
+	dep.Manager = common.HexToAddress("0x00000000000000000000000000000000000000d1")
+	config.KnownNetworks[config.DefaultNetwork] = dep
+	t.Cleanup(func() { config.KnownNetworks[config.DefaultNetwork] = orig })
+	return dep
+}
 
 func TestDefaultConfig(t *testing.T) {
 	c := qt.New(t)
@@ -22,6 +36,22 @@ func TestDefaultConfig(t *testing.T) {
 
 func TestValidateConfig(t *testing.T) {
 	c := qt.New(t)
+
+	c.Run("rejects an undeployed preset unless --manager is given", func(c *qt.C) {
+		orig := config.KnownNetworks[config.DefaultNetwork]
+		config.KnownNetworks[config.DefaultNetwork] = config.NetworkDeployment{ChainID: orig.ChainID, RPCs: orig.RPCs}
+		c.Cleanup(func() { config.KnownNetworks[config.DefaultNetwork] = orig })
+
+		c.Assert(validateConfig(defaultConfig()), qt.ErrorMatches,
+			"network "+config.DefaultNetwork+" has no DKGManager yet: pass --manager")
+
+		cfg := defaultConfig()
+		cfg.Network = config.DefaultNetwork
+		c.Assert(validateConfig(cfg), qt.ErrorMatches, ".*no DKGManager yet.*")
+
+		cfg.ManagerAddr = "0x00000000000000000000000000000000000000c0"
+		c.Assert(validateConfig(cfg), qt.IsNil)
+	})
 
 	c.Run("rejects non positive gas multiplier", func(c *qt.C) {
 		cfg := defaultConfig()
@@ -55,7 +85,7 @@ func TestNetworkResolution(t *testing.T) {
 	for _, env := range []string{"DAVINCI_DKG_NETWORK", "DAVINCI_DKG_MANAGER", "DAVINCI_DKG_WEB3_RPC"} {
 		t.Setenv(env, "")
 	}
-	gnosis := config.KnownNetworks[config.DefaultNetwork]
+	def := deployDefaultPreset(t)
 	sepolia := config.KnownNetworks["sepolia"]
 	const custom = "0x00000000000000000000000000000000000000c0"
 	cases := []struct {
@@ -66,7 +96,7 @@ func TestNetworkResolution(t *testing.T) {
 		rpc        []string
 		chainCheck uint64
 	}{
-		{"default", nil, "gnosis", gnosis.Manager.Hex(), gnosis.RPCs, 100},
+		{"default", nil, config.DefaultNetwork, def.Manager.Hex(), def.RPCs, def.ChainID},
 		{
 			"explicit preset",
 			[]string{"--network=sep", "--web3.rpc=https://a,https://b"},
@@ -77,15 +107,15 @@ func TestNetworkResolution(t *testing.T) {
 		{"custom manager", []string{"--manager=" + custom}, "localhost", custom, []string{localRPC}, 0},
 		{
 			"custom manager on a preset chain",
-			[]string{"--network=gnosis", "--manager=" + custom},
-			"gnosis", custom, gnosis.RPCs, 0,
+			[]string{"--network=" + config.DefaultNetwork, "--manager=" + custom},
+			config.DefaultNetwork, custom, def.RPCs, 0,
 		},
 		{
 			"custom rpc on the default preset",
 			[]string{"--web3.rpc=https://mine"},
-			"gnosis", gnosis.Manager.Hex(),
+			config.DefaultNetwork, def.Manager.Hex(),
 			[]string{"https://mine"},
-			100,
+			def.ChainID,
 		},
 	}
 	for _, tc := range cases {
@@ -108,6 +138,7 @@ func TestNetworkResolution(t *testing.T) {
 
 func TestLoadConfigNetworkFromEnv(t *testing.T) {
 	c := qt.New(t)
+	deployDefaultPreset(t)
 	t.Setenv("DAVINCI_DKG_NETWORK", "")
 	t.Setenv("DAVINCI_DKG_MANAGER", "")
 	cfg, err := loadConfigFromArgs(nil)
@@ -121,11 +152,44 @@ func TestLoadConfigNetworkFromEnv(t *testing.T) {
 	c.Assert(cfg.Web3.RPC, qt.DeepEquals, []string{localRPC})
 }
 
+func TestDecryptLookbackFollowsThePreset(t *testing.T) {
+	c := qt.New(t)
+	for _, env := range []string{"DAVINCI_DKG_NETWORK", "DAVINCI_DKG_MANAGER", "DAVINCI_DKG_DECRYPT_LOOKBACK_BLOCKS"} {
+		t.Setenv(env, "")
+	}
+	def := deployDefaultPreset(t)
+	c.Assert(def.DecryptLookbackBlocks, qt.Equals, uint64(126_000))
+	const custom = "0x00000000000000000000000000000000000000c0"
+
+	lookback := func(c *qt.C, args ...string) uint64 {
+		cfg, err := loadConfigFromArgs(args)
+		c.Assert(err, qt.IsNil)
+		return cfg.DecryptLookbackBlocks
+	}
+	c.Run("neither flag nor env uses the preset's value", func(c *qt.C) {
+		c.Assert(lookback(c), qt.Equals, def.DecryptLookbackBlocks)
+	})
+	c.Run("a preset without a value keeps the default", func(c *qt.C) {
+		c.Assert(lookback(c, "--network=sepolia", "--web3.rpc=https://a"), qt.Equals, uint64(50_400))
+	})
+	c.Run("the flag wins", func(c *qt.C) {
+		c.Assert(lookback(c, "--decrypt-lookback-blocks=1000"), qt.Equals, uint64(1000))
+	})
+	c.Run("the env wins", func(c *qt.C) {
+		c.Setenv("DAVINCI_DKG_DECRYPT_LOOKBACK_BLOCKS", "2000")
+		c.Assert(lookback(c), qt.Equals, uint64(2000))
+	})
+	c.Run("a custom deployment keeps the default", func(c *qt.C) {
+		c.Assert(lookback(c, "--manager="+custom), qt.Equals, uint64(50_400))
+	})
+}
+
 // Misconfiguration must fail at startup with a clear message rather than
 // as a revert (InvalidPolicy) on the first auto-created epoch or a panic in
 // time.NewTicker.
 func TestValidateConfigRejectsBadPollIntervalAndEpochPolicy(t *testing.T) {
 	c := qt.New(t)
+	deployDefaultPreset(t)
 	cases := []struct {
 		name  string
 		mut   func(*Config)
@@ -157,6 +221,7 @@ func TestValidateConfigRejectsBadPollIntervalAndEpochPolicy(t *testing.T) {
 
 func TestLoadConfigReportsInvalidFlags(t *testing.T) {
 	c := qt.New(t)
+	deployDefaultPreset(t)
 	_, err := loadConfigFromArgs([]string{"--poll-interval=0s"})
 	c.Assert(err, qt.ErrorMatches, ".*poll interval.*")
 	_, err = loadConfigFromArgs([]string{"--epoch-policy.lottery-alpha-bps=100"})

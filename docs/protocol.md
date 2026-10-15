@@ -79,7 +79,7 @@ were aborted.
 A `Live` epoch hosts one encryption context per application, keyed by a 32-byte `aid` chosen by
 the registrant inside its own namespace: `aid = salt << 160 | registrant`. The contract reverts
 `InvalidApplication` unless the low 160 bits of `aid` are the caller, so nobody can register an
-id in another account's namespace (Gnosis deployment; the Sepolia deployment `0xc73b…` predates
+id in another account's namespace (OP Mainnet deployment; the Sepolia deployment `0xc73b…` predates
 [#14](https://github.com/vocdoni/davinci-dkg/issues/14) and does not enforce this check), and an
 integrator whose ids are predictable (a hash of a process id, say) cannot be front-run into
 `ApplicationAlreadyExists`. `aid` is also a public

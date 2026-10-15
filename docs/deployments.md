@@ -4,9 +4,49 @@ The public deployments below are built into the node (`--network`), `dkgapp` and
 (`KNOWN_NETWORKS`). Only the `DKGManager` address is configured anywhere; the other contracts are
 read from it on chain.
 
-## Gnosis Chain
+## OP Mainnet
 
-Chain id 100. The default network of the node. Deployed at block 48,632,905 with the
+Chain id 10. The default network of the node, `dkgapp` and the SDK. The circuits are the pinned
+`circuits-v6` artifacts. `scripts/move-optimism-preset.sh` fills the rows below and the preset
+once the deployment is done (see "Moving the OP preset").
+
+Status: **pending deployment** (the preset has no `DKGManager` yet: the node and `dkgapp` refuse it without `--manager`, and `getNetwork('optimism')` throws).
+
+| Contract | Address |
+|---|---|
+| DKGManager | `pending` |
+| DKGAppManager | `pending` |
+| DKGRegistry | `pending` |
+| ContributionVerifier | `pending` |
+| FinalizeVerifier | `pending` |
+| PartialDecryptVerifier | `pending` |
+| DecryptCombineVerifier | `pending` |
+
+Deployment block: `pending`.
+
+OP has 2-second blocks, so the windows are the Gnosis ones (5-second blocks) in the same
+wall-clock time:
+
+| Parameter | Value |
+|---|---|
+| `EPOCH_DURATION_BLOCKS` | 43,200 (24 h at 2 s blocks) |
+| `COMMITTEE_SELECTION_BLOCKS` / `KEY_ASSEMBLY_BLOCKS` / `FINALIZE_GAP_BLOCKS` | 90 / 30 / 1 (3 min / 1 min / 2 s) |
+| `MIN_THRESHOLD` / `MIN_COMMITTEE_SIZE` / `MAX_LOTTERY_ALPHA_BPS` | 2 / 3 / 20000 |
+| `INACTIVITY_WINDOW` (registry) | 126,000 blocks (about 2.9 days) |
+
+The preset also carries the node's `--decrypt-lookback-blocks` default for OP, 126,000 blocks: the
+same span as the registry's inactivity window. Without a preset the default is 50,400 blocks.
+
+The preset's public endpoints (`https://mainnet.optimism.io`, `https://optimism-rpc.publicnode.com`)
+are rate-limited, and publicnode refuses state older than about 600 blocks and old log ranges
+(`mainnet.optimism.io` served 10,000-block log ranges 136,000 blocks back on 2026-10-15). A
+long-lived node lists a private provider first in
+`--web3.rpc` and the public ones after it as failover; the node rotates off refusing endpoints.
+
+## Gnosis Chain (retired)
+
+Chain id 100. The former default network of the node, no longer built in: run it with
+`--manager` and `--web3.rpc`, and the explorer still serves it until it moves to OP. Deployed at block 48,632,905 with the
 [`circuits-v6`](https://github.com/vocdoni/davinci-dkg/releases/tag/circuits-v6) artifacts; every
 contract is source-verified on [Gnosisscan](https://gnosisscan.io) and Sourcify. It replaced the
 first Gnosis deployment on 2026-10-07 to ship the application-id namespace of
@@ -82,66 +122,71 @@ verifiers embed the verifying keys of the circuits in `config/circuit_artifacts.
 running a release built from the same commit can serve the deployment. Point them at it with
 `--manager <DKGManager> --web3.rpc <endpoints>`.
 
-## Moving the Gnosis deployment
+## Moving the OP preset
 
 A change to the contracts' rules (such as the application-id namespace of
 [#14](https://github.com/vocdoni/davinci-dkg/issues/14)) needs a fresh deployment. The old one keeps
-its applications and plaintexts on chain, but its nodes leave it once the preset moves.
+its applications and plaintexts on chain, but its nodes leave it once the preset moves. The same
+steps took the preset from its placeholder to the first OP deployment.
 
 1. **Deploy** from a clean checkout of the release commit, with Foundry on `PATH`. Do not run
    `make circuits` first: the committed verifiers must stay those of the pinned `circuits-v6`
    artifacts. Write the settings to a `0600` `solidity/.env` and delete it afterwards. These are the
-   current Gnosis parameters:
+   OP Mainnet parameters:
 
    ```bash
-   RPC_URL=https://rpc.gnosischain.com
-   CHAIN_ID=100
+   RPC_URL=https://mainnet.optimism.io
+   CHAIN_ID=10
    PRIVATE_KEY=<deployer key>
    MIN_THRESHOLD=2
    MIN_COMMITTEE_SIZE=3
    MAX_LOTTERY_ALPHA_BPS=20000
-   EPOCH_DURATION_BLOCKS=17280
-   COMMITTEE_SELECTION_BLOCKS=36
-   KEY_ASSEMBLY_BLOCKS=12
+   EPOCH_DURATION_BLOCKS=43200
+   COMMITTEE_SELECTION_BLOCKS=90
+   KEY_ASSEMBLY_BLOCKS=30
    FINALIZE_GAP_BLOCKS=1
-   INACTIVITY_WINDOW=50400
-   ETHERSCAN_API_KEY=<Etherscan v2 key, for Gnosisscan verification>
+   INACTIVITY_WINDOW=126000
+   ETHERSCAN_API_KEY=<Etherscan v2 key, for Optimistic Etherscan verification>
    ```
 
    ```bash
    make solidity-deploy && rm solidity/.env
    ```
 
-   `rpc.gnosischain.com` is the endpoint that accepts the deployment; publicnode and drpc cap
-   `eth_getLogs` ranges, which the explorer needs later, not the deployment.
+   The deploy script prints `RPC_URL` and writes it to `.last_deployed_addresses.env`, so use a
+   public endpoint here, never a provider URL that embeds a key.
 2. **Check it.** `solidity/.last_deployed_addresses.env` lists the seven addresses. Read the
    manager's deployment block and the parameters back:
 
    ```bash
    . solidity/.last_deployed_addresses.env
    jq -r --arg m "${MANAGER,,}" '.receipts[] | select((.contractAddress // "" | ascii_downcase) == $m)
-     | .blockNumber' solidity/broadcast/DeployAll.s.sol/100/run-latest.json | xargs cast to-dec
+     | .blockNumber' solidity/broadcast/DeployAll.s.sol/10/run-latest.json | xargs cast to-dec
    for f in "REGISTRY()(address)" "appManager()(address)" "EPOCH_DURATION_BLOCKS()(uint256)" \
      "MIN_THRESHOLD()(uint16)" "MIN_COMMITTEE_SIZE()(uint16)" "MAX_LOTTERY_ALPHA_BPS()(uint16)"; do
-     cast call "$MANAGER" "$f" --rpc-url https://rpc.gnosischain.com; done
-   cast call "$REGISTRY" "INACTIVITY_WINDOW()(uint64)" --rpc-url https://rpc.gnosischain.com
+     cast call "$MANAGER" "$f" --rpc-url https://mainnet.optimism.io; done
+   cast call "$REGISTRY" "INACTIVITY_WINDOW()(uint64)" --rpc-url https://mainnet.optimism.io
    ```
 
-3. **Move the preset.** `scripts/move-gnosis-preset.sh solidity/.last_deployed_addresses.env
-   <deploy block>` rewrites every place that names the Gnosis deployment: `config/networks.go`,
-   `sdk/src/networks.ts`, `ui/public/config.json`, the fallbacks in `scripts/render-ui-config.sh`,
-   `ui/.do/davinci-dkg-ui.yaml`, this file, the README and their tests. Review the diff, run the
-   checks it prints, list the old manager under a "Retired" note here, and commit.
+3. **Move the preset.** `scripts/move-optimism-preset.sh solidity/.last_deployed_addresses.env
+   <deploy block> [YYYY-MM-DD]` fills the `optimism` preset in `config/networks.go` and
+   `sdk/src/networks.ts` (manager and start block), the OP Mainnet tables in this file and the
+   README networks row. It edits nothing else; check with `bash scripts/move-optimism-preset.test.sh`.
+   Review the diff, run the checks it prints, list a replaced manager under a "Retired" note here,
+   and commit. The explorer (`ui/public/config.json`, `scripts/render-ui-config.sh`,
+   `ui/.do/davinci-dkg-ui.yaml`) moves to OP separately, once the deployment is live: on DigitalOcean
+   App Platform set `CHAIN_ID=10`, `CHAIN_NAME=optimism`, `EXPLORER_URL=https://optimistic.etherscan.io`,
+   `RPC_URL=https://mainnet.optimism.io`, `MANAGER_ADDRESS` and `DEPLOY_BLOCK`.
 4. **Release** a stable `vX.Y.Z`. `latest` moves, so compose nodes under Watchtower switch to the
    new manager on their own, register in its registry at start (`EnsureRegistered`) and start
-   from an empty `<datadir>/100-<manager>`. Railway has no Watchtower: roll every service with
+   from an empty `<datadir>/10-<manager>`. Railway has no Watchtower: roll every service with
    `scripts/railway-roll-node.sh <service id> ghcr.io/vocdoni/davinci-dkg:vX.Y.Z`. For the
    explorer on DigitalOcean App Platform: the app's build-time env (`MANAGER_ADDRESS`,
    `DEPLOY_BLOCK`) overrides the repo file, so apply the values from `ui/.do/davinci-dkg-ui.yaml`
    to the app's environment spec, trigger a redeploy, and purge the Cloudflare cache.
 5. **Verify.** Every node logs `self: registry row` and `node running` against the new manager
    (`scripts/railway-node-status.sh <service id>`). `cast call $REGISTRY "activeCount()(uint64)"`
-   reaches the fleet size. The first epoch goes `Live` about four minutes after a node creates it.
-   It needs `MIN_COMMITTEE_SIZE` (3) active operators, all claiming within the 36-block selection
+   reaches the fleet size. The first epoch goes `Live` about four minutes after a node creates it (the windows are 3 min + 1 min).
+   It needs `MIN_COMMITTEE_SIZE` (3) active operators, all claiming within the 90-block selection
    window, and at least `minValidContributions` contributions. Then register an automatic
    application and decrypt a value end to end with `dkgapp`.
