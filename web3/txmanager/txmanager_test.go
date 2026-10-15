@@ -251,7 +251,10 @@ func TestRetryStuckDoesNotHoldTheLockDuringRPC(t *testing.T) {
 }
 
 // A transaction the RPC's mempool does not know about (the send was lost or
-// the pool failed over) is re-broadcast as-is on the next monitor pass.
+// the pool failed over) is re-broadcast as-is on the next monitor pass. A
+// rebroadcast the network takes is not an attempt toward MaxRetries: the tx
+// may only look unknown (a load-balanced OP RPC), and dropping it would free
+// a nonce that can still be mined. Refusals still count (next test).
 func TestRetryStuckRebroadcastsTxMissingFromMempool(t *testing.T) {
 	c := qt.New(t)
 	f := newFakeRPC(t)
@@ -278,7 +281,7 @@ func TestRetryStuckRebroadcastsTxMissingFromMempool(t *testing.T) {
 	c.Assert(m.retryStuck(context.Background()), qt.IsNil)
 	c.Assert(sent, qt.HasLen, 1)
 	c.Assert(sent[0].Hash(), qt.Equals, tx.Hash())
-	c.Assert(m.pending[5].retries, qt.Equals, 1)
+	c.Assert(m.pending[5].retries, qt.Equals, 0)
 	c.Assert(m.pending[5].hash, qt.Equals, tx.Hash())
 }
 

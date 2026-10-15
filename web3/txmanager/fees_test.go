@@ -360,3 +360,105 @@ func TestRetryStuckAtCapAlreadyKnownKeepsTheCadence(t *testing.T) {
 	c.Assert(f.calls["eth_sendRawTransaction"], qt.Equals, 1, qt.Commentf("no resend right after"))
 	c.Assert(m.pending[5].retries, qt.Equals, 1)
 }
+
+// pendingIsConfirmed serves a load-balanced OP RPC that has not seen the
+// pending tx: eth_getTransactionCount answers the confirmed nonce for both
+// tags, so a live nonce-5 transaction looks unknown to the mempool.
+func pendingIsConfirmed(f *fakeRPC) {
+	f.handle("eth_getTransactionCount", func([]json.RawMessage) (any, error) { return "0x5", nil })
+}
+
+// sendRecorder answers "already known" for the transactions the pool already
+// holds and accepts the rest, recording every broadcast.
+func sendRecorder(f *fakeRPC, held map[common.Hash]bool) *[]*gethtypes.Transaction {
+	var sent []*gethtypes.Transaction
+	f.handle("eth_sendRawTransaction", func(params []json.RawMessage) (any, error) {
+		var raw hexutil.Bytes
+		if err := json.Unmarshal(params[0], &raw); err != nil {
+			return nil, err
+		}
+		var decoded gethtypes.Transaction
+		if err := decoded.UnmarshalBinary(raw); err != nil {
+			return nil, err
+		}
+		sent = append(sent, &decoded)
+		if held[decoded.Hash()] {
+			return nil, fmt.Errorf("already known")
+		}
+		held[decoded.Hash()] = true
+		return decoded.Hash(), nil
+	})
+	return &sent
+}
+
+// A tx older than MaxPendingTime is bumped even when the RPC reports it
+// unknown to the mempool (OP has no public mempool; a load-balanced RPC can
+// answer the pending nonce with the confirmed one): rebroadcasting it as is
+// would keep it stuck under the base fee forever.
+func TestRetryStuckBumpsAnOldTxThatLooksUnknown(t *testing.T) {
+	c := qt.New(t)
+	f := newFakeRPC(t)
+	m := newChainManager(t, f, opChain)
+	tx := capTx(t, m, 1_000_000, 1_016_000)
+	m.RecordPending(tx)
+	m.pending[5].submittedAt = time.Now().Add(-m.config.MaxPendingTime - time.Second)
+	pendingIsConfirmed(f)
+	sent := sendRecorder(f, map[common.Hash]bool{tx.Hash(): true})
+
+	c.Assert(m.retryStuck(context.Background()), qt.IsNil)
+	c.Assert(*sent, qt.HasLen, 1)
+	c.Assert((*sent)[0].Hash() != tx.Hash(), qt.IsTrue, qt.Commentf("bumped, not rebroadcast as is"))
+	c.Assert((*sent)[0].GasFeeCap().Cmp(tx.GasFeeCap()) > 0, qt.IsTrue)
+	c.Assert(m.pending[5].hash, qt.Equals, (*sent)[0].Hash())
+}
+
+// The whole lifecycle under that RPC: a monitor pass every MonitorInterval
+// for well past MaxPendingTime. The tx is rebroadcast while young, never
+// dropped (which would free its nonce while it can still be mined), and
+// bumped once it is MaxPendingTime old.
+func TestRetryStuckFalseUnknownIsBumpedNotDropped(t *testing.T) {
+	c := qt.New(t)
+	f := newFakeRPC(t)
+	m := newChainManager(t, f, opChain)
+	tx := capTx(t, m, 1_000_000, 1_016_000)
+	m.RecordPending(tx)
+	pendingIsConfirmed(f)
+	sent := sendRecorder(f, map[common.Hash]bool{tx.Hash(): true})
+
+	passes := int(m.config.MaxPendingTime/m.config.MonitorInterval) + 5
+	bumpedAt := -1
+	for i := 0; i < passes; i++ {
+		// One MonitorInterval goes by between passes.
+		m.mu.Lock()
+		cur, ok := m.pending[5]
+		if ok {
+			cur.submittedAt = cur.submittedAt.Add(-m.config.MonitorInterval)
+		}
+		m.mu.Unlock()
+		c.Assert(ok, qt.IsTrue, qt.Commentf("dropped at pass %d (retries %d)", i, m.config.MaxRetries))
+		c.Assert(m.retryStuck(context.Background()), qt.IsNil)
+		if bumpedAt < 0 && m.pending[5] != nil && m.pending[5].hash != tx.Hash() {
+			bumpedAt = i
+		}
+	}
+	c.Assert(bumpedAt >= 0, qt.IsTrue, qt.Commentf("never bumped in %d passes; sends %d", passes, len(*sent)))
+	c.Assert(m.pending[5].signed.GasFeeCap().Cmp(tx.GasFeeCap()) > 0, qt.IsTrue)
+	c.Assert(m.pending[5].retries < m.config.MaxRetries, qt.IsTrue)
+}
+
+// Only "the pool already holds it" answers are spared from MaxRetries.
+func TestAlreadyKnown(t *testing.T) {
+	c := qt.New(t)
+	for msg, want := range map[string]bool{
+		"already known":            true,
+		"ALREADY KNOWN":            true,
+		"known transaction: 0xabc": true,
+		"AlreadyKnown":             true,
+		"insufficient funds for gas * price + value":             false,
+		"replacement transaction underpriced":                    false,
+		"nonce too low":                                          false,
+		"transaction underpriced: tip needed 1, tip permitted 0": false,
+	} {
+		c.Assert(alreadyKnown(fmt.Errorf("%s", msg)), qt.Equals, want, qt.Commentf("%q", msg))
+	}
+}
