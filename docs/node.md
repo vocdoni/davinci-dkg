@@ -3,7 +3,7 @@
 A node registers its operator in `DKGRegistry`, enters the lottery of every epoch created after
 its registration, and when drawn deals its contribution, takes its turn at finalization and
 decrypts the committee's ciphertexts. With no network settings it joins the OP Mainnet
-deployment, which anyone may join (until the contracts are deployed, pass `--manager`).
+deployment, which anyone may join.
 
 ## Requirements
 

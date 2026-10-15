@@ -160,7 +160,7 @@ endpoint, with no backend. `make ui-dev` serves it for the Gnosis deployment on
 
 | Network | Chain id | `DKGManager` | Circuits |
 |---|---|---|---|
-| OP Mainnet (default, pending deployment) | 10 | `pending` | [`circuits-v6`](https://github.com/vocdoni/davinci-dkg/releases/tag/circuits-v6) |
+| OP Mainnet (default) | 10 | `0x9E799A1D22710056E62c849e3FFE19Dd01db2D41` | [`circuits-v6`](https://github.com/vocdoni/davinci-dkg/releases/tag/circuits-v6) |
 | Gnosis Chain (retired) | 100 | `0xC6Fb38c42ed3FB35D363a702218746d5C7Da36BF` | [`circuits-v6`](https://github.com/vocdoni/davinci-dkg/releases/tag/circuits-v6) |
 | Sepolia (testnet, predates [#14](https://github.com/vocdoni/davinci-dkg/issues/14)) | 11155111 | `0xc73b7a868eca6ac7e3e647e2665aa16a793cf551` | [`circuits-v6`](https://github.com/vocdoni/davinci-dkg/releases/tag/circuits-v6) |
 

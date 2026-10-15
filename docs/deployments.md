@@ -6,23 +6,41 @@ read from it on chain.
 
 ## OP Mainnet
 
-Chain id 10. The default network of the node, `dkgapp` and the SDK. The circuits are the pinned
-`circuits-v6` artifacts. `scripts/move-optimism-preset.sh` fills the rows below and the preset
-once the deployment is done (see "Moving the OP preset").
-
-Status: **pending deployment** (the preset has no `DKGManager` yet: the node and `dkgapp` refuse it without `--manager`, and `getNetwork('optimism')` throws).
+Chain id 10. The default network of the node, `dkgapp` and the SDK since the Gnosis deployment
+retired. Deployed on 2026-10-15 at block 158,245,366 with the
+[`circuits-v6`](https://github.com/vocdoni/davinci-dkg/releases/tag/circuits-v6) artifacts, from
+a dedicated deployer key, [`0x5eb38f2D16CEaabFF6a63C17505a14b45624f537`](https://optimistic.etherscan.io/address/0x5eb38f2D16CEaabFF6a63C17505a14b45624f537),
+used for nothing else (not the operators' keys). All nine transactions landed in that block. The
+runtime code of every contract equals the Gnosis deployment's with the immutables masked, and the
+four verifiers equal Gnosis's byte for byte. Sources are verified on Sourcify (exact match; the
+manager a full match); not yet on Optimistic Etherscan.
 
 | Contract | Address |
 |---|---|
-| DKGManager | `pending` |
-| DKGAppManager | `pending` |
-| DKGRegistry | `pending` |
-| ContributionVerifier | `pending` |
-| FinalizeVerifier | `pending` |
-| PartialDecryptVerifier | `pending` |
-| DecryptCombineVerifier | `pending` |
+| DKGManager | `0x9E799A1D22710056E62c849e3FFE19Dd01db2D41` |
+| DKGAppManager | `0x1e7f0bec007828e2e0a1a469d9d3e148888fc39a` |
+| DKGRegistry | `0x5ac7ec4c9a2100f705d108841a170074fe95a998` |
+| ContributionVerifier | `0xc05077531c6d7dd0cd0265b7dc677676ad12e23f` |
+| FinalizeVerifier | `0xa10fe6cc25b71493a5073354328296b4218bce39` |
+| PartialDecryptVerifier | `0x6a5fc58dded56a7093c776032fc87c98d3e5c933` |
+| DecryptCombineVerifier | `0x0610a2f9cc701e3faad5817b11f89040b934205c` |
 
-Deployment block: `pending`.
+Deployment block: 158,245,366 (2026-10-15).
+
+| Transaction | Hash | Gas |
+|---|---|---:|
+| ContributionVerifier | `0xeeb5e45a61ea98509620f0a32d77b13858e0e4c32094f73d84c19036d22bfa1d` | 1,286,050 |
+| FinalizeVerifier | `0x99679901915009a2159c5a00893d1b925aebed57d20581defa6a487f02da3076` | 1,242,131 |
+| PartialDecryptVerifier | `0x700a72b446b5ad8b0dcffc91c71bc324e6c4ee71c10bd041f677588714644b34` | 1,580,373 |
+| DecryptCombineVerifier | `0x3faa94dd858a8701b6393d319e38efd19437f6c87690b70f6da025f8c5ce5ca2` | 1,322,348 |
+| DKGRegistry | `0xc3851eca0ea2843ea894ac6f64258842d81c007d0258ad5ccf4316293c97a45d` | 1,230,014 |
+| DKGManager | `0x03eb26001de8009cf3cfd9903e4a12fb5e2e35ffe8fd82de61847cb857b47aa3` | 4,070,003 |
+| DKGRegistry.setManager | `0x9950b864049ff33c7cb87e0331e5676c3de6b078498b0a0368fd01d12d13b799` | 45,186 |
+| DKGAppManager | `0x705ce3a8bb7cd739c300e416e89eab424f6c146299dd2b139c60b57897f79578` | 2,035,220 |
+| DKGManager.setAppManager | `0xc5e44b571d8e3494698ca27feeab59fb720f43dbe4369df6a1cc030a11f56625` | 44,179 |
+
+12,855,504 gas at 2,422 wei per gas (0.000000031 ETH) plus 0.00000058 ETH of OP L1 data fee.
+`setManager` and `setAppManager` are one-shot, so the suite has no owner.
 
 OP has 2-second blocks, so the windows are the Gnosis ones (5-second blocks) in the same
 wall-clock time:
