@@ -14,7 +14,7 @@ func TestChainByID(t *testing.T) {
 	op := ChainByID(10)
 	c.Assert(op.BlockTime, qt.Equals, 2*time.Second)
 	c.Assert(op.FallbackTipCap.Cmp(big.NewInt(1_000_000)), qt.Equals, 0)
-	c.Assert(op.MaxFeePerGas.Cmp(big.NewInt(100_000_000)), qt.Equals, 0)
+	c.Assert(op.MaxFeePerGas.Cmp(big.NewInt(20_000_000)), qt.Equals, 0) // 0.02 gwei
 
 	gnosis := ChainByID(100)
 	c.Assert(gnosis.BlockTime, qt.Equals, 5*time.Second)
@@ -38,5 +38,5 @@ func TestChainByIDReturnsCopies(t *testing.T) {
 	a.MaxFeePerGas.SetInt64(7)
 	b := ChainByID(10)
 	c.Assert(b.FallbackTipCap.Int64(), qt.Equals, int64(1_000_000))
-	c.Assert(b.MaxFeePerGas.Int64(), qt.Equals, int64(100_000_000))
+	c.Assert(b.MaxFeePerGas.Int64(), qt.Equals, int64(20_000_000))
 }

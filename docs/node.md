@@ -14,7 +14,10 @@ deployment, which anyone may join.
 - About 1.5 GB of disk for the circuit artifacts and the node state.
 - An operator key funded with the chain's native currency (ETH on OP Mainnet) for
   registration, contributions, finalizations and decryptions. Gas per call is in
-  [BENCHMARKS.md](../BENCHMARKS.md#gas).
+  [BENCHMARKS.md](../BENCHMARKS.md#gas). On OP keep at least 0.1 mETH (0.0001 ETH) and top it
+  up monthly: the node caps `maxFeePerGas` at 0.02 gwei there, and the pool reserves gas limit ×
+  cap for every transaction in flight (a finalize, 2.6M gas, plus a contribution, 0.55M: 0.063
+  mETH), while running costs about 0.0015 mETH a day.
 - At least two JSON-RPC endpoints for a long-lived node. The OP preset has two public
   endpoints built in, which are rate-limited (publicnode also refuses old state and log ranges):
   list a private provider first and the public ones after it as failover. The node rotates off

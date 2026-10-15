@@ -27,8 +27,10 @@ func ChainByID(chainID uint64) Chain {
 		// so the generic 1 gwei fallback would be ~1000x too high.
 		return Chain{
 			BlockTime:      2 * time.Second,
-			FallbackTipCap: big.NewInt(1_000_000),   // 0.001 gwei
-			MaxFeePerGas:   big.NewInt(100_000_000), // 0.1 gwei, ~100x the usual price
+			FallbackTipCap: big.NewInt(1_000_000), // 0.001 gwei
+			// 0.02 gwei: 5x the worst OP base fee in 4,145 samples (0.0039 gwei,
+			// median 5.5e-7), and what an operator must hold per in-flight tx.
+			MaxFeePerGas: big.NewInt(20_000_000),
 		}
 	case 100: // Gnosis Chain
 		return Chain{BlockTime: 5 * time.Second}

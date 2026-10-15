@@ -42,6 +42,13 @@ Deployment block: 158,245,366 (2026-10-15).
 12,855,504 gas at 2,422 wei per gas (0.000000031 ETH) plus 0.00000058 ETH of OP L1 data fee.
 `setManager` and `setAppManager` are one-shot, so the suite has no owner.
 
+Nodes on chain 10 tip 0.001 gwei when the RPC cannot suggest a tip, cap `maxFeePerGas` (and the
+tip) at 0.02 gwei, bumps included (5x the worst OP base fee in 4,145 samples, 0.0039 gwei), and
+space their finalize and decryption rotations 8 blocks apart (16 s; 3 blocks, 15 s, on Gnosis).
+Each operator holds at least 0.1 mETH and is topped up monthly: the pool reserves gas limit ×
+cap over the transactions in flight (a finalize, 2.6M gas, plus a contribution, 0.55M: 0.063
+mETH at 0.02 gwei), and running costs about 0.0015 mETH a day.
+
 OP has 2-second blocks, so the windows are the Gnosis ones (5-second blocks) in the same
 wall-clock time:
 
