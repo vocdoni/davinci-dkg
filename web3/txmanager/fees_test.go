@@ -20,7 +20,7 @@ const (
 	gnosisChain  = uint64(100)
 	gwei         = int64(1_000_000_000)
 	opFallback   = int64(1_000_000)
-	opFeeCapWei  = int64(100_000_000)
+	opFeeCapWei  = int64(20_000_000) // 0.02 gwei
 	unknownChain = testChainID
 )
 
@@ -194,7 +194,7 @@ func TestBumpedCopyStopsAtTheCap(t *testing.T) {
 	m := newChainManager(t, newFakeRPC(t), opChain)
 
 	// 50 % bumps compound until both values reach the cap, then stop.
-	tx := capTx(t, m, 1_000_000, 50_000_000)
+	tx := capTx(t, m, 1_000_000, 10_000_000)
 	var last *gethtypes.Transaction
 	for i := 0; i < 20; i++ {
 		next, err := m.bumpedCopy(tx)
@@ -214,10 +214,10 @@ func TestBumpedCopyStopsAtTheCap(t *testing.T) {
 func TestBumpedCopyPartialBumpClamps(t *testing.T) {
 	c := qt.New(t)
 	m := newChainManager(t, newFakeRPC(t), opChain)
-	tx := capTx(t, m, 1_000_000, 80_000_000)
+	tx := capTx(t, m, 1_000_000, 16_000_000)
 	next, err := m.bumpedCopy(tx)
 	c.Assert(err, qt.IsNil)
-	c.Assert(next.GasFeeCap().Int64(), qt.Equals, opFeeCapWei) // 120M clamped
+	c.Assert(next.GasFeeCap().Int64(), qt.Equals, opFeeCapWei) // 24M clamped
 	c.Assert(next.GasTipCap().Int64(), qt.Equals, int64(1_500_000))
 	c.Assert(next.Hash() != tx.Hash(), qt.IsTrue)
 }
@@ -288,39 +288,38 @@ func TestBumpedCopyNeedsTenPercentOverTheOriginal(t *testing.T) {
 	c := qt.New(t)
 	m := newChainManager(t, newFakeRPC(t), opChain)
 
-	// 95M -> 142.5M -> clamped 100M is +5.3%: geth would refuse it.
-	tx := capTx(t, m, 1_000_000, 95_000_000)
+	// 19M -> 28.5M -> clamped 20M is +5.3%: geth would refuse it.
+	tx := capTx(t, m, 1_000_000, 19_000_000)
 	next, err := m.bumpedCopy(tx)
 	c.Assert(err, qt.IsNil)
 	c.Assert(next.Hash(), qt.Equals, tx.Hash())
 
-	// 90M -> 100M is +11.1%: accepted.
-	tx = capTx(t, m, 1_000_000, 90_000_000)
+	// 18M -> 20M is +11.1%: accepted.
+	tx = capTx(t, m, 1_000_000, 18_000_000)
 	next, err = m.bumpedCopy(tx)
 	c.Assert(err, qt.IsNil)
 	c.Assert(next.Hash() != tx.Hash(), qt.IsTrue)
 	c.Assert(next.GasFeeCap().Int64(), qt.Equals, opFeeCapWei)
 
-	// Exactly +10% (feeCap 90.909091M -> ceil 100,000,001 would exceed;
-	// use a cap-aligned pair): tip 90M of cap 100M clamps feeCap to 100M and
-	// needs tip >= 99M, which the 50% bump of 90M (135M -> 100M) meets.
-	tx = capTx(t, m, 90_000_000, 90_000_000)
+	// A cap-aligned pair: tip 18M of cap 20M clamps feeCap to 20M and needs
+	// tip >= 19.8M, which the 50% bump of 18M (27M -> 20M) meets.
+	tx = capTx(t, m, 18_000_000, 18_000_000)
 	next, err = m.bumpedCopy(tx)
 	c.Assert(err, qt.IsNil)
 	c.Assert(next.Hash() != tx.Hash(), qt.IsTrue)
 
-	// Just under 10% on the fee cap: 91M * 1.1 = 100.1M > cap, so at cap.
-	tx = capTx(t, m, 1_000_000, 91_000_000)
+	// Just under 10% on the fee cap: 18.2M * 1.1 = 20.02M > cap, so at cap.
+	tx = capTx(t, m, 1_000_000, 18_200_000)
 	next, err = m.bumpedCopy(tx)
 	c.Assert(err, qt.IsNil)
 	c.Assert(next.Hash(), qt.Equals, tx.Hash())
 
-	// Just at 10%: 90.909090M -> ceil(x*1.1) = 100,000,000 (x = 90,909,090 gives 99,999,999 -> ok).
-	tx = capTx(t, m, 1_000_000, 90_909_090)
+	// Just at 10%: ceil(18,181,818 * 1.1) = 20,000,000 = the cap -> ok.
+	tx = capTx(t, m, 1_000_000, 18_181_818)
 	next, err = m.bumpedCopy(tx)
 	c.Assert(err, qt.IsNil)
 	c.Assert(next.Hash() != tx.Hash(), qt.IsTrue)
-	tx = capTx(t, m, 1_000_000, 90_909_091) // ceil(100,000,000.1) = 100,000,001
+	tx = capTx(t, m, 1_000_000, 18_181_819) // ceil(20,000,000.9) = 20,000,001
 	next, err = m.bumpedCopy(tx)
 	c.Assert(err, qt.IsNil)
 	c.Assert(next.Hash(), qt.Equals, tx.Hash())
