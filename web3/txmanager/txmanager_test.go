@@ -412,3 +412,32 @@ func TestSignerAppliesGasHeadroomToEstimatedGas(t *testing.T) {
 	c.Assert(err, qt.IsNil)
 	c.Assert(signed.Gas(), qt.Equals, uint64(21_000))
 }
+
+// An endpoint answering "pending" with 0 under a latest count of 5 must not
+// make retryStuck drop or skip a young tracked tx at nonce 5: it is
+// rebroadcast once per pass and stays tracked.
+func TestRetryStuckSurvivesAZeroPendingCount(t *testing.T) {
+	c := qt.New(t)
+	f := newFakeRPC(t)
+	m := newTestManager(t, f)
+	tx := signedTx(t, m, 5)
+	m.RecordPending(tx)
+	m.pending[5].submittedAt = time.Now().Add(-2 * m.config.MonitorInterval) // younger than MaxPendingTime
+
+	f.handle("eth_getTransactionCount", func(params []json.RawMessage) (any, error) {
+		var tag string
+		_ = json.Unmarshal(params[1], &tag)
+		if tag == tagPending {
+			return "0x0", nil
+		}
+		return "0x5", nil
+	})
+	f.handle("eth_sendRawTransaction", func([]json.RawMessage) (any, error) { return tx.Hash(), nil })
+
+	for i := 1; i <= 2; i++ {
+		c.Assert(m.retryStuck(context.Background()), qt.IsNil)
+		c.Assert(f.calls["eth_sendRawTransaction"], qt.Equals, i)
+		c.Assert(m.pending[5], qt.IsNotNil)
+		c.Assert(m.pending[5].retries, qt.Equals, 0)
+	}
+}

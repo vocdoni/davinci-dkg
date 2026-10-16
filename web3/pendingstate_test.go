@@ -44,7 +44,10 @@ func brokenPendingServer(code map[common.Address]string, latestNonce string) *ht
 				resp.Result = "0x0"
 			}
 		case "eth_estimateGas":
-			resp.Result = "0x5208"
+			resp.Result = "0x5208" // tag-less or pending: a broken estimate
+			if tag == "latest" {
+				resp.Result = "0x9c40"
+			}
 		case "eth_sendRawTransaction":
 			resp.Result = common.Hash{1}.Hex()
 		default:
@@ -75,13 +78,13 @@ func TestTransactSurvivesBrokenPendingState(t *testing.T) {
 	c.Assert(err, qt.IsNil)
 	c.Assert(code, qt.DeepEquals, []byte{0x60, 0x01})
 
-	var signedNonce uint64
+	var signedNonce, signedGas uint64
 	opts := &bind.TransactOpts{
 		From:     common.Address{9},
 		Context:  ctx,
 		GasPrice: big.NewInt(1),
 		Signer: func(_ common.Address, tx *types.Transaction) (*types.Transaction, error) {
-			signedNonce = tx.Nonce()
+			signedNonce, signedGas = tx.Nonce(), tx.Gas()
 			return tx, nil
 		},
 	}
@@ -89,6 +92,7 @@ func TestTransactSurvivesBrokenPendingState(t *testing.T) {
 	_, err = bc.RawTransact(opts, []byte{1, 2, 3, 4})
 	c.Assert(errors.Is(err, bind.ErrNoCode), qt.IsFalse, qt.Commentf("%v", err))
 	c.Assert(signedNonce, qt.Equals, uint64(35))
+	c.Assert(signedGas, qt.Equals, uint64(0x9c40), qt.Commentf("the estimate must come from latest"))
 
 	bc = bind.NewBoundContract(empty, *managerABI, backend, backend, backend)
 	_, err = bc.RawTransact(opts, []byte{1, 2, 3, 4})

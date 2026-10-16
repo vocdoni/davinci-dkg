@@ -68,10 +68,12 @@ func (p *PooledBackend) BatchCallContext(ctx context.Context, batch []rpc.BatchE
 	return nil
 }
 
-// EstimateGas implements GasEstimator (part of ContractTransactor).
+// EstimateGas implements GasEstimator (part of ContractTransactor). It is pinned
+// to the latest block, the state PendingCodeAt checks, so a broken "pending"
+// state cannot skew the estimate.
 func (p *PooledBackend) EstimateGas(ctx context.Context, call ethereum.CallMsg) (uint64, error) {
 	p.pool.Note("eth_estimateGas")
-	gas, err := p.pool.Current().EstimateGas(ctx, call)
+	gas, err := p.pool.Current().EstimateGasAtBlock(ctx, call, nil)
 	p.pool.NoteError(err)
 	return gas, err
 }
