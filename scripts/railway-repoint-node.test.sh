@@ -13,7 +13,7 @@ fail() { echo "[railway-repoint-node.test] FAIL: $*"; exit 1; }
 printf 'tok-SECRET-123\n' >"$tmp/token"
 printf 'https://private.example/KEY-SECRET-456\n' >"$tmp/rpcs"
 cat >"$tmp/server.py" <<'PY'
-import json, sys
+import json, os, sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 state = {"image": "ghcr.io/vocdoni/davinci-dkg:v0.10.0",
          "vars": {"DAVINCI_DKG_PRIVKEY": "0xPRIVKEY-SECRET-789", "DAVINCI_DKG_WEB3_RPC": "https://old.example/OLD-SECRET",
@@ -50,6 +50,10 @@ class H(BaseHTTPRequestHandler):
         elif "variableDelete" in q:
             state["vars"].pop(v["input"]["name"]); data = {"variableDelete": True}
         elif "serviceInstanceDeployV2" in q:
+            if os.path.exists(os.path.dirname(sys.argv[2]) + "/fail-deploy"):
+                body = json.dumps({"errors": [{"message": "deploy refused"}]}).encode()
+                self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(body)
+                return
             data = {"serviceInstanceDeployV2": "dep-1"}
         else:
             data = None
@@ -121,6 +125,11 @@ s=$(state)
 ls "$tmp"/state/*.json >/dev/null 2>&1 && fail "the rolled-back state is still in place"
 ls "$tmp"/state/*.rolled-back-* >/dev/null 2>&1 || fail "the rolled-back state was not kept aside"
 run --apply || { cat "$tmp/out"; fail "--apply after a rollback was refused"; }
+# A --rollback whose deploy fails must say so and keep the saved state for another try.
+touch "$tmp/fail-deploy"
+if run --rollback; then fail "a failed rollback deploy exited 0"; fi
+ls "$tmp"/state/*.json >/dev/null 2>&1 || fail "a failed rollback set the saved state aside"
+rm "$tmp/fail-deploy"
 run --rollback || { cat "$tmp/out"; fail "second rollback failed"; }
 
 # Wrong prefix: refused before any mutation.
