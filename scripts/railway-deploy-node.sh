@@ -98,15 +98,18 @@ echo "service $NODE_NAME: $service"
 printf '{"input":{"projectId":"%s","environmentId":"%s","serviceId":"%s","mountPath":"%s"}}\n' \
 	"$RAILWAY_PROJECT_ID" "$RAILWAY_ENVIRONMENT_ID" "$service" "$MOUNT_PATH" > "$vars"
 resp=$(gql 'mutation($input: VolumeCreateInput!) { volumeCreate(input: $input) { id } }' "$vars")
-echo "volume: $(field "$resp" data.volumeCreate.id) at $MOUNT_PATH"
+vol=$(field "$resp" data.volumeCreate.id)
+echo "volume: $vol at $MOUNT_PATH"
 
 # 3. Restart whatever happens (an RPC outage must not leave the node down).
 printf '{"serviceId":"%s","environmentId":"%s","input":{"restartPolicyType":"ALWAYS"}}\n' "$service" "$RAILWAY_ENVIRONMENT_ID" > "$vars"
 resp=$(gql 'mutation($serviceId: String!, $environmentId: String!, $input: ServiceInstanceUpdateInput!) { serviceInstanceUpdate(serviceId: $serviceId, environmentId: $environmentId, input: $input) }' "$vars")
-echo "restart policy: $(field "$resp" data.serviceInstanceUpdate)"
+policy=$(field "$resp" data.serviceInstanceUpdate)
+echo "restart policy: $policy"
 
 # 4. Deploy with everything above in place.
 printf '{"serviceId":"%s","environmentId":"%s"}\n' "$service" "$RAILWAY_ENVIRONMENT_ID" > "$vars"
 resp=$(gql 'mutation($serviceId: String!, $environmentId: String!) { serviceInstanceDeployV2(serviceId: $serviceId, environmentId: $environmentId) }' "$vars")
-echo "deploy: $(field "$resp" data.serviceInstanceDeployV2)"
+dep=$(field "$resp" data.serviceInstanceDeployV2)
+echo "deploy: $dep"
 echo "operator: $(python3 -c 'import sys,json; k=json.load(open(sys.argv[1])); k=k.get("data",k) if isinstance(k,dict) else k; print((k[0] if isinstance(k,list) else k)["address"])' "$NODE_KEY_FILE")"

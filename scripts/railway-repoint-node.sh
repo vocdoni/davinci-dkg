@@ -154,7 +154,8 @@ PY
 		fi
 	done
 	vars "$tmp/v" service="$service" env="$env"
-	echo "rolled back: $(gql 'mutation($service: String!, $env: String!) { serviceInstanceDeployV2(serviceId: $service, environmentId: $env) }' "$tmp/v")"
+	dep=$(gql 'mutation($service: String!, $env: String!) { serviceInstanceDeployV2(serviceId: $service, environmentId: $env) }' "$tmp/v")
+	echo "rolled back: $dep"
 	# Set the restored state aside (kept, 0600) so a later --apply can save afresh.
 	mv "$saved" "$saved.rolled-back-$(date -u +%Y%m%dT%H%M%SZ)"
 	exit 0
@@ -210,5 +211,6 @@ for name in "${deletes[@]}"; do
 	echo "deleted $name"
 done
 vars "$tmp/v" service="$service" env="$env"
-echo "deployment: $(gql 'mutation($service: String!, $env: String!) { serviceInstanceDeployV2(serviceId: $service, environmentId: $env) }' "$tmp/v")"
+dep=$(gql 'mutation($service: String!, $env: String!) { serviceInstanceDeployV2(serviceId: $service, environmentId: $env) }' "$tmp/v")
+echo "deployment: $dep"
 echo "follow it with scripts/railway-node-status.sh $service"
