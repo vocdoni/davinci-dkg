@@ -27,6 +27,11 @@ class H(BaseHTTPRequestHandler):
         req = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         q, v = req["query"], req["variables"]
         op = next(o for o in ("serviceCreate", "volumeCreate", "serviceInstanceUpdate", "serviceInstanceDeployV2") if o in q)
+        if op == "volumeCreate" and os.path.exists(sys.argv[3] + "/fail-volume"):
+            log.write(json.dumps({"op": op, "v": v, "modes": []}) + "\n"); log.flush()
+            body = json.dumps({"errors": [{"message": "You are creating volumes too quickly"}]}).encode()
+            self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(body)
+            return
         modes = sorted({oct(os.stat(f).st_mode & 0o777) for f in glob.glob(sys.argv[3] + "/*.body")})
         log.write(json.dumps({"op": op, "v": v, "modes": modes}) + "\n"); log.flush()
         data = {"serviceCreate": {"id": "svc-1", "name": v.get("input", {}).get("name")},
@@ -63,4 +68,11 @@ for key in plain wrapped; do
 		! grep -q "$secret" "$tmp/out-$key" || fail "$key: output shows $secret"
 	done
 done
+# A Railway error on any step stops the script before the deploy (a volume that failed must not
+# leave a node deployed without one).
+: >"$tmp/calls"; touch "$tmp/fail-volume"
+if RAILWAY_API=http://127.0.0.1:$port RAILWAY_TOKEN_FILE=$tmp/token RAILWAY_PROJECT_ID=p-1 RAILWAY_ENVIRONMENT_ID=e-1 \
+	NODE_NAME=dkg-node5 NODE_KEY_FILE=$tmp/plain.json NETWORK=optimism RPC_FILE=$tmp/rpcs TMPDIR=$tmp \
+	bash "$here/railway-deploy-node.sh" >"$tmp/out-fail" 2>&1; then fail "a volume error did not stop the script"; fi
+[ "$(jq -r .op "$tmp/calls" | tr '\n' ' ')" = "serviceCreate volumeCreate " ] || fail "calls after the volume error: $(jq -r .op "$tmp/calls" | tr '\n' ' ')"
 echo "[railway-deploy-node.test] ok"
