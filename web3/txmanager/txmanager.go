@@ -480,6 +480,9 @@ func (m *Manager) retryStuck(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("pending nonce: %w", err)
 	}
+	// Some endpoints answer "pending" with 0 or a stale count; it is never
+	// below the confirmed one.
+	chainPending = max(chainPending, confirmed)
 	m.reconcile(confirmed)
 
 	now := time.Now()

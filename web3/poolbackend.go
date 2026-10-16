@@ -132,20 +132,39 @@ func (p *PooledBackend) TransactionReceipt(ctx context.Context, hash common.Hash
 	return receipt, err
 }
 
-// PendingCodeAt implements ContractTransactor.
+// PendingCodeAt implements ContractTransactor. It reads the code at the latest
+// block: a pending transaction cannot remove a contract, bind only uses this to
+// refuse a call to an address with no code, and some public endpoints
+// (mainnet.optimism.io) answer "pending" with empty code for a live contract.
+// A genuinely codeless address still returns empty code.
 func (p *PooledBackend) PendingCodeAt(ctx context.Context, account common.Address) ([]byte, error) {
 	p.pool.Note("eth_getCode")
-	code, err := p.pool.Current().PendingCodeAt(ctx, account)
+	code, err := p.pool.Current().CodeAt(ctx, account, nil)
 	p.pool.NoteError(err)
 	return code, err
 }
 
-// PendingNonceAt implements ContractTransactor.
+// PendingNonceAt implements ContractTransactor. It returns the larger of the
+// latest and pending transaction counts: some endpoints answer "pending" with
+// 0 (or a stale value), which would make every send fail with "nonce too low".
+// The latest count can lag the pool by our own in-flight transactions, so the
+// txmanager treats the result as a lower bound and keeps its own counter above
+// every nonce it has handed out (Manager.allocateNonce).
 func (p *PooledBackend) PendingNonceAt(ctx context.Context, account common.Address) (uint64, error) {
+	client := p.pool.Current()
 	p.pool.Note("eth_getTransactionCount")
-	nonce, err := p.pool.Current().PendingNonceAt(ctx, account)
+	latest, err := client.NonceAt(ctx, account, nil)
 	p.pool.NoteError(err)
-	return nonce, err
+	if err != nil {
+		return 0, err
+	}
+	p.pool.Note("eth_getTransactionCount")
+	pending, err := client.PendingNonceAt(ctx, account)
+	p.pool.NoteError(err)
+	if err != nil {
+		return 0, err
+	}
+	return max(latest, pending), nil
 }
 
 // FilterLogs implements ContractFilterer.
