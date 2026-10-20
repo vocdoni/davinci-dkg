@@ -18,10 +18,15 @@ deployment, which anyone may join.
   up monthly: the node caps `maxFeePerGas` at 0.02 gwei there, and the pool reserves gas limit ×
   cap for every transaction in flight (a finalize, 2.6M gas, plus a contribution, 0.55M: 0.063
   mETH), while running costs about 0.0015 mETH a day.
-- At least two JSON-RPC endpoints for a long-lived node. The OP preset has two public
-  endpoints built in, which are rate-limited (publicnode also refuses old state and log ranges):
-  list a private provider first and the public ones after it as failover. The node rotates off
-  endpoints that are rate-limited or unreachable.
+- At least two JSON-RPC endpoints for a long-lived node, serving old log ranges and receipts. The
+  OP preset has two public endpoints built in, which are rate-limited: list a private provider
+  first and the public ones after it as failover. The node prefers the earliest endpoint that
+  works and moves a read to the next one when an endpoint is rate-limited, unreachable or refuses
+  it (publicnode refuses old log ranges and receipts, so list it last if at all). Logs show an
+  endpoint as its position in the list and `scheme://host` only: API keys in the path, query or
+  userinfo are never printed. List each endpoint's canonical URL: the node never follows an HTTP
+  redirect (the credentials in the URL must not go anywhere else), so an endpoint that redirects is
+  logged as `redirected` and skipped.
 
 ## Installing
 
@@ -123,7 +128,10 @@ It serves no HTTP. Watch it through its logs, or through the [explorer](../ui/RE
 
 State is kept under `<datadir>/<chainid>-<manager>`, one directory per deployment: the cache of
 contribution calldata and the list of tainted applications. A node moved to another deployment
-starts from an empty directory and finds its old state again when moved back.
+starts from an empty directory and finds its old state again when moved back. A committee member
+stores every accepted contribution's calldata there when its epoch goes Live, so it can rebuild its
+key shares days later without event logs that old; keep the directory on a persistent volume, or a
+restarted node needs an endpoint that serves the epoch's old log ranges.
 
 ## Upgrades
 

@@ -101,7 +101,9 @@ func TestRateLimitRotatesImmediatelyConnectivityKeepsThreshold(t *testing.T) {
 
 // The incident path: a FilterLogs (eth_getLogs) 429 from the current endpoint
 // must disable it at once and rotate, instead of the pool hammering the same
-// throttled endpoint on every scan. A healthy second endpoint takes over.
+// throttled endpoint on every scan. A healthy second endpoint takes over,
+// within the same call; alone, the throttled endpoint's error surfaces and
+// classifies as a rate limit.
 func TestFilterLogsRateLimitRotatesPool(t *testing.T) {
 	c := qt.New(t)
 	rateLimited := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -120,7 +122,132 @@ func TestFilterLogsRateLimitRotatesPool(t *testing.T) {
 	backend := NewPooledBackend(pool)
 	before := pool.CurrentURL()
 	_, err = backend.FilterLogs(context.Background(), ethereum.FilterQuery{FromBlock: big.NewInt(1)})
+	c.Assert(err, qt.IsNil, qt.Commentf("the next endpoint must answer the throttled call"))
+	c.Assert(pool.CurrentURL(), qt.Not(qt.Equals), before, qt.Commentf("a FilterLogs 429 must rotate the pool"))
+	c.Assert(pool.entries[0].disabledAt.IsZero(), qt.IsFalse)
+
+	alone, err := NewRPCPool([]string{rateLimited.URL})
+	c.Assert(err, qt.IsNil)
+	defer alone.Close()
+	_, err = NewPooledBackend(alone).FilterLogs(context.Background(), ethereum.FilterQuery{FromBlock: big.NewInt(1)})
 	c.Assert(err, qt.Not(qt.IsNil))
 	c.Assert(IsRateLimitError(err), qt.IsTrue, qt.Commentf("the 429 response must classify as a rate limit, got %v", err))
-	c.Assert(pool.CurrentURL(), qt.Not(qt.Equals), before, qt.Commentf("a FilterLogs 429 must rotate the pool"))
+}
+
+// errConnReset is the scattered failure the OP operators saw from their
+// private RPC: a transport error, not a refusal.
+var errConnReset = errors.New("read tcp 10.0.0.2:41234->10.0.0.1:443: read: connection reset by peer")
+
+// Only consecutive transport failures disable an endpoint: a primary that
+// drops a connection now and then, with calls it answered in between (a
+// result, or an error that is the call's own such as a revert), stays the
+// active endpoint however many such failures it collects over the node's
+// life.
+func TestScatteredTransportErrorsKeepThePrimary(t *testing.T) {
+	for _, answer := range []struct {
+		name string
+		err  error
+	}{
+		{"success", nil},
+		{"revert", errors.New("execution reverted: AlreadyLive()")},
+	} {
+		t.Run(answer.name, func(t *testing.T) {
+			c := qt.New(t)
+			p := newTestPool("primary", "fallback")
+			for i := range 3 * rpcMaxFailures {
+				_ = p.Current()
+				p.NoteError(errConnReset)
+				_ = p.Current()
+				c.Assert(p.CurrentURL(), qt.Equals, "primary", qt.Commentf("after scattered failure %d", i+1))
+				p.NoteError(answer.err)
+			}
+			c.Assert(p.entries[0].disabledAt.IsZero(), qt.IsTrue, qt.Commentf("the primary must stay enabled"))
+
+			// rpcMaxFailures failures in a row still disable it.
+			for range rpcMaxFailures {
+				_ = p.Current()
+				p.NoteError(errConnReset)
+			}
+			c.Assert(p.entries[0].disabledAt.IsZero(), qt.IsFalse)
+			_ = p.Current()
+			c.Assert(p.CurrentURL(), qt.Equals, "fallback")
+		})
+	}
+}
+
+// The pool prefers its endpoints in the configured order: once the
+// primary's cooldown has expired it takes the traffic back, even while the
+// fallback it moved to keeps answering.
+func TestPoolReturnsToThePrimaryAfterTheCooldown(t *testing.T) {
+	for _, disable := range []struct {
+		name string
+		mark func(p *RPCPool)
+	}{
+		{"transport failures", func(p *RPCPool) {
+			for range rpcMaxFailures {
+				p.NoteError(errConnReset)
+			}
+		}},
+		{"rate limit", func(p *RPCPool) { p.NoteError(errors.New("429 Too Many Requests")) }},
+	} {
+		t.Run(disable.name, func(t *testing.T) {
+			c := qt.New(t)
+			p := newTestPool("primary", "fallback", "last")
+			_ = p.Current()
+			disable.mark(p)
+			_ = p.Current()
+			c.Assert(p.CurrentURL(), qt.Equals, "fallback")
+
+			// The fallback answers; the primary is still cooling down.
+			p.NoteError(nil)
+			_ = p.Current()
+			c.Assert(p.CurrentURL(), qt.Equals, "fallback")
+
+			p.entries[0].disabledAt = time.Now().Add(-rpcCooldownDuration)
+			_ = p.Current()
+			c.Assert(p.CurrentURL(), qt.Equals, "primary", qt.Commentf("a cooled-down primary must take the traffic back"))
+			c.Assert(p.entries[0].failures, qt.Equals, 0)
+		})
+	}
+}
+
+// An endpoint that refuses a class of request (a free tier without archive
+// access, a pruned node) is disabled for the cooldown at once and the pool
+// rotates, like a rate limit: retrying it only buys the same refusal. The
+// incident's spelling is publicnode's HTTP 403 with JSON-RPC -32602 "Archive
+// requests require a personal token". A malformed request of ours (-32602
+// invalid argument) and a revert are not the endpoint's fault.
+func TestCapabilityRefusalsRotateAtOnce(t *testing.T) {
+	archive := `{"code":-32602,"message":"Archive requests require a personal token. Get one at: https://example.com"}`
+	cases := []struct {
+		name   string
+		err    error
+		refuse bool
+	}{
+		{"http 403 archive", rpc.HTTPError{StatusCode: http.StatusForbidden, Status: "403 Forbidden", Body: []byte(archive)}, true},
+		{"wrapped http 403", fmt.Errorf("filter logs: %w", rpc.HTTPError{StatusCode: http.StatusForbidden, Status: "403 Forbidden"}), true},
+		{"http 401", rpc.HTTPError{StatusCode: http.StatusUnauthorized, Status: "401 Unauthorized"}, true},
+		{"json-rpc archive", fakeRPCError{code: -32602, msg: "Archive requests require a personal token."}, true},
+		{"missing trie node", errors.New("missing trie node 9ae5b4e3e1c0e2c5 (path ) state 0x1 is not available"), true},
+		{"pruned history", errors.New("pruned history unavailable"), true},
+		{"header not found", fakeRPCError{code: -32000, msg: "header not found"}, true},
+		{"invalid argument", fakeRPCError{code: -32602, msg: "invalid argument 0: hex string without 0x prefix"}, false},
+		{"revert", errors.New("execution reverted: NotEligible()"), false},
+		{"not found", ethereum.NotFound, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := qt.New(t)
+			p := newTestPool("a", "b")
+			_ = p.Current()
+			p.NoteError(tc.err)
+			c.Assert(p.entries[0].disabledAt.IsZero(), qt.Equals, !tc.refuse)
+			_ = p.Current()
+			want := "a"
+			if tc.refuse {
+				want = "b"
+			}
+			c.Assert(p.CurrentURL(), qt.Equals, want)
+		})
+	}
 }

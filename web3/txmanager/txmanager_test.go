@@ -8,6 +8,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"sort"
 	"sync"
 	"testing"
@@ -327,7 +328,7 @@ func TestPendingTracksANonceUntilConfirmed(t *testing.T) {
 	c.Assert(err, qt.IsNil)
 	m.RecordPending(bumped)
 	c.Assert(m.Pending(5), qt.IsTrue)
-	m.reconcile(6)
+	m.observe(6, 1) // mined count 6 at block 1
 	c.Assert(m.Pending(5), qt.IsFalse)
 }
 
@@ -342,6 +343,7 @@ func TestRetryStuckBumpsFeesAndPrunesConfirmed(t *testing.T) {
 	m.RecordPending(stuck)
 	m.pending[5].submittedAt = time.Now().Add(-m.config.MaxPendingTime - time.Second)
 
+	f.handle("eth_blockNumber", func([]json.RawMessage) (any, error) { return "0x64", nil })
 	f.handle("eth_getTransactionCount", func(params []json.RawMessage) (any, error) {
 		var tag string
 		_ = json.Unmarshal(params[1], &tag)
@@ -365,8 +367,8 @@ func TestRetryStuckBumpsFeesAndPrunesConfirmed(t *testing.T) {
 	})
 
 	c.Assert(m.retryStuck(context.Background()), qt.IsNil)
-	_, has4 := m.pending[4]
-	c.Assert(has4, qt.IsFalse, qt.Commentf("nonce 4 is confirmed and must be pruned"))
+	c.Assert(m.Pending(4), qt.IsFalse, qt.Commentf("nonce 4 is mined: no longer in flight, only kept until deep"))
+	c.Assert(m.pending[4].mined, qt.IsTrue)
 	c.Assert(sent, qt.HasLen, 1)
 	c.Assert(sent[0].Nonce(), qt.Equals, uint64(5))
 	c.Assert(sent[0].GasFeeCap().Int64(), qt.Equals, int64(3)) // 2 × 1.5
@@ -440,4 +442,249 @@ func TestRetryStuckSurvivesAZeroPendingCount(t *testing.T) {
 		c.Assert(m.pending[5], qt.IsNotNil)
 		c.Assert(m.pending[5].retries, qt.Equals, 0)
 	}
+}
+
+// fakeNonceChain is the sender's view of a chain the monitor polls: the head,
+// the mined (latest) and pending nonces, and every raw transaction sent.
+type fakeNonceChain struct {
+	mu                    sync.Mutex
+	head, latest, pending uint64
+	headDown              bool // eth_blockNumber fails
+	sent                  []common.Hash
+}
+
+func (ch *fakeNonceChain) set(head, latest, pending uint64) {
+	ch.mu.Lock()
+	defer ch.mu.Unlock()
+	ch.head, ch.latest, ch.pending = head, latest, pending
+}
+
+func (ch *fakeNonceChain) sentHashes() []common.Hash {
+	ch.mu.Lock()
+	defer ch.mu.Unlock()
+	return slices.Clone(ch.sent)
+}
+
+func (ch *fakeNonceChain) install(f *fakeRPC) {
+	f.handle("eth_blockNumber", func([]json.RawMessage) (any, error) {
+		ch.mu.Lock()
+		defer ch.mu.Unlock()
+		if ch.headDown {
+			return nil, errors.New("upstream timeout")
+		}
+		return hexutil.EncodeUint64(ch.head), nil
+	})
+	f.handle("eth_getTransactionCount", func(params []json.RawMessage) (any, error) {
+		ch.mu.Lock()
+		defer ch.mu.Unlock()
+		var tag string
+		_ = json.Unmarshal(params[1], &tag)
+		if tag == tagPending {
+			return hexutil.EncodeUint64(ch.pending), nil
+		}
+		return hexutil.EncodeUint64(ch.latest), nil
+	})
+	f.handle("eth_sendRawTransaction", func(params []json.RawMessage) (any, error) {
+		var raw hexutil.Bytes
+		if err := json.Unmarshal(params[0], &raw); err != nil {
+			return nil, err
+		}
+		var tx gethtypes.Transaction
+		if err := tx.UnmarshalBinary(raw); err != nil {
+			return nil, err
+		}
+		ch.mu.Lock()
+		defer ch.mu.Unlock()
+		ch.sent = append(ch.sent, tx.Hash())
+		return tx.Hash(), nil
+	})
+}
+
+// sendTracked allocates nonce and records its signed transaction, as a
+// bound call through NewTransactOpts does.
+func sendTracked(t *testing.T, m *Manager, nonce uint64) *gethtypes.Transaction {
+	t.Helper()
+	qt.Assert(t, m.allocateNonce(nonce), qt.Equals, nonce)
+	tx := signedTx(t, m, nonce)
+	m.RecordPending(tx)
+	return tx
+}
+
+// A mined transaction stays tracked until it is deep. If a reorg then takes
+// it out of the chain and no mempool holds it any more (the chain's nonces
+// fall back below it), the running monitor rebroadcasts it and its nonce is
+// filled, without a restart; a new transaction is not given that nonce.
+func TestReorgedNonceIsRebroadcastAndFilled(t *testing.T) {
+	c := qt.New(t)
+	ctx := context.Background()
+	f := newFakeRPC(t)
+	m := newTestManager(t, f)
+	chain := &fakeNonceChain{}
+	chain.install(f)
+	tx5 := sendTracked(t, m, 5)
+
+	chain.set(100, 6, 6) // nonce 5 mined
+	c.Assert(m.retryStuck(ctx), qt.IsNil)
+	c.Assert(m.Pending(5), qt.IsFalse, qt.Commentf("a mined transaction is not in flight"))
+
+	chain.set(101, 5, 5) // a reorg drops it, and no mempool has it
+	c.Assert(m.retryStuck(ctx), qt.IsNil)
+	c.Assert(chain.sentHashes(), qt.Contains, tx5.Hash(), qt.Commentf("the dropped transaction must be rebroadcast"))
+	c.Assert(m.Pending(5), qt.IsTrue)
+	next := m.allocateNonce(5)
+	c.Assert(next, qt.Not(qt.Equals), uint64(5), qt.Commentf("a new transaction must not take the refilled nonce"))
+	m.mu.Lock()
+	delete(m.pending, next) // never signed
+	m.mu.Unlock()
+
+	chain.set(102, 6, 6) // the rebroadcast lands
+	c.Assert(m.retryStuck(ctx), qt.IsNil)
+	c.Assert(m.Pending(5), qt.IsFalse)
+}
+
+// Once a mined nonce is deep, an endpoint behind the chain that reports a
+// lower nonce cannot reopen it.
+func TestStaleNonceBelowADeepNonceIsNeverReused(t *testing.T) {
+	c := qt.New(t)
+	ctx := context.Background()
+	f := newFakeRPC(t)
+	m := newTestManager(t, f)
+	chain := &fakeNonceChain{}
+	chain.install(f)
+	sendTracked(t, m, 5)
+
+	chain.set(100, 6, 6)
+	c.Assert(m.retryStuck(ctx), qt.IsNil)
+	chain.set(300, 6, 6) // deep by now
+	c.Assert(m.retryStuck(ctx), qt.IsNil)
+
+	chain.set(90, 5, 5) // a lagging endpoint
+	sendTracked(t, m, 6)
+	c.Assert(m.retryStuck(ctx), qt.IsNil)
+	c.Assert(chain.sentHashes(), qt.HasLen, 0, qt.Commentf("a stale view is no reorg"))
+	c.Assert(m.allocateNonce(5), qt.Equals, uint64(7), qt.Commentf("a deep nonce must never be reused"))
+}
+
+// After a reorg took a mined nonce back, an observation that predates the
+// reorg (an endpoint still on the old chain, at a lower head) must not mark
+// it mined again, let alone deep: once the monitor gives up on the
+// transaction, the nonce is free for the next one.
+func TestLatePreReorgObservationCannotRaiseTheFloor(t *testing.T) {
+	c := qt.New(t)
+	ctx := context.Background()
+	f := newFakeRPC(t)
+	m := newTestManager(t, f)
+	chain := &fakeNonceChain{}
+	chain.install(f)
+	sendTracked(t, m, 5)
+
+	chain.set(100, 6, 6)
+	c.Assert(m.retryStuck(ctx), qt.IsNil)
+	chain.set(150, 5, 5) // reorg
+	c.Assert(m.retryStuck(ctx), qt.IsNil)
+	chain.set(120, 6, 6) // late view from the old chain
+	c.Assert(m.retryStuck(ctx), qt.IsNil)
+	c.Assert(m.Pending(5), qt.IsTrue, qt.Commentf("a stale observation must not mark the nonce mined"))
+	chain.set(300, 5, 5) // long after, still not mined
+	c.Assert(m.retryStuck(ctx), qt.IsNil)
+
+	m.mu.Lock()
+	delete(m.pending, 5) // the monitor gave up on it
+	m.mu.Unlock()
+	c.Assert(m.allocateNonce(5), qt.Equals, uint64(5), qt.Commentf("the floor must not have risen past 5"))
+}
+
+// A monitor pass whose head read fails observes nothing: the mined count it
+// still reads is not anchored to a height, so it marks nothing mined and
+// starts no depth. After an idle stretch that would otherwise date a fresh
+// transaction to the last head seen and make it "deep" one block later.
+func TestUnanchoredObservationChangesNothing(t *testing.T) {
+	c := qt.New(t)
+	ctx := context.Background()
+	f := newFakeRPC(t)
+	m := newTestManager(t, f)
+	chain := &fakeNonceChain{}
+	chain.install(f)
+	sendTracked(t, m, 5)
+
+	chain.set(100, 5, 6) // seen in the mempool at head 100
+	c.Assert(m.retryStuck(ctx), qt.IsNil)
+
+	chain.set(1000, 6, 6) // mined around block 1000, but the head read fails
+	chain.mu.Lock()
+	chain.headDown = true
+	chain.mu.Unlock()
+	_ = m.retryStuck(ctx)
+	c.Assert(m.pending[5].mined, qt.IsFalse, qt.Commentf("an unanchored count must not mark anything mined"))
+
+	chain.mu.Lock()
+	chain.headDown = false
+	chain.mu.Unlock()
+	chain.set(1001, 6, 6)
+	c.Assert(m.retryStuck(ctx), qt.IsNil)
+	chain.set(1002, 6, 6)
+	c.Assert(m.retryStuck(ctx), qt.IsNil)
+	_, kept := m.pending[5]
+	c.Assert(kept, qt.IsTrue, qt.Commentf("one block after it was first seen mined, it is not deep"))
+	chain.set(1001+confirmDepth, 6, 6)
+	c.Assert(m.retryStuck(ctx), qt.IsNil)
+	_, kept = m.pending[5]
+	c.Assert(kept, qt.IsFalse)
+}
+
+// A manager started for an account already at nonce 5 signs 5 and sees the
+// mined count reach 6 at head 100. Before 5 is deep, a lagging endpoint
+// answers a pending nonce of 4: the next transaction must get neither 4
+// (mined before the restart, never tracked) nor 5 (mined, retained). The
+// mined-count bound comes down only with an accepted reorg observation, not
+// with a stale one.
+func TestAllocationNeverGoesBelowTheMinedCount(t *testing.T) {
+	c := qt.New(t)
+	ctx := context.Background()
+	f := newFakeRPC(t)
+	m := newTestManager(t, f)
+	chain := &fakeNonceChain{}
+	chain.install(f)
+	sendTracked(t, m, 5)
+	chain.set(100, 6, 6)
+	c.Assert(m.retryStuck(ctx), qt.IsNil)
+
+	next := m.allocateNonce(4)
+	c.Assert(next, qt.Equals, uint64(6), qt.Commentf("nonces below the mined count must not be reused"))
+	m.mu.Lock()
+	delete(m.pending, next) // never signed
+	m.mu.Unlock()
+
+	chain.set(90, 4, 4) // a lagging endpoint
+	c.Assert(m.retryStuck(ctx), qt.IsNil)
+	c.Assert(m.allocateNonce(4), qt.Equals, uint64(6), qt.Commentf("a stale view must not lower the bound"))
+}
+
+// The monitor gives up on a transaction it snapshotted at MaxRetries only if
+// the tracker still holds it in that state: one that a receipt observation
+// marked mined between the snapshot and the drop stays tracked until it is
+// deep, so a reorg can still refill its nonce.
+func TestRetryExhaustionKeepsATransactionMinedMeanwhile(t *testing.T) {
+	c := qt.New(t)
+	f := newFakeRPC(t)
+	m := newTestManager(t, f)
+	sendTracked(t, m, 5)
+	m.mu.Lock()
+	m.pending[5].retries = m.config.MaxRetries
+	snapshot := *m.pending[5]
+	m.mu.Unlock()
+
+	m.observe(6, 100) // the receipt path saw it mined
+	m.dropExhausted(snapshot)
+	_, kept := m.pending[5]
+	c.Assert(kept, qt.IsTrue, qt.Commentf("a mined transaction must stay tracked until deep"))
+
+	sendTracked(t, m, 6)
+	m.mu.Lock()
+	m.pending[6].retries = m.config.MaxRetries
+	snapshot = *m.pending[6]
+	m.mu.Unlock()
+	m.dropExhausted(snapshot)
+	_, kept = m.pending[6]
+	c.Assert(kept, qt.IsFalse, qt.Commentf("an exhausted, unmined transaction is given up on"))
 }

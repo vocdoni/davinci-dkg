@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"math/big"
 	mrand "math/rand"
-	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -99,6 +98,13 @@ type Node struct {
 	// unreadable) must not burn one per tick, while a transient RPC hiccup
 	// is retried within a tick or two.
 	finalizeRetry map[[12]byte]*serviceBackoff
+	// retain holds the Live epochs whose contribution calldata this member
+	// still has to keep (see retainContributions); keepRetry backs one off
+	// after a failed attempt.
+	retain    map[[12]byte]retention
+	keepRetry map[[12]byte]*serviceBackoff
+	// keepBudget overrides keepPassBudget (0 = the default).
+	keepBudget time.Duration
 	// contribCache memoises validated submitContribution calldata under the
 	// datadir so a rebuilt private share or finalization statement does not
 	// rescan the event log for every dealer (see contribcache.go).
@@ -194,6 +200,7 @@ func New(cfg *Config) (*Node, error) {
 	}
 	txm.SetGasMultiplier(cfg.Web3.GasMultiplier)
 	txm.SetRequestNoter(c.Pool().Note)
+	txm.SetReceiptReader(c.PooledBackend())
 	manager, err := gtypes.NewDKGManager(c.Addresses.Manager, c.PooledBackend())
 	if err != nil {
 		return nil, fmt.Errorf("manager binding: %w", err)
@@ -245,6 +252,8 @@ func New(cfg *Config) (*Node, error) {
 		ownContribs:    make(map[[12]byte]*savedContrib),
 		selectedCache:  make(map[[12]byte][]common.Address),
 		finalizeRetry:  make(map[[12]byte]*serviceBackoff),
+		retain:         make(map[[12]byte]retention),
+		keepRetry:      make(map[[12]byte]*serviceBackoff),
 		contribCache:   &contributionCache{dir: contributionCacheDir(stateDir)},
 		lookback:       cfg.DecryptLookbackBlocks,
 		stagger:        staggerBlocksFor(config.ChainByID(c.ChainID).BlockTime),
@@ -313,7 +322,7 @@ func (n *Node) LogStartupSnapshot(ctx context.Context, cfg *Config) {
 		"network", cfg.ResolvedNetworkName(),
 		"chainId", n.contracts.ChainID,
 		"staggerBlocks", n.staggerOrDefault(),
-		"rpcHost", rpcHost(cfg.Web3.RPC[0]),
+		"rpc", redactedEndpoints(cfg.Web3.RPC),
 		"gasMultiplier", cfg.Web3.GasMultiplier)
 	log.Infow("config: contracts",
 		"registry", n.contracts.Addresses.Registry,
@@ -409,7 +418,7 @@ func (n *Node) LogStartupSnapshot(ctx context.Context, cfg *Config) {
 // logFunds queries the on-chain ETH balance and logs it alongside the
 // accumulated gas cost tracked by the transaction manager since startup.
 func (n *Node) logFunds(ctx context.Context) {
-	balance, err := n.txm.Balance(ctx)
+	balance, err := n.contracts.Client().BalanceAt(ctx, n.address, nil)
 	if err != nil {
 		log.Warnw("funds: failed to query balance", "address", n.address, "err", err)
 		return
@@ -1303,6 +1312,7 @@ func (n *Node) tick(ctx context.Context, cfg *Config, tc *tickCtx) error {
 		log.Warnw("ciphertext scan failed", "err", err)
 	}
 	n.serviceCiphertexts(ctx, tc)
+	n.retainContributions(ctx, tc, n.contracts.Client())
 	return nil
 }
 
@@ -1368,7 +1378,7 @@ func (n *Node) participate(ctx context.Context, tc *tickCtx, chain epochReader, 
 		//                  then race on a deterministic stagger to prove and call finalizeEpoch.
 		// The committee is frozen once KeyAssembly starts, so it is safe to
 		// cache it like the decryption path does for Live epochs.
-		selected, err := n.selected(ctx, epochID)
+		selected, err := n.selected(ctx, n.contracts, epochID, epoch.Policy.CommitteeSize)
 		if err != nil {
 			return err
 		}
@@ -1402,7 +1412,12 @@ func (n *Node) participate(ctx context.Context, tc *tickCtx, chain epochReader, 
 
 	case epochLive:
 		// Every pool key and share root landed with finalizeEpoch: key
-		// generation is over. Ciphertexts are the decryption scanner's job.
+		// generation is over. Ciphertexts are the decryption scanner's job;
+		// a member also queues the contributions its shares come from for
+		// retention (see retainContributions).
+		if err := n.queueRetention(ctx, n.contracts, epochID, epoch); err != nil {
+			return err
+		}
 		n.finish(epochID)
 		return nil
 
@@ -1870,10 +1885,12 @@ func (n *Node) tryAutoFinalize(
 // every accepted contribution by:
 //   - Own contribution (in-memory cache): evaluate own polynomial directly
 //   - Own contribution (after restart, cache lost): fall back to calldata recovery
-//   - Other contributions: scan on-chain txs for calldata and decrypt
+//   - Other contributions: decrypt the share from the dealer's calldata
 //
-// The result is cached only when every accepted contribution was recovered;
-// a partial sum is a wrong share, so any failure is returned as a retryable
+// The calldata comes from the on-disk cache, which keepContributions filled
+// when the epoch went Live; the event-log scan is only the fallback. The
+// result is cached only when every accepted contribution was recovered; a
+// partial sum is a wrong share, so any failure is returned as a retryable
 // error instead.
 //
 // The calldata scan starts at the epoch's seed block, which keeps it tight
@@ -1901,7 +1918,7 @@ func (n *Node) buildPrivateShare(
 		return nil, fmt.Errorf("epoch policy: %w", err)
 	}
 
-	records, err := finalizer.ContributionRecords(ctx, client, n.managerAddr, nil, epochID, selected)
+	records, err := n.acceptedRecords(ctx, client, epochID, epoch, selected)
 	if err != nil {
 		return nil, err
 	}
@@ -2026,28 +2043,26 @@ func (n *Node) recoverShareFrom(
 	if myIdx == 0 || int(myIdx) > layout.CommitteeSize {
 		return nil, fmt.Errorf("member index %d outside the committee of %d", myIdx, layout.CommitteeSize)
 	}
-	recovered := func(data []byte) (*big.Int, error) {
+	var share *big.Int
+	check := func(data []byte) error {
 		tr, err := decodeContribution(data, layout)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		return recoverShare(tr, layout, contribIdx, myIdx, keyIndex, roundHash, storedHash, n.bjjSecret)
+		share, err = recoverShare(tr, layout, contribIdx, myIdx, keyIndex, roundHash, storedHash, n.bjjSecret)
+		return err
 	}
-	data, cached := n.contribCache.Get(epochID, contributor)
-	share, err := recovered(data)
+	if n.cachedContribution(epochID, contributor, check) {
+		return share, nil
+	}
+	err := n.fetchContribution(ctx, client, epochID, contributor, fromBlock, check)
+	if errors.Is(err, errCacheWrite) {
+		// The calldata is valid; only a later rebuild pays for the miss.
+		log.Warnw("contribution calldata not cached", "epoch", roundHex(epochID), "contributor", contributor, "err", err)
+		return share, nil
+	}
 	if err != nil {
-		if cached {
-			log.Warnw("cached contribution calldata unusable, refetching",
-				"epoch", roundHex(epochID), "contributor", contributor, "err", err)
-		}
-		data, err = finalizer.ContributionCalldata(ctx, client, n.manager, epochID, contributor, fromBlock)
-		if err != nil {
-			return nil, err
-		}
-		if share, err = recovered(data); err != nil {
-			return nil, err
-		}
-		n.contribCache.Put(epochID, contributor, data)
+		return nil, err
 	}
 	return share, nil
 }
@@ -2068,15 +2083,34 @@ func recoverShare(
 	storedHash [32]byte,
 	secret *big.Int,
 ) (*big.Int, error) {
-	if int(keyIndex) >= len(tr.Commitments) || int(keyIndex) >= len(tr.MaskedShares) {
-		return nil, fmt.Errorf("pool key %d outside the transcript's %d keys", keyIndex, len(tr.Commitments))
-	}
-	got, err := finalizer.ContributionHash(roundHash, contribIdx, layout.Threshold, tr.Commitments)
-	if err != nil {
+	if err := checkCommitments(tr, layout, contribIdx, roundHash, storedHash); err != nil {
 		return nil, err
 	}
+	return openShare(tr, contribIdx, myIdx, keyIndex, roundHash, secret)
+}
+
+// checkCommitments refuses a transcript whose commitments do not reproduce
+// the commitmentsHash the contract stored for the dealer.
+func checkCommitments(
+	tr *contribution.Transcript, layout contribution.Layout, contribIdx uint16, roundHash *big.Int, storedHash [32]byte,
+) error {
+	got, err := finalizer.ContributionHash(roundHash, contribIdx, layout.Threshold, tr.Commitments)
+	if err != nil {
+		return err
+	}
 	if got.Cmp(new(big.Int).SetBytes(storedHash[:])) != 0 {
-		return nil, fmt.Errorf("commitments hash %s does not match the stored %x", got, storedHash)
+		return fmt.Errorf("commitments hash %s does not match the stored %x", got, storedHash)
+	}
+	return nil
+}
+
+// openShare decrypts member myIdx's share of pool key keyIndex and checks it
+// opens the dealer's key-keyIndex commitments.
+func openShare(
+	tr *contribution.Transcript, contribIdx, myIdx uint16, keyIndex uint8, roundHash, secret *big.Int,
+) (*big.Int, error) {
+	if int(keyIndex) >= len(tr.Commitments) || int(keyIndex) >= len(tr.MaskedShares) {
+		return nil, fmt.Errorf("pool key %d outside the transcript's %d keys", keyIndex, len(tr.Commitments))
 	}
 	// Decode enforces that recipient slot i carries index i+1, so this
 	// node's ephemeral and masked share sit at slot myIdx−1.
@@ -2148,14 +2182,15 @@ func finalizeRaceLost(reason string, status uint8) bool {
 	return strings.Contains(reason, "AlreadyLive") || status != epochKeyAssembly
 }
 
-// rpcHost returns only the host of an RPC URL for logging; provider API
-// keys live in the path or userinfo and must not reach the logs.
-func rpcHost(raw string) string {
-	u, err := url.Parse(raw)
-	if err != nil || u.Host == "" {
-		return "<unparseable rpc url>"
+// redactedEndpoints lists the RPC endpoints as they may be logged, in
+// order: provider API keys live in the URL's path, query or userinfo (see
+// web3.RedactURL).
+func redactedEndpoints(urls []string) []string {
+	out := make([]string, len(urls))
+	for i, raw := range urls {
+		out[i] = web3.RedactURL(raw)
 	}
-	return u.Host
+	return out
 }
 
 // isExpectedClaimRevert returns true if a claimSlot revert is "benign" — i.e.

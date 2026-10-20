@@ -172,7 +172,7 @@ func loadConfigFromArgs(args []string) (*Config, error) {
 	fs.Uint16("epoch-policy.min-valid-contributions", cfg.EpochPolicy.MinValidContributions, "minValidContributions when this node proposes an epoch")
 	fs.Uint16("epoch-policy.lottery-alpha-bps", cfg.EpochPolicy.LotteryAlphaBps, "lottery oversubscription α in basis points (10000 = 1.0)")
 	if err := fs.Parse(args); err != nil {
-		return nil, fmt.Errorf("parse flags: %w", err)
+		return nil, fmt.Errorf("parse flags: %w", redactRPCFlagError(err))
 	}
 
 	v := viper.New()
@@ -298,4 +298,20 @@ func (c *Config) ResolvedNetworkName() string {
 		return name
 	}
 	return c.Web3.Network
+}
+
+// redactRPCFlagError hides the value pflag quotes back when --web3.rpc does
+// not parse ("invalid argument %q for %q flag: <reason>"): its endpoints may
+// carry API keys. The reason (a CSV error with line and column) is kept.
+func redactRPCFlagError(err error) error {
+	const flagName, sep = `"--web3.rpc"`, " flag: "
+	msg := err.Error()
+	if !strings.Contains(msg, flagName) {
+		return err
+	}
+	reason := "not a comma-separated list of URLs"
+	if i := strings.LastIndex(msg, sep); i >= 0 {
+		reason = msg[i+len(sep):]
+	}
+	return fmt.Errorf("invalid --web3.rpc value (not shown: it may carry API keys): %s", reason)
 }

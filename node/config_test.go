@@ -1,6 +1,7 @@
 package node
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -232,4 +233,16 @@ func TestLoadConfigReportsInvalidFlags(t *testing.T) {
 // per-field checks can be exercised.
 func fixedPolicy(c *Config) {
 	c.EpochPolicy = EpochPolicyConfig{Threshold: 3, CommitteeSize: 4, MinValidContributions: 3, LotteryAlphaBps: 15_000}
+}
+
+// A --web3.rpc value that does not parse (a stray quote) must not be echoed
+// back: main prints the error, and the endpoints carry API keys.
+func TestMalformedRPCFlagIsNotEchoed(t *testing.T) {
+	c := qt.New(t)
+	value := `https://rpcuser:RPCPASSWORD@rpc.example/v2/RPCPATHKEY?apikey=RPCQUERYKEY,"https://other.example`
+	_, err := loadConfigFromArgs([]string{"--web3.rpc=" + value})
+	c.Assert(err, qt.ErrorMatches, `.*--web3.rpc.*`)
+	for _, secret := range []string{"rpcuser", "RPCPASSWORD", "RPCPATHKEY", "RPCQUERYKEY"} {
+		c.Assert(strings.Contains(err.Error(), secret), qt.IsFalse, qt.Commentf("%s leaked: %v", secret, err))
+	}
 }

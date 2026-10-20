@@ -1,10 +1,10 @@
 package web3
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -28,12 +28,19 @@ const (
 // error band); -32005 is the conventional "rate limit" spelling.
 const rpcRateLimitCode = -32005
 
-// RPCPool holds multiple ethclient instances and provides round-robin failover.
+// RPCPool holds the node's JSON-RPC endpoints in priority order, the order
+// they were configured in, and fails over between them. Every call goes to
+// the earliest usable endpoint, so the primary takes the traffic back as
+// soon as its cooldown expires. An endpoint is disabled for
+// rpcCooldownDuration after rpcMaxFailures consecutive transport failures,
+// or at once when it rate-limits us or refuses a class of request it does
+// not serve (IsCapabilityError).
 type RPCPool struct {
 	mu      sync.Mutex
 	entries []*rpcEntry
-	current int
+	current int // the endpoint picked last; NoteError and CurrentURL refer to it
 	stats   rpcStats
+	redact  redactor // every configured endpoint's secrets, for error text
 }
 
 // rpcStats counts the JSON-RPC requests sent through the pool, per method,
@@ -76,7 +83,8 @@ func (p *RPCPool) Note(method string) { p.stats.note(method) }
 func (p *RPCPool) Snapshot() map[string]uint64 { return p.stats.snapshot() }
 
 type rpcEntry struct {
-	url        string
+	url        string // the full URL: may carry an API key, never log it
+	label      string // what is logged: "#<index> scheme://host"
 	client     *ethclient.Client
 	failures   int
 	disabledAt time.Time // zero = enabled
@@ -87,19 +95,15 @@ func NewRPCPool(urls []string) (*RPCPool, error) {
 	if len(urls) == 0 {
 		return nil, fmt.Errorf("rpc pool: no URLs provided")
 	}
-	pool := &RPCPool{}
-	for _, url := range urls {
-		// Dial with a bounded HTTP client: a hung endpoint then fails the
-		// round trip after rpcHTTPTimeout instead of blocking forever. The
-		// option only applies to http(s) URLs; websocket and ipc endpoints
-		// keep their own keepalive/deadline handling.
-		rpcClient, err := rpc.DialOptions(context.Background(), url, rpc.WithHTTPClient(&http.Client{Timeout: rpcHTTPTimeout}))
+	pool := &RPCPool{redact: newRedactor(urls...)}
+	for i, url := range urls {
+		label := fmt.Sprintf("#%d %s", i, RedactURL(url))
+		client, err := dialEndpoint(url)
 		if err != nil {
-			log.Warnw("rpc pool: failed to dial endpoint, skipping", "url", url, "err", err)
+			log.Warnw("rpc pool: failed to dial endpoint, skipping", "endpoint", label, "err", err)
 			continue
 		}
-		client := ethclient.NewClient(rpcClient)
-		pool.entries = append(pool.entries, &rpcEntry{url: url, client: client})
+		pool.entries = append(pool.entries, &rpcEntry{url: url, label: label, client: client})
 	}
 	if len(pool.entries) == 0 {
 		return nil, fmt.Errorf("rpc pool: all endpoints failed to dial")
@@ -107,100 +111,152 @@ func NewRPCPool(urls []string) (*RPCPool, error) {
 	return pool, nil
 }
 
-// Current returns the active client, re-enabling cooled-down entries first.
-// If all entries are disabled, they are all reset.
+// Current returns the earliest usable endpoint in priority order,
+// re-enabling entries whose cooldown has expired. If every entry is
+// disabled, all of them are reset and the first one is returned.
 func (p *RPCPool) Current() *ethclient.Client {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	n := len(p.entries)
-	// Try to find an enabled entry starting from current.
-	for i := 0; i < n; i++ {
-		idx := (p.current + i) % n
-		e := p.entries[idx]
-		if e.disabledAt.IsZero() {
-			// Enabled entry found.
-			p.current = idx
-			return e.client
-		}
-		// Check if cooldown has expired.
-		if time.Since(e.disabledAt) >= rpcCooldownDuration {
-			e.disabledAt = time.Time{}
-			e.failures = 0
-			log.Infow("rpc pool: re-enabled endpoint", "url", e.url)
-			p.current = idx
-			return e.client
-		}
-	}
-
-	// All entries are disabled — reset all of them.
-	log.Warnw("rpc pool: all endpoints failed, resetting")
-	for _, e := range p.entries {
-		e.disabledAt = time.Time{}
-		e.failures = 0
-	}
-	return p.entries[p.current].client
+	_, client, _ := p.next(nil)
+	return client
 }
 
-// CurrentURL returns the URL of the active client (for logging).
+// next returns the earliest usable endpoint not yet marked in tried (indexed
+// like the entries; nil when nothing was tried) and makes it current. ok is
+// false once every usable endpoint has been tried. When no endpoint is
+// usable at all and none was tried, every entry is reset and the first one
+// is returned.
+func (p *RPCPool) next(tried []bool) (int, *ethclient.Client, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	idx, ok := p.pickLocked(tried)
+	if !ok {
+		return 0, nil, false
+	}
+	return idx, p.entries[idx].client, true
+}
+
+// pickLocked is next without the client, for callers holding p.mu.
+func (p *RPCPool) pickLocked(tried []bool) (int, bool) {
+	for idx, e := range p.entries {
+		if (tried != nil && tried[idx]) || !e.usable() {
+			continue
+		}
+		p.current = idx
+		return idx, true
+	}
+	if slices.Contains(tried, true) {
+		return 0, false
+	}
+	log.Warnw("rpc pool: all endpoints failed, resetting")
+	for _, e := range p.entries {
+		e.disabledAt, e.failures = time.Time{}, 0
+	}
+	p.current = 0
+	return 0, true
+}
+
+// usable reports whether the entry may serve a call, re-enabling it once its
+// cooldown has expired.
+func (e *rpcEntry) usable() bool {
+	if e.disabledAt.IsZero() {
+		return true
+	}
+	if time.Since(e.disabledAt) < rpcCooldownDuration {
+		return false
+	}
+	e.disabledAt, e.failures = time.Time{}, 0
+	log.Infow("rpc pool: re-enabled endpoint", "endpoint", e.label)
+	return true
+}
+
+// CurrentURL returns the full URL of the active endpoint. It may carry an
+// API key: log RedactURL(CurrentURL()) instead.
 func (p *RPCPool) CurrentURL() string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.entries[p.current].url
 }
 
-// MarkFailed marks the current endpoint as having failed. After rpcMaxFailures
-// it is disabled for rpcCooldownDuration and the pool rotates to the next one.
+// MarkFailed counts a transport failure against the current endpoint. After
+// rpcMaxFailures in a row it is disabled for rpcCooldownDuration and the
+// pool moves to the next usable one.
 func (p *RPCPool) MarkFailed() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-
-	e := p.entries[p.current]
-	e.failures++
-	if e.failures >= rpcMaxFailures {
-		e.disabledAt = time.Now()
-		log.Warnw("rpc pool: disabling endpoint", "url", e.url, "failures", e.failures)
-		p.current = (p.current + 1) % len(p.entries)
-	}
+	p.failedLocked(p.current, "unreachable")
 }
 
 // MarkRateLimited disables the current endpoint for the cooldown at once and
-// rotates: a 429 means the provider is already refusing our requests, so the
+// moves on: a 429 means the provider is already refusing our requests, so the
 // rpcMaxFailures threshold would only buy two more rate-limited round trips.
 func (p *RPCPool) MarkRateLimited() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-
-	e := p.entries[p.current]
-	e.failures++
-	e.disabledAt = time.Now()
-	log.Warnw("rpc pool: rate-limited, disabling endpoint", "url", e.url, "failures", e.failures)
-	p.current = (p.current + 1) % len(p.entries)
+	p.disableLocked(p.current, "rate-limited")
 }
 
-// NoteError classifies an error returned by a call made to the current
-// endpoint and rotates the pool when the endpoint is at fault: a rate-limit
-// response disables it at once (MarkRateLimited), a connectivity failure
-// counts toward the usual threshold (MarkFailed). Contract reverts and every
-// other error are none of the endpoint's business. nil is a no-op, so callers
-// can feed it every result unconditionally.
-// Rotate advances to the next endpoint without disabling the current one;
-// used by startup code that wants to try every endpoint once.
-func (p *RPCPool) Rotate() {
+// NoteError classifies the outcome of a call the current endpoint served
+// (see noteAt). nil counts as an answer, so callers can feed it every result
+// unconditionally.
+func (p *RPCPool) NoteError(err error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.current = (p.current + 1) % len(p.entries)
+	p.noteLocked(p.current, err)
 }
 
-func (p *RPCPool) NoteError(err error) {
-	if err == nil || !IsRPCTransportError(err) {
-		return
+// disable takes the endpoint at idx out of service for the cooldown.
+func (p *RPCPool) disable(idx int, reason string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.disableLocked(idx, reason)
+}
+
+// noteAt is NoteError for the endpoint at idx, whichever is current now.
+func (p *RPCPool) noteAt(idx int, err error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.noteLocked(idx, err)
+}
+
+// noteLocked records one call's outcome against entry idx. Any answer,
+// including an error that is the call's own (a revert, not found), proves
+// the endpoint works and clears its failure count, so only consecutive
+// failures disable it. A rate limit or a capability refusal disables it at
+// once; a transport failure or an HTTP server error counts toward
+// rpcMaxFailures.
+func (p *RPCPool) noteLocked(idx int, err error) {
+	switch {
+	case IsRateLimitError(err):
+		p.disableLocked(idx, "rate-limited")
+	case IsCapabilityError(err):
+		p.disableLocked(idx, "refused the request")
+	case isRedirect(err):
+		p.disableLocked(idx, "redirected (not followed: list the endpoint's canonical URL)")
+	case IsRPCTransportError(err):
+		p.failedLocked(idx, "unreachable")
+	case isServerError(err):
+		p.failedLocked(idx, "server error")
+	default:
+		p.entries[idx].failures = 0
 	}
-	if IsRateLimitError(err) {
-		p.MarkRateLimited()
-		return
+}
+
+func (p *RPCPool) failedLocked(idx int, reason string) {
+	e := p.entries[idx]
+	e.failures++
+	if e.failures >= rpcMaxFailures {
+		p.disableLocked(idx, reason)
 	}
-	p.MarkFailed()
+}
+
+// disableLocked takes entry idx out of service for the cooldown and makes
+// the next usable endpoint current.
+func (p *RPCPool) disableLocked(idx int, reason string) {
+	e := p.entries[idx]
+	if e.disabledAt.IsZero() {
+		log.Warnw("rpc pool: disabling endpoint", "endpoint", e.label, "reason", reason, "failures", e.failures)
+	}
+	e.disabledAt = time.Now()
+	p.pickLocked(nil)
 }
 
 // Close closes all underlying clients.
@@ -259,4 +315,64 @@ func IsRateLimitError(err error) bool {
 	return strings.Contains(s, "429") ||
 		strings.Contains(s, "too many requests") ||
 		strings.Contains(s, "rate limit")
+}
+
+// IsCapabilityError reports whether err is an endpoint refusing a class of
+// request it does not serve rather than failing it: HTTP 401 / 403 (a free
+// tier answering "Archive requests require a personal token" for old log
+// ranges and for every receipt), or a pruned node missing the state, header
+// or history asked for. Another endpoint may well answer, so the pool
+// rotates at once, as for a rate limit. A revert is never one.
+func IsCapabilityError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var httpErr rpc.HTTPError
+	if errors.As(err, &httpErr) &&
+		(httpErr.StatusCode == http.StatusForbidden || httpErr.StatusCode == http.StatusUnauthorized) {
+		return true
+	}
+	s := strings.ToLower(err.Error())
+	if strings.Contains(s, "execution reverted") {
+		return false
+	}
+	for _, substr := range []string{
+		"403 forbidden",
+		"401 unauthorized",
+		"archive",
+		"missing trie node",
+		"pruned",
+		"header not found",
+	} {
+		if strings.Contains(s, substr) {
+			return true
+		}
+	}
+	return false
+}
+
+// endpointFault reports whether err is the endpoint's fault rather than the
+// call's own outcome: a transport failure, a rate limit, a capability
+// refusal, an HTTP 5xx or a redirect. Such a call is worth
+// repeating on another endpoint.
+func endpointFault(err error) bool {
+	return IsRPCTransportError(err) || IsCapabilityError(err) || isServerError(err) || isRedirect(err)
+}
+
+// isRedirect reports whether the endpoint answered with an HTTP redirect.
+// The node never follows one (see dialEndpoint): the credentials in the
+// endpoint's URL must not reach another, so the endpoint is unusable until
+// its URL is fixed.
+func isRedirect(err error) bool {
+	var httpErr rpc.HTTPError
+	return errors.As(err, &httpErr) && httpErr.StatusCode >= 300 && httpErr.StatusCode < 400
+}
+
+// isServerError reports whether err is an HTTP 5xx from the endpoint (or a
+// gateway in front of it, 52x included): the endpoint failed the request,
+// which another endpoint can serve. The status comes from go-ethereum's
+// structured rpc.HTTPError, never from message text.
+func isServerError(err error) bool {
+	var httpErr rpc.HTTPError
+	return errors.As(err, &httpErr) && httpErr.StatusCode >= 500 && httpErr.StatusCode <= 599
 }

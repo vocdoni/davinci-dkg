@@ -62,11 +62,14 @@ wall-clock time:
 The preset also carries the node's `--decrypt-lookback-blocks` default for OP, 126,000 blocks: the
 same span as the registry's inactivity window. Without a preset the default is 50,400 blocks.
 
-The preset's public endpoints (`https://mainnet.optimism.io`, `https://optimism-rpc.publicnode.com`)
-are rate-limited, and publicnode refuses state older than about 600 blocks and old log ranges
-(`mainnet.optimism.io` served 10,000-block log ranges 136,000 blocks back on 2026-10-15). A
-long-lived node lists a private provider first in
-`--web3.rpc` and the public ones after it as failover; the node rotates off refusing endpoints.
+The preset's public endpoints (`https://mainnet.optimism.io`, `https://optimism.gateway.tenderly.co`)
+are rate-limited. Both serve old log ranges and receipts (`mainnet.optimism.io` served 10,000-block
+log ranges 136,000 blocks back on 2026-10-15), which a member rebuilding its key share and every
+transaction wait need. `https://optimism-rpc.publicnode.com` is not in the preset: it refuses state
+older than about 600 blocks, log ranges older than about 10,000 blocks and every receipt (HTTP 403).
+A long-lived node lists a private provider first in `--web3.rpc` and the public ones after it as
+failover; the node always prefers the earliest endpoint that works and moves a refused,
+rate-limited or failed read to the next one within the call.
 
 ## Gnosis Chain (retired)
 

@@ -67,15 +67,23 @@ func DefaultConfig() Config {
 }
 
 // pendingTx tracks a nonce handed out by the manager until the chain has
-// consumed it. `signed` is nil between allocation and signing.
+// consumed it, and then until the transaction is deep (see observe).
+// `signed` is nil between allocation and signing.
 type pendingTx struct {
 	hash        common.Hash
 	nonce       uint64
 	signed      *gethtypes.Transaction
 	submittedAt time.Time
 	retries     int
-	capLogged   bool // the "fee cap reached" warning went out for this entry
+	capLogged   bool   // the "fee cap reached" warning went out for this entry
+	mined       bool   // the chain's mined nonce count covers it
+	minedAt     uint64 // head of the observation that first saw it mined
 }
+
+// confirmDepth is how many blocks a mined transaction stays tracked: a reorg
+// that drops it within that depth is answered by rebroadcasting it, and
+// only past it does its nonce raise the floor no stale view can reopen.
+const confirmDepth = 64
 
 // Manager handles nonce management, EIP-1559 gas estimation, and basic
 // stuck-transaction recovery. It is safe for concurrent use.
@@ -96,11 +104,22 @@ type Manager struct {
 	// manager issues on the raw client, so the caller's per-method request
 	// counters (web3.RPCPool.Note) stay complete.
 	noter func(method string)
+	// receipts, when set, serves the receipt polls of WaitTxByHash instead
+	// of the raw client.
+	receipts ReceiptReader
 
-	mu            sync.Mutex
-	nextNonce     uint64
-	pending       map[uint64]*pendingTx
-	totalGasSpent *big.Int // accumulated gas cost in wei across confirmed txs
+	mu        sync.Mutex
+	nextNonce uint64
+	// floor is one above the highest nonce whose transaction is deep: no
+	// nonce below it is handed out again, whatever any endpoint reports.
+	// minedCount is the mined count of the newest accepted observation,
+	// which covers nonces this process never tracked (an account restarted
+	// at nonce 5): allocation never goes below it, and only an accepted
+	// reorg observation lowers it, never below floor. head is the newest
+	// head an observation came from; older ones are stale and ignored.
+	floor, minedCount, head uint64
+	pending                 map[uint64]*pendingTx
+	totalGasSpent           *big.Int // accumulated gas cost in wei across confirmed txs
 
 	monitorCancel context.CancelFunc
 }
@@ -141,6 +160,35 @@ func (m *Manager) SetRequestNoter(noter func(method string)) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.noter = noter
+}
+
+// ReceiptReader fetches transaction receipts. *web3.PooledBackend is one: it
+// moves to the next endpoint within the call when one refuses receipts (a
+// free tier answering HTTP 403) or fails, where the raw client would poll the
+// refusing endpoint until the wait times out.
+type ReceiptReader interface {
+	TransactionReceipt(ctx context.Context, hash common.Hash) (*gethtypes.Receipt, error)
+}
+
+// SetReceiptReader makes WaitTxByHash poll receipts through r, which counts
+// its own requests, instead of the raw client.
+func (m *Manager) SetReceiptReader(r ReceiptReader) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.receipts = r
+}
+
+// receipt reads one receipt through the receipt reader, or the raw client
+// when none is set.
+func (m *Manager) receipt(ctx context.Context, hash common.Hash) (*gethtypes.Receipt, error) {
+	m.mu.Lock()
+	r := m.receipts
+	m.mu.Unlock()
+	if r != nil {
+		return r.TransactionReceipt(ctx, hash)
+	}
+	m.note("eth_getTransactionReceipt")
+	return m.clientFn().TransactionReceipt(ctx, hash)
 }
 
 // note reports one request to the registered noter, if any.
@@ -244,15 +292,19 @@ func (m *Manager) NewTransactOpts(ctx context.Context) (*bind.TransactOpts, erro
 // the chain's view of the sender's next nonce: the counter never falls
 // behind it, and any nonce between it and the counter that is no longer in
 // flight (a transaction the monitor gave up on) is re-used first so the
-// account cannot stall on a gap.
+// account cannot stall on a gap. Mined nonces are never re-used, whatever a
+// stale chainPending (an endpoint behind the chain) says: none goes below
+// the accepted mined count and the deep floor, and those still tracked are
+// skipped like any in flight.
 func (m *Manager) allocateNonce(chainPending uint64) uint64 {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if chainPending > m.nextNonce {
-		m.nextNonce = chainPending
+	floor := max(chainPending, m.minedCount, m.floor)
+	if floor > m.nextNonce {
+		m.nextNonce = floor
 	}
 	nonce := m.nextNonce
-	for k := chainPending; k < m.nextNonce; k++ {
+	for k := floor; k < m.nextNonce; k++ {
 		if _, inflight := m.pending[k]; !inflight {
 			nonce = k
 			break
@@ -303,13 +355,13 @@ func (m *Manager) RecordPending(tx *gethtypes.Transaction) {
 }
 
 // Pending reports whether the transaction signed at nonce is still in
-// flight: tracked (the original or a fee-bumped replacement), not yet seen
-// confirmed and not given up on after MaxRetries.
+// flight: tracked (the original or a fee-bumped replacement), not seen
+// mined and not given up on after MaxRetries.
 func (m *Manager) Pending(nonce uint64) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	_, ok := m.pending[nonce]
-	return ok
+	ptx, ok := m.pending[nonce]
+	return ok && !ptx.mined
 }
 
 // WaitTxByHash blocks until the transaction is confirmed or the timeout expires.
@@ -331,8 +383,7 @@ func (m *Manager) WaitTxByHash(hash common.Hash, timeout time.Duration) error {
 			}
 			return fmt.Errorf("timeout waiting for transaction %s", hash.Hex())
 		case <-ticker.C:
-			m.note("eth_getTransactionReceipt")
-			receipt, err := m.clientFn().TransactionReceipt(ctx, hash)
+			receipt, err := m.receipt(ctx, hash)
 			switch {
 			case err == nil:
 				// Always record gas cost — reverted txs still consume gas.
@@ -452,7 +503,8 @@ func (m *Manager) suggestFees(ctx context.Context) (*big.Int, *big.Int, error) {
 // lock, does all RPC work without it, and applies the outcome per entry
 // only if that entry has not changed meanwhile:
 //
-//   - nonces below the confirmed nonce are done (mined or replaced);
+//   - nonces below the confirmed nonce are mined, and stay tracked until
+//     they are deep (observe), so a reorg that drops one is rebroadcast;
 //   - a transaction at or above the chain's pending nonce is unknown to the
 //     RPC's mempool (lost send or pool failover) and is re-broadcast as-is;
 //   - a transaction pending longer than MaxPendingTime is replaced by a
@@ -460,18 +512,24 @@ func (m *Manager) suggestFees(ctx context.Context) (*big.Int, *big.Int, error) {
 //     included), after which it is dropped so its nonce can be re-used.
 func (m *Manager) retryStuck(ctx context.Context) error {
 	m.mu.Lock()
-	snapshot := make([]pendingTx, 0, len(m.pending))
-	for _, ptx := range m.pending {
-		snapshot = append(snapshot, *ptx)
-	}
+	tracked := len(m.pending)
 	m.mu.Unlock()
-	if len(snapshot) == 0 {
+	if tracked == 0 {
 		return nil
 	}
 
 	client := m.clientFn()
+	// The mined count is read at the head just read, so the pair is one
+	// observation. Without a head it is read at latest for this pass only
+	// and observes nothing (see observe).
+	m.note("eth_blockNumber")
+	head, headErr := withTimeout(ctx, func(c context.Context) (uint64, error) { return client.BlockNumber(c) })
+	var at *big.Int
+	if headErr == nil {
+		at = new(big.Int).SetUint64(head)
+	}
 	m.note("eth_getTransactionCount")
-	confirmed, err := withTimeout(ctx, func(c context.Context) (uint64, error) { return client.NonceAt(c, m.from, nil) })
+	confirmed, err := withTimeout(ctx, func(c context.Context) (uint64, error) { return client.NonceAt(c, m.from, at) })
 	if err != nil {
 		return fmt.Errorf("confirmed nonce: %w", err)
 	}
@@ -480,21 +538,25 @@ func (m *Manager) retryStuck(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("pending nonce: %w", err)
 	}
-	m.reconcile(confirmed)
+	if headErr == nil {
+		m.applyObservation(ctx, confirmed, head)
+	}
 
+	m.mu.Lock()
+	snapshot := make([]pendingTx, 0, len(m.pending))
+	for _, ptx := range m.pending {
+		snapshot = append(snapshot, *ptx)
+	}
+	m.mu.Unlock()
 	now := time.Now()
 	for _, ptx := range snapshot {
-		if ptx.nonce < confirmed || ptx.signed == nil {
-			continue // done, or still being signed
+		if ptx.mined || ptx.nonce < confirmed || ptx.signed == nil {
+			continue // mined, or still being signed
 		}
 		age := now.Sub(ptx.submittedAt)
 		switch {
 		case ptx.retries >= m.config.MaxRetries:
-			m.mu.Lock()
-			if cur, ok := m.pending[ptx.nonce]; ok && cur.hash == ptx.hash {
-				delete(m.pending, ptx.nonce)
-			}
-			m.mu.Unlock()
+			m.dropExhausted(ptx)
 		case age >= m.config.MaxPendingTime:
 			// Before the unknown-to-the-mempool case: OP has no public mempool,
 			// and a load-balanced RPC can answer the pending nonce with the
@@ -529,6 +591,18 @@ func (m *Manager) retryStuck(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// dropExhausted gives up on a transaction a monitor pass snapshotted at
+// MaxRetries, if the tracker still holds it in that state: one a receipt
+// observation marked mined meanwhile stays tracked until it is deep.
+func (m *Manager) dropExhausted(ptx pendingTx) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cur, ok := m.pending[ptx.nonce]
+	if ok && cur.hash == ptx.hash && !cur.mined && cur.retries >= m.config.MaxRetries {
+		delete(m.pending, ptx.nonce)
+	}
 }
 
 // resend broadcasts tx and, if the pending entry is still the one we
@@ -611,46 +685,78 @@ func (m *Manager) bumpedCopy(tx *gethtypes.Transaction) (*gethtypes.Transaction,
 	return gethtypes.SignTx(raw, gethtypes.LatestSignerForChainID(m.chainID), m.key)
 }
 
-// reconcile drops every pending entry below the confirmed nonce and keeps
-// the local counter from falling behind it.
-func (m *Manager) reconcile(confirmed uint64) {
+// observe applies one chain observation: the sender's mined nonce count
+// read at block head. Only an anchored count is an observation: a zero head
+// (unknown) changes nothing, and one older than a head already seen comes
+// from an endpoint behind the chain and is ignored, as is a count below the
+// deep floor. An accepted observation sets the mined count allocation never
+// goes below, lower or higher. Tracked transactions the count covers are
+// marked mined; one marked mined that it no longer covers was dropped by a
+// reorg: it is in flight again, the counter comes back down to just above
+// what is still tracked, and it is returned for the caller to rebroadcast.
+// A transaction still mined confirmDepth blocks after it was first seen
+// mined is deep: it is dropped from the tracker and raises the floor.
+func (m *Manager) observe(mined, head uint64) []*gethtypes.Transaction {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for nonce := range m.pending {
-		if nonce < confirmed {
-			delete(m.pending, nonce)
+	if head == 0 || head < m.head || mined < m.floor {
+		return nil
+	}
+	m.head, m.minedCount = head, mined
+	var reorged []*gethtypes.Transaction
+	for nonce, ptx := range m.pending {
+		switch {
+		case nonce < mined && !ptx.mined:
+			ptx.mined, ptx.minedAt = true, head
+		case nonce >= mined && ptx.mined:
+			ptx.mined, ptx.minedAt = false, 0
+			ptx.submittedAt = time.Now()
+			if ptx.signed != nil {
+				reorged = append(reorged, ptx.signed)
+			}
 		}
 	}
-	if confirmed > m.nextNonce {
-		m.nextNonce = confirmed
+	for nonce, ptx := range m.pending {
+		if ptx.mined && head >= ptx.minedAt+confirmDepth {
+			delete(m.pending, nonce)
+			m.floor = max(m.floor, nonce+1)
+		}
+	}
+	if len(reorged) > 0 {
+		next := max(mined, m.floor)
+		for nonce := range m.pending {
+			next = max(next, nonce+1)
+		}
+		m.nextNonce = next
+	}
+	if mined > m.nextNonce {
+		m.nextNonce = mined
+	}
+	return reorged
+}
+
+// applyObservation observes the mined nonce count at head and rebroadcasts
+// what a reorg dropped.
+func (m *Manager) applyObservation(ctx context.Context, mined, head uint64) {
+	for _, tx := range m.observe(mined, head) {
+		log.Warnw("tx manager: a reorg dropped a mined transaction, rebroadcasting",
+			"nonce", tx.Nonce(), "tx", tx.Hash().Hex())
+		m.resend(ctx, pendingTx{nonce: tx.Nonce(), hash: tx.Hash()}, tx, false)
 	}
 }
 
-// pruneConfirmed reconciles the pending set against the sender's nonce at
-// blockNumber (all our transactions mined by then are done).
+// pruneConfirmed observes the sender's nonce at blockNumber, the block a
+// receipt was seen in.
 func (m *Manager) pruneConfirmed(blockNumber *big.Int) {
-	if blockNumber == nil {
+	if blockNumber == nil || !blockNumber.IsUint64() {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), rpcCallTimeout)
 	defer cancel()
 	m.note("eth_getTransactionCount")
-	confirmed, err := m.clientFn().NonceAt(ctx, m.from, blockNumber)
+	mined, err := m.clientFn().NonceAt(ctx, m.from, blockNumber)
 	if err != nil {
 		return
 	}
-	m.reconcile(confirmed)
-}
-
-// ResetNonce re-reads the confirmed nonce from the chain and reconciles the
-// pending set against it. Call this when the nonce counter is suspected to
-// be out of sync.
-func (m *Manager) ResetNonce(ctx context.Context) error {
-	m.note("eth_getTransactionCount")
-	nonce, err := m.clientFn().NonceAt(ctx, m.from, nil)
-	if err != nil {
-		return fmt.Errorf("reset nonce: %w", err)
-	}
-	m.reconcile(nonce)
-	return nil
+	m.applyObservation(ctx, mined, blockNumber.Uint64())
 }

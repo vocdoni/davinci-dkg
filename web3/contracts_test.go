@@ -341,3 +341,44 @@ func TestCommitteeSnapshot(t *testing.T) {
 	// snapshot event.
 	c.Assert(keys[0].Operator, qt.Equals, common.Address{})
 }
+
+// A first endpoint that is unreachable or refuses the startup reads must not
+// stop the node: the next endpoint in the list serves them.
+func TestNewOnChainFailsOverAtStartup(t *testing.T) {
+	refusing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"Archive requests require a personal token."}}`))
+	}))
+	defer refusing.Close()
+	unreachable := httptest.NewServer(http.NotFoundHandler())
+	unreachable.Close()
+	healthy := testRPCServer() // serves chain 31337
+	defer healthy.Close()
+	addrs := testAddresses()
+
+	for name, first := range map[string]string{"refusing": refusing.URL, "unreachable": unreachable.URL} {
+		t.Run(name, func(t *testing.T) {
+			c := qt.New(t)
+			contracts, err := NewOnChain([]string{first, healthy.URL}, addrs, 31337)
+			c.Assert(err, qt.IsNil)
+			c.Assert(contracts.ChainID, qt.Equals, uint64(31337))
+			c.Assert(contracts.Close(), qt.IsNil)
+
+			_, err = NewOnChain([]string{first}, addrs, 31337)
+			c.Assert(err, qt.IsNotNil, qt.Commentf("with no other endpoint the startup error surfaces"))
+		})
+	}
+}
+
+// testAddresses is a deployment testRPCServer serves, every address given
+// but the app manager, which is derived from the manager.
+func testAddresses() types.ContractAddresses {
+	return types.ContractAddresses{
+		Registry:               common.HexToAddress("0x1000000000000000000000000000000000000001"),
+		Manager:                common.HexToAddress("0x2000000000000000000000000000000000000002"),
+		ContributionVerifier:   common.HexToAddress("0x3000000000000000000000000000000000000003"),
+		FinalizeVerifier:       common.HexToAddress("0x4000000000000000000000000000000000000004"),
+		PartialDecryptVerifier: common.HexToAddress("0x5000000000000000000000000000000000000005"),
+		DecryptCombineVerifier: common.HexToAddress("0x6000000000000000000000000000000000000006"),
+	}
+}

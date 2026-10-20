@@ -203,7 +203,7 @@ func TestBuildPrivateShareRefusesAndDoesNotCacheACorruptedContribution(t *testin
 		common.BigToAddress(big.NewInt(1)), common.BigToAddress(big.NewInt(2)), common.BigToAddress(big.NewInt(3)),
 	}
 	dealer := selected[dealerIdx-1]
-	epoch := epochView{Policy: web3.EpochPolicy{Threshold: 2, CommitteeSize: 3}, SeedBlock: 100}
+	epoch := epochView{Policy: web3.EpochPolicy{Threshold: 2, CommitteeSize: 3}, SeedBlock: 100, ContributionCount: 1}
 	slot := poolSlot{epoch: epochID, key: 0}
 
 	pi, words, coeffs := dealtContribution(t, epochID, layout, dealerIdx, myIdx, secret)

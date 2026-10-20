@@ -2,6 +2,7 @@ package node
 
 import (
 	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,6 +19,10 @@ import (
 // bytes under <datadir>/<chainid>-<manager>/contributions/<epochId hex>/
 // <dealer address>.bin (see datadir.go). A contribution is immutable once
 // accepted (the contract refuses a second one), so entries never go stale.
+// A committee member fills it for every accepted dealer when the epoch goes
+// Live (keepContributions), while the logs are recent: a share for a pool key
+// claimed days later then needs no old-range eth_getLogs, which many
+// endpoints refuse.
 
 // contributionCache memoises raw submitContribution calldata under the node
 // datadir. It implements finalizer.CalldataCache. A nil receiver or an empty
@@ -58,12 +63,20 @@ func (c *contributionCache) Get(epochID [12]byte, dealer common.Address) ([]byte
 }
 
 // Put stores calldata written after it has been validated (selector, ABI
-// shape, transcript size). The write is atomic (temp file + rename) so a crash
-// never leaves a truncated entry behind; a failed write only costs a later
-// refetch.
+// shape, transcript size), best effort: a failed write is logged and only
+// costs a later refetch. Retention, which must know, uses Store.
 func (c *contributionCache) Put(epochID [12]byte, dealer common.Address, data []byte) {
+	if err := c.Store(epochID, dealer, data); err != nil {
+		log.Warnw("contribution cache: cannot persist calldata", "err", err)
+	}
+}
+
+// Store is Put returning the write error. The write is atomic (temp file +
+// rename) so a crash never leaves a truncated entry behind. A disabled cache
+// stores nothing and reports no error.
+func (c *contributionCache) Store(epochID [12]byte, dealer common.Address, data []byte) error {
 	if !c.enabled() {
-		return
+		return nil
 	}
 	p := c.path(epochID, dealer)
 	tmp := p + ".tmp"
@@ -75,7 +88,8 @@ func (c *contributionCache) Put(epochID [12]byte, dealer common.Address, data []
 		err = os.Rename(tmp, p)
 	}
 	if err != nil {
-		log.Warnw("contribution cache: cannot persist calldata", "path", p, "err", err)
 		_ = os.Remove(tmp)
+		return fmt.Errorf("persist %s: %w", p, err)
 	}
+	return nil
 }

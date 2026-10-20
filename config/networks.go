@@ -46,10 +46,12 @@ var KnownNetworks = map[string]NetworkDeployment{
 		ChainID:    10,
 		Manager:    common.HexToAddress("0x9E799A1D22710056E62c849e3FFE19Dd01db2D41"),
 		StartBlock: 158_245_366, // DKGManager deployment block on OP Mainnet (2026-10-15)
-		// Public failover endpoints; operators put a private RPC first via --web3.rpc.
+		// Public failover endpoints; operators put a private RPC first via
+		// --web3.rpc. Both serve old log ranges and receipts, which share
+		// rebuilds and transaction waits need (publicnode refuses both).
 		RPCs: []string{
 			"https://mainnet.optimism.io",
-			"https://optimism-rpc.publicnode.com",
+			"https://optimism.gateway.tenderly.co",
 		},
 		DecryptLookbackBlocks: 126_000,
 	},

@@ -175,7 +175,7 @@ func (f *Fleet) close() {
 func waitRPC(ctx context.Context, rpcURL string) (*rpc.Client, error) {
 	deadline := time.Now().Add(envDuration("BATTERY_CONNECT_TIMEOUT", 10*time.Minute))
 	for {
-		client, err := rpc.DialContext(ctx, rpcURL)
+		client, err := web3.DialRPC(rpcURL) // errors never echo the URL's key
 		if err == nil {
 			var chainID hexutil.Big
 			if err = client.CallContext(ctx, &chainID, "eth_chainId"); err == nil {
@@ -184,7 +184,7 @@ func waitRPC(ctx context.Context, rpcURL string) (*rpc.Client, error) {
 			client.Close()
 		}
 		if time.Now().After(deadline) {
-			return nil, fmt.Errorf("rpc %s not reachable: %w", rpcURL, err)
+			return nil, fmt.Errorf("rpc %s not reachable: %w", web3.RedactURL(rpcURL), web3.RedactEndpointError(rpcURL, err))
 		}
 		select {
 		case <-ctx.Done():

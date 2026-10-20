@@ -375,11 +375,18 @@ func TestIsPermanentRevertRecognisesMinedReverts(t *testing.T) {
 }
 
 // The startup banner must not leak RPC credentials (API keys live in the
-// URL path or userinfo on most providers).
-func TestRPCHostHidesCredentials(t *testing.T) {
+// URL path, query or userinfo on most providers).
+func TestStartupBannerHidesRPCCredentials(t *testing.T) {
 	c := qt.New(t)
-	c.Assert(rpcHost("https://user:secret@eth-sepolia.example.com/v3/apikey123"), qt.Equals, "eth-sepolia.example.com")
-	c.Assert(rpcHost("http://127.0.0.1:8545"), qt.Equals, "127.0.0.1:8545")
-	c.Assert(rpcHost("ws://[::1]:8546/ws?key=1"), qt.Equals, "[::1]:8546")
-	c.Assert(rpcHost("not a url"), qt.Equals, "<unparseable rpc url>")
+	c.Assert(redactedEndpoints([]string{
+		"https://user:secret@eth-sepolia.example.com/v3/apikey123",
+		"http://127.0.0.1:8545",
+		"ws://[::1]:8546/ws?key=1",
+		"not a url",
+	}), qt.DeepEquals, []string{
+		"https://eth-sepolia.example.com",
+		"http://127.0.0.1:8545",
+		"ws://[::1]:8546",
+		"<unparseable rpc url>",
+	})
 }

@@ -714,7 +714,7 @@ func (n *Node) serviceCiphertext(ctx context.Context, tc *tickCtx, key ctKey, ct
 		// an aborted or completed epoch can never serve this slot.
 		return epoch.Status == epochAborted || epoch.Status == epochCompleted, nil
 	}
-	selected, err := n.selected(ctx, key.epoch)
+	selected, err := n.selected(ctx, n.contracts, key.epoch, epoch.Policy.CommitteeSize)
 	if err != nil {
 		return false, err
 	}
@@ -788,14 +788,26 @@ func (n *Node) serviceCiphertext(ctx context.Context, tc *tickCtx, key ctKey, ct
 	return n.tryCombine(ctx, key, ct, epoch, app, idx, uint16(len(selected)), tc.head)
 }
 
-// selected caches the committee of a Live epoch (it never changes).
-func (n *Node) selected(ctx context.Context, epochID [12]byte) ([]common.Address, error) {
+// committeeReader reads an epoch's committee; *web3.Contracts implements it.
+type committeeReader interface {
+	SelectedParticipants(ctx context.Context, epochID [12]byte) ([]common.Address, error)
+}
+
+// selected returns the committee of an epoch past selection (KeyAssembly
+// starts when the committee is full, and it never changes after), cached
+// once complete. A committee shorter than the policy's size comes from an
+// endpoint behind the chain, which is still collecting slot claims: it is an
+// error to retry, never cached and never read as "not a member".
+func (n *Node) selected(ctx context.Context, chain committeeReader, epochID [12]byte, size uint16) ([]common.Address, error) {
 	if s, ok := n.selectedCache[epochID]; ok {
 		return s, nil
 	}
-	s, err := n.contracts.SelectedParticipants(ctx, epochID)
+	s, err := chain.SelectedParticipants(ctx, epochID)
 	if err != nil {
 		return nil, fmt.Errorf("selected participants: %w", err)
+	}
+	if len(s) != int(size) {
+		return nil, fmt.Errorf("committee has %d of its %d members: the endpoint is behind the chain, retrying", len(s), size)
 	}
 	n.selectedCache[epochID] = s
 	return s, nil

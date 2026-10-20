@@ -39,12 +39,10 @@ func (c *Contracts) GetEpoch(ctx context.Context, epochID [12]byte) (EpochView, 
 	if err != nil {
 		return EpochView{}, fmt.Errorf("pack getEpoch: %w", err)
 	}
-	c.pool.Note("eth_call")
-	output, err := c.pool.Current().CallContract(ctx, ethereum.CallMsg{
+	output, err := c.PooledBackend().CallContract(ctx, ethereum.CallMsg{
 		To:   &c.Addresses.Manager,
 		Data: input,
 	}, nil)
-	c.pool.NoteError(err)
 	if err != nil {
 		return EpochView{}, fmt.Errorf("call getEpoch: %w", err)
 	}
@@ -105,12 +103,10 @@ func (c *Contracts) SelectedParticipants(ctx context.Context, epochID [12]byte) 
 	if err != nil {
 		return nil, fmt.Errorf("pack selectedParticipants: %w", err)
 	}
-	c.pool.Note("eth_call")
-	output, err := c.pool.Current().CallContract(ctx, ethereum.CallMsg{
+	output, err := c.PooledBackend().CallContract(ctx, ethereum.CallMsg{
 		To:   &c.Addresses.Manager,
 		Data: input,
 	}, nil)
-	c.pool.NoteError(err)
 	if err != nil {
 		return nil, fmt.Errorf("call selectedParticipants: %w", err)
 	}

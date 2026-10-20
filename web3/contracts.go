@@ -124,24 +124,32 @@ func NewOnChain(rpcURLs []string, addresses types.ContractAddresses, chainID uin
 		return nil, fmt.Errorf("dial rpc: %w", err)
 	}
 
-	// Every startup read goes through the same rotation as the runtime paths:
-	// a rate-limited or unreachable first endpoint must not make the whole
-	// process exit before it ever tried the others.
-	var gotChainID *big.Int
-	for attempt := 0; ; attempt++ {
+	// Every startup read goes through the same failover as the runtime paths:
+	// a rate-limited, refusing or unreachable first endpoint must not make the
+	// whole process exit before it ever tried the others.
+	var (
+		gotChainID *big.Int
+		lastErr    error
+	)
+	tried := make([]bool, len(pool.entries))
+	for {
+		idx, client, ok := pool.next(tried)
+		if !ok {
+			pool.Close()
+			return nil, pool.redact.error(lastErr)
+		}
+		tried[idx] = true
 		var derived types.ContractAddresses
-		var derr error
-		gotChainID, derived, derr = deriveStartup(pool.Current(), addresses, chainID)
-		if derr == nil {
+		gotChainID, derived, lastErr = deriveStartup(client, addresses, chainID)
+		pool.noteAt(idx, lastErr)
+		if lastErr == nil {
 			addresses = derived
 			break
 		}
-		if attempt+1 >= len(rpcURLs) || !IsRPCTransportError(derr) {
+		if !endpointFault(lastErr) {
 			pool.Close()
-			return nil, derr
+			return nil, pool.redact.error(lastErr)
 		}
-		pool.NoteError(derr)
-		pool.Rotate()
 	}
 
 	if err := addresses.Validate(); err != nil {
@@ -243,12 +251,13 @@ func (c *Contracts) Close() error {
 	return nil
 }
 
-// Client returns a chain client backed by the pool's current active endpoint.
-// It is the pooled backend rather than a raw ethclient, so every call it
-// serves — including the ethclient-style reads BlockNumber, TransactionByHash
-// and TransactionReceipt that calldata recovery and head tracking use —
-// classifies endpoint errors and rotates a rate-limited or unreachable
-// endpoint (see RPCPool.NoteError). It still implements bind.ContractBackend.
+// Client returns a chain client backed by the pool's endpoints. It is the
+// pooled backend rather than a raw ethclient, so every read it serves —
+// including the ethclient-style BlockNumber, TransactionByHash and
+// TransactionReceipt that calldata recovery, head tracking and transaction
+// waits use — moves to the next endpoint within the call when one is
+// rate-limited, unreachable or refuses the request (see PooledBackend). It
+// still implements bind.ContractBackend.
 func (c *Contracts) Client() *PooledBackend {
 	return c.PooledBackend()
 }
@@ -269,12 +278,10 @@ func (c *Contracts) callHash(ctx context.Context, contract common.Address, contr
 		return common.Hash{}, fmt.Errorf("pack %s: %w", method, err)
 	}
 
-	c.pool.Note("eth_call")
-	output, err := c.pool.Current().CallContract(ctx, ethereum.CallMsg{
+	output, err := c.PooledBackend().CallContract(ctx, ethereum.CallMsg{
 		To:   &contract,
 		Data: input,
 	}, nil)
-	c.pool.NoteError(err)
 	if err != nil {
 		return common.Hash{}, fmt.Errorf("call %s: %w", method, err)
 	}

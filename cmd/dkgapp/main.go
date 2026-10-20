@@ -141,6 +141,7 @@ func run() error {
 		if err != nil {
 			return err
 		}
+		a.txm.SetReceiptReader(contracts.PooledBackend())
 		a.txm.Start(ctx)
 		defer a.txm.Stop()
 	}
