@@ -6,7 +6,7 @@
 #   RAILWAY_TOKEN_FILE=/home/p4u/davinci-dkg/railway-api-key \
 #   RAILWAY_PROJECT=davinci-dkg-gnosis RAILWAY_ENVIRONMENT=production \
 #   IMAGE=ghcr.io/vocdoni/davinci-dkg:v0.11.0 NETWORK=optimism \
-#   RPC_FILE=~/optimism-rpcs.txt PUBLIC_RPCS=https://mainnet.optimism.io,https://optimism-rpc.publicnode.com \
+#   RPC_FILE=~/optimism-rpcs.txt PUBLIC_RPCS=https://mainnet.optimism.io,https://optimism.gateway.tenderly.co \
 #   scripts/railway-repoint-node.sh dkg-node1 [--plan|--apply|--rollback]
 #
 # --plan (default) only reads: it resolves the service, prints its current image, volume and
@@ -35,7 +35,7 @@ case $mode in --plan | --apply | --rollback) ;; *) echo "mode must be --plan, --
 : "${IMAGE:=}"
 : "${NETWORK:=optimism}"
 : "${RPC_FILE:=}"
-: "${PUBLIC_RPCS:=https://mainnet.optimism.io,https://optimism-rpc.publicnode.com}"
+: "${PUBLIC_RPCS:=https://mainnet.optimism.io,https://optimism.gateway.tenderly.co}"
 : "${STATE_DIR:=$HOME/.cache/railway-repoint}"
 API=${RAILWAY_API:-https://backboard.railway.com/graphql/v2}
 # The committee size goes first: should a delete deploy on its own, every boot in between fails

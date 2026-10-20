@@ -88,7 +88,7 @@ run --apply || { cat "$tmp/out"; fail "apply failed"; }
 s=$(state)
 [ "$(field "$s" '.image')" = ghcr.io/vocdoni/davinci-dkg:v0.11.0 ] || fail "image not set"
 [ "$(field "$s" '.vars.DAVINCI_DKG_NETWORK')" = optimism ] || fail "network not set"
-[ "$(field "$s" '.vars.DAVINCI_DKG_WEB3_RPC')" = "https://private.example/KEY-SECRET-456,https://mainnet.optimism.io,https://optimism-rpc.publicnode.com" ] || fail "rpc list"
+[ "$(field "$s" '.vars.DAVINCI_DKG_WEB3_RPC')" = "https://private.example/KEY-SECRET-456,https://mainnet.optimism.io,https://optimism.gateway.tenderly.co" ] || fail "rpc list"
 [ "$(field "$s" '.vars | has("DAVINCI_DKG_MANAGER")')" = false ] || fail "manager override kept"
 [ "$(field "$s" '.vars | has("DAVINCI_DKG_EPOCH_POLICY_COMMITTEE_SIZE")')" = false ] || fail "fixed policy kept"
 [ "$(field "$s" '.vars.DAVINCI_DKG_PRIVKEY')" = 0xPRIVKEY-SECRET-789 ] || fail "operator key touched"

@@ -49,7 +49,7 @@ for key in plain wrapped; do
 	: >"$tmp/calls"
 	RAILWAY_API=http://127.0.0.1:$port RAILWAY_TOKEN_FILE=$tmp/token RAILWAY_PROJECT_ID=p-1 RAILWAY_ENVIRONMENT_ID=e-1 \
 		NODE_NAME=dkg-node4 NODE_KEY_FILE=$tmp/$key.json IMAGE=ghcr.io/vocdoni/davinci-dkg:v0.11.0 NETWORK=optimism \
-		RPC_FILE=$tmp/rpcs PUBLIC_RPCS=https://mainnet.optimism.io,https://optimism-rpc.publicnode.com TMPDIR=$tmp \
+		RPC_FILE=$tmp/rpcs PUBLIC_RPCS=https://mainnet.optimism.io,https://optimism.gateway.tenderly.co TMPDIR=$tmp \
 		bash -c 'umask 002; exec bash "$0"' "$here/railway-deploy-node.sh" >"$tmp/out-$key" 2>&1 || { cat "$tmp/out-$key"; fail "$key: deploy failed"; }
 	[ "$(jq -r .op "$tmp/calls" | tr '\n' ' ')" = "serviceCreate volumeCreate serviceInstanceUpdate serviceInstanceDeployV2 " ] ||
 		fail "$key: call order $(jq -r .op "$tmp/calls" | tr '\n' ' ')"
@@ -59,7 +59,7 @@ for key in plain wrapped; do
 	[ "$(jq -r .v.input.variables.DAVINCI_DKG_PRIVKEY <<<"$create")" = "0xPRIVKEY-SECRET-$n" ] || fail "$key: operator key"
 	[ "$(jq -r .v.input.variables.DAVINCI_DKG_NETWORK <<<"$create")" = optimism ] || fail "$key: network"
 	[ "$(jq -r .v.input.variables.DAVINCI_DKG_WEB3_RPC <<<"$create")" = \
-		"https://private.example/KEY-SECRET-456,https://mainnet.optimism.io,https://optimism-rpc.publicnode.com" ] || fail "$key: rpc list"
+		"https://private.example/KEY-SECRET-456,https://mainnet.optimism.io,https://optimism.gateway.tenderly.co" ] || fail "$key: rpc list"
 	[ "$(jq -r .v.input.variables.DAVINCI_DKG_DATADIR <<<"$create")" = /app/run/data ] || fail "$key: datadir"
 	[ "$(jq -r .v.input.source.image <<<"$create")" = ghcr.io/vocdoni/davinci-dkg:v0.11.0 ] || fail "$key: image"
 	[ "$(sed -n 3p "$tmp/calls" | jq -r .v.input.restartPolicyType)" = ALWAYS ] || fail "$key: restart policy"

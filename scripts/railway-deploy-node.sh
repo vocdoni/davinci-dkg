@@ -12,7 +12,7 @@
 # Sepolia testnet needs both, e.g. NETWORK=sepolia
 # RPC=https://ethereum-sepolia-rpc.publicnode.com,https://1rpc.io/sepolia.
 # RPC_FILE (its first line, a private endpoint) goes first, then PUBLIC_RPCS:
-#   RPC_FILE=~/optimism-rpcs.txt PUBLIC_RPCS=https://mainnet.optimism.io,https://optimism-rpc.publicnode.com
+#   RPC_FILE=~/optimism-rpcs.txt PUBLIC_RPCS=https://mainnet.optimism.io,https://optimism.gateway.tenderly.co
 #
 # NODE_KEY_FILE holds `[{"address": "0x…", "private_key": "0x…"}]` or the
 # `{"data": [...]}` that `cast wallet new --json` prints. The key and the
