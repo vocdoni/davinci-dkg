@@ -18,8 +18,8 @@ export interface NetworkDeployment {
 export const KNOWN_NETWORKS: Readonly<Record<string, NetworkDeployment>> = {
   optimism: {
     chainId: 10,
-    managerAddress: '0x9E799A1D22710056E62c849e3FFE19Dd01db2D41',
-    startBlock: 158_245_366n,
+    managerAddress: '0x401381a9711B473baf8757404B5514537A5216d7',
+    startBlock: 158_592_323n,
     rpcUrls: ['https://mainnet.optimism.io', 'https://optimism.gateway.tenderly.co'],
   },
   sepolia: {

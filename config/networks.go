@@ -44,8 +44,8 @@ func (d NetworkDeployment) Deployed() bool {
 var KnownNetworks = map[string]NetworkDeployment{
 	"optimism": {
 		ChainID:    10,
-		Manager:    common.HexToAddress("0x9E799A1D22710056E62c849e3FFE19Dd01db2D41"),
-		StartBlock: 158_245_366, // DKGManager deployment block on OP Mainnet (2026-10-15)
+		Manager:    common.HexToAddress("0x401381a9711B473baf8757404B5514537A5216d7"),
+		StartBlock: 158_592_323, // DKGManager deployment block on OP Mainnet (2026-10-23)
 		// Public failover endpoints; operators put a private RPC first via
 		// --web3.rpc. Both serve old log ranges and receipts, which share
 		// rebuilds and transaction waits need (publicnode refuses both).
